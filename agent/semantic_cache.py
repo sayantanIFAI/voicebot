@@ -89,7 +89,11 @@ DEFAULT_THRESHOLD = 0.78
 
 # Slots naming a THING whose identity decides which record gets looked up.
 # A semantic hit may not cross one of these without character-level proof.
-_ENTITY_SLOTS = ("test_name", "doctor_name")
+# faq_topic included for the same reason as test_name/doctor_name: a
+# fuzzy-similar question ("কোথায় গাড়ি রাখব" vs "ক্লিনিকটা কোথায়") must not
+# let a cached "parking" answer get served for a "location" question just
+# because the sentence shapes are close in embedding space.
+_ENTITY_SLOTS = ("test_name", "doctor_name", "faq_topic")
 
 # Bengali-vs-Bengali character similarity, so ASR garble ("ইউরিক এসিদ" vs
 # "ইউরিক অ্যাসিড") still matches while a genuinely different test does not.

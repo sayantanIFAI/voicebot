@@ -34,18 +34,31 @@ import urllib.request
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
 
-VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment", "smalltalk", "unclear"}
+VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment",
+                  "test_prep", "clinic_faq", "smalltalk", "unclear"}
+
+# The FAQ topic keys FastPath.FAQCatalogue matches locally against
+# /api/v1/catalogue's faq_topics. Kept here too, as a fixed enum for the
+# model's OWN classification when fast_path abstains on a paraphrase its
+# keyword table doesn't cover -- the model still only ever picks a TOPIC
+# KEY, never composes the answer itself (agent/reply_templates.py fetches
+# and speaks the real one). If clinic-api's FAQ table grows, update both
+# this tuple and seed.py's FAQ_ENTRIES together.
+FAQ_TOPICS = ("hours", "location", "payment_methods", "insurance", "parking",
+              "report_collection", "contact_number", "home_collection")
 
 SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's Bengali phone assistant. You will be given ONE caller utterance, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in Bengali script.
 
 Today's date is {today_iso} ({today_weekday}), Asia/Kolkata.
 
-YOUR ONLY JOB is to classify intent and pull out slots that are LITERALLY present in the utterance. You do NOT know test prices, doctor schedules, or appointment availability -- do not guess or state any of those; that data comes from a separate lookup after you run.
+YOUR ONLY JOB is to classify intent and pull out slots that are LITERALLY present in the utterance. You do NOT know test prices, doctor schedules, test preparation instructions, or clinic FAQ answers -- do not guess or state any of those; that data comes from a separate lookup after you run.
 
 INTENTS (exactly one):
 - "test_rate": caller is asking the price/rate of a diagnostic test.
 - "doctor_availability": caller is asking whether/when a named doctor is available.
 - "book_appointment": caller wants to book, confirm, or reschedule an appointment.
+- "test_prep": caller is asking how to prepare for a test (fasting, before/after instructions).
+- "clinic_faq": caller is asking a general clinic question with no specific test or doctor -- hours, location, payment methods, insurance, parking, report collection, contact number, or home sample collection. Fill "faq_topic" with exactly one of: {faq_topics}. If the question doesn't clearly match one of those topics, use "unclear" instead of guessing a topic.
 - "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm Bengali reply yourself for this case only.
 - "unclear": you cannot confidently tell what the caller wants, or the utterance is empty/garbled ASR noise.
 
@@ -53,19 +66,21 @@ SLOT RULES:
 - Only fill a slot if the caller's words support it. Leave it null rather than inferring.
 - "date": resolve relative Bengali time words (আজ=today, কাল=tomorrow, পরশু=day after tomorrow, this/next weekday names) to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today".
 - "test_name" / "doctor_name": copy the term as the caller said it (Bengali or transliterated English), do not translate or normalize it -- the lookup service handles matching.
+- "faq_topic": only for "clinic_faq" -- one of the fixed topic keys above, never free text.
 - "phone": only if a phone number is explicitly spoken, digits only.
 - Never invent a patient name, phone number, or date that was not said.
 
 Output ONLY a single valid JSON object, no other text, in exactly this shape:
 {{
-  "intent": "test_rate" | "doctor_availability" | "book_appointment" | "smalltalk" | "unclear",
+  "intent": "test_rate" | "doctor_availability" | "book_appointment" | "test_prep" | "clinic_faq" | "smalltalk" | "unclear",
   "slots": {{
     "test_name": string or null,
     "doctor_name": string or null,
     "date": string or null,
     "time_slot": string or null,
     "patient_name": string or null,
-    "phone": string or null
+    "phone": string or null,
+    "faq_topic": string or null
   }},
   "direct_reply_bn": string or null
 }}
@@ -106,7 +121,7 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
     if not isinstance(slots, dict):
         errors.append("slots: expected object")
     else:
-        for key in ("test_name", "doctor_name", "date", "time_slot", "patient_name", "phone"):
+        for key in ("test_name", "doctor_name", "date", "time_slot", "patient_name", "phone", "faq_topic"):
             if key not in slots:
                 errors.append(f"slots.{key}: missing")
     if data.get("intent") != "smalltalk" and data.get("direct_reply_bn") not in (None, ""):
@@ -114,6 +129,13 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
         # exact failure mode this schema exists to prevent (see module
         # docstring), so we defend in code rather than trust a retry to fix it.
         data["direct_reply_bn"] = None
+    if isinstance(slots, dict) and slots.get("faq_topic") not in (None, *FAQ_TOPICS):
+        # The model invented a topic key outside the fixed enum. Not fatal
+        # either: null it so main.py's missing-slot path asks the caller
+        # to repeat, rather than passing an unknown key to clinic-api's
+        # /api/v1/faq, which would just 404 -- same "the model proposes,
+        # code decides" discipline as direct_reply_bn above.
+        slots["faq_topic"] = None
     return (len([e for e in errors if "missing" not in e or "intent" in e or "slots: expected" in e]) == 0
             and "slots" in data, errors)
 
@@ -124,6 +146,7 @@ def extract_intent(transcript_bn: str, max_retries: int = 2) -> tuple[dict, dict
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         today_iso=now.strftime("%Y-%m-%d"),
         today_weekday=now.strftime("%A"),
+        faq_topics=", ".join(FAQ_TOPICS),
     )
     prompt = f"{system_prompt}\n\nCALLER UTTERANCE (Bengali, ASR output):\n{transcript_bn}\n\nJSON:"
 

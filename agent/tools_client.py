@@ -65,6 +65,33 @@ class ClinicToolsClient:
         except httpx.HTTPError as e:
             raise ToolCallError(f"get_doctor_availability({doctor_name!r}, {date!r}): {e}") from e
 
+    # ---- Tool 4: GET /api/v1/tests/prep?name=... ----
+    # Expected response shape:
+    #   found=true:  {"found": true, "test_name": "...", "test_name_bn": "...",
+    #                 "fasting_required": true, "prep_instructions": "..."}
+    #   found=false: {"found": false, "query": "...", "did_you_mean": ["..."]}
+    async def get_test_prep(self, test_name: str) -> dict:
+        try:
+            r = await self._client.get("/api/v1/tests/prep", params={"name": test_name})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"get_test_prep({test_name!r}): {e}") from e
+
+    # ---- Tool 5: GET /api/v1/faq?topic=... ----
+    # `topic` is the STABLE KEY from /api/v1/catalogue's faq_topics, already
+    # resolved by agent/fast_path.py's FAQCatalogue -- never free caller text.
+    # Expected response shape:
+    #   found=true:  {"found": true, "topic": "hours", "answer": "..."}
+    #   found=false: {"found": false, "topic": "..."}
+    async def get_faq(self, topic: str) -> dict:
+        try:
+            r = await self._client.get("/api/v1/faq", params={"topic": topic})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"get_faq({topic!r}): {e}") from e
+
     # ---- Tool 3: POST /api/v1/appointments ----
     # Body: {"doctor_name", "date", "time_slot", "patient_name", "phone"}
     # Expected response shape:

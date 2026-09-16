@@ -20,6 +20,7 @@ probe tts         "http://localhost:8002/health"
 probe clinic-api  "http://localhost:8080/api/health"
 probe voice-agent "http://localhost:8100/api/health"
 probe voice-pcm   "http://localhost:8101/api/health"
+probe english-asr "http://localhost:8003/health"
 
 echo
 echo "== resident models =="

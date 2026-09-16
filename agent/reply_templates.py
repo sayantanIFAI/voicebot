@@ -48,6 +48,8 @@ def missing_slot_prompt(intent: str, missing: str) -> str:
         ("book_appointment", "date"): "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?",
         ("book_appointment", "patient_name"): "রোগীর নামটা বলবেন?",
         ("book_appointment", "phone"): "একটা ফোন নম্বর দেবেন, যাতে কনফার্মেশন পাঠাতে পারি?",
+        ("test_prep", "test_name"): "কোন টেস্টের প্রস্তুতি জানতে চান, একটু বলবেন?",
+        ("clinic_faq", "faq_topic"): "দুঃখিত, ঠিক বুঝতে পারলাম না। আর একটু বলবেন?",
     }
     return prompts.get((intent, missing), "দুঃখিত, একটু স্পষ্ট করে বলবেন?")
 
@@ -86,6 +88,25 @@ def doctor_availability_reply(slots: dict, result: dict) -> str:
     if next_date:
         return f"{name} ওই দিন বসবেন না। পরবর্তী উপলব্ধ দিন: {next_date}।"
     return f"{name} এখন কোনো নির্দিষ্ট দিন বসছেন না। আমাদের কাউন্টারে খোঁজ নিতে পারেন।"
+
+
+def test_prep_reply(slots: dict, result: dict) -> str:
+    if not result.get("found"):
+        suggestions = result.get("did_you_mean") or []
+        if suggestions:
+            return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
+                     f"আপনি কি বলতে চাইছেন: {', '.join(suggestions)}?")
+        return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
+
+    name = _spoken_test_name(slots, result)
+    instructions = result.get("prep_instructions") or "এই টেস্টের জন্য বিশেষ কোনো প্রস্তুতির প্রয়োজন নেই।"
+    return f"{name} টেস্টের জন্য: {instructions}"
+
+
+def clinic_faq_reply(slots: dict, result: dict) -> str:
+    if not result.get("found"):
+        return "দুঃখিত, এই বিষয়ে এখন সঠিক তথ্য দিতে পারছি না। কাউন্টারে যোগাযোগ করুন।"
+    return result.get("answer") or "দুঃখিত, এই বিষয়ে এখন সঠিক তথ্য দিতে পারছি না। কাউন্টারে যোগাযোগ করুন।"
 
 
 def booking_reply(slots: dict, result: dict) -> str:

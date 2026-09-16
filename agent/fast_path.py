@@ -25,6 +25,13 @@ correctness margin than the 7B model's output was ever checked against.
 So the LLM is demoted to what it is genuinely needed for: utterances this
 module is NOT confident about.
 
+Extended beyond price/availability to also cover test preparation
+("test_prep") and a small fixed set of clinic FAQ topics ("clinic_faq" --
+hours, location, payment, insurance, parking, report collection, contact
+number, home collection): same reasoning, same commit-floor discipline,
+same abstain-when-ambiguous default. See Catalogue's docstring for the
+FAQ table's shape and its growth limit.
+
 WHAT IT DELIBERATELY REFUSES
 ----------------------------
 `book_appointment` always goes to the LLM. It needs a date, a time, a
@@ -58,12 +65,28 @@ ENTITY_MATCH_FLOOR = 0.55
 # the two abstains to the LLM rather than guessing.
 COMMIT_FLOOR = 0.72
 
+# Same commit-without-a-model bar, applied to FAQ topic keyword phrases.
+# REASONED, not measured -- there is no real-call FAQ-question corpus yet
+# to calibrate against, unlike COMMIT_FLOOR above. Recalibrate against
+# real Kolkata call audio before trusting this past the pilot; see
+# agent/lid.py's module docstring for what "measured vs reasoned" means
+# in this codebase.
+FAQ_COMMIT_FLOOR = 0.72
+
 _RATE_CUES = ("রেট", "দাম", "খরচ", "চার্জ", "মূল্য", "কত টাকা", "কত পড়বে",
               "কত লাগবে", "কত নেবে", "প্রাইস", "টাকা লাগে")
 _AVAIL_CUES = ("কবে", "কখন", "বসবেন", "বসেন", "চেম্বার", "আছেন", "থাকবেন",
                "পাওয়া যাবে", "ভিজিট", "সময়সূচি", "শিডিউল")
 _BOOK_CUES = ("বুক", "বুকিং", "অ্যাপয়েন্টমেন্ট", "অ্যাপয়েনমেন্ট", "সিরিয়াল",
               "নাম লেখা", "স্লট")
+# What must the caller DO before/for a test -- distinct from _RATE_CUES
+# ("কত টাকা") and _AVAIL_CUES (a DOCTOR's schedule), so a test-prep
+# question never gets misrouted as a price or a doctor question even
+# though all three can mention a test/doctor name in the same sentence
+# shape.
+_PREP_CUES = ("প্রস্তুতি", "উপবাস", "উপোস", "খালি পেটে", "ফাস্টিং", "আগে কী করতে হবে",
+              "আগে কি করতে হবে", "কী মানতে হবে", "কি মানতে হবে", "খাওয়া যাবে কিনা",
+              "আগে খাওয়া যাবে")
 _GREETING_CUES = ("নমস্কার", "নমষ্কার", "হ্যালো", "হ্যালো?", "শুভ সকাল", "আসসালামু")
 _THANKS_CUES = ("ধন্যবাদ", "থ্যাঙ্ক", "থ্যাংক")
 
@@ -106,11 +129,20 @@ def _best_window_ratio(needle: str, haystack_words: list[str]) -> float:
 
 
 class Catalogue:
-    """The 74 rows, with every spoken form that maps to each."""
+    """The 74 rows, with every spoken form that maps to each -- plus the
+    FAQ topic table, which is the same shape (one canonical key, several
+    spoken forms) even though its keys are topics ("hours") rather than
+    tests or doctors. When this table outgrows a few dozen topics or needs
+    ranked/partial matches, that is the signal to promote it to a real
+    retrieval index (Epic E25) -- a flat keyword scan is the right tool
+    only while it stays small and exhaustively enumerable, same trade-off
+    fast_path.py's own docstring makes for the 74-row catalogue itself.
+    """
 
     def __init__(self, payload: dict):
         self.tests: list[tuple[str, list[str]]] = []
         self.doctors: list[tuple[str, list[str]]] = []
+        self.faq_topics: list[tuple[str, list[str]]] = []
 
         for t in payload.get("tests", []):
             forms = [_normalize(a) for a in t.get("aliases_bn", [])]
@@ -122,15 +154,23 @@ class Catalogue:
             forms.append(_normalize(d.get("surname") or d["name"].split()[-1]))
             self.doctors.append((d["name"], [f for f in forms if f]))
 
+        for f in payload.get("faq_topics", []):
+            forms = [_normalize(k) for k in f.get("keywords_bn", [])]
+            self.faq_topics.append((f["topic"], [x for x in forms if x]))
+
     def __len__(self) -> int:
-        return len(self.tests) + len(self.doctors)
+        return len(self.tests) + len(self.doctors) + len(self.faq_topics)
+
+    def _rows(self, kind: str) -> list[tuple[str, list[str]]]:
+        return {"test": self.tests, "doctor": self.doctors, "faq": self.faq_topics}[kind]
 
     def match(self, text: str, kind: str) -> tuple[str | None, str | None, float]:
-        """-> (canonical_name, matched_spoken_form, score)."""
+        """-> (canonical_key, matched_spoken_form, score). `canonical_key`
+        is a test/doctor name for kind in {"test", "doctor"}, or a FAQ
+        topic key for kind="faq"."""
         words = _normalize(text).split()
-        rows = self.tests if kind == "test" else self.doctors
         best_name, best_form, best_score = None, None, 0.0
-        for name, forms in rows:
+        for name, forms in self._rows(kind):
             for form in forms:
                 score = _best_window_ratio(form, words)
                 if score > best_score:
@@ -160,7 +200,7 @@ class FastPathResult:
 
 def _empty_slots(**kw) -> dict:
     slots = {"test_name": None, "doctor_name": None, "date": None,
-             "time_slot": None, "patient_name": None, "phone": None}
+             "time_slot": None, "patient_name": None, "phone": None, "faq_topic": None}
     slots.update(kw)
     return slots
 
@@ -229,10 +269,13 @@ class FastPath:
 
         wants_rate = _any_cue(text, _RATE_CUES)
         wants_avail = _any_cue(text, _AVAIL_CUES)
+        wants_prep = _any_cue(text, _PREP_CUES)
 
-        # Both cue sets firing means an utterance asking about more than
-        # one thing. Let the model decide which.
-        if wants_rate and wants_avail:
+        # More than one cue set firing means an utterance asking about more
+        # than one thing (or genuinely ambiguous between them -- "কী মানতে
+        # হবে" alone can read as prep, but combined with a rate/avail cue
+        # it is not this module's call to make). Let the model decide.
+        if sum((wants_rate, wants_avail, wants_prep)) > 1:
             self.stats["abstained"] += 1
             return None
 
@@ -242,6 +285,16 @@ class FastPath:
                 self.stats["served"] += 1
                 logger.info("fast path: test_rate %r (%.2f) from %r", name, score, transcript)
                 return FastPathResult("test_rate", _empty_slots(test_name=form or name),
+                                      score, matched_form=form)
+            self.stats["abstained"] += 1
+            return None
+
+        if wants_prep:
+            name, form, score = self.catalogue.match(text, "test")
+            if name and score >= COMMIT_FLOOR:
+                self.stats["served"] += 1
+                logger.info("fast path: test_prep %r (%.2f) from %r", name, score, transcript)
+                return FastPathResult("test_prep", _empty_slots(test_name=form or name),
                                       score, matched_form=form)
             self.stats["abstained"] += 1
             return None
@@ -261,6 +314,19 @@ class FastPath:
             return FastPathResult("doctor_availability",
                                   _empty_slots(doctor_name=form or name, date=date_iso),
                                   score, matched_form=form)
+
+        # No rate/prep/availability cue at all -- try the FAQ topic table
+        # before falling through to greeting/thanks/abstain. Deliberately
+        # LAST among the "answerable" branches: every FAQ keyword phrase
+        # is generic clinic language ("সময়", "কোথায়") with no test/doctor
+        # cue word in it by construction, so this cannot silently steal a
+        # rate/prep/availability question -- those already returned above.
+        faq_topic, faq_form, faq_score = self.catalogue.match(text, "faq")
+        if faq_topic and faq_score >= FAQ_COMMIT_FLOOR:
+            self.stats["served"] += 1
+            logger.info("fast path: clinic_faq %r (%.2f) from %r", faq_topic, faq_score, transcript)
+            return FastPathResult("clinic_faq", _empty_slots(faq_topic=faq_topic),
+                                  faq_score, matched_form=faq_form)
 
         # Pure greeting or thanks, with no entity and no question in it.
         if _any_cue(text, _GREETING_CUES) and len(text.split()) <= 4:

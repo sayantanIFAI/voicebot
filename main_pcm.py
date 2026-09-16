@@ -84,6 +84,7 @@ from agent.asr import TurnASR
 from agent.llm import extract_intent, ExtractionError
 from agent.reply_templates import (
     missing_slot_prompt, test_rate_reply, doctor_availability_reply, booking_reply,
+    test_prep_reply, clinic_faq_reply,
 )
 from agent.fast_path import Catalogue, FastPath
 from agent.semantic_cache import SemanticCache, embed as _embed_probe
@@ -396,6 +397,20 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     return
                 result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
                 await _speak(session, doctor_availability_reply(slots, result))
+
+            elif intent == "test_prep":
+                if not slots.get("test_name"):
+                    await _speak(session, missing_slot_prompt(intent, "test_name"))
+                    return
+                result = await _tools.get_test_prep(slots["test_name"])
+                await _speak(session, test_prep_reply(slots, result))
+
+            elif intent == "clinic_faq":
+                if not slots.get("faq_topic"):
+                    await _speak(session, missing_slot_prompt(intent, "faq_topic"))
+                    return
+                result = await _tools.get_faq(slots["faq_topic"])
+                await _speak(session, clinic_faq_reply(slots, result))
 
             elif intent == "book_appointment":
                 for field in ("doctor_name", "date", "time_slot", "patient_name", "phone"):

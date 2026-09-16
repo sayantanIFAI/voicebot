@@ -23,7 +23,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from db import get_db, SessionLocal
-from models import Department, Doctor, DoctorSchedule, LabTest, Appointment
+from models import Department, Doctor, DoctorSchedule, LabTest, Appointment, FAQ
 
 app = FastAPI(title="Kolkata Care Diagnostics -- Clinic Data API (dummy)")
 
@@ -113,40 +113,88 @@ def catalogue(db: Session = Depends(get_db)):
              "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a]}
             for d in db.query(Doctor).all()
         ],
+        # FAQ topics + their keyword sets, for FastPath.FAQCatalogue --
+        # same "fetch the small table once, match locally" shape as tests
+        # and doctors above. NOT the answer text itself: the answer is
+        # still fetched live via /api/v1/faq on every turn, the same
+        # discipline test_rate and doctor_availability already apply, so a
+        # cached routing decision can never serve a stale FAQ answer.
+        "faq_topics": [
+            {"topic": f.topic,
+             "keywords_bn": [k for k in (f.keywords_bn or "").split("|") if k]}
+            for f in db.query(FAQ).all()
+        ],
     }
 
 
-@app.get("/api/v1/tests/search")
-def search_test(name: str = Query(...), db: Session = Depends(get_db)):
-    # English substring match -- covers callers who say the test name in
-    # English/transliterated form.
+def _find_test(db: Session, name: str) -> LabTest | None:
+    """The exact/Bengali-alias/fuzzy cascade search_test() and the prep
+    endpoint both need -- factored out so "which test did they mean" has
+    exactly one implementation, not two that can drift apart."""
     exact = db.query(LabTest).filter(func.lower(LabTest.name).contains(name.lower())).first()
     if exact:
-        return _test_reply_dict(exact)
+        return exact
 
-    # Bengali-script match -- covers the actual common case. A caller
-    # saying "ইউরিক এসিড" was matched against nothing before this existed:
-    # the DB only stored the English name "Uric Acid", and Bengali script
-    # shares zero characters with Latin script, so substring AND fuzzy
-    # matching against the English column alone can NEVER succeed on
-    # Bengali input, regardless of how close the pronunciation is.
     all_tests = db.query(LabTest).all()
     for t in all_tests:
         aliases = [a for a in t.aliases_bn.split("|") if a]
         if any(name in alias or alias in name for alias in aliases):
-            return _test_reply_dict(t)
+            return t
+    return None
 
-    # Fuzzy fallback -- try both the English name and every Bengali alias,
-    # so suggestions are useful regardless of which script the caller used.
+
+def _test_suggestions(db: Session, name: str) -> list[str]:
+    all_tests = db.query(LabTest).all()
     candidates = []
     for t in all_tests:
         candidates.append(t.name)
         candidates.extend(a for a in t.aliases_bn.split("|") if a)
     suggestions = difflib.get_close_matches(name, candidates, n=3, cutoff=0.5)
-    # Map suggested aliases back to their canonical English name for display.
     alias_to_name = {a: t.name for t in all_tests for a in t.aliases_bn.split("|") if a}
-    suggestions = list(dict.fromkeys(alias_to_name.get(s, s) for s in suggestions))
-    return {"found": False, "query": name, "did_you_mean": suggestions}
+    return list(dict.fromkeys(alias_to_name.get(s, s) for s in suggestions))
+
+
+@app.get("/api/v1/tests/search")
+def search_test(name: str = Query(...), db: Session = Depends(get_db)):
+    # English substring match, then Bengali-script match -- covers callers
+    # who say the test name in English/transliterated form, then the
+    # actual common case. A caller saying "ইউরিক এসিড" was matched against
+    # nothing before the Bengali path existed: the DB only stored the
+    # English name "Uric Acid", and Bengali script shares zero characters
+    # with Latin script, so substring AND fuzzy matching against the
+    # English column alone can NEVER succeed on Bengali input, regardless
+    # of how close the pronunciation is.
+    found = _find_test(db, name)
+    if found:
+        return _test_reply_dict(found)
+
+    # Fuzzy fallback -- try both the English name and every Bengali alias,
+    # so suggestions are useful regardless of which script the caller used.
+    return {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}
+
+
+# =============================================================================
+# Tool 4: GET /api/v1/tests/prep?name=...
+# =============================================================================
+def _test_prep_reply_dict(t: LabTest) -> dict:
+    return {
+        "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "fasting_required": t.fasting_required, "prep_instructions": t.prep_instructions_bn,
+    }
+
+
+@app.get("/api/v1/tests/prep")
+def test_prep(name: str = Query(...), db: Session = Depends(get_db)):
+    """Same entity resolution as /tests/search, different fact -- kept as a
+    separate endpoint rather than folding prep fields into every search
+    response, because prep instructions are Tier-3 "approved content"
+    (Blueprint 2.2) conceptually distinct from the Tier-1 price/turnaround
+    facts search_test returns, and the two may end up backed by different
+    systems of record later."""
+    found = _find_test(db, name)
+    if found:
+        return _test_prep_reply_dict(found)
+    return {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}
 
 
 # =============================================================================
@@ -330,3 +378,21 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
         "doctor_name": doctor.name,
         "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": req.date, "time_slot": req.time_slot,
     }
+
+
+# =============================================================================
+# Tool 5: GET /api/v1/faq?topic=...
+# =============================================================================
+@app.get("/api/v1/faq")
+def faq_answer(topic: str = Query(...), db: Session = Depends(get_db)):
+    """Looked up by TOPIC KEY, not free text -- the caller-facing entity
+    resolution (which topic did they mean) already happened in
+    FastPath.FAQCatalogue against the keyword sets from /api/v1/catalogue.
+    This endpoint's only job is "give me the current answer for this
+    topic", fetched live on every turn for the same reason test_rate and
+    doctor_availability never trust a cached VALUE -- only a cached
+    ROUTING decision."""
+    row = db.query(FAQ).filter_by(topic=topic).first()
+    if not row:
+        return {"found": False, "topic": topic}
+    return {"found": True, "topic": row.topic, "answer": row.answer_bn}

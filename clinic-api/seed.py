@@ -10,7 +10,7 @@ Run:  python3 seed.py     (idempotent -- safe to re-run, wipes and reloads)
 from __future__ import annotations
 
 from db import engine, SessionLocal
-from models import Base, Department, Doctor, DoctorSchedule, LabTest
+from models import Base, Department, Doctor, DoctorSchedule, LabTest, FAQ
 
 # ---------------------------------------------------------------------------
 # 8 departments, 4 doctors each = 32 doctors.
@@ -154,6 +154,64 @@ LAB_TESTS = [
     ("Calcium (Serum)", ["ক্যালসিয়াম", "সিরাম ক্যালসিয়াম"], 250, "Blood", 12),
 ]
 
+# Per-test preparation, keyed by the exact LAB_TESTS name. Only tests with
+# a genuine requirement are listed; every other test gets the generic
+# no-special-preparation default in _prep_for() below. Fictional but
+# clinically plausible, matching the rest of this file's seed data.
+PREP_OVERRIDES: dict[str, tuple[bool, str]] = {
+    "Blood Sugar Fasting": (True, "এই টেস্টের আগে অন্তত আট ঘণ্টা কিছু খাবেন না, শুধু জল খেতে পারেন। "
+                                    "সকালে খালি পেটে এসে টেস্ট করানো ভালো।"),
+    "Lipid Profile": (True, "এই টেস্টের আগে দশ থেকে বারো ঘণ্টা উপবাস থাকতে হবে, জল ছাড়া আর কিছু খাবেন না। "
+                             "আগের রাতে হালকা খাবার খাওয়া ভালো।"),
+    "HbA1c": (False, "এই টেস্টের জন্য উপবাস থাকার দরকার নেই, স্বাভাবিক খাওয়াদাওয়ার পরেও করানো যায়।"),
+    "Kidney Function Test (KFT)": (True, "এই টেস্টের আগে ছয় থেকে আট ঘণ্টা উপবাস থাকার পরামর্শ দেওয়া হয়।"),
+    "Liver Function Test (LFT)": (True, "এই টেস্টের আগে আট ঘণ্টা উপবাস থাকার পরামর্শ দেওয়া হয়।"),
+    "USG Whole Abdomen": (True, "এই টেস্টের আগে ছয় ঘণ্টা কিছু খাবেন না এবং প্রস্রাব চেপে রাখতে হবে, "
+                                  "মূত্রথলি ভর্তি থাকা দরকার।"),
+    "USG Pregnancy Profile": (True, "এই টেস্টের আগে জল বেশি খেয়ে মূত্রথলি ভর্তি রাখতে হবে, "
+                                      "টেস্টের ঠিক আগে প্রস্রাব করবেন না।"),
+    "TMT (Treadmill Test)": (False, "হালকা, আরামদায়ক পোশাক ও জুতো পরে আসবেন। টেস্টের দুই ঘণ্টা আগে ভারী "
+                                      "খাবার না খাওয়াই ভালো।"),
+}
+
+_DEFAULT_PREP_BN = "এই টেস্টের জন্য বিশেষ কোনো প্রস্তুতির প্রয়োজন নেই, স্বাভাবিকভাবে এসে করাতে পারেন।"
+
+
+def _prep_for(test_name: str) -> tuple[bool, str]:
+    return PREP_OVERRIDES.get(test_name, (False, _DEFAULT_PREP_BN))
+
+
+# (topic, [Bengali keyword/phrase cues], answer)
+# Fictional clinic details, representative of a real Kolkata polyclinic --
+# same convention as DEPARTMENTS/LAB_TESTS above, not sourced from a real
+# clinic. This is the Tier-3 "approved content" table (models.FAQ).
+FAQ_ENTRIES = [
+    ("hours",
+     ["সময়", "কখন খোলে", "কখন বন্ধ", "খোলা থাকে", "ভিজিটিং আওয়ার্স", "ক্লিনিকের সময়"],
+     "আমাদের ক্লিনিক প্রতিদিন সকাল আটটা থেকে রাত আটটা পর্যন্ত খোলা থাকে, রবিবার সকাল আটটা থেকে দুপুর দুটো পর্যন্ত।"),
+    ("location",
+     ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব"],
+     "আমাদের ক্লিনিক কলকাতার রাজারহাট নিউ টাউনে, সিটি সেন্টার টু-এর কাছে।"),
+    ("payment_methods",
+     ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ"],
+     "নগদ, সব ধরনের কার্ড এবং ইউপিআই -- সব মাধ্যমেই পেমেন্ট নেওয়া হয়।"),
+    ("insurance",
+     ["ইনসিওরেন্স", "ইন্সুরেন্স", "বিমা", "ক্যাশলেস", "মেডিক্লেম"],
+     "প্রধান বিমা সংস্থাগুলোর ক্যাশলেস সুবিধা আছে। আপনার কার্ডের নাম বললে কাউন্টার থেকে নিশ্চিত করে দেওয়া হবে।"),
+    ("parking",
+     ["পার্কিং", "গাড়ি রাখার জায়গা", "গাড়ি কোথায় রাখব"],
+     "ক্লিনিকের নিজস্ব পার্কিং আছে, কোনো চার্জ লাগে না।"),
+    ("report_collection",
+     ["রিপোর্ট কীভাবে পাব", "রিপোর্ট নিতে", "রিপোর্ট কোথা থেকে"],
+     "রিপোর্ট সরাসরি কাউন্টার থেকে সংগ্রহ করতে পারেন, অথবা হোয়াটসঅ্যাপ ও ইমেলেও পাঠানো হয়।"),
+    ("contact_number",
+     ["ফোন নম্বর", "যোগাযোগ", "নম্বরটা কী"],
+     "আমাদের হেল্পডেস্ক নম্বরে ফোন করে সরাসরি কথা বলতে পারেন, এই কলটার পরেও নম্বরটা এসএমএস করে দেওয়া হবে।"),
+    ("home_collection",
+     ["বাড়িতে এসে", "হোম কালেকশন", "বাড়ি থেকে স্যাম্পল"],
+     "বেশিরভাগ ব্লাড টেস্টের জন্য বাড়িতে এসে স্যাম্পল নেওয়ার সুবিধা আছে। বুক করার সময় বলে দেবেন।"),
+]
+
 
 def seed():
     Base.metadata.drop_all(engine)
@@ -183,12 +241,17 @@ def seed():
                 doctor_index += 1
 
         for name, aliases_bn, rate, sample, hours in LAB_TESTS:
+            fasting, prep_bn = _prep_for(name)
             db.add(LabTest(name=name, aliases_bn="|".join(aliases_bn), rate_inr=rate,
-                            sample_type=sample, report_time_hours=hours))
+                            sample_type=sample, report_time_hours=hours,
+                            fasting_required=fasting, prep_instructions_bn=prep_bn))
+
+        for topic, keywords_bn, answer_bn in FAQ_ENTRIES:
+            db.add(FAQ(topic=topic, keywords_bn="|".join(keywords_bn), answer_bn=answer_bn))
 
         db.commit()
         print(f"Seeded {len(DEPARTMENTS)} departments, {doctor_index} doctors, "
-              f"{len(LAB_TESTS)} lab tests.")
+              f"{len(LAB_TESTS)} lab tests, {len(FAQ_ENTRIES)} FAQ topics.")
     finally:
         db.close()
 

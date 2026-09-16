@@ -37,27 +37,56 @@ import nemo.collections.asr as nemo_asr
 from omegaconf import OmegaConf
 from nemo.collections.asr.parts.submodules.rnnt_decoding import RNNTDecodingConfig
 
-MODEL_ID = "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large"
+# HF repo per language -- bn/hi share this fork's checkpoint family; en is
+# NOT here on purpose, it needs mainline NeMo (see the module docstring)
+# and is loaded by a separate process/venv, never by this class.
+MODEL_ID_BY_LANGUAGE = {
+    "bn": "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large",
+    "hi": "ai4bharat/indicconformer_stt_hi_hybrid_ctc_rnnt_large",
+}
 
 
-def _resolve_nemo_file() -> str:
+def _resolve_nemo_file(language_id: str = "bn") -> str:
     """Locate the .nemo checkpoint without hardcoding a machine-specific
-    HF cache path. Resolution order: explicit env var override, then a
-    glob of the HF cache this project's own download step populates."""
+    HF cache path.
+
+    Resolution order:
+      1. VOICE_AGENT_NEMO_FILE_<LANG> (e.g. VOICE_AGENT_NEMO_FILE_BN) --
+         the explicit, unambiguous path deploy/env.sh sets once more than
+         one IndicConformer checkpoint lives on the box (bn AND hi, since
+         the pilot single-L4 architecture routes between them --
+         docs/adr/0001-pilot-single-l4-architecture.md).
+      2. VOICE_AGENT_NEMO_FILE (unqualified) -- kept for backward
+         compatibility with the original Bengali-only deployment.
+      3. A glob of the HF cache, FILTERED by language_id. An unqualified
+         glob across every "*indicconformer*" directory is only safe when
+         exactly one checkpoint exists; with two, `hits[0]` picks
+         whichever the filesystem happens to list first, silently loading
+         the wrong language's model into the wrong TurnASR instance.
+    """
+    per_lang = os.environ.get(f"VOICE_AGENT_NEMO_FILE_{language_id.upper()}")
+    if per_lang and os.path.exists(per_lang):
+        return per_lang
+
     explicit = os.environ.get("VOICE_AGENT_NEMO_FILE")
     if explicit and os.path.exists(explicit):
         return explicit
 
     hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
-    hits = glob.glob(os.path.join(hf_home, "hub", "**", "*indicconformer*", "**", "*.nemo"),
-                      recursive=True)
+    pattern = os.path.join(hf_home, "hub", "**", f"*indicconformer*{language_id}*", "**", "*.nemo")
+    hits = glob.glob(pattern, recursive=True) or glob.glob(
+        os.path.join(hf_home, "hub", "**", "*indicconformer*", "**", f"*{language_id}*.nemo"),
+        recursive=True,
+    )
     if hits:
         return hits[0]
 
+    repo = MODEL_ID_BY_LANGUAGE.get(language_id, f"<no known AI4Bharat repo for {language_id!r}>")
     raise FileNotFoundError(
-        f"Could not locate the IndicConformer .nemo checkpoint under {hf_home}. "
-        f"Download it first: huggingface_hub.snapshot_download('{MODEL_ID}', "
-        f"token=<HF_TOKEN>) -- the model is gated, accept its licence on "
+        f"Could not locate an IndicConformer .nemo checkpoint for language_id={language_id!r} "
+        f"under {hf_home}. Set VOICE_AGENT_NEMO_FILE_{language_id.upper()} explicitly, or "
+        f"download it first: huggingface_hub.snapshot_download('{repo}', token=<HF_TOKEN>) -- "
+        f"the AI4Bharat IndicConformer models are gated, accept the licence on "
         f"huggingface.co first."
     )
 
@@ -96,7 +125,7 @@ class TurnASR:
     def __init__(self, nemo_file: str | None = None, language_id: str = "bn",
                  device: str | None = None):
         self.language_id = language_id
-        nemo_file = nemo_file or _resolve_nemo_file()
+        nemo_file = nemo_file or _resolve_nemo_file(language_id)
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = nemo_asr.models.ASRModel.restore_from(restore_path=nemo_file)
         self.model = self.model.to(self.device)
