@@ -15,6 +15,7 @@ import logging
 
 import datetime
 import difflib
+import unicodedata
 import uuid
 
 from fastapi import FastAPI, Depends, Query
@@ -46,6 +47,8 @@ def _ensure_seeded():
     from db import engine
     from models import Base, LabTest
     Base.metadata.create_all(engine)
+    from seed import add_i18n_columns
+    add_i18n_columns()   # before ANY ORM query: an old database lacks the new columns
     db = SessionLocal()
     try:
         if db.query(LabTest).count() == 0:
@@ -54,6 +57,8 @@ def _ensure_seeded():
             seed()
         else:
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
+            from seed import backfill_i18n
+            logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
     finally:
         db.close()
 
@@ -86,6 +91,7 @@ def _first_alias_bn(aliases_bn: str) -> str | None:
 def _test_reply_dict(t: LabTest) -> dict:
     return {
         "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "test_name_hi": _first_alias_bn(t.aliases_hi),
         "rate_inr": t.rate_inr,
         "sample_type": t.sample_type, "report_time_hours": t.report_time_hours,
     }
@@ -104,13 +110,15 @@ def catalogue(db: Session = Depends(get_db)):
     return {
         "tests": [
             {"name": t.name,
-             "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a]}
+             "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a],
+             "aliases_hi": [a for a in (t.aliases_hi or "").split("|") if a]}
             for t in db.query(LabTest).all()
         ],
         "doctors": [
             {"name": d.name,
              "surname": d.name.split()[-1],
-             "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a]}
+             "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
+             "aliases_hi": [a for a in (d.aliases_hi or "").split("|") if a]}
             for d in db.query(Doctor).all()
         ],
         # FAQ topics + their keyword sets, for FastPath.FAQCatalogue --
@@ -127,6 +135,27 @@ def catalogue(db: Session = Depends(get_db)):
     }
 
 
+# Words that carry no test identity when a caller wraps a test name in a
+# sentence: "lipid profile TEST" must match "Lipid Profile". Bengali/Hindi
+# spellings of "test" included.
+_GENERIC_WORDS = {"test", "tests", "the", "a", "of", "for", "price", "rate",
+                  "টেস্ট", "টেস্টের", "टेस्ट", "जांच"}
+
+
+def _norm_name(s: str) -> str:
+    """Comparison form for a caller-said test name.
+
+    Lowercases, drops generic words, and removes the Devanagari nukta
+    (U+093C): the Hindi ASR emits both "प्रोफाइल" and "प्रोफ़ाइल" for the same
+    spoken word, and NFC keeps the nukta as a separate mark, so removing it
+    makes the two spellings equal. Never fuzzy -- a wrong test's real price is
+    the failure this file exists to prevent, so a near-miss is offered as a
+    suggestion to the caller, not silently accepted."""
+    s = unicodedata.normalize("NFC", s).lower().replace("\u093c", "").replace("-", " ")
+    toks = [t.strip("?.,;:!'\"()") for t in s.split()]
+    return " ".join(t for t in toks if t and t not in _GENERIC_WORDS)
+
+
 def _find_test(db: Session, name: str) -> LabTest | None:
     """The exact/Bengali-alias/fuzzy cascade search_test() and the prep
     endpoint both need -- factored out so "which test did they mean" has
@@ -137,9 +166,21 @@ def _find_test(db: Session, name: str) -> LabTest | None:
 
     all_tests = db.query(LabTest).all()
     for t in all_tests:
-        aliases = [a for a in t.aliases_bn.split("|") if a]
+        aliases = [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
         if any(name in alias or alias in name for alias in aliases):
             return t
+
+    # Normalised, two-way containment against the English name and every
+    # alias: the caller's phrase may contain the test name ("lipid profile
+    # test") or be a part of it, in any script.
+    q = _norm_name(name)
+    if q:
+        for t in all_tests:
+            forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+            for form in forms:
+                n = _norm_name(form)
+                if n and (q in n or n in q):
+                    return t
     return None
 
 
@@ -148,9 +189,10 @@ def _test_suggestions(db: Session, name: str) -> list[str]:
     candidates = []
     for t in all_tests:
         candidates.append(t.name)
-        candidates.extend(a for a in t.aliases_bn.split("|") if a)
+        candidates.extend(a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a)
     suggestions = difflib.get_close_matches(name, candidates, n=3, cutoff=0.5)
-    alias_to_name = {a: t.name for t in all_tests for a in t.aliases_bn.split("|") if a}
+    alias_to_name = {a: t.name for t in all_tests
+                     for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a}
     return list(dict.fromkeys(alias_to_name.get(s, s) for s in suggestions))
 
 
@@ -176,15 +218,25 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
 # =============================================================================
 # Tool 4: GET /api/v1/tests/prep?name=...
 # =============================================================================
-def _test_prep_reply_dict(t: LabTest) -> dict:
+def _by_lang(lang: str, bn: str, hi: str, en: str) -> str:
+    """Requested-language text, falling back to Bengali (the system of
+    record) if a translation is missing rather than returning an empty
+    string the caller would hear as silence."""
+    return {"hi": hi, "en": en}.get(lang) or bn
+
+
+def _test_prep_reply_dict(t: LabTest, lang: str = "bn") -> dict:
     return {
         "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
-        "fasting_required": t.fasting_required, "prep_instructions": t.prep_instructions_bn,
+        "test_name_hi": _first_alias_bn(t.aliases_hi),
+        "fasting_required": t.fasting_required, "lang": lang,
+        "prep_instructions": _by_lang(lang, t.prep_instructions_bn,
+                                      t.prep_instructions_hi, t.prep_instructions_en),
     }
 
 
 @app.get("/api/v1/tests/prep")
-def test_prep(name: str = Query(...), db: Session = Depends(get_db)):
+def test_prep(name: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
     """Same entity resolution as /tests/search, different fact -- kept as a
     separate endpoint rather than folding prep fields into every search
     response, because prep instructions are Tier-3 "approved content"
@@ -193,7 +245,7 @@ def test_prep(name: str = Query(...), db: Session = Depends(get_db)):
     systems of record later."""
     found = _find_test(db, name)
     if found:
-        return _test_prep_reply_dict(found)
+        return _test_prep_reply_dict(found, lang)
     return {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}
 
 
@@ -234,7 +286,7 @@ def _find_doctor(db: Session, name: str) -> Doctor | None:
     # canonical name. Same root cause and same fix as search_test()'s
     # aliases_bn check.
     for d in all_doctors:
-        aliases = [a for a in d.aliases_bn.split("|") if a]
+        aliases = [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
         if any(name in alias or alias in name for alias in aliases):
             return d
 
@@ -243,7 +295,8 @@ def _find_doctor(db: Session, name: str) -> Doctor | None:
     # on what the caller actually said and how the decoder heard it.
     best_doctor, best_ratio = None, 0.0
     for d in all_doctors:
-        candidates = [d.name.split()[-1].lower()] + [a for a in d.aliases_bn.split("|") if a]
+        candidates = [d.name.split()[-1].lower()] + [
+            a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
         for c in candidates:
             ratio = difflib.SequenceMatcher(None, name.lower(), c.lower()).ratio()
             if ratio > best_ratio:
@@ -283,14 +336,16 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
         if sched:
             return {
                 "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": target.isoformat(),
+                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": target.isoformat(),
                 "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
                 "next_available_date": None,
             }
         next_date = _next_available_date(db, doctor.id, target + datetime.timedelta(days=1))
         return {
             "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": target.isoformat(),
+                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": target.isoformat(),
             "available": False, "chamber_hours": None, "next_available_date": next_date,
         }
 
@@ -299,13 +354,15 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
     if not next_date:
         return {
             "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": None,
+                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": None,
             "available": False, "chamber_hours": None, "next_available_date": None,
         }
     sched = _schedule_for_weekday(db, doctor.id, datetime.date.fromisoformat(next_date).weekday())
     return {
         "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": next_date,
+                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": next_date,
         "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
         "next_available_date": None,
     }
@@ -376,7 +433,8 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
     return {
         "success": True, "confirmation_id": confirmation_id,
         "doctor_name": doctor.name,
-        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": req.date, "time_slot": req.time_slot,
+        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": req.date, "time_slot": req.time_slot,
     }
 
 
@@ -384,7 +442,7 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
 # Tool 5: GET /api/v1/faq?topic=...
 # =============================================================================
 @app.get("/api/v1/faq")
-def faq_answer(topic: str = Query(...), db: Session = Depends(get_db)):
+def faq_answer(topic: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
     """Looked up by TOPIC KEY, not free text -- the caller-facing entity
     resolution (which topic did they mean) already happened in
     FastPath.FAQCatalogue against the keyword sets from /api/v1/catalogue.
@@ -395,4 +453,5 @@ def faq_answer(topic: str = Query(...), db: Session = Depends(get_db)):
     row = db.query(FAQ).filter_by(topic=topic).first()
     if not row:
         return {"found": False, "topic": topic}
-    return {"found": True, "topic": row.topic, "answer": row.answer_bn}
+    return {"found": True, "topic": row.topic, "lang": lang,
+            "answer": _by_lang(lang, row.answer_bn, row.answer_hi, row.answer_en)}

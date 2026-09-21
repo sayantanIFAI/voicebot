@@ -14,6 +14,8 @@ direct_reply_bn -- there is no fact to get wrong in "নমস্কার" or "
 """
 from __future__ import annotations
 
+from agent import reply_templates_i18n as _i18n
+
 
 def _spoken_test_name(slots: dict, result: dict) -> str:
     """What the caller HEARS as the test's name.
@@ -40,7 +42,9 @@ def _spoken_doctor_name(slots: dict, result: dict) -> str:
     return slots.get("doctor_name") or result.get("doctor_name") or "ডাক্তার"
 
 
-def missing_slot_prompt(intent: str, missing: str) -> str:
+def missing_slot_prompt(intent: str, missing: str, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.missing_slot_prompt(intent, missing, lang)
     prompts = {
         ("test_rate", "test_name"): "কোন টেস্টের রেট জানতে চান, একটু বলবেন?",
         ("doctor_availability", "doctor_name"): "কোন ডাক্তারের কথা জিজ্ঞেস করছেন?",
@@ -54,7 +58,9 @@ def missing_slot_prompt(intent: str, missing: str) -> str:
     return prompts.get((intent, missing), "দুঃখিত, একটু স্পষ্ট করে বলবেন?")
 
 
-def test_rate_reply(slots: dict, result: dict) -> str:
+def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.test_rate_reply(slots, result, lang)
     if not result.get("found"):
         suggestions = result.get("did_you_mean") or []
         if suggestions:
@@ -74,7 +80,9 @@ def test_rate_reply(slots: dict, result: dict) -> str:
     return reply
 
 
-def doctor_availability_reply(slots: dict, result: dict) -> str:
+def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.doctor_availability_reply(slots, result, lang)
     if not result.get("found"):
         return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার আমাদের এখানে নেই।"
 
@@ -90,7 +98,9 @@ def doctor_availability_reply(slots: dict, result: dict) -> str:
     return f"{name} এখন কোনো নির্দিষ্ট দিন বসছেন না। আমাদের কাউন্টারে খোঁজ নিতে পারেন।"
 
 
-def test_prep_reply(slots: dict, result: dict) -> str:
+def test_prep_reply(slots: dict, result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.test_prep_reply(slots, result, lang)
     if not result.get("found"):
         suggestions = result.get("did_you_mean") or []
         if suggestions:
@@ -103,13 +113,17 @@ def test_prep_reply(slots: dict, result: dict) -> str:
     return f"{name} টেস্টের জন্য: {instructions}"
 
 
-def clinic_faq_reply(slots: dict, result: dict) -> str:
+def clinic_faq_reply(slots: dict, result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.clinic_faq_reply(slots, result, lang)
     if not result.get("found"):
         return "দুঃখিত, এই বিষয়ে এখন সঠিক তথ্য দিতে পারছি না। কাউন্টারে যোগাযোগ করুন।"
     return result.get("answer") or "দুঃখিত, এই বিষয়ে এখন সঠিক তথ্য দিতে পারছি না। কাউন্টারে যোগাযোগ করুন।"
 
 
-def booking_reply(slots: dict, result: dict) -> str:
+def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.booking_reply(slots, result, lang)
     if result.get("success"):
         return (f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
                 f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {result['time_slot']}। "

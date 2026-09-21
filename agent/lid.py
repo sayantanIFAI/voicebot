@@ -92,6 +92,7 @@ class SpeechBrainVoxLingua107LID:
 
     def __init__(self, device: str = "cpu"):
         self.device = device
+        self._label_idx: dict[str, int] | None = None
         self._model = None  # lazy: keeps import-time cost at zero for
         # every caller (tests, the router, CI) that never needs the model.
 
@@ -105,21 +106,94 @@ class SpeechBrainVoxLingua107LID:
                 "speechbrain is not installed. This is expected off-pod; "
                 "install it on the RunPod instance before using this class."
             ) from exc
+        import os
+
+        # Without an explicit savedir speechbrain writes ./pretrained_models
+        # relative to the process CWD -- i.e. into the repo checkout, or
+        # onto the ephemeral overlay depending on where the service starts.
+        savedir = os.environ.get("VOICE_AGENT_LID_DIR") or os.path.join(
+            os.path.expanduser("~"), ".cache", "voice-agent-lid")
         self._model = EncoderClassifier.from_hparams(
-            source=self.MODEL_SOURCE, run_opts={"device": self.device},
+            source=self.MODEL_SOURCE, savedir=savedir, run_opts={"device": self.device},
         )
 
-    def identify(self, audio_16k_mono) -> LIDResult:  # pragma: no cover - needs the pod
+    # A supported-language posterior mass below this means the audio is most
+    # likely some OTHER language (or not speech): say "unknown" rather than
+    # renormalizing three near-zero numbers into a confident-looking guess.
+    MIN_SUPPORTED_MASS = 0.25
+
+    def _label_index(self) -> dict[str, int]:
+        """Model label ("bn: Bengali") -> class index, for the three
+        languages we route between. Built once from the loaded model."""
+        idx: dict[str, int] = {}
+        for label, i in self._model.hparams.label_encoder.lab2ind.items():
+            code = str(label).split(":")[0].strip().lower()
+            if code in SUPPORTED_LANGUAGES:
+                idx[code] = int(i)
+        return idx
+
+    def identify(self, audio_16k_mono) -> LIDResult:  # pragma: no cover - needs the model
+        """`audio_16k_mono`: a float tensor, [T] or [1, T], 16 kHz mono.
+
+        Scoring is restricted to bn/hi/en and renormalized. The model has 107
+        classes; taking its raw top-1 would turn every Urdu-sounding Hindi
+        utterance into "unknown". Restricting is the right question -- "of
+        the languages we can actually serve, which is this?" -- with a
+        separate mass check (MIN_SUPPORTED_MASS) for "none of them"."""
+        import torch
+
         self._ensure_loaded()
-        # NOTE: unverified call shape -- confirm against the installed
-        # speechbrain version's actual classify_batch() signature and
-        # output format on the pod before relying on this.
-        out_prob, score, index, label = self._model.classify_batch(audio_16k_mono)
-        lang3 = str(label[0]).split(":")[0].strip().lower()
-        mapped = {"bn": "bn", "ben": "bn", "hi": "hi", "hin": "hi", "en": "en", "eng": "en"}
-        language = mapped.get(lang3, "unknown")
-        confidence = float(score[0]) if language != "unknown" else 0.0
-        return LIDResult(language=language, confidence=confidence)
+        wav = audio_16k_mono
+        if not torch.is_tensor(wav):
+            wav = torch.as_tensor(wav, dtype=torch.float32)
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
+
+        out_prob, _score, _index, _label = self._model.classify_batch(wav)
+        log_post = out_prob[0]
+        if self._label_idx is None:
+            self._label_idx = self._label_index()
+        missing = set(SUPPORTED_LANGUAGES) - set(self._label_idx)
+        if missing:
+            raise RuntimeError(
+                f"VoxLingua107 label set at this speechbrain version has no {sorted(missing)}; "
+                f"routing cannot work until that is resolved")
+
+        probs = {lang: float(torch.exp(log_post[i])) for lang, i in self._label_idx.items()}
+        mass = sum(probs.values())
+        if mass < self.MIN_SUPPORTED_MASS:
+            return LIDResult(language="unknown", confidence=0.0,
+                             scores={k: v / mass if mass else 0.0 for k, v in probs.items()})
+        scores = {lang: p / mass for lang, p in probs.items()}
+        best = max(scores, key=scores.get)
+        return LIDResult(language=best, confidence=scores[best], scores=scores)
+
+    def load(self) -> None:  # pragma: no cover - needs the model
+        """Load the model AND verify its label set has bn/hi/en. Call once at
+        startup so a wrong speechbrain version fails at boot, not on the
+        first caller's first word."""
+        self._ensure_loaded()
+        self._label_idx = self._label_index()
+        missing = set(SUPPORTED_LANGUAGES) - set(self._label_idx)
+        if missing:
+            raise RuntimeError(f"VoxLingua107 label set has no {sorted(missing)}")
+
+    def identify_path(self, wav_path: str) -> LIDResult:  # pragma: no cover - needs the model
+        """Load a WAV (any rate/channels) as 16 kHz mono and identify it.
+
+        Reads with soundfile, not torchaudio.load: on torch >= 2.9 torchaudio
+        delegates file IO to torchcodec, which is one more compiled
+        dependency that must match the torch build exactly. LID needs only a
+        WAV read; resampling stays in torchaudio.functional (pure torch)."""
+        import soundfile as sf
+        import torch
+        import torchaudio
+
+        data, sr = sf.read(wav_path, dtype="float32", always_2d=True)
+        wav = torch.from_numpy(data.mean(axis=1))
+        if sr != 16000:
+            wav = torchaudio.functional.resample(wav, sr, 16000)
+        return self.identify(wav)
 
 
 @dataclasses.dataclass

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import threading
 import os
 
 import torch
@@ -78,6 +79,8 @@ def _first_text(texts) -> str:
         if not item:
             return ""
         item = item[0]
+    # NeMo >= 2 returns Hypothesis objects, not str.
+    item = getattr(item, "text", item)
     return (item or "").strip()
 
 
@@ -88,10 +91,43 @@ class ASRResult:
     decoder_agreement: float = 1.0
 
 
+def _word_agreement(a: str, b: str) -> float:
+    wa, wb = set(a.lower().split()), set(b.lower().split())
+    if not wa and not wb:
+        return 1.0
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+# One model, one GPU stream: transcriptions are serialized. The decoder is
+# switched by a model attribute (cur_decoder), so two threads interleaving
+# would decode one clip with the other's decoder.
+_lock = threading.Lock()
+
+
 def _transcribe_sync(wav_path: str) -> ASRResult:
-    texts = _model.transcribe([wav_path], batch_size=1)
-    text = _first_text(texts)
-    return ASRResult(text=text, decoder_used="fastconformer", decoder_agreement=1.0)
+    """RNNT text, plus the CTC decoder's word agreement with it.
+
+    The agreement is not decoration: agent/lang_select.py uses it to decide
+    whether a clip really is English when language ID is unsure (a
+    decoder pair trained on English agrees on English speech and disagrees
+    on anything else), the same signal agent/asr.py reports for bn/hi."""
+    with _lock:
+        rnnt = ctc = ""
+        if hasattr(_model, "cur_decoder"):
+            _model.cur_decoder = "ctc"
+            ctc = _first_text(_model.transcribe([wav_path], batch_size=1))
+            _model.cur_decoder = "rnnt"
+        rnnt = _first_text(_model.transcribe([wav_path], batch_size=1))
+    if not hasattr(_model, "cur_decoder"):
+        return ASRResult(text=rnnt, decoder_used="fastconformer", decoder_agreement=1.0)
+    if rnnt:
+        return ASRResult(text=rnnt, decoder_used="rnnt",
+                         decoder_agreement=round(_word_agreement(ctc, rnnt), 2))
+    if ctc:
+        return ASRResult(text=ctc, decoder_used="ctc_fallback", decoder_agreement=0.0)
+    return ASRResult(text="", decoder_used="none", decoder_agreement=1.0)
 
 
 class TranscribeRequest(BaseModel):

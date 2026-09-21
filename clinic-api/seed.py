@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from db import engine, SessionLocal
 from models import Base, Department, Doctor, DoctorSchedule, LabTest, FAQ
+from i18n_content import (
+    TEST_ALIASES_HI, SURNAME_HI, PREP_I18N, DEFAULT_PREP_HI, DEFAULT_PREP_EN, FAQ_I18N,
+)
 
 # ---------------------------------------------------------------------------
 # 8 departments, 4 doctors each = 32 doctors.
@@ -213,6 +216,72 @@ FAQ_ENTRIES = [
 ]
 
 
+I18N_COLUMNS = {
+    "doctors": ["aliases_hi"],
+    "lab_tests": ["aliases_hi", "prep_instructions_hi", "prep_instructions_en"],
+    "faqs": ["answer_hi", "answer_en"],
+}
+
+
+def add_i18n_columns() -> list[str]:
+    """ALTER TABLE for any Hindi/English column an older database lacks.
+
+    MUST run before the first ORM query on these tables: SQLAlchemy selects
+    every mapped column, so on an old database even `count()` fails with
+    "no such column" -- which is exactly how clinic-api crashed at boot on
+    the pod's existing clinic.db."""
+    from sqlalchemy import inspect, text
+    added = []
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in I18N_COLUMNS.items():
+            have = {c["name"] for c in insp.get_columns(table)}
+            for col in cols:
+                if col not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR NOT NULL DEFAULT ''"))
+                    added.append(f"{table}.{col}")
+    return added
+
+
+def backfill_i18n(db=None) -> dict:
+    """Bring an EXISTING database up to date with the Hindi/English columns
+    without wiping it. seed() is destructive (drop_all), so the boot-time
+    path cannot use it on a database that already holds bookings.
+
+    Adds any missing column (add_i18n_columns), then fills only rows whose
+    value is still empty -- so a value someone edited by hand is never
+    overwritten. Safe to run on every boot."""
+    added = add_i18n_columns()
+
+    own = db is None
+    db = db or SessionLocal()
+    filled = 0
+    try:
+        for d in db.query(Doctor).all():
+            if not d.aliases_hi:
+                d.aliases_hi = "|".join(SURNAME_HI.get(d.name.split()[-1], []))
+                filled += 1
+        for t in db.query(LabTest).all():
+            prep_hi, prep_en = PREP_I18N.get(t.name, (DEFAULT_PREP_HI, DEFAULT_PREP_EN))
+            for attr, val in (("aliases_hi", "|".join(TEST_ALIASES_HI.get(t.name, []))),
+                              ("prep_instructions_hi", prep_hi),
+                              ("prep_instructions_en", prep_en)):
+                if not getattr(t, attr):
+                    setattr(t, attr, val)
+                    filled += 1
+        for f in db.query(FAQ).all():
+            ans_hi, ans_en = FAQ_I18N.get(f.topic, ("", ""))
+            for attr, val in (("answer_hi", ans_hi), ("answer_en", ans_en)):
+                if not getattr(f, attr):
+                    setattr(f, attr, val)
+                    filled += 1
+        db.commit()
+    finally:
+        if own:
+            db.close()
+    return {"columns_added": added, "values_filled": filled}
+
+
 def seed():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
@@ -228,6 +297,7 @@ def seed():
                 surname = doc_name.split()[-1]
                 aliases = "|".join(SURNAME_BN.get(surname, []))
                 doc = Doctor(name=doc_name, qualifications=quals, aliases_bn=aliases,
+                             aliases_hi="|".join(SURNAME_HI.get(surname, [])),
                              department_id=dept.id)
                 db.add(doc)
                 db.flush()
@@ -242,12 +312,17 @@ def seed():
 
         for name, aliases_bn, rate, sample, hours in LAB_TESTS:
             fasting, prep_bn = _prep_for(name)
+            prep_hi, prep_en = PREP_I18N.get(name, (DEFAULT_PREP_HI, DEFAULT_PREP_EN))
             db.add(LabTest(name=name, aliases_bn="|".join(aliases_bn), rate_inr=rate,
+                            aliases_hi="|".join(TEST_ALIASES_HI.get(name, [])),
                             sample_type=sample, report_time_hours=hours,
-                            fasting_required=fasting, prep_instructions_bn=prep_bn))
+                            fasting_required=fasting, prep_instructions_bn=prep_bn,
+                            prep_instructions_hi=prep_hi, prep_instructions_en=prep_en))
 
         for topic, keywords_bn, answer_bn in FAQ_ENTRIES:
-            db.add(FAQ(topic=topic, keywords_bn="|".join(keywords_bn), answer_bn=answer_bn))
+            ans_hi, ans_en = FAQ_I18N.get(topic, ("", ""))
+            db.add(FAQ(topic=topic, keywords_bn="|".join(keywords_bn), answer_bn=answer_bn,
+                       answer_hi=ans_hi, answer_en=ans_en))
 
         db.commit()
         print(f"Seeded {len(DEPARTMENTS)} departments, {doctor_index} doctors, "

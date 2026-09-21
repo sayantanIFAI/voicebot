@@ -129,6 +129,28 @@ class ASRRouter:
         """Convenience wrapper for the common `commit` routing decision."""
         return await self.engine_for(language).transcribe_utterance(wav_path)
 
+    async def transcribe_many(self, languages: list[str], wav_path: str) -> list[tuple[str, object]]:
+        """Run several engines on one clip, concurrently. Returns
+        [(language, result)] for the ones that succeeded, in the order given.
+
+        An engine that raises (English ASR is a separate process and can be
+        down) is dropped, not fatal: verification exists to pick the best of
+        what is available. Only when EVERY engine fails does this raise."""
+        import asyncio
+        import logging
+
+        outcomes = await asyncio.gather(*[self.transcribe(lang, wav_path) for lang in languages],
+                                        return_exceptions=True)
+        good = []
+        for lang, out in zip(languages, outcomes):
+            if isinstance(out, BaseException):
+                logging.getLogger("asr_router").warning("ASR %s failed on verify: %s", lang, out)
+            else:
+                good.append((lang, out))
+        if not good:
+            raise next(o for o in outcomes if isinstance(o, BaseException))
+        return good
+
     async def transcribe_dual(self, primary: str, secondary: str, wav_path: str):
         """For the `dual_asr` routing decision: run two engines on the
         same clip and return both results, primary first, for the

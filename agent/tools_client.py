@@ -70,9 +70,10 @@ class ClinicToolsClient:
     #   found=true:  {"found": true, "test_name": "...", "test_name_bn": "...",
     #                 "fasting_required": true, "prep_instructions": "..."}
     #   found=false: {"found": false, "query": "...", "did_you_mean": ["..."]}
-    async def get_test_prep(self, test_name: str) -> dict:
+    async def get_test_prep(self, test_name: str, lang: str = "bn") -> dict:
         try:
-            r = await self._client.get("/api/v1/tests/prep", params={"name": test_name})
+            r = await self._client.get("/api/v1/tests/prep",
+                                       params={"name": test_name, "lang": lang})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:
@@ -84,9 +85,9 @@ class ClinicToolsClient:
     # Expected response shape:
     #   found=true:  {"found": true, "topic": "hours", "answer": "..."}
     #   found=false: {"found": false, "topic": "..."}
-    async def get_faq(self, topic: str) -> dict:
+    async def get_faq(self, topic: str, lang: str = "bn") -> dict:
         try:
-            r = await self._client.get("/api/v1/faq", params={"topic": topic})
+            r = await self._client.get("/api/v1/faq", params={"topic": topic, "lang": lang})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:

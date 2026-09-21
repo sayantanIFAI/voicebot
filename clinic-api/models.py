@@ -34,6 +34,9 @@ class Doctor(Base):
     # Bengali ASR output silently fails 100% of the time, not just on
     # near-misses, since the two scripts share no characters at all.
     aliases_bn = Column(String, nullable=False, default="")
+    # Devanagari spellings, same reason: Hindi ASR emits Devanagari, which
+    # shares no characters with either the Latin name or the Bengali alias.
+    aliases_hi = Column(String, nullable=False, default="")
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
 
     department = relationship("Department", back_populates="doctors")
@@ -63,6 +66,7 @@ class LabTest(Base):
     # Bengali-script names/synonyms a real caller would actually say,
     # "|"-joined -- see Doctor.aliases_bn for why this exists at all.
     aliases_bn = Column(String, nullable=False, default="")
+    aliases_hi = Column(String, nullable=False, default="")
     rate_inr = Column(Integer, nullable=False)
     sample_type = Column(String, nullable=False)         # "Blood" / "Urine" / "Imaging" / "Cardiac"
     report_time_hours = Column(Integer, nullable=False)
@@ -73,6 +77,8 @@ class LabTest(Base):
     # live numeric fact, but it still goes through a template rather than
     # being handed to the LLM, for the same reason every other fact does.
     prep_instructions_bn = Column(String, nullable=False, default="")
+    prep_instructions_hi = Column(String, nullable=False, default="")
+    prep_instructions_en = Column(String, nullable=False, default="")
 
 
 class FAQ(Base):
@@ -91,6 +97,8 @@ class FAQ(Base):
     # "|"-joined Bengali keyword/phrase set fast_path matches against.
     keywords_bn = Column(String, nullable=False, default="")
     answer_bn = Column(String, nullable=False)
+    answer_hi = Column(String, nullable=False, default="")
+    answer_en = Column(String, nullable=False, default="")
 
 
 class Appointment(Base):

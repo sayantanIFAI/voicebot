@@ -47,7 +47,7 @@ VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment",
 FAQ_TOPICS = ("hours", "location", "payment_methods", "insurance", "parking",
               "report_collection", "contact_number", "home_collection")
 
-SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's Bengali phone assistant. You will be given ONE caller utterance, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in Bengali script.
+SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's phone assistant. You will be given ONE caller utterance in {language_name}, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in the caller's own script.
 
 Today's date is {today_iso} ({today_weekday}), Asia/Kolkata.
 
@@ -59,13 +59,13 @@ INTENTS (exactly one):
 - "book_appointment": caller wants to book, confirm, or reschedule an appointment.
 - "test_prep": caller is asking how to prepare for a test (fasting, before/after instructions).
 - "clinic_faq": caller is asking a general clinic question with no specific test or doctor -- hours, location, payment methods, insurance, parking, report collection, contact number, or home sample collection. Fill "faq_topic" with exactly one of: {faq_topics}. If the question doesn't clearly match one of those topics, use "unclear" instead of guessing a topic.
-- "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm Bengali reply yourself for this case only.
+- "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself for this case only, in {language_name}, in that language's own script.
 - "unclear": you cannot confidently tell what the caller wants, or the utterance is empty/garbled ASR noise.
 
 SLOT RULES:
 - Only fill a slot if the caller's words support it. Leave it null rather than inferring.
-- "date": resolve relative Bengali time words (আজ=today, কাল=tomorrow, পরশু=day after tomorrow, this/next weekday names) to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today".
-- "test_name" / "doctor_name": copy the term as the caller said it (Bengali or transliterated English), do not translate or normalize it -- the lookup service handles matching.
+- "date": resolve relative time words (Bengali আজ/কাল/পরশু, Hindi आज/कल/परसों, English today/tomorrow/day after tomorrow, and this/next weekday names in any of these languages; আজ/आज=today, কাল/कल=tomorrow, পরশু/परसों=day after tomorrow) to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today".
+- "test_name" / "doctor_name": copy the term as the caller said it (in {language_name} script, or English if they said it in English), do not translate or normalize it -- the lookup service handles matching.
 - "faq_topic": only for "clinic_faq" -- one of the fixed topic keys above, never free text.
 - "phone": only if a phone number is explicitly spoken, digits only.
 - Never invent a patient name, phone number, or date that was not said.
@@ -103,6 +103,10 @@ def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
         "prompt": prompt,
         "stream": False,
         "format": "json",
+        # Keep Qwen resident. Ollama unloads a model after 5 idle minutes and a
+        # cold 7B load measured 74 s on this pod -- the first caller after any
+        # quiet spell would wait that long for one intent.
+        "keep_alive": -1,
         "options": {"temperature": 0.0},
     }).encode("utf-8")
     req = urllib.request.Request(
@@ -140,15 +144,25 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
             and "slots" in data, errors)
 
 
-def extract_intent(transcript_bn: str, max_retries: int = 2) -> tuple[dict, dict]:
-    """Returns (parsed JSON dict, diagnostics dict)."""
+_LANGUAGE_NAMES = {"bn": "Bengali", "hi": "Hindi", "en": "English"}
+
+
+def extract_intent(transcript_bn: str, max_retries: int = 2, lang: str = "bn") -> tuple[dict, dict]:
+    """Returns (parsed JSON dict, diagnostics dict).
+
+    `transcript_bn` keeps its historical name for callers; it is the caller's
+    utterance in `lang`. Only the prompt's language wording changes -- the
+    schema, the slot rules and the never-state-a-fact rule are identical
+    for every language."""
     now = datetime.datetime.now()
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         today_iso=now.strftime("%Y-%m-%d"),
         today_weekday=now.strftime("%A"),
         faq_topics=", ".join(FAQ_TOPICS),
+        language_name=_LANGUAGE_NAMES.get(lang, "Bengali"),
     )
-    prompt = f"{system_prompt}\n\nCALLER UTTERANCE (Bengali, ASR output):\n{transcript_bn}\n\nJSON:"
+    prompt = (f"{system_prompt}\n\nCALLER UTTERANCE ({_LANGUAGE_NAMES.get(lang, 'Bengali')}, "
+              f"ASR output):\n{transcript_bn}\n\nJSON:")
 
     diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": []}
     last_error = None

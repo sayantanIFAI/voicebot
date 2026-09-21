@@ -1,4 +1,10 @@
-"""Bengali TTS via AI4Bharat's FastPitch + HiFi-GAN (Indic-TTS).
+"""Bengali/Hindi/English TTS via AI4Bharat's FastPitch + HiFi-GAN (Indic-TTS).
+
+One tts_server.py process serves all three languages (bn/hi/en); this client
+picks the voice per call with `lang` and verbalizes per language
+(agent/speech_norm.py). Everything below written about Bengali holds for the
+other two: their tokenizers drop out-of-script characters the same way.
+
 
 Confirmed real and Bengali-capable: github.com/AI4Bharat/Indic-TTS ships
 monolingual FastPitch+HiFi-GAN-V1 checkpoints for 13 Indian languages
@@ -34,7 +40,7 @@ import threading
 
 import httpx
 
-from agent.bn_normalize import unspeakable_spans, verbalize
+from agent.speech_norm import unspeakable_spans, verbalize
 
 logger = logging.getLogger("tts")
 
@@ -56,8 +62,9 @@ FALLBACK_FILES = {
 
 # Sentences the agent says on fixed paths, synthesized once at startup so
 # the caller never waits on the vocoder for them. The greeting especially:
-# it is the first thing on every single call.
-PREWARM_LINES = [
+# it is the first thing on every single call. Per language: see
+# agent/phrases.py, which owns the text so it exists in exactly one place.
+PREWARM_LINES_BN = [
     "নমস্কার, কলকাতা কেয়ার ডায়াগনস্টিকসে স্বাগতম। কীভাবে সাহায্য করতে পারি?",
     "দুঃখিত, শুনতে পাইনি। আবার বলবেন?",
     "দুঃখিত, বুঝতে পারিনি। আবার একটু বলবেন?",
@@ -103,40 +110,49 @@ class TTSClient:
             while len(self._audio_cache) > AUDIO_CACHE_MAX:
                 self._audio_cache.popitem(last=False)
 
-    async def synthesize(self, text_bn: str) -> bytes:
+    async def synthesize(self, text: str, lang: str = "bn") -> bytes:
         """Returns WAV bytes, or raises. Callers should catch and fall back
         to `fallback_audio()` -- see main.py's _speak()."""
-        spoken = verbalize(text_bn)
+        spoken = verbalize(text, lang)
 
-        # Anything still in Latin script will be dropped by the tokenizer
+        # Anything the voice cannot pronounce is dropped by its tokenizer
         # exactly the way the digits were. Log it so the gap is visible
         # here rather than only to whoever is on the phone.
-        leftovers = unspeakable_spans(spoken)
+        leftovers = unspeakable_spans(spoken, lang)
         if leftovers:
-            logger.warning("unpronounceable Latin spans will be dropped by TTS: %s", leftovers)
+            logger.warning("[%s] unpronounceable spans will be dropped by TTS: %s", lang, leftovers)
 
-        key = self._key(spoken)
+        # The language is part of the key: identical text can be a valid
+        # sentence in two languages (a bare number, an ID) and must not
+        # return the other voice's audio.
+        key = self._key(f"{lang}\x00{spoken}")
         cached = self._cache_get(key)
         if cached is not None:
             return cached
 
         self.stats["misses"] += 1
-        r = await self._client.post(self.base_url, json={"text": spoken, "lang": "bn"})
+        r = await self._client.post(self.base_url, json={"text": spoken, "lang": lang})
         r.raise_for_status()
         wav = r.content
         self._cache_put(key, wav)
         return wav
 
-    async def prewarm(self):
+    async def prewarm(self, lines_by_lang: dict[str, list[str]] | None = None):
         """Best-effort: a failure here must not stop the app from starting.
         Worst case the first caller pays normal synthesis latency."""
-        for line in PREWARM_LINES:
-            try:
-                await self.synthesize(line)
-            except Exception as e:  # noqa: BLE001 - prewarm is advisory only
-                logger.warning("prewarm failed for %r: %s", line[:32], e)
-                return
+        lines_by_lang = lines_by_lang or {"bn": PREWARM_LINES_BN}
+        for lang, lines in lines_by_lang.items():
+            for line in lines:
+                try:
+                    await self.synthesize(line, lang)
+                except Exception as e:  # noqa: BLE001 - prewarm is advisory only
+                    logger.warning("prewarm failed [%s] for %r: %s", lang, line[:32], e)
+                    break
         logger.info("TTS prewarm complete (%d lines cached)", len(self._audio_cache))
+
+    def for_language(self, lang: str) -> "LanguageVoice":
+        """The TTSEngine (agent/tts_router.py) for one language."""
+        return LanguageVoice(self, lang)
 
     def snapshot(self) -> dict:
         total = self.stats["hits"] + self.stats["misses"]
@@ -147,12 +163,25 @@ class TTSClient:
         }
 
     @staticmethod
-    def fallback_audio(reason: str) -> bytes:
+    def fallback_audio(reason: str, lang: str = "bn") -> bytes:
         """reason in FALLBACK_FILES. Reads from disk every call (small
         files, infrequent path) rather than caching, so a corrected
-        recording takes effect without a restart."""
+        recording takes effect without a restart.
+
+        Non-Bengali callers get `<name>_<lang>.wav` if it has been recorded,
+        else the Bengali clip -- a wrong-language apology beats dead air,
+        and the missing file is logged so the gap is visible."""
         filename = FALLBACK_FILES.get(reason, FALLBACK_FILES["llm_failure"])
-        path = os.path.join(FALLBACK_DIR, filename)
+        candidates = []
+        if lang != "bn":
+            stem, ext = os.path.splitext(filename)
+            candidates.append(f"{stem}_{lang}{ext}")
+        candidates.append(filename)
+        path = os.path.join(FALLBACK_DIR, candidates[0])
+        for name in candidates:
+            path = os.path.join(FALLBACK_DIR, name)
+            if os.path.exists(path):
+                break
         try:
             with open(path, "rb") as f:
                 return f.read()
@@ -162,3 +191,17 @@ class TTSClient:
                 "failure path. Record it: see README.md.", path,
             )
             return b""
+
+
+class LanguageVoice:
+    """A TTSClient bound to one language -- satisfies agent.tts_router.TTSEngine,
+    so TTSRouter can be built as {lang: client.for_language(lang)}. All three
+    share the one client (and its audio cache and HTTP connection pool); the
+    voices themselves already live in the one tts_server.py process."""
+
+    def __init__(self, client: TTSClient, lang: str):
+        self._client = client
+        self.lang = lang
+
+    async def synthesize(self, text: str, **_speech_params) -> bytes:
+        return await self._client.synthesize(text, self.lang)

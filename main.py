@@ -75,6 +75,17 @@ from agent.semantic_cache import SemanticCache, embed as _embed_probe
 from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent.tts import TTSClient
 from agent.vad_stream import TurnDetector
+import secrets
+
+from fastapi import Header, HTTPException
+from pydantic import BaseModel
+
+from agent.admission import AdmissionController, HealthMonitor, http_probe
+from agent.asr_router import ASRRouter, HTTPASREngine, UnroutableLanguageError
+from agent.lid import ASRLanguageRouter, LIDResult, SUPPORTED_LANGUAGES, SpeechBrainVoxLingua107LID
+from agent.phrases import HANDOFF_ALL_LANGUAGES, phrase, prewarm_lines
+from agent.lang_select import languages_to_verify, pick_candidate, speakable as _speakable
+from agent.tts_router import TTSRouter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
@@ -106,6 +117,25 @@ RESYNC_REWIND_S = 0.25
 
 CLINIC_API_BASE = os.environ.get("CLINIC_API_BASE", "http://localhost:8080")
 
+# Languages the live path routes between. "bn" alone reproduces the original
+# Bengali-only behaviour (no LID, no Hindi ASR loaded) -- the rollback lever.
+# Bengali is always active: it is the clinic's primary language and the
+# greeting language.
+ACTIVE_LANGUAGES = tuple(dict.fromkeys(
+    ["bn"] + [x for x in os.environ.get("VOICE_AGENT_LANGUAGES", "bn,hi,en").replace(" ", "").split(",")
+              if x in SUPPORTED_LANGUAGES]))
+ENGLISH_ASR_URL = os.environ.get("ENGLISH_ASR_URL", "http://localhost:8003")
+TTS_HEALTH_URL = os.environ.get("TTS_HEALTH_URL", "http://localhost:8002/health")
+OLLAMA_HEALTH_URL = os.environ.get("OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags")
+
+# Admission control (agent/admission.py). Cap is per PROCESS: with the WebM
+# and PCM services both running, each has its own counter.
+ADMISSION_MAX_CALLS = int(os.environ.get("ADMISSION_MAX_CALLS", "28"))
+ADMISSION_SHED_P95_S = (float(os.environ["ADMISSION_SHED_P95_S"])
+                        if os.environ.get("ADMISSION_SHED_P95_S") else None)
+ADMISSION_BYPASS_FILE = os.environ.get("ADMISSION_BYPASS_FILE", "/workspace/.ai_bypass")
+ADMISSION_ADMIN_TOKEN = os.environ.get("ADMISSION_ADMIN_TOKEN", "")
+
 app = FastAPI()
 
 # ---- process-wide singletons: loaded once, shared by every call ----
@@ -115,18 +145,155 @@ _tools: ClinicToolsClient | None = None
 _tts: TTSClient | None = None
 _intent_cache: SemanticCache | None = None
 _fast_path: FastPath | None = None
+_asr_router: ASRRouter | None = None
+_lid: SpeechBrainVoxLingua107LID | None = None
+_tts_router: TTSRouter | None = None
+_admission: AdmissionController | None = None
+_health: HealthMonitor | None = None
+_health_task: asyncio.Task | None = None
+_languages_active: tuple[str, ...] = ("bn",)
+
+
+class _UnavailableASR:
+    """Registered for a language this build does not serve. Fails loudly on
+    use (ASRRouter's contract) instead of silently sending Hindi audio to
+    the Bengali model."""
+
+    def __init__(self, language: str):
+        self.language = language
+
+    async def transcribe_utterance(self, wav_path: str):
+        raise UnroutableLanguageError(f"language {self.language!r} is not active in this build")
+
+
+_fast_path_retry_at = 0.0
+
+
+async def _warm_speech_models() -> None:
+    """Push one real utterance per language through its ASR, and through LID.
+
+    The first real inference on a CUDA model compiles kernels and allocates
+    workspaces; measured on the pod, the first turn of the first call took
+    ~23 s (three ASRs plus LID, all cold) against ~2 s once warm. A tone or
+    silence does NOT do it -- the decode path only runs on speech -- so the
+    warm-up speech is the agent's own greeting, synthesized by the TTS."""
+    t0 = time.monotonic()
+    for lang in _languages_active:
+        path = os.path.join(tempfile.gettempdir(), f"kcd_warm_{lang}_{uuid.uuid4().hex[:6]}.wav")
+        try:
+            wav = await _tts_router.synthesize(lang, phrase("greeting", lang))
+            with open(path, "wb") as f:
+                f.write(wav)
+            await _asr_router.transcribe(lang, path)
+            if _lid is not None:
+                await asyncio.to_thread(_lid.identify_path, path)
+            if lang == "bn":
+                # The turn detector and the audio writer are on every call's
+                # first-turn path too, and both are lazy: Silero's first
+                # inference and torchaudio's first save (torchcodec, loaded
+                # from the network volume) are where the first caller's wait
+                # went if they are not exercised here.
+                import soundfile as sf
+                data, sr = await asyncio.to_thread(sf.read, path, dtype="float32", always_2d=True)
+                mono = torchaudio.functional.resample(
+                    __import__("torch").from_numpy(data.mean(axis=1)), sr, 16000)
+                await asyncio.to_thread(_turn_detector.poll, mono, 16000)
+                warm_out = path + ".save.wav"
+                await asyncio.to_thread(torchaudio.save, warm_out, mono.unsqueeze(0), 16000)
+                with contextlib.suppress(OSError):
+                    os.remove(warm_out)
+        except Exception as e:  # noqa: BLE001 - warmup is advisory
+            logger.warning("speech warmup failed for %s: %s", lang, e)
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(path)
+    logger.info("speech models warm (%.1fs)", time.monotonic() - t0)
+
+
+async def _load_fast_path() -> FastPath | None:
+    """Fetch the catalogue and build the fast path, or None if clinic-api is
+    not reachable. Optional by design: without it every turn goes to the LLM,
+    which is the behaviour that existed before this path did."""
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=10) as c:
+            payload = (await c.get(f"{CLINIC_API_BASE}/api/v1/catalogue")).json()
+        fp = FastPath(Catalogue(payload))
+        logger.info("fast path ready over %d catalogue rows", len(fp.catalogue))
+        return fp
+    except Exception as e:  # noqa: BLE001 - degrade to LLM-only, never fail startup
+        logger.warning("catalogue unavailable, fast path disabled: %s", e)
+        return None
+
+
+async def _maybe_reload_fast_path() -> None:
+    """If the fast path failed to load at boot (clinic-api was not up yet --
+    it starts AFTER this service in start_all.sh), retry at most every 30 s.
+    Without this a boot-order race silently costs the fast path until the
+    next restart: every turn pays an LLM call and nothing says why."""
+    global _fast_path, _fast_path_retry_at
+    if _fast_path is not None or time.monotonic() < _fast_path_retry_at:
+        return
+    _fast_path_retry_at = time.monotonic() + 30.0
+    _fast_path = await _load_fast_path()
 
 
 @app.on_event("startup")
 async def _startup():
     global _asr, _turn_detector, _tools, _tts, _intent_cache, _fast_path
-    logger.info("loading IndicConformer...")
+    global _asr_router, _lid, _tts_router, _admission, _health, _health_task, _languages_active
+    import httpx as _httpx
+
+    active = list(ACTIVE_LANGUAGES)
+    engines: dict = {}
+    logger.info("loading IndicConformer bn...")
     _asr = await asyncio.to_thread(TurnASR)
+    engines["bn"] = _asr
+    if "hi" in active:
+        logger.info("loading IndicConformer hi...")
+        engines["hi"] = await asyncio.to_thread(TurnASR, None, "hi")
+    if "en" in active:
+        engines["en"] = HTTPASREngine(ENGLISH_ASR_URL)
+    for lang in SUPPORTED_LANGUAGES:
+        engines.setdefault(lang, _UnavailableASR(lang))
+    _asr_router = ASRRouter(engines)
+
+    _lid = None
+    if len(active) > 1:
+        logger.info("loading language ID (SpeechBrain VoxLingua107, CPU)...")
+        try:
+            lid = SpeechBrainVoxLingua107LID(device="cpu")
+            await asyncio.to_thread(lid.load)
+            _lid = lid
+        except Exception as e:  # noqa: BLE001 - degrade LOUDLY to Bengali-only, never guess a language
+            logger.error("language ID unavailable (%s) -- serving Bengali ONLY until fixed", e)
+            active = ["bn"]
+    _languages_active = tuple(active)
+    logger.info("active languages: %s", ",".join(_languages_active))
+
     logger.info("loading Silero VAD...")
     _turn_detector = await asyncio.to_thread(TurnDetector)
     _tools = ClinicToolsClient(CLINIC_API_BASE)
     _tts = TTSClient()
+    _tts_router = TTSRouter({lang: _tts.for_language(lang) for lang in SUPPORTED_LANGUAGES})
     _intent_cache = SemanticCache()
+
+    _admission = AdmissionController(
+        max_calls=ADMISSION_MAX_CALLS,
+        latency_shed_p95_s=ADMISSION_SHED_P95_S,
+        bypass_file=ADMISSION_BYPASS_FILE or None,
+    )
+    probe_client = _httpx.AsyncClient()
+    probes = {
+        "tts": http_probe(probe_client, TTS_HEALTH_URL),
+        "clinic-api": http_probe(probe_client, f"{CLINIC_API_BASE}/api/health"),
+        "ollama": http_probe(probe_client, OLLAMA_HEALTH_URL),
+    }
+    if "en" in _languages_active:
+        probes["english-asr"] = http_probe(probe_client, f"{ENGLISH_ASR_URL}/health")
+    _health = HealthMonitor(_admission, probes)
+    _health.probe_client = probe_client
+    _health_task = asyncio.create_task(_health.run_forever())
 
     # Pull bge-m3 into VRAM before the first caller needs it. Cold-loading
     # it inside a live turn measured past the client's patience AND past
@@ -139,27 +306,39 @@ async def _startup():
     except Exception as e:  # noqa: BLE001 - cache is optional, the call is not
         logger.warning("embedding warmup failed, cache starts L1-only: %s", e)
 
+    # Load Qwen into VRAM now. Cold, it measured 74 s for its first intent --
+    # that is the first caller's wait, and it would also poison the latency
+    # window admission control sheds load on.
+    try:
+        _, diag = await asyncio.to_thread(extract_intent, "নমস্কার")
+        logger.info("intent model warm (%.1fs)", diag["total_time_s"])
+    except Exception as e:  # noqa: BLE001 - warmup is advisory
+        logger.warning("intent model warmup failed: %s", e)
+
     # Load the 74-row catalogue once so the fast path can identify a test
     # or doctor locally. Optional: if the clinic API is not up yet, every
     # turn simply goes to the LLM, which is the behaviour that existed
     # before this path did.
-    try:
-        import httpx as _httpx
-        async with _httpx.AsyncClient(timeout=10) as c:
-            payload = (await c.get(f"{CLINIC_API_BASE}/api/v1/catalogue")).json()
-        _fast_path = FastPath(Catalogue(payload))
-        logger.info("fast path ready over %d catalogue rows", len(_fast_path.catalogue))
-    except Exception as e:  # noqa: BLE001 - degrade to LLM-only, never fail startup
-        logger.warning("catalogue unavailable, fast path disabled: %s", e)
-        _fast_path = None
+    _fast_path = await _load_fast_path()
 
     logger.info("prewarming TTS...")
-    await _tts.prewarm()
+    lines = prewarm_lines()
+    await _tts.prewarm({lang: lines[lang] for lang in _languages_active})
+    await _warm_speech_models()
     logger.info("startup complete -- ready for calls")
 
 
 @app.on_event("shutdown")
 async def _shutdown():
+    if _health_task:
+        _health_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _health_task
+    if _health is not None:
+        await _health.probe_client.aclose()
+    if _asr_router is not None:
+        with contextlib.suppress(Exception):
+            await _asr_router.engine_for("en").aclose()
     if _tools:
         await _tools.aclose()
     if _tts:
@@ -172,7 +351,34 @@ async def health():
         "status": "ok",
         "asr_loaded": _asr is not None,
         "clinic_api_base": CLINIC_API_BASE,
+        "languages_active": list(_languages_active),
+        "lid_loaded": _lid is not None,
+        "admission_open": bool(_admission and _admission.snapshot()["open"]),
     }
+
+
+@app.get("/api/admission")
+async def admission_status():
+    """Read-only: safe to leave unauthenticated behind the private network."""
+    return _admission.snapshot() if _admission else {"open": False, "closed_reason": "starting"}
+
+
+class _BypassRequest(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/admission/bypass")
+async def admission_bypass(req: _BypassRequest, x_admin_token: str = Header(default="")):
+    """The audited AI kill-switch: enabled=true sends every NEW call to the
+    human contact centre without a deploy. Disabled entirely (503) unless
+    ADMISSION_ADMIN_TOKEN is set -- an unauthenticated switch that can take
+    the whole service offline is worse than none."""
+    if not ADMISSION_ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="bypass endpoint disabled: no admin token configured")
+    if not secrets.compare_digest(x_admin_token, ADMISSION_ADMIN_TOKEN):
+        raise HTTPException(status_code=403, detail="bad admin token")
+    _admission.set_bypass(req.enabled, actor="http")
+    return _admission.snapshot()
 
 
 @app.get("/api/stats")
@@ -183,6 +389,7 @@ async def stats():
         "fast_path": _fast_path.snapshot() if _fast_path else None,
         "intent_cache": _intent_cache.snapshot() if _intent_cache else None,
         "tts_cache": _tts.snapshot() if _tts else None,
+        "admission": _admission.snapshot() if _admission else None,
     }
 
 
@@ -252,6 +459,14 @@ class CallSession:
         self.speak_deadline = time.time() + PLAYBACK_GUARD_S
         self.resync_pending = False
 
+        # Language is per UTTERANCE (ASRLanguageRouter decides each turn);
+        # `lang` is only the last committed one -- the reply language, and
+        # the prior the router falls back on when LID is unsure.
+        self.lang = "bn"
+        self.lang_router = ASRLanguageRouter()
+        self.turn_started_at: float | None = None
+        self.admission = None
+
     def hold_gate_for(self, audio_duration_s: float):
         """Called before each reply goes out. Extends rather than replaces
         the deadline: replies queue on the client, so a second clip starts
@@ -284,19 +499,52 @@ class CallSession:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
 
 
-async def _speak(session: CallSession, text_bn: str, fallback_reason: str | None = None):
-    await session.send_json("AI", text_bn)
+async def _speak(session: CallSession, text: str, lang: str | None = None,
+                 fallback_reason: str | None = None) -> float:
+    """Speak `text` in `lang` (default: the call's current language).
+    Returns the audio duration in seconds."""
+    lang = lang or session.lang
+    await session.send_json("AI", text)
     try:
-        wav = await _tts.synthesize(text_bn)
+        wav = await _tts_router.synthesize(lang, text)
     except Exception as e:  # noqa: BLE001 - TTS is the last mile, must not raise past here
         logger.warning("[%s] TTS failed (%s) -- using fallback audio", session.call_id, e)
-        wav = _tts.fallback_audio(fallback_reason or "tts_failure")
+        wav = _tts.fallback_audio(fallback_reason or "tts_failure", lang)
 
     # Close the gate BEFORE the bytes leave, never after: the client can
     # start playing the moment they land, and a poll tick that slips in
     # between send and gate is exactly the echo this prevents.
-    session.hold_gate_for(_wav_duration_s(wav))
+    duration = _wav_duration_s(wav)
+    session.hold_gate_for(duration)
     await session.send_audio(wav)
+
+    # First audio of a turn is when the caller stops waiting: that interval
+    # is the latency admission control sheds load on.
+    if session.turn_started_at is not None and _admission is not None:
+        _admission.record_turn_latency(time.monotonic() - session.turn_started_at)
+        session.turn_started_at = None
+    return duration
+
+
+async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[str, ...] | None = None):
+    """Tell the caller and the telephony bridge that a person is taking over.
+
+    The `handoff_human` frame is the machine-readable half: the SBC/bridge
+    that owns the SIP leg acts on it (this repo has no SIP transfer). The
+    spoken notice is the human-readable half, said in every language when
+    the caller's is not yet known.
+    """
+    logger.warning("[%s] handoff to human: %s", session.call_id, reason)
+    with contextlib.suppress(Exception):
+        await session.ws.send_text(json.dumps({"type": "handoff_human", "reason": reason}))
+    total = 0.0
+    for lang in (languages or (session.lang,)):
+        with contextlib.suppress(Exception):
+            total += await _speak(session, phrase("handoff", lang), lang)
+    # Let the notice finish playing before the socket closes under it.
+    await asyncio.sleep(min(total + 0.5, 20.0))
+    with contextlib.suppress(Exception):
+        await session.ws.close()
 
 
 async def _slice_utterance(session: CallSession, start_s: float, end_s: float, seq: int) -> str:
@@ -310,7 +558,7 @@ async def _slice_utterance(session: CallSession, start_s: float, end_s: float, s
     return clip_path
 
 
-async def _resolve_intent(session: CallSession, text: str) -> dict:
+async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> dict:
     """Semantic cache in front of the LLM. A hit skips Ollama entirely --
     the slowest hop in the turn -- but the clinic lookup that follows still
     runs live, so a cached intent can never serve a stale price."""
@@ -318,7 +566,10 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
     # entity is a string-matching problem with a 0.32 confidence margin,
     # where the embedding route had 0.03 -- see agent/fast_path.py. This
     # returns None whenever it is not sure, which is the common case for
-    # anything except a routine price or availability question.
+    # anything except a routine price or availability question. Its cues
+    # are Bengali, so for Hindi/English it mostly abstains and the turn
+    # goes to the LLM -- safe by construction, just not free.
+    await _maybe_reload_fast_path()
     if _fast_path is not None:
         hit = await asyncio.to_thread(_fast_path.resolve, text)
         if hit is not None:
@@ -326,98 +577,156 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
                         session.call_id, hit.intent, hit.confidence)
             return hit.as_llm_shape()
 
-    cached, how = await asyncio.to_thread(_intent_cache.get, text)
+    # The cache stores the whole intent object (smalltalk carries reply
+    # text in the caller's language), so the language is part of the key.
+    key = text if lang == "bn" else f"[{lang}] {text}"
+    cached, how = await asyncio.to_thread(_intent_cache.get, key)
     if cached is not None:
         logger.info("[%s] intent cache %s hit", session.call_id, how)
         return cached
 
-    data, diag = await asyncio.to_thread(extract_intent, text)
+    data, diag = await asyncio.to_thread(extract_intent, text, 2, lang)
     logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
                 session.call_id, diag["total_time_s"], diag["attempts"])
-    await asyncio.to_thread(_intent_cache.put, text, data)
+    await asyncio.to_thread(_intent_cache.put, key, data)
     return data
 
 
+async def _route_and_transcribe(session: CallSession, utterance_wav: str):
+    """LID -> routing decision -> ASR. Returns (language, ASRResult), or
+    (None, None) when the router says a human should take the call."""
+    if _lid is None or len(_languages_active) < 2:
+        return "bn", await _asr_router.transcribe("bn", utterance_wav)
+
+    try:
+        lid = await asyncio.to_thread(_lid.identify_path, utterance_wav)
+    except Exception as e:  # noqa: BLE001 - a LID fault must degrade the turn, not kill it
+        logger.warning("[%s] LID failed (%s) -- treating as unknown", session.call_id, e)
+        lid = LIDResult(language="unknown", confidence=0.0)
+
+    # LID's top label alone is not trusted: Indian-accented English is
+    # labelled Hindi at ~0.9, or not found at all (measured; see
+    # agent/lang_select.py). Unless LID is decisive, let every active ASR
+    # try and keep the one whose decoders agree.
+    verify = languages_to_verify(lid.language, lid.scores, _languages_active) if lid.scores else None
+    if verify:
+        outcomes = await _asr_router.transcribe_many(verify, utterance_wav)
+        lang, result = pick_candidate(outcomes)
+        logger.info("[%s] LID %s %s not decisive -> ran %s, chose %s (%s)",
+                    session.call_id, lid.language, {k: round(v, 2) for k, v in lid.scores.items()},
+                    "+".join(l for l, _ in outcomes), lang,
+                    ", ".join(f"{l}:{r.decoder_agreement:.2f}" for l, r in outcomes))
+        session.lang_router.note_response_language(lang)
+        return lang, result
+
+    decision = session.lang_router.route(lid)
+    logger.info("[%s] LID %s %.2f -> %s %s (%s)", session.call_id, lid.language, lid.confidence,
+                decision.action, decision.language or "", decision.reason)
+
+    if decision.action == "handoff_human":
+        return None, None
+
+    if decision.action == "dual_asr" and decision.secondary_language:
+        primary, secondary = decision.language, decision.secondary_language
+        r1, r2 = await _asr_router.transcribe_dual(primary, secondary, utterance_wav)
+        return pick_candidate([(primary, r1), (secondary, r2)])
+
+    return decision.language, await _asr_router.transcribe(decision.language, utterance_wav)
+
+
 async def _dispatch_turn(session: CallSession, utterance_wav: str):
-    """One full turn: ASR -> intent -> tool -> templated reply -> TTS.
+    """One full turn: LID -> ASR -> intent -> tool -> templated reply -> TTS.
     Serialized per-call via session.dispatch_lock so replies never
     interleave, even if the caller starts talking again immediately."""
     async with session.dispatch_lock:
+        session.turn_started_at = time.monotonic()
         try:
-            asr_result = await _asr.transcribe_utterance(utterance_wav)
+            lang, asr_result = await _route_and_transcribe(session, utterance_wav)
+        except Exception as e:  # noqa: BLE001 - a dead ASR must not leave the caller in silence
+            logger.exception("[%s] ASR/LID stage failed: %s", session.call_id, e)
+            await _speak(session, phrase("llm_failure", session.lang), session.lang,
+                         fallback_reason="llm_failure")
+            return
         finally:
             with contextlib.suppress(OSError):
                 os.remove(utterance_wav)
 
+        if lang is None:
+            await _handoff_to_human(session, "language_ambiguous")
+            return
+        session.lang = lang
+        session.lang_router.note_response_language(lang)
+
         text = asr_result.text.strip()
         if not text:
             logger.info("[%s] ASR returned empty text", session.call_id)
-            await _speak(session, "দুঃখিত, শুনতে পাইনি। আবার বলবেন?", fallback_reason="asr_empty")
+            await _speak(session, phrase("asr_empty", lang), lang, fallback_reason="asr_empty")
             return
         await session.send_json("User", text)
 
         try:
-            data = await _resolve_intent(session, text)
+            data = await _resolve_intent(session, text, lang)
         except ExtractionError as e:
             logger.error("[%s] intent extraction failed: %s", session.call_id, e)
-            await _speak(session, "একটু সমস্যা হচ্ছে, একটু ধরুন।", fallback_reason="llm_failure")
+            await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
             return
 
         intent = data["intent"]
         slots = data["slots"]
 
         if intent == "smalltalk":
-            await _speak(session, data.get("direct_reply_bn") or "নমস্কার, কী সাহায্য করতে পারি?")
+            reply = data.get("direct_reply_bn")
+            await _speak(session, reply if _speakable(reply or "", lang)
+                         else phrase("smalltalk_default", lang), lang)
             return
 
         if intent == "unclear":
-            await _speak(session, "দুঃখিত, বুঝতে পারিনি। আবার একটু বলবেন?")
+            await _speak(session, phrase("unclear", lang), lang)
             return
 
         try:
             if intent == "test_rate":
                 if not slots.get("test_name"):
-                    await _speak(session, missing_slot_prompt(intent, "test_name"))
+                    await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                     return
                 result = await _tools.get_test_rate(slots["test_name"])
-                await _speak(session, test_rate_reply(slots, result))
+                await _speak(session, test_rate_reply(slots, result, lang), lang)
 
             elif intent == "doctor_availability":
                 if not slots.get("doctor_name"):
-                    await _speak(session, missing_slot_prompt(intent, "doctor_name"))
+                    await _speak(session, missing_slot_prompt(intent, "doctor_name", lang), lang)
                     return
                 result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
-                await _speak(session, doctor_availability_reply(slots, result))
+                await _speak(session, doctor_availability_reply(slots, result, lang), lang)
 
             elif intent == "test_prep":
                 if not slots.get("test_name"):
-                    await _speak(session, missing_slot_prompt(intent, "test_name"))
+                    await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                     return
-                result = await _tools.get_test_prep(slots["test_name"])
-                await _speak(session, test_prep_reply(slots, result))
+                result = await _tools.get_test_prep(slots["test_name"], lang)
+                await _speak(session, test_prep_reply(slots, result, lang), lang)
 
             elif intent == "clinic_faq":
                 if not slots.get("faq_topic"):
-                    await _speak(session, missing_slot_prompt(intent, "faq_topic"))
+                    await _speak(session, missing_slot_prompt(intent, "faq_topic", lang), lang)
                     return
-                result = await _tools.get_faq(slots["faq_topic"])
-                await _speak(session, clinic_faq_reply(slots, result))
+                result = await _tools.get_faq(slots["faq_topic"], lang)
+                await _speak(session, clinic_faq_reply(slots, result, lang), lang)
 
             elif intent == "book_appointment":
                 for field in ("doctor_name", "date", "time_slot", "patient_name", "phone"):
                     if not slots.get(field):
-                        await _speak(session, missing_slot_prompt(intent, field))
+                        await _speak(session, missing_slot_prompt(intent, field, lang), lang)
                         return
                 result = await _tools.book_appointment(
                     slots["doctor_name"], slots["date"], slots["time_slot"],
                     slots["patient_name"], slots["phone"],
                 )
-                await _speak(session, booking_reply(slots, result))
+                await _speak(session, booking_reply(slots, result, lang), lang)
 
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
-            await _speak(session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
-                         fallback_reason="tool_failure")
+            await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
 
 
 async def _resync_after_playback(session: CallSession) -> bool:
@@ -453,7 +762,7 @@ async def _turn_poll_loop(session: CallSession):
 
         if time.time() - session.last_activity > IDLE_TIMEOUT_S:
             logger.info("[%s] idle timeout, closing", session.call_id)
-            await _speak(session, "লাইনে কোনো সাড়া পাচ্ছি না, কল শেষ করছি। ধন্যবাদ।")
+            await _speak(session, phrase("idle_close", session.lang), session.lang)
             with contextlib.suppress(Exception):
                 await session.ws.close()
             return
@@ -514,11 +823,23 @@ async def _handle_control(session: CallSession, raw: str):
 async def ws_audio(ws: WebSocket):
     await ws.accept()
     session = CallSession(ws)
-    logger.info("[%s] call started", session.call_id)
+
+    # The door. A call the AI cannot serve goes to a person NOW -- never
+    # queued behind the GPU. See agent/admission.py for what closes it.
+    admission = _admission.try_admit()
+    if not admission.admitted:
+        logger.warning("[%s] call refused: %s", session.call_id, admission.reason)
+        try:
+            await _handoff_to_human(session, admission.reason, languages=HANDOFF_ALL_LANGUAGES)
+        finally:
+            session.cleanup()
+        return
+    session.admission = admission
+    logger.info("[%s] call started (%d active)", session.call_id, _admission.active_calls)
     poll_task = asyncio.create_task(_turn_poll_loop(session))
 
     try:
-        await _speak(session, "নমস্কার, কলকাতা কেয়ার ডায়াগনস্টিকসে স্বাগতম। কীভাবে সাহায্য করতে পারি?")
+        await _speak(session, phrase("greeting", "bn"), "bn")
         while True:
             message = await ws.receive()
             if message["type"] == "websocket.disconnect":
@@ -535,8 +856,9 @@ async def ws_audio(ws: WebSocket):
         poll_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await poll_task
+        _admission.release(admission)
         session.cleanup()
-        logger.info("[%s] call ended", session.call_id)
+        logger.info("[%s] call ended (%d active)", session.call_id, _admission.active_calls)
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

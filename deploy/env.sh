@@ -64,3 +64,24 @@ export SILERO_VAD_REPO=/workspace/silero-vad
 # (deploy/install_ollama.sh -- NOT the official installer, which ignores
 # OLLAMA_INSTALL_DIR and writes to /usr/local, on the ephemeral overlay).
 export PATH=/workspace/bin:/workspace/venv/bin:${PATH:-}
+
+# ---- live language routing (main.py) --------------------------------------
+# "bn" alone = the original Bengali-only path (no language ID, no Hindi ASR
+# loaded): the rollback lever if the 3-language path misbehaves.
+export VOICE_AGENT_LANGUAGES=${VOICE_AGENT_LANGUAGES:-bn,hi,en}
+# Where the SpeechBrain VoxLingua107 LID model lives (persistent, ~86 MB).
+export VOICE_AGENT_LID_DIR=/workspace/lid_model
+
+# ---- admission control (agent/admission.py) -------------------------------
+# Cap is per process; the WebM and PCM services each count their own calls.
+export ADMISSION_MAX_CALLS=${ADMISSION_MAX_CALLS:-28}
+# `touch` this file = human-only mode for every NEW call, no deploy needed.
+export ADMISSION_BYPASS_FILE=/workspace/.ai_bypass
+# Turn-latency load shedding is OFF until calibrated against a real load
+# test; set e.g. ADMISSION_SHED_P95_S=2.5 once p95 is measured.
+# The HTTP kill-switch (POST /api/admission/bypass) stays disabled unless a
+# token exists -- read from a file, never committed:
+if [ -f /workspace/.admission_token ]; then
+    export ADMISSION_ADMIN_TOKEN
+    ADMISSION_ADMIN_TOKEN=$(cat /workspace/.admission_token)
+fi

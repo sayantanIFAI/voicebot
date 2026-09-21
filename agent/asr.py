@@ -31,8 +31,25 @@ import asyncio
 import dataclasses
 import glob
 import os
+import threading
 
+import numpy as np
 import torch
+
+# The AI4Bharat NeMo fork (nemo_toolkit 1.23) calls np.sctypes, which NumPy 2.0
+# removed. Loading the checkpoint works, so the model "comes up" -- and then
+# the FIRST real transcription raises AttributeError inside NeMo's audio
+# loader. Restored here rather than downgrading numpy, which torch/scipy/
+# speechbrain in this venv were installed against.
+if not hasattr(np, "sctypes"):
+    np.sctypes = {
+        "int": [np.int8, np.int16, np.int32, np.int64],
+        "uint": [np.uint8, np.uint16, np.uint32, np.uint64],
+        "float": [np.float16, np.float32, np.float64],
+        "complex": [np.complex64, np.complex128],
+        "others": [bool, object, bytes, str, np.void],
+    }
+
 import nemo.collections.asr as nemo_asr
 from omegaconf import OmegaConf
 from nemo.collections.asr.parts.submodules.rnnt_decoding import RNNTDecodingConfig
@@ -125,6 +142,8 @@ class TurnASR:
     def __init__(self, nemo_file: str | None = None, language_id: str = "bn",
                  device: str | None = None):
         self.language_id = language_id
+        # cur_decoder is flipped per call; concurrent threads must not interleave.
+        self._lock = threading.Lock()
         nemo_file = nemo_file or _resolve_nemo_file(language_id)
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = nemo_asr.models.ASRModel.restore_from(restore_path=nemo_file)
@@ -153,7 +172,8 @@ class TurnASR:
         """Blocking. Callers MUST run this via asyncio.to_thread -- it
         holds the GIL through GPU inference and would otherwise stall
         every other WebSocket connection's audio handling on this process."""
-        ctc_text, rnnt_text = self._transcribe_clip(wav_path)
+        with self._lock:
+            ctc_text, rnnt_text = self._transcribe_clip(wav_path)
 
         if rnnt_text:
             return ASRResult(text=rnnt_text, decoder_used="rnnt",
