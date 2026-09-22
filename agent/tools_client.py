@@ -112,3 +112,137 @@ class ClinicToolsClient:
             return r.json()
         except httpx.HTTPError as e:
             raise ToolCallError(f"book_appointment({body!r}): {e}") from e
+
+    # =========================================================================
+    # Epic E26: booking, rescheduling and cancellation. Two-phase (hold, then
+    # confirm) for the same reason /api/v1/bookings/hold itself is two-phase
+    # -- see clinic-api/booking_service.py and models.SlotLock's docstrings
+    # for the concurrency reasoning (KCD-376).
+    # =========================================================================
+    async def hold_slot(self, doctor_name: str, date: str, time_slot: str) -> dict:
+        body = {"doctor_name": doctor_name, "date": date, "time_slot": time_slot}
+        try:
+            r = await self._client.post("/api/v1/bookings/hold", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"hold_slot({body!r}): {e}") from e
+
+    async def confirm_booking(self, hold_token: str, doctor_id: int, date: str, time_slot: str,
+                               patient_name: str, phone: str, caller_phone: str,
+                               patient_age: int | None = None, relationship: str = "self") -> dict:
+        body = {
+            "hold_token": hold_token, "doctor_id": doctor_id, "date": date, "time_slot": time_slot,
+            "patient_name": patient_name, "phone": phone, "caller_phone": caller_phone,
+            "patient_age": patient_age, "relationship": relationship,
+        }
+        try:
+            r = await self._client.post("/api/v1/bookings/confirm", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"confirm_booking({body!r}): {e}") from e
+
+    async def reschedule_appointment(self, confirmation_id: str, new_date: str, new_time_slot: str) -> dict:
+        body = {"confirmation_id": confirmation_id, "new_date": new_date, "new_time_slot": new_time_slot}
+        try:
+            r = await self._client.post("/api/v1/bookings/reschedule", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"reschedule_appointment({body!r}): {e}") from e
+
+    async def cancel_appointment(self, confirmation_id: str, confirm_charge: bool = False) -> dict:
+        body = {"confirmation_id": confirmation_id, "confirm_charge": confirm_charge}
+        try:
+            r = await self._client.post("/api/v1/bookings/cancel", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"cancel_appointment({body!r}): {e}") from e
+
+    async def lookup_bookings(self, phone: str | None = None, confirmation_id: str | None = None,
+                               name: str | None = None) -> dict:
+        params = {k: v for k, v in
+                  {"phone": phone, "confirmation_id": confirmation_id, "name": name}.items() if v}
+        try:
+            r = await self._client.get("/api/v1/bookings/lookup", params=params)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"lookup_bookings({params!r}): {e}") from e
+
+    async def booking_conflict(self, phone: str, date: str, time_slot: str) -> dict:
+        params = {"phone": phone, "date": date, "time_slot": time_slot}
+        try:
+            r = await self._client.get("/api/v1/bookings/conflict", params=params)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"booking_conflict({params!r}): {e}") from e
+
+    async def book_tests(self, test_names: list[str], date: str, patient_name: str, phone: str,
+                          caller_phone: str, patient_age: int | None = None,
+                          relationship: str = "self") -> dict:
+        body = {
+            "test_names": test_names, "date": date, "patient_name": patient_name, "phone": phone,
+            "caller_phone": caller_phone, "patient_age": patient_age, "relationship": relationship,
+        }
+        try:
+            r = await self._client.post("/api/v1/bookings/tests", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"book_tests({body!r}): {e}") from e
+
+    async def add_test_to_booking(self, confirmation_id: str, test_name: str) -> dict:
+        body = {"confirmation_id": confirmation_id, "test_name": test_name}
+        try:
+            r = await self._client.post("/api/v1/bookings/add-test", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"add_test_to_booking({body!r}): {e}") from e
+
+    async def doctor_earliest(self, doctor_name: str) -> dict:
+        try:
+            r = await self._client.get("/api/v1/doctors/earliest", params={"name": doctor_name})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"doctor_earliest({doctor_name!r}): {e}") from e
+
+    async def route_department(self, query_text: str, lang: str = "bn") -> dict:
+        params = {"query": query_text, "lang": lang}
+        try:
+            r = await self._client.get("/api/v1/departments/route", params=params)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"route_department({params!r}): {e}") from e
+
+    async def resend_confirmation(self, confirmation_id: str) -> dict:
+        try:
+            r = await self._client.post("/api/v1/bookings/resend",
+                                        params={"confirmation_id": confirmation_id})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"resend_confirmation({confirmation_id!r}): {e}") from e
+
+    async def save_draft_booking(self, caller_phone: str, call_id: str, slots_json: str) -> dict:
+        body = {"caller_phone": caller_phone, "call_id": call_id, "slots_json": slots_json}
+        try:
+            r = await self._client.post("/api/v1/bookings/draft", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"save_draft_booking({body!r}): {e}") from e
+
+    async def get_draft_booking(self, caller_phone: str) -> dict:
+        try:
+            r = await self._client.get("/api/v1/bookings/draft", params={"phone": caller_phone})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"get_draft_booking({caller_phone!r}): {e}") from e

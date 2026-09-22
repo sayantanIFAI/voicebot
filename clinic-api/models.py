@@ -9,7 +9,13 @@ change, because it speaks the exact contract voice-agent already expects.
 from __future__ import annotations
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, ForeignKey, DateTime, UniqueConstraint,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -38,6 +44,9 @@ class Doctor(Base):
     # shares no characters with either the Latin name or the Bengali alias.
     aliases_hi = Column(String, nullable=False, default="")
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
+    # Added by booking_migrate.add_doctor_booking_columns() on an existing
+    # DB -- see that module for why a real fee is needed for KCD-372.
+    consultation_fee_inr = Column(Integer, nullable=False, default=500)
 
     department = relationship("Department", back_populates="doctors")
     schedule = relationship("DoctorSchedule", back_populates="doctor")
@@ -102,6 +111,13 @@ class FAQ(Base):
 
 
 class Appointment(Base):
+    """A CONFIRMED doctor appointment. Concurrency is not guarded here --
+    see SlotLock below -- so this row is only ever created once a hold on
+    (doctor_id, date, time_slot) has already been won atomically. The
+    original UniqueConstraint stays for defence in depth, but it is no
+    longer the primary race guard, because it would also block a cancelled
+    slot from ever being rebooked and SQLite cannot narrow an existing
+    UNIQUE constraint to a partial one without rebuilding the table."""
     __tablename__ = "appointments"
     id = Column(Integer, primary_key=True)
     confirmation_id = Column(String, nullable=False, unique=True)
@@ -112,6 +128,144 @@ class Appointment(Base):
     phone = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False)
 
+    # --- booking-lifecycle columns (Epic E26) -- added by
+    # booking_migrate.add_appointment_booking_columns() on an existing DB.
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+    caller_phone = Column(String, nullable=True)   # who called; `phone` is the contact-for-SMS number
+    status = Column(String, nullable=False, default="confirmed")  # confirmed | cancelled | rescheduled
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_charge_inr = Column(Integer, nullable=True)
+    rescheduled_from_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
+    booking_group_id = Column(String, nullable=True)  # groups doctor+test bookings made in one call
+
     doctor = relationship("Doctor")
 
     __table_args__ = (UniqueConstraint("doctor_id", "date", "time_slot", name="uq_doctor_slot"),)
+
+
+class SlotLock(Base):
+    """The real concurrency guard for KCD-376: a two-caller race for the
+    same doctor slot. Its own primary key IS (doctor_id, date, time_slot),
+    so SQLite's single-writer file lock plus this constraint mean exactly
+    one of two simultaneous INSERTs for the same key can ever succeed --
+    the other gets IntegrityError, mapped to a clean "slot_taken" reply.
+
+    A row here means "this slot is spoken for", either temporarily
+    (status="held", until hold_expires_at) while a caller is still being
+    walked through patient/contact details, or permanently
+    (status="confirmed") once an Appointment row exists. Deleting the row
+    (on cancel, on hold expiry, or when a reschedule moves off it) is what
+    makes the slot bookable again -- kept in a table of its own, separate
+    from `appointments`, specifically so a cancelled appointment's slot
+    does not stay blocked by `appointments`' own historical UNIQUE
+    constraint forever."""
+    __tablename__ = "slot_locks"
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), primary_key=True)
+    date = Column(String, primary_key=True)
+    time_slot = Column(String, primary_key=True)
+    status = Column(String, nullable=False)          # held | confirmed
+    hold_token = Column(String, nullable=False)
+    hold_expires_at = Column(DateTime, nullable=True)  # null once confirmed
+    appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
+
+
+class Patient(Base):
+    """A person an appointment or test booking is FOR -- distinct from the
+    caller, who books it (KCD-364: a son booking for his mother). One
+    patient can be found again across calls by phone, so a returning
+    caller does not create a duplicate record every time."""
+    __tablename__ = "patients"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    phone = Column(String, nullable=False, index=True)
+    age = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+
+
+class PatientProxy(Base):
+    """Records that a caller, on a specific phone number, is authorised to
+    act for a patient who is not themselves -- KCD-364's "son booking for
+    his mother". `verified_by` states HOW that was decided, never left
+    implicit: "self" (caller's own phone matches the patient's own phone,
+    no proxy needed), "relationship_stated" (caller declared a relationship
+    and it was recorded -- sufficient to BOOK, not to read back an existing
+    record), or "dob_confirmed" (caller additionally confirmed the
+    patient's date of birth -- required before disclosing an EXISTING
+    booking to a non-matching phone, see booking_service.authorize_access).
+    """
+    __tablename__ = "patient_proxies"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    caller_phone = Column(String, nullable=False, index=True)
+    relationship_label = Column(String, nullable=False)   # "self" | "son" | "daughter" | "spouse" | "parent" | "guardian" | "other"
+    verified_by = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+
+class TestBooking(Base):
+    """One lab test within a booking. KCD-365 books several tests in one
+    call as several rows sharing one `booking_group_id` and one
+    `confirmation_id`, so they are confirmed, prepped and read back
+    together; KCD-374 adds a row to an existing group."""
+    __tablename__ = "test_bookings"
+    id = Column(Integer, primary_key=True)
+    booking_group_id = Column(String, nullable=False, index=True)
+    confirmation_id = Column(String, nullable=False, index=True)
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=False)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+    patient_name = Column(String, nullable=False)
+    date = Column(String, nullable=False)
+    phone = Column(String, nullable=False)
+    caller_phone = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="confirmed")  # confirmed | cancelled
+    created_at = Column(DateTime, nullable=False)
+
+    lab_test = relationship("LabTest")
+
+
+class SmsOutbox(Base):
+    """The open placeholder the user asked for: a real endpoint that
+    genuinely records every confirmation/resend/cancellation notice this
+    service would send, in the exact shape a real provider needs, but
+    sends nothing itself -- `status` never becomes anything but "queued"
+    until a provider is actually wired into
+    clinic-api/notifications.py:send(). Logging here rather than silently
+    no-op-ing means nothing pretends to have reached a caller's phone."""
+    __tablename__ = "sms_outbox"
+    id = Column(Integer, primary_key=True)
+    to_phone = Column(String, nullable=False)
+    template_key = Column(String, nullable=False)
+    message = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="queued")  # queued -- see notifications.py
+    related_confirmation_id = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+
+
+class DraftBooking(Base):
+    """KCD-375: a caller whose call dropped mid-booking. Keyed by the
+    calling phone number so a return call can find it; `slots_json` is
+    whatever the in-progress agent.booking_flow.BookingState had captured.
+    Expired drafts are simply not returned by lookup, never surfaced or
+    applied without the caller re-confirming each value."""
+    __tablename__ = "draft_bookings"
+    id = Column(Integer, primary_key=True)
+    caller_phone = Column(String, nullable=False, index=True)
+    call_id = Column(String, nullable=False)
+    slots_json = Column(String, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+
+class DepartmentRoute(Base):
+    """KCD-359: a clinician-approved, deterministic map from a symptom
+    description to a department -- never the model's own judgement, and
+    never framed as a diagnosis (see reply_templates.department_route_reply).
+    """
+    __tablename__ = "department_routes"
+    id = Column(Integer, primary_key=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
+    keywords_bn = Column(String, nullable=False, default="")
+    keywords_hi = Column(String, nullable=False, default="")
+    keywords_en = Column(String, nullable=False, default="")
+
+    department = relationship("Department")

@@ -11,20 +11,19 @@ were already that robust.
 """
 from __future__ import annotations
 
-import logging
-
 import datetime
 import difflib
+import logging
 import unicodedata
 import uuid
 
-from fastapi import FastAPI, Depends, Query
+import booking_service as bs
+from db import SessionLocal, get_db
+from fastapi import Depends, FastAPI, Query
+from models import FAQ, Appointment, Department, Doctor, DoctorSchedule, LabTest
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
-from db import get_db, SessionLocal
-from models import Department, Doctor, DoctorSchedule, LabTest, Appointment, FAQ
 
 app = FastAPI(title="Kolkata Care Diagnostics -- Clinic Data API (dummy)")
 
@@ -61,6 +60,16 @@ def _ensure_seeded():
             logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
     finally:
         db.close()
+
+    # Epic E26 (booking/reschedule/cancel): new columns on `appointments`
+    # and `doctors`, and the department-routing seed table. Also before
+    # any ORM query that touches those tables -- same reason as
+    # add_i18n_columns above. create_all() already created every brand-new
+    # table (SlotLock, Patient, PatientProxy, TestBooking, SmsOutbox,
+    # DraftBooking, DepartmentRoute) a moment ago; this only ALTERs what
+    # already existed.
+    from booking_migrate import migrate_booking_schema
+    logging.getLogger("clinic-api").info("booking schema migration: %s", migrate_booking_schema())
 
 
 @app.get("/api/health")
@@ -455,3 +464,199 @@ def faq_answer(topic: str = Query(...), lang: str = Query("bn"), db: Session = D
         return {"found": False, "topic": topic}
     return {"found": True, "topic": row.topic, "lang": lang,
             "answer": _by_lang(lang, row.answer_bn, row.answer_hi, row.answer_en)}
+
+
+# =============================================================================
+# Epic E26: booking, rescheduling and cancellation
+#
+# Two-phase everywhere a slot is claimed (hold, then confirm) so the actual
+# concurrency guard -- booking_service.hold_slot()'s atomic INSERT into
+# SlotLock -- runs BEFORE the caller has to speak a patient name and phone
+# number, not after. See booking_service.py's module docstring and
+# models.SlotLock's for the full reasoning (KCD-376).
+# =============================================================================
+class HoldRequest(BaseModel):
+    doctor_name: str
+    date: str
+    time_slot: str
+
+
+@app.post("/api/v1/bookings/hold")
+def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
+    doctor = _find_doctor(db, req.doctor_name)
+    if not doctor:
+        return {"success": False, "reason": "doctor_not_found"}
+    try:
+        target = datetime.date.fromisoformat(req.date)
+    except ValueError:
+        return {"success": False, "reason": "invalid_date"}
+    if target < datetime.date.today():
+        # KCD-363: never book a past date, and never silently roll it
+        # forward -- the caller is told plainly (main.py's reply template)
+        # and offered the same weekday next week.
+        return {"success": False, "reason": "date_in_past"}
+
+    sched = _schedule_for_weekday(db, doctor.id, target.weekday())
+    if not sched:
+        return {"success": False, "reason": "doctor_not_available_that_day"}
+    valid_slots = _generate_slots(sched.start_time, sched.end_time)
+    if req.time_slot not in valid_slots:
+        return {"success": False, "reason": "invalid_slot", "valid_slots": valid_slots}
+
+    result = bs.hold_slot(db, doctor.id, req.date, req.time_slot)
+    if not result["success"]:
+        result["alternative_slots"] = [a["time_slot"] for a in
+                                        bs.nearest_alternatives(db, doctor.id, req.date, req.time_slot)]
+    else:
+        result["doctor_id"] = doctor.id
+        result["doctor_name"] = doctor.name
+    return result
+
+
+class ConfirmRequest(BaseModel):
+    hold_token: str
+    doctor_id: int
+    date: str
+    time_slot: str
+    patient_name: str
+    phone: str
+    caller_phone: str
+    patient_age: int | None = None
+    relationship: str = "self"
+
+
+@app.post("/api/v1/bookings/confirm")
+def confirm_booking_endpoint(req: ConfirmRequest, db: Session = Depends(get_db)):
+    return bs.confirm_booking(db, req.hold_token, req.doctor_id, req.date, req.time_slot,
+                               req.patient_name, req.phone, req.caller_phone,
+                               req.patient_age, req.relationship)
+
+
+class RescheduleRequest(BaseModel):
+    confirmation_id: str
+    new_date: str
+    new_time_slot: str
+
+
+@app.post("/api/v1/bookings/reschedule")
+def reschedule_booking(req: RescheduleRequest, db: Session = Depends(get_db)):
+    return bs.reschedule_appointment(db, req.confirmation_id, req.new_date, req.new_time_slot)
+
+
+class CancelRequest(BaseModel):
+    confirmation_id: str
+    confirm_charge: bool = False
+
+
+@app.post("/api/v1/bookings/cancel")
+def cancel_booking(req: CancelRequest, db: Session = Depends(get_db)):
+    return bs.cancel_appointment(db, req.confirmation_id, req.confirm_charge)
+
+
+@app.get("/api/v1/bookings/lookup")
+def lookup_booking(phone: str | None = Query(None), confirmation_id: str | None = Query(None),
+                    name: str | None = Query(None), db: Session = Depends(get_db)):
+    if not (phone or confirmation_id):
+        return {"found": False, "bookings": []}
+    rows = bs.lookup_bookings(db, phone=phone, confirmation_id=confirmation_id, name=name)
+    return {"found": bool(rows), "bookings": rows}
+
+
+@app.get("/api/v1/bookings/conflict")
+def booking_conflict(phone: str = Query(...), date: str = Query(...), time_slot: str = Query(...),
+                      db: Session = Depends(get_db)):
+    conflict = bs.find_conflict(db, phone, date, time_slot)
+    return {"conflict": conflict is not None, "existing": conflict}
+
+
+class TestsBookingRequest(BaseModel):
+    test_names: list[str]
+    date: str
+    patient_name: str
+    phone: str
+    caller_phone: str
+    patient_age: int | None = None
+    relationship: str = "self"
+
+
+@app.post("/api/v1/bookings/tests")
+def book_tests_endpoint(req: TestsBookingRequest, db: Session = Depends(get_db)):
+    ids, not_found = [], []
+    for name in req.test_names:
+        t = _find_test(db, name)
+        (ids if t else not_found).append(t.id if t else name)
+    if not ids:
+        return {"success": False, "reason": "no_valid_tests", "not_found": not_found}
+    result = bs.book_tests(db, ids, req.date, req.patient_name, req.phone, req.caller_phone,
+                            req.patient_age, req.relationship)
+    result["not_found"] = not_found
+    return result
+
+
+class AddTestRequest(BaseModel):
+    confirmation_id: str
+    test_name: str
+
+
+@app.post("/api/v1/bookings/add-test")
+def add_test_endpoint(req: AddTestRequest, db: Session = Depends(get_db)):
+    return bs.add_test_to_booking(db, req.confirmation_id, req.test_name)
+
+
+@app.get("/api/v1/doctors/earliest")
+def doctor_earliest(name: str = Query(...), db: Session = Depends(get_db)):
+    doctor = _find_doctor(db, name)
+    if not doctor:
+        return {"found": False, "query": name}
+    result = bs.earliest_available(db, doctor.id, datetime.date.today())
+    if not result:
+        return {"found": True, "available": False, "doctor_name": doctor.name}
+    return {"found": True, "available": True, "doctor_name": doctor.name,
+            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), **result}
+
+
+@app.get("/api/v1/departments/route")
+def department_route(query: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
+    return bs.route_department(db, query, lang)
+
+
+class SmsRequest(BaseModel):
+    to: str
+    message: str
+    template_key: str = "generic"
+    related_confirmation_id: str | None = None
+
+
+@app.post("/api/v1/notifications/sms")
+def send_sms(req: SmsRequest, db: Session = Depends(get_db)):
+    """The open placeholder the caller-confirmation flow already writes
+    to via booking_service.queue_sms(). Exposed as its own endpoint too,
+    so an external system (or a future clinic-api/notifications.py) has
+    one clear place to either call in, or be wired up as the thing THIS
+    function calls out to. `status` is always "queued": nothing in this
+    codebase claims a message reached a phone until a real provider is
+    plugged in here."""
+    return bs.queue_sms(db, req.to, req.template_key, req.message, req.related_confirmation_id)
+
+
+@app.post("/api/v1/bookings/resend")
+def resend_booking_confirmation(confirmation_id: str, db: Session = Depends(get_db)):
+    return bs.resend_confirmation(db, confirmation_id)
+
+
+class DraftRequest(BaseModel):
+    caller_phone: str
+    call_id: str
+    slots_json: str
+
+
+@app.post("/api/v1/bookings/draft")
+def save_draft_endpoint(req: DraftRequest, db: Session = Depends(get_db)):
+    bs.save_draft(db, req.caller_phone, req.call_id, req.slots_json)
+    return {"saved": True}
+
+
+@app.get("/api/v1/bookings/draft")
+def get_draft_endpoint(phone: str = Query(...), db: Session = Depends(get_db)):
+    draft = bs.find_draft(db, phone)
+    return {"found": draft is not None, "draft": draft}

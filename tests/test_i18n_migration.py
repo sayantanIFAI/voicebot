@@ -19,7 +19,7 @@ def old_db(tmp_path, monkeypatch):
     path = tmp_path / "old.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
     monkeypatch.syspath_prepend(CLINIC_API)
-    for mod in ("db", "models", "seed", "i18n_content"):
+    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate"):
         sys.modules.pop(mod, None)
     import sqlite3
     con = sqlite3.connect(path)
@@ -42,7 +42,7 @@ def old_db(tmp_path, monkeypatch):
     con.commit()
     con.close()
     yield path
-    for mod in ("db", "models", "seed", "i18n_content"):
+    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate"):
         sys.modules.pop(mod, None)
 
 
@@ -54,6 +54,16 @@ def test_old_database_gains_columns_and_translations_without_losing_rows(old_db)
     added = seed.add_i18n_columns()
     assert set(added) == {"doctors.aliases_hi", "lab_tests.aliases_hi", "lab_tests.prep_instructions_hi",
                           "lab_tests.prep_instructions_en", "faqs.answer_hi", "faqs.answer_en"}
+
+    # Epic E26 added its own mapped columns to Doctor/Appointment (see
+    # clinic-api/booking_migrate.py). SQLAlchemy selects every mapped
+    # column on any query, so this real production startup order --
+    # create_all() for brand-new tables, then EVERY ALTER-TABLE migration,
+    # before the first ORM query -- is required here too, not just in
+    # clinic-api/main.py's own startup handler.
+    booking_migrate = importlib.import_module("booking_migrate")
+    models.Base.metadata.create_all(db_mod.engine)
+    booking_migrate.migrate_booking_schema()
 
     db = db_mod.SessionLocal()
     try:
@@ -78,7 +88,12 @@ def test_backfill_never_overwrites_a_hand_edited_value(old_db):
     seed = importlib.import_module("seed")
     models = importlib.import_module("models")
     db_mod = importlib.import_module("db")
+    booking_migrate = importlib.import_module("booking_migrate")
     seed.add_i18n_columns()
+    # backfill_i18n() below also queries Doctor, which needs Epic E26's
+    # columns to exist too -- see the sibling test's comment.
+    models.Base.metadata.create_all(db_mod.engine)
+    booking_migrate.migrate_booking_schema()
     db = db_mod.SessionLocal()
     try:
         t = db.query(models.LabTest).filter_by(name="Uric Acid").one()

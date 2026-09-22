@@ -22,6 +22,8 @@ PHRASES: dict[str, dict[str, str]] = {
         "idle_close": "লাইনে কোনো সাড়া পাচ্ছি না, কল শেষ করছি। ধন্যবাদ।",
         "smalltalk_default": "নমস্কার, কী সাহায্য করতে পারি?",
         "handoff": "আমি আপনাকে আমাদের স্টাফের সাথে যুক্ত করছি, দয়া করে লাইনে থাকুন।",
+        "cancel_aborted": "ঠিক আছে, আপনার অ্যাপয়েন্টমেন্টটা যেমন ছিল তেমনই আছে।",
+        "no_confirmation_number": "ঠিক আছে, তাহলে বুকিংটা হয়ে যাবে, কিন্তু কোনো লিখিত কনফার্মেশন পাঠাতে পারব না।",
     },
     "hi": {
         "greeting": "नमस्कार, कोलकाता केयर डायग्नोस्टिक्स में आपका स्वागत है। मैं आपकी क्या मदद कर सकती हूँ?",
@@ -32,6 +34,8 @@ PHRASES: dict[str, dict[str, str]] = {
         "idle_close": "लाइन पर कोई आवाज़ नहीं आ रही, कॉल समाप्त कर रही हूँ। धन्यवाद।",
         "smalltalk_default": "नमस्कार, मैं आपकी क्या मदद कर सकती हूँ?",
         "handoff": "मैं आपको हमारे स्टाफ़ से जोड़ रही हूँ, कृपया लाइन पर बने रहिए।",
+        "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
+        "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
     },
     "en": {
         "greeting": "Hello, welcome to Kolkata Care Diagnostics. How can I help you?",
@@ -42,6 +46,8 @@ PHRASES: dict[str, dict[str, str]] = {
         "idle_close": "I can't hear anything on the line, so I'm ending the call. Thank you.",
         "smalltalk_default": "Hello, how can I help you?",
         "handoff": "Let me connect you to our staff, please stay on the line.",
+        "cancel_aborted": "Okay, your appointment is unchanged.",
+        "no_confirmation_number": "Okay, I'll go ahead with the booking, but I won't be able to send you a written confirmation.",
     },
 }
 

@@ -28,6 +28,17 @@ _HI_MISSING = {
     ("book_appointment", "phone"): "एक फ़ोन नंबर दीजिए, ताकि मैं कन्फ़र्मेशन भेज सकूँ?",
     ("test_prep", "test_name"): "किस टेस्ट की तैयारी जाननी है, ज़रा बताइए?",
     ("clinic_faq", "faq_topic"): "माफ़ कीजिए, ठीक से समझ नहीं पाई। क्या आप फिर से बताएँगे?",
+    ("book_test", "test_names"): "कौन से टेस्ट बुक करना चाहते हैं, ज़रा बताइए?",
+    ("book_test", "date"): "किस दिन टेस्ट करवाना चाहते हैं?",
+    ("book_test", "patient_name"): "मरीज़ का नाम बताइए?",
+    ("book_test", "phone"): "एक फ़ोन नंबर दीजिए, ताकि मैं कन्फ़र्मेशन भेज सकूँ?",
+    ("reschedule_appointment", "confirmation_id"): "आपका कन्फ़र्मेशन नंबर या जिस नंबर से बुक किया था वह बताइए?",
+    ("reschedule_appointment", "new_date"): "किस दिन ले जाना चाहते हैं?",
+    ("reschedule_appointment", "new_time_slot"): "किस समय ले जाना चाहते हैं?",
+    ("cancel_appointment", "confirmation_id"): "आपका कन्फ़र्मेशन नंबर या जिस नंबर से बुक किया था वह बताइए?",
+    ("add_test_booking", "confirmation_id"): "आपका कन्फ़र्मेशन नंबर बताइए?",
+    ("add_test_booking", "test_name"): "कौन सा टेस्ट जोड़ना चाहते हैं?",
+    ("lookup_booking", "phone"): "जिस नंबर से बुक किया था वह बताइए?",
 }
 _HI_MISSING_DEFAULT = "माफ़ कीजिए, क्या आप थोड़ा साफ़ बोलेंगे?"
 
@@ -41,6 +52,17 @@ _EN_MISSING = {
     ("book_appointment", "phone"): "Could you give me a phone number so I can send the confirmation?",
     ("test_prep", "test_name"): "Which test would you like the preparation for?",
     ("clinic_faq", "faq_topic"): "Sorry, I didn't quite get that. Could you say it again?",
+    ("book_test", "test_names"): "Which tests would you like to book?",
+    ("book_test", "date"): "Which day would you like the tests for?",
+    ("book_test", "patient_name"): "May I have the patient's name?",
+    ("book_test", "phone"): "Could you give me a phone number so I can send the confirmation?",
+    ("reschedule_appointment", "confirmation_id"): "Could you give me your confirmation number, or the number you booked from?",
+    ("reschedule_appointment", "new_date"): "Which day would you like to move it to?",
+    ("reschedule_appointment", "new_time_slot"): "Which time would you like to move it to?",
+    ("cancel_appointment", "confirmation_id"): "Could you give me your confirmation number, or the number you booked from?",
+    ("add_test_booking", "confirmation_id"): "Could you give me your confirmation number?",
+    ("add_test_booking", "test_name"): "Which test would you like to add?",
+    ("lookup_booking", "phone"): "Could you give me the number you booked from?",
 }
 _EN_MISSING_DEFAULT = "Sorry, could you say that a little more clearly?"
 
@@ -210,6 +232,212 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
                     else "माफ़ कीजिए, इस नाम के कोई डॉक्टर नहीं मिले।")
         return (f"Sorry, I couldn't find a doctor named '{q}'." if q
                 else "Sorry, I couldn't find a doctor by that name.")
+    if reason == "doctor_not_available_that_day":
+        return ("माफ़ कीजिए, उस दिन डॉक्टर नहीं बैठते। कोई और दिन बताएँगे?" if hi
+                else "Sorry, the doctor doesn't sit that day. Could you say another day?")
+    if reason == "invalid_slot":
+        return ("माफ़ कीजिए, वह समय ठीक नहीं है। चेंबर के समय के भीतर कोई समय बताएँगे?" if hi
+                else "Sorry, that time isn't valid. Could you give a time within the chamber hours?")
+    if reason == "date_in_past":
+        return ("वह तारीख तो निकल चुकी है। अगले हफ़्ते उसी दिन के लिए बुक कर दूँ?" if hi
+                else "That date has already passed. Shall I book the same weekday next week instead?")
+    if reason == "hold_expired":
+        return ("माफ़ कीजिए, समय रोका नहीं जा सका, थोड़ी देर हो गई। फिर कोशिश करें?" if hi
+                else "Sorry, that slot couldn't be held in time. Shall we try again?")
     return ("माफ़ कीजिए, अपॉइंटमेंट बुक नहीं हो सका। थोड़ी देर बाद फिर कोशिश करें, या काउंटर पर संपर्क करें।"
             if hi else
             "Sorry, I couldn't book the appointment. Please try again shortly, or contact the counter.")
+
+
+def booking_confirmation_readback(slots: dict, action: str, lang: str) -> str:
+    hi = lang == "hi"
+    if action == "book_appointment":
+        if hi:
+            return (f"तो {slots.get('doctor_name')} डॉक्टर के पास {slots.get('date')} को, "
+                    f"समय {slots.get('time_slot')} पर, मरीज़ का नाम {slots.get('patient_name')}, "
+                    f"फ़ोन नंबर {slots.get('phone')} -- यह अपॉइंटमेंट कन्फ़र्म कर दूँ?")
+        return (f"So, with Dr. {slots.get('doctor_name')} on {slots.get('date')} at {slots.get('time_slot')}, "
+                f"for {slots.get('patient_name')}, phone number {slots.get('phone')} -- shall I confirm this?")
+    if action == "book_test":
+        tests = ", ".join(slots.get("_test_names_display", [])) or ("टेस्ट" if hi else "the tests")
+        if hi:
+            return (f"तो {slots.get('date')} को {tests} -- मरीज़ का नाम {slots.get('patient_name')}, "
+                    f"फ़ोन नंबर {slots.get('phone')} -- यह बुकिंग कन्फ़र्म कर दूँ?")
+        return (f"So {tests} on {slots.get('date')}, for {slots.get('patient_name')}, "
+                f"phone number {slots.get('phone')} -- shall I confirm this booking?")
+    if action == "reschedule_appointment":
+        return (f"तो अपॉइंटमेंट {slots.get('new_date')} को, समय {slots.get('new_time_slot')} पर ले जाऊँ?" if hi
+                else f"So I'll move the appointment to {slots.get('new_date')} at {slots.get('new_time_slot')} -- confirm?")
+    if action == "cancel_appointment":
+        return "आपकी अपॉइंटमेंट रद्द कर दूँ?" if hi else "Shall I cancel your appointment?"
+    if action == "add_test_booking":
+        return (f"तो आपकी बुकिंग में {slots.get('test_name')} टेस्ट जोड़ दूँ?" if hi
+                else f"Shall I add the {slots.get('test_name')} test to your booking?")
+    return "क्या यह कन्फ़र्म कर दूँ?" if hi else "Shall I confirm this?"
+
+
+def reschedule_reply(result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    if result.get("success"):
+        if hi:
+            return (f"आपकी अपॉइंटमेंट {result['date']} को, समय {result['time_slot']} पर बदल दी गई है। "
+                    f"नया कन्फ़र्मेशन नंबर: {result['confirmation_id']}।")
+        return (f"Your appointment has been moved to {result['date']} at {result['time_slot']}. "
+                f"New confirmation number: {result['confirmation_id']}.")
+    reason = result.get("reason")
+    if reason == "not_found":
+        return ("माफ़ कीजिए, इस कन्फ़र्मेशन नंबर पर कोई अपॉइंटमेंट नहीं मिली।" if hi
+                else "Sorry, I couldn't find an appointment with that confirmation number.")
+    if reason == "slot_taken":
+        alts = result.get("alternative_slots") or []
+        if alts:
+            return (f"वह समय बुक हो चुका है। ये समय खाली हैं: {', '.join(alts)}। कौन सा चाहिए?" if hi
+                    else f"That time is already booked. These times are free: {', '.join(alts)}. Which one would you like?")
+        return ("वह समय बुक हो चुका है। आपकी पुरानी अपॉइंटमेंट वैसी ही है।" if hi
+                else "That time is already booked. Your original appointment is unchanged.")
+    return ("माफ़ कीजिए, अपॉइंटमेंट बदली नहीं जा सकी। आपकी पुरानी अपॉइंटमेंट वैसी ही है।" if hi
+            else "Sorry, I couldn't move the appointment. Your original appointment is unchanged.")
+
+
+def cancel_reply(result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    reason = result.get("reason")
+    if reason == "charge_confirmation_required":
+        charge = result["charge_inr"]
+        return (f"इस समय रद्द करने पर {charge} रुपये कटेंगे। फिर भी रद्द कर दूँ?" if hi
+                else f"Cancelling now means a charge of {charge} rupees. Shall I still cancel it?")
+    if result.get("success"):
+        charge = result.get("charge_inr") or 0
+        if charge:
+            return (f"आपकी अपॉइंटमेंट रद्द कर दी गई है। {charge} रुपये काटे गए हैं।" if hi
+                    else f"Your appointment has been cancelled. A charge of {charge} rupees has been applied.")
+        return ("आपकी अपॉइंटमेंट बिना किसी शुल्क के रद्द कर दी गई है।" if hi
+                else "Your appointment has been cancelled with no charge.")
+    if reason == "not_found":
+        return ("माफ़ कीजिए, इस कन्फ़र्मेशन नंबर पर कोई अपॉइंटमेंट नहीं मिली।" if hi
+                else "Sorry, I couldn't find an appointment with that confirmation number.")
+    return "माफ़ कीजिए, रद्द नहीं हो सकी। काउंटर से संपर्क करें।" if hi else "Sorry, I couldn't cancel it. Please contact the counter."
+
+
+def lookup_reply(bookings: list[dict], lang: str) -> str:
+    hi = lang == "hi"
+    if not bookings:
+        return ("माफ़ कीजिए, आपके नाम कोई आने वाली अपॉइंटमेंट नहीं मिली।" if hi
+                else "Sorry, I couldn't find any upcoming appointment for you.")
+    b = bookings[0]
+    if hi:
+        return (f"आपकी अगली अपॉइंटमेंट: {b.get('doctor_name')} डॉक्टर के पास, {b['date']} को, "
+                f"समय {b['time_slot']} पर। कन्फ़र्मेशन नंबर: {b['confirmation_id']}। "
+                f"चाहें तो लिखित कन्फ़र्मेशन फिर से भेज सकती हूँ।")
+    return (f"Your next appointment: with {b.get('doctor_name')}, on {b['date']} at {b['time_slot']}. "
+            f"Confirmation number: {b['confirmation_id']}. I can resend the written confirmation if you'd like.")
+
+
+def multi_test_reply(result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    if not result.get("success"):
+        return ("माफ़ कीजिए, टेस्ट बुक नहीं हो सके। थोड़ी देर बाद फिर कोशिश करें।" if hi
+                else "Sorry, I couldn't book the tests. Please try again shortly.")
+    names = ", ".join(result["test_names"])
+    if hi:
+        reply = (f"{names} -- ये टेस्ट {result['date']} को बुक कर दिए गए हैं। "
+                 f"कुल खर्च {result['total_rate_inr']} रुपये। कन्फ़र्मेशन नंबर: {result['confirmation_id']}।")
+        if result.get("combined_prep"):
+            reply += f" तैयारी: {result['combined_prep']}"
+        return reply
+    reply = (f"{names} have been booked for {result['date']}. Total cost {result['total_rate_inr']} rupees. "
+             f"Confirmation number: {result['confirmation_id']}.")
+    if result.get("combined_prep"):
+        reply += f" Preparation: {result['combined_prep']}"
+    return reply
+
+
+def add_test_reply(result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    if result.get("success"):
+        return (f"{result['test_name']} टेस्ट आपकी {result['date']} की बुकिंग में जोड़ दिया गया है।" if hi
+                else f"The {result['test_name']} test has been added to your booking for {result['date']}.")
+    reason = result.get("reason")
+    if reason == "not_found":
+        return ("माफ़ कीजिए, इस कन्फ़र्मेशन नंबर पर कोई टेस्ट बुकिंग नहीं मिली।" if hi
+                else "Sorry, I couldn't find a test booking with that confirmation number.")
+    if reason == "test_not_found":
+        return "माफ़ कीजिए, यह टेस्ट हमारी सूची में नहीं है।" if hi else "Sorry, that test is not on our list."
+    if reason == "already_booked":
+        return "यह टेस्ट तो पहले से ही आपकी बुकिंग में है।" if hi else "That test is already part of your booking."
+    return "माफ़ कीजिए, टेस्ट जोड़ा नहीं जा सका।" if hi else "Sorry, I couldn't add that test."
+
+
+def resend_reply(result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    if result.get("success"):
+        return (f"कन्फ़र्मेशन दोबारा भेज दिया गया है, नंबर खत्म होता है {result['sent_to_last4']} से।" if hi
+                else f"The confirmation has been resent, to the number ending in {result['sent_to_last4']}.")
+    if result.get("reason") == "rate_limited":
+        return "अभी थोड़ी देर पहले ही भेजा गया था। थोड़ी देर बाद फिर कहिए।" if hi else "It was already sent a moment ago. Please ask again shortly."
+    return "माफ़ कीजिए, इस कन्फ़र्मेशन नंबर पर कोई बुकिंग नहीं मिली।" if hi else "Sorry, I couldn't find a booking with that confirmation number."
+
+
+def department_route_reply(result: dict, symptom: str, lang: str) -> str:
+    hi = lang == "hi"
+    if result.get("matched"):
+        return (f"इसके लिए {result['department_name']} विभाग में दिखाना ठीक रहेगा। डॉक्टर की अपॉइंटमेंट बना दूँ?" if hi
+                else f"For this, it would be best to see the {result['department_name']} department. "
+                     f"Shall I book a doctor's appointment?")
+    if result.get("ambiguous"):
+        cands = result["candidates"]
+        return (f"यह {' या '.join(cands)} -- इनमें से कोई एक विभाग हो सकता है। कौन सा बताएँगे?" if hi
+                else f"This could be either {' or '.join(cands)}. Which would you like?")
+    return ("माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर पूछ सकते हैं।" if hi
+            else "Sorry, I couldn't quite tell which department this needs. You could ask at the counter.")
+
+
+def conflict_reply(conflict: dict, lang: str) -> str:
+    hi = lang == "hi"
+    if hi:
+        return (f"उस समय आपकी पहले से एक अपॉइंटमेंट है -- {conflict.get('doctor_name')} डॉक्टर के पास, "
+                f"{conflict['date']} को, समय {conflict['time_slot']} पर। पुरानी रखूँ, बदलूँ, या नई जोड़ दूँ?")
+    return (f"You already have an appointment at that time -- with {conflict.get('doctor_name')}, "
+            f"on {conflict['date']} at {conflict['time_slot']}. Shall I keep it, move it, or add a new one?")
+
+
+def earliest_available_reply(result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    if not result.get("found"):
+        q = result.get("query")
+        return (f"माफ़ कीजिए, '{q}' नाम के कोई डॉक्टर नहीं मिले।" if hi
+                else f"Sorry, I couldn't find a doctor named '{q}'.")
+    if not result.get("available"):
+        return (f"माफ़ कीजिए, {result.get('doctor_name')} डॉक्टर के पास नज़दीकी समय में कोई जगह खाली नहीं है। "
+                f"बाद में फिर फ़ोन करें तो बता पाऊँगी।" if hi
+                else f"Sorry, {result.get('doctor_name')} has nothing free in the near term. "
+                     f"Please call again later and I can check for you.")
+    if hi:
+        reply = f"सबसे जल्दी खाली है {result['date']} को, समय {result['time_slot']} पर।"
+        alts = result.get("alternatives") or []
+        if alts:
+            reply += f" इसके अलावा: {', '.join(alts)}।"
+        return reply
+    reply = f"The earliest opening is on {result['date']} at {result['time_slot']}."
+    alts = result.get("alternatives") or []
+    if alts:
+        reply += f" Also available: {', '.join(alts)}."
+    return reply
+
+
+def draft_resume_reply(draft: dict, lang: str) -> str:
+    hi = lang == "hi"
+    return ("पिछली बार कॉल कट गई थी, आपकी बुकिंग पूरी नहीं हुई थी। जहाँ से छोड़ा था वहीं से जारी रखूँ, या नए सिरे से शुरू करूँ?"
+            if hi else
+            "Your call dropped last time before the booking finished. Shall I continue where we left off, or start fresh?")
+
+
+def spelling_prompt(lang: str) -> str:
+    hi = lang == "hi"
+    return "नाम एक-एक अक्षर करके बताएँगे?" if hi else "Could you spell the name out for me, letter by letter?"
+
+
+def spelling_readback(spelled: str, lang: str) -> str:
+    hi = lang == "hi"
+    return (f"मैंने सुना {spelled.upper()} -- क्या यह ठीक है?" if hi
+            else f"I heard {spelled.upper()} -- is that right?")

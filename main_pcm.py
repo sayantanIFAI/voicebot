@@ -70,6 +70,7 @@ import io
 import json
 import logging
 import os
+import secrets
 import tempfile
 import time
 import uuid
@@ -77,31 +78,61 @@ import wave
 
 import torchaudio
 from agent.pcm_buffer import PcmCallBuffer, SAMPLE_RATE
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-
-from agent.asr import TurnASR
-from agent.llm import extract_intent, ExtractionError
-from agent.reply_templates import (
-    missing_slot_prompt, test_rate_reply, doctor_availability_reply, booking_reply,
-    test_prep_reply, clinic_faq_reply,
-)
-from agent.fast_path import Catalogue, FastPath
-from agent.semantic_cache import SemanticCache, embed as _embed_probe
-from agent.tools_client import ClinicToolsClient, ToolCallError
-from agent.tts import TTSClient
-from agent.vad_stream import TurnDetector
-import secrets
-
-from fastapi import Header, HTTPException
 from pydantic import BaseModel
 
 from agent.admission import AdmissionController, HealthMonitor, http_probe
+from agent.asr import TurnASR
 from agent.asr_router import ASRRouter, HTTPASREngine, UnroutableLanguageError
-from agent.lid import ASRLanguageRouter, LIDResult, SUPPORTED_LANGUAGES, SpeechBrainVoxLingua107LID
+from agent.booking_flow import (
+    BookingState,
+    classify_yes_no,
+    effective_phone,
+    is_ready_to_confirm,
+    mark_awaiting_charge_confirm,
+    mark_confirming,
+    merge_slots,
+    merge_spelling,
+    missing_required,
+    new_state,
+)
+from agent.fast_path import Catalogue, FastPath
+from agent.lang_select import languages_to_verify, pick_candidate
+from agent.lang_select import speakable as _speakable
+from agent.lid import (
+    SUPPORTED_LANGUAGES,
+    ASRLanguageRouter,
+    LIDResult,
+    SpeechBrainVoxLingua107LID,
+)
+from agent.llm import ExtractionError, extract_intent
 from agent.phrases import HANDOFF_ALL_LANGUAGES, phrase, prewarm_lines
-from agent.lang_select import languages_to_verify, pick_candidate, speakable as _speakable
+from agent.reply_templates import (
+    add_test_reply,
+    booking_confirmation_readback,
+    booking_reply,
+    cancel_reply,
+    clinic_faq_reply,
+    conflict_reply,
+    department_route_reply,
+    doctor_availability_reply,
+    lookup_reply,
+    missing_slot_prompt,
+    multi_test_reply,
+    reschedule_reply,
+    resend_reply,
+    spelling_prompt,
+    spelling_readback,
+    test_prep_reply,
+    test_rate_reply,
+)
+from agent.semantic_cache import SemanticCache
+from agent.semantic_cache import embed as _embed_probe
+from agent.tools_client import ClinicToolsClient, ToolCallError
+from agent.tts import TTSClient
 from agent.tts_router import TTSRouter
+from agent.vad_stream import TurnDetector
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
@@ -466,6 +497,18 @@ class CallSession:
         self.turn_started_at: float | None = None
         self.admission = None
 
+        # Epic E26: the in-progress booking/reschedule/cancel/add-test flow
+        # for this call, if any -- see agent/booking_flow.py. One at a time;
+        # a caller starting a second booking mid-flow replaces it (their
+        # most recent words win, same principle as merge_slots' overwrite
+        # rule). No real telephony CallerID exists yet (see HANDOVER.md /
+        # CLAUDE.md's "STILL NOT BUILT" notes), so there is no independent
+        # "number this call came from" distinct from whatever contact phone
+        # the caller states -- booking_service's proxy-authorisation model
+        # is real, but is only as strong as a phone-based system without
+        # SIP CallerID can be until that lands.
+        self.booking: BookingState | None = None
+
     def hold_gate_for(self, audio_duration_s: float):
         """Called before each reply goes out. Extends rather than replaces
         the deadline: replies queue on the client, so a second clip starts
@@ -651,7 +694,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.turn_started_at = time.monotonic()
         try:
             lang, asr_result = await _route_and_transcribe(session, utterance_wav)
-        except Exception as e:  # noqa: BLE001 - a dead ASR must not leave the caller in silence
+        except Exception as e:
             logger.exception("[%s] ASR/LID stage failed: %s", session.call_id, e)
             await _speak(session, phrase("llm_failure", session.lang), session.lang,
                          fallback_reason="llm_failure")
@@ -672,6 +715,16 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _speak(session, phrase("asr_empty", lang), lang, fallback_reason="asr_empty")
             return
         await session.send_json("User", text)
+
+        # Epic E26: a booking/reschedule/cancel/add-test confirmation
+        # already in progress is a closed yes/no question -- answered
+        # deterministically (agent/booking_flow.classify_yes_no), with NO
+        # LLM round trip, both for the zero-extra-latency requirement and
+        # because CLAUDE.md's truth boundary keeps exactly this kind of
+        # high-stakes binary decision out of the model's hands.
+        if session.booking is not None and session.booking.stage in ("confirming", "awaiting_charge_confirm"):
+            await _handle_booking_confirmation_turn(session, text, lang)
+            return
 
         try:
             data = await _resolve_intent(session, text, lang)
@@ -723,19 +776,266 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 await _speak(session, clinic_faq_reply(slots, result, lang), lang)
 
             elif intent == "book_appointment":
-                for field in ("doctor_name", "date", "time_slot", "patient_name", "phone"):
-                    if not slots.get(field):
-                        await _speak(session, missing_slot_prompt(intent, field, lang), lang)
+                if session.booking is None or session.booking.action != "book_appointment":
+                    session.booking = new_state("book_appointment")
+                st = session.booking
+                merge_slots(st, slots)
+
+                # Secure the hold as soon as doctor+date+time are known, even
+                # if patient details are still missing -- KCD-376: the
+                # concurrency guard must run before the caller has spoken a
+                # patient name, not after.
+                if st.hold_token is None and st.slots.get("doctor_name") and st.slots.get("date") \
+                        and st.slots.get("time_slot"):
+                    hold = await _tools.hold_slot(st.slots["doctor_name"], st.slots["date"], st.slots["time_slot"])
+                    if not hold.get("success"):
+                        await _speak(session, booking_reply(st.slots, hold, lang), lang)
+                        st.slots.pop("time_slot", None)   # keep doctor/date, re-collect just the time
                         return
-                result = await _tools.book_appointment(
-                    slots["doctor_name"], slots["date"], slots["time_slot"],
-                    slots["patient_name"], slots["phone"],
-                )
-                await _speak(session, booking_reply(slots, result, lang), lang)
+                    st.hold_token, st.hold_doctor_id = hold["hold_token"], hold["doctor_id"]
+
+                # KCD-368: a caller may spell a name unprompted, or after
+                # being offered it below -- either way, letters heard this
+                # turn are assembled and used before anything else is
+                # asked, so an eager caller is never told to repeat
+                # themselves. Confirmed by readback like every other slot.
+                if not st.slots.get("patient_name") and slots.get("spelled_letters"):
+                    spelled = merge_spelling(st, slots["spelled_letters"])
+                    if spelled:
+                        st.slots["patient_name"] = spelled.capitalize()
+                        await _speak(session, spelling_readback(spelled, lang), lang)
+                        return
+
+                missing = missing_required(st)
+                if missing:
+                    field_name = missing[0]
+                    if field_name == "phone" and st.note_retry("phone") >= 2:
+                        # KCD-370: a caller who won't give a number still
+                        # gets the booking, told plainly what that costs
+                        # them, instead of being blocked here forever.
+                        st.phone_declined = True
+                    elif field_name == "patient_name" and st.note_retry("patient_name") >= 2:
+                        # KCD-368: offered proactively after one failed
+                        # capture, not only when the caller asks for it.
+                        await _speak(session, spelling_prompt(lang), lang)
+                        return
+                    else:
+                        await _speak(session, missing_slot_prompt(intent, field_name, lang), lang)
+                        return
+                    missing = missing_required(st)
+                    if missing:
+                        await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                        return
+
+                # Skipped when no real phone exists to check by -- the
+                # "not_provided" sentinel must never be used as a lookup
+                # key, or two different callers who both declined to give
+                # a number would appear to conflict with EACH OTHER.
+                if effective_phone(st) != "not_provided" and not st.slots.get("_conflict_checked"):
+                    conflict = await _tools.booking_conflict(
+                        effective_phone(st), st.slots["date"], st.slots["time_slot"])
+                    st.slots["_conflict_checked"] = "1"
+                    if conflict.get("conflict"):
+                        await _speak(session, conflict_reply(conflict["existing"], lang), lang)
+                        return
+
+                if is_ready_to_confirm(st):
+                    mark_confirming(st)
+                    if st.phone_declined:
+                        await _speak(session, phrase("no_confirmation_number", lang), lang)
+                    await _speak(session, booking_confirmation_readback(st.slots, "book_appointment", lang), lang)
+
+            elif intent == "book_test":
+                if session.booking is None or session.booking.action != "book_test":
+                    session.booking = new_state("book_test")
+                st = session.booking
+                merge_slots(st, slots)
+                st.slots["_test_names_display"] = st.test_names
+                missing = missing_required(st)
+                if missing:
+                    field_name = missing[0]
+                    if field_name == "phone" and st.note_retry("phone") >= 2:
+                        st.phone_declined = True
+                    else:
+                        await _speak(session, missing_slot_prompt(intent, field_name, lang), lang)
+                        return
+                    missing = missing_required(st)
+                    if missing:
+                        await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                        return
+                if is_ready_to_confirm(st):
+                    mark_confirming(st)
+                    if st.phone_declined:
+                        await _speak(session, phrase("no_confirmation_number", lang), lang)
+                    await _speak(session, booking_confirmation_readback(st.slots, "book_test", lang), lang)
+
+            elif intent == "reschedule_appointment":
+                if session.booking is None or session.booking.action != "reschedule_appointment":
+                    session.booking = new_state("reschedule_appointment")
+                st = session.booking
+                merge_slots(st, slots)
+                if not st.slots.get("confirmation_id") and slots.get("phone"):
+                    found = await _tools.lookup_bookings(phone=slots["phone"])
+                    if found.get("bookings"):
+                        st.slots["confirmation_id"] = found["bookings"][0]["confirmation_id"]
+                missing = missing_required(st)
+                if missing:
+                    await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                    return
+                if is_ready_to_confirm(st):
+                    mark_confirming(st)
+                    await _speak(session, booking_confirmation_readback(st.slots, "reschedule_appointment", lang), lang)
+
+            elif intent == "cancel_appointment":
+                if session.booking is None or session.booking.action != "cancel_appointment":
+                    session.booking = new_state("cancel_appointment")
+                st = session.booking
+                merge_slots(st, slots)
+                if not st.slots.get("confirmation_id") and slots.get("phone"):
+                    found = await _tools.lookup_bookings(phone=slots["phone"])
+                    if found.get("bookings"):
+                        st.slots["confirmation_id"] = found["bookings"][0]["confirmation_id"]
+                missing = missing_required(st)
+                if missing:
+                    await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                    return
+                if is_ready_to_confirm(st):
+                    mark_confirming(st)
+                    await _speak(session, booking_confirmation_readback(st.slots, "cancel_appointment", lang), lang)
+
+            elif intent == "add_test_booking":
+                if session.booking is None or session.booking.action != "add_test_booking":
+                    session.booking = new_state("add_test_booking")
+                st = session.booking
+                merge_slots(st, slots)
+                missing = missing_required(st)
+                if missing:
+                    await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                    return
+                if is_ready_to_confirm(st):
+                    mark_confirming(st)
+                    await _speak(session, booking_confirmation_readback(st.slots, "add_test_booking", lang), lang)
+
+            elif intent == "lookup_booking":
+                if not (slots.get("phone") or slots.get("confirmation_id")):
+                    await _speak(session, missing_slot_prompt(intent, "phone", lang), lang)
+                    return
+                result = await _tools.lookup_bookings(
+                    phone=slots.get("phone"), confirmation_id=slots.get("confirmation_id"))
+                await _speak(session, lookup_reply(result.get("bookings") or [], lang), lang)
+
+            elif intent == "resend_confirmation":
+                confirmation_id = slots.get("confirmation_id")
+                if not confirmation_id and slots.get("phone"):
+                    found = await _tools.lookup_bookings(phone=slots["phone"])
+                    if found.get("bookings"):
+                        confirmation_id = found["bookings"][0]["confirmation_id"]
+                if not confirmation_id:
+                    await _speak(session, missing_slot_prompt("cancel_appointment", "confirmation_id", lang), lang)
+                    return
+                result = await _tools.resend_confirmation(confirmation_id)
+                await _speak(session, resend_reply(result, lang), lang)
+
+            elif intent == "department_query":
+                symptom = slots.get("symptom_description")
+                if not symptom:
+                    await _speak(session, phrase("unclear", lang), lang)
+                    return
+                result = await _tools.route_department(symptom, lang)
+                await _speak(session, department_route_reply(result, symptom, lang), lang)
 
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
             await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
+
+
+async def _handle_booking_confirmation_turn(session: CallSession, text: str, lang: str) -> None:
+    """The caller's answer to a "shall I confirm this?" readback --
+    resolved deterministically (see the classify_yes_no call site in
+    _dispatch_turn), never via the LLM.
+
+    "no" means different things by action: for cancel_appointment there is
+    nothing to correct, so "no" simply aborts it (KCD-372's spirit -- the
+    caller was asked once with the charge stated, a "no" ends it there).
+    For every other action, "no" re-opens collection instead of discarding
+    the booking, because the far more common reason a caller says "no"
+    here is "something's wrong", not "forget the whole thing" -- and
+    KCD-367 explicitly asks for a correction to re-enter slot filling
+    rather than restart. An unrecognised answer just repeats the question
+    rather than guessing which the caller meant."""
+    st = session.booking
+    assert st is not None
+    answer = classify_yes_no(text, lang)
+
+    if answer is None:
+        await _speak(session, booking_confirmation_readback(st.slots, st.action, lang), lang)
+        return
+
+    if answer == "no":
+        if st.action == "cancel_appointment":
+            await _speak(session, phrase("cancel_aborted", lang), lang)
+            session.booking = None
+            return
+        st.stage = "collecting"
+        st.pending_charge_inr = None
+        await _speak(session, missing_slot_prompt(st.action,
+                     "doctor_name" if st.action == "book_appointment" else "date", lang), lang)
+        return
+
+    # answer == "yes": commit for real.
+    try:
+        if st.action == "book_appointment":
+            phone = effective_phone(st)
+            result = await _tools.confirm_booking(
+                st.hold_token, st.hold_doctor_id, st.slots["date"], st.slots["time_slot"],
+                st.slots["patient_name"], phone, caller_phone=phone,
+                patient_age=st.slots.get("patient_age"), relationship=st.slots.get("relationship") or "self",
+            )
+            await _speak(session, booking_reply(st.slots, result, lang), lang)
+            if result.get("success") or result.get("reason") != "hold_expired":
+                session.booking = None
+            else:
+                st.hold_token, st.stage = None, "collecting"   # let a retry re-hold
+
+        elif st.action == "book_test":
+            phone = effective_phone(st)
+            result = await _tools.book_tests(
+                st.test_names, st.slots["date"], st.slots["patient_name"], phone,
+                caller_phone=phone, patient_age=st.slots.get("patient_age"),
+                relationship=st.slots.get("relationship") or "self",
+            )
+            await _speak(session, multi_test_reply(result, lang), lang)
+            session.booking = None
+
+        elif st.action == "reschedule_appointment":
+            result = await _tools.reschedule_appointment(
+                st.slots["confirmation_id"], st.slots["new_date"], st.slots["new_time_slot"])
+            await _speak(session, reschedule_reply(result, lang), lang)
+            if result.get("success") or result.get("reason") != "slot_taken":
+                session.booking = None
+            else:
+                st.stage = "collecting"
+                st.slots.pop("new_time_slot", None)
+
+        elif st.action == "cancel_appointment":
+            confirm_charge = st.stage == "awaiting_charge_confirm"
+            result = await _tools.cancel_appointment(st.slots["confirmation_id"], confirm_charge)
+            if not result.get("success") and result.get("reason") == "charge_confirmation_required":
+                mark_awaiting_charge_confirm(st, result["charge_inr"])
+                await _speak(session, cancel_reply(result, lang), lang)
+                return
+            await _speak(session, cancel_reply(result, lang), lang)
+            session.booking = None
+
+        elif st.action == "add_test_booking":
+            result = await _tools.add_test_to_booking(st.slots["confirmation_id"], st.slots["test_name"])
+            await _speak(session, add_test_reply(result, lang), lang)
+            session.booking = None
+
+    except ToolCallError as e:
+        logger.error("[%s] clinic API call failed during booking confirmation: %s", session.call_id, e)
+        await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
+        session.booking = None
 
 
 async def _resync_after_playback(session: CallSession) -> bool:

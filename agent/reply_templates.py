@@ -50,10 +50,22 @@ def missing_slot_prompt(intent: str, missing: str, lang: str = "bn") -> str:
         ("doctor_availability", "doctor_name"): "কোন ডাক্তারের কথা জিজ্ঞেস করছেন?",
         ("book_appointment", "doctor_name"): "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?",
         ("book_appointment", "date"): "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?",
+        ("book_appointment", "time_slot"): "কোন সময়ের জন্য অ্যাপয়েন্টমেন্ট চাই?",
         ("book_appointment", "patient_name"): "রোগীর নামটা বলবেন?",
         ("book_appointment", "phone"): "একটা ফোন নম্বর দেবেন, যাতে কনফার্মেশন পাঠাতে পারি?",
         ("test_prep", "test_name"): "কোন টেস্টের প্রস্তুতি জানতে চান, একটু বলবেন?",
         ("clinic_faq", "faq_topic"): "দুঃখিত, ঠিক বুঝতে পারলাম না। আর একটু বলবেন?",
+        ("book_test", "test_names"): "কোন টেস্টগুলো বুক করতে চান, একটু বলবেন?",
+        ("book_test", "date"): "কোন দিনের জন্য টেস্ট করাতে চান?",
+        ("book_test", "patient_name"): "রোগীর নামটা বলবেন?",
+        ("book_test", "phone"): "একটা ফোন নম্বর দেবেন, যাতে কনফার্মেশন পাঠাতে পারি?",
+        ("reschedule_appointment", "confirmation_id"): "আপনার কনফার্মেশন নম্বরটা বা যে নম্বর থেকে বুক করেছিলেন সেটা বলবেন?",
+        ("reschedule_appointment", "new_date"): "কোন দিনে নিয়ে যেতে চান?",
+        ("reschedule_appointment", "new_time_slot"): "কোন সময়ে নিয়ে যেতে চান?",
+        ("cancel_appointment", "confirmation_id"): "আপনার কনফার্মেশন নম্বরটা বা যে নম্বর থেকে বুক করেছিলেন সেটা বলবেন?",
+        ("add_test_booking", "confirmation_id"): "আপনার কনফার্মেশন নম্বরটা বলবেন?",
+        ("add_test_booking", "test_name"): "কোন টেস্টটা যোগ করতে চান?",
+        ("lookup_booking", "phone"): "যে নম্বর থেকে বুক করেছিলেন সেটা বলবেন?",
     }
     return prompts.get((intent, missing), "দুঃখিত, একটু স্পষ্ট করে বলবেন?")
 
@@ -137,4 +149,171 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         return "ওই সময়টা বুক হয়ে গেছে, এবং কাছাকাছি কোনো সময় ফাঁকা নেই।"
     if reason == "doctor_not_found":
         return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার খুঁজে পেলাম না।"
+    if reason == "doctor_not_available_that_day":
+        return "দুঃখিত, ওই দিন ডাক্তার বসেন না। অন্য কোনো দিন বলবেন?"
+    if reason == "invalid_slot":
+        return "দুঃখিত, ওই সময়টা ঠিক নেই। চেম্বারের সময়ের মধ্যে একটা সময় বলবেন?"
+    if reason == "date_in_past":
+        # KCD-363: never silently rolled forward -- stated plainly, and
+        # the caller is offered the same weekday next week.
+        return "ওই তারিখটা তো চলে গেছে। আগামী সপ্তাহে ওই দিনের জন্য বুক করব?"
+    if reason == "hold_expired":
+        return "দুঃখিত, সময়টা ধরে রাখা যায়নি, একটু দেরি হয়ে গেছে। আবার চেষ্টা করি?"
     return "দুঃখিত, অ্যাপয়েন্টমেন্ট বুক করা গেল না। একটু পরে আবার চেষ্টা করুন, অথবা কাউন্টারে যোগাযোগ করুন।"
+
+
+def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") -> str:
+    """Read back what is about to be written BEFORE it is written -- the
+    step KCD-367/369 depend on: a caller who spots a mistake here corrects
+    it before anything is committed, not after."""
+    if lang != "bn":
+        return _i18n.booking_confirmation_readback(slots, action, lang)
+    if action == "book_appointment":
+        return (f"তাহলে {slots.get('doctor_name')} ডাক্তারের কাছে {slots.get('date')} তারিখে, "
+                f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')}, "
+                f"ফোন নম্বর {slots.get('phone')} -- এই অ্যাপয়েন্টমেন্টটা কনফার্ম করব?")
+    if action == "book_test":
+        tests = "、".join(slots.get("_test_names_display", [])) or "টেস্ট"
+        return (f"তাহলে {slots.get('date')} তারিখে {tests} -- রোগীর নাম {slots.get('patient_name')}, "
+                f"ফোন নম্বর {slots.get('phone')} -- এই বুকিংটা কনফার্ম করব?")
+    if action == "reschedule_appointment":
+        return f"তাহলে অ্যাপয়েন্টমেন্টটা {slots.get('new_date')} তারিখে, সময় {slots.get('new_time_slot')}-এ নিয়ে যাব?"
+    if action == "cancel_appointment":
+        return "আপনার অ্যাপয়েন্টমেন্টটা বাতিল করে দেব?"
+    if action == "add_test_booking":
+        return f"তাহলে আপনার বুকিং-এ {slots.get('test_name')} টেস্টটা যোগ করে দেব?"
+    return "এটা কনফার্ম করব?"
+
+
+def reschedule_reply(result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.reschedule_reply(result, lang)
+    if result.get("success"):
+        return (f"আপনার অ্যাপয়েন্টমেন্টটা {result['date']} তারিখে, সময় {result['time_slot']}-এ "
+                f"পাল্টে দেওয়া হয়েছে। নতুন কনফার্মেশন নম্বর: {result['confirmation_id']}।")
+    reason = result.get("reason")
+    if reason == "not_found":
+        return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো অ্যাপয়েন্টমেন্ট খুঁজে পেলাম না।"
+    if reason == "slot_taken":
+        alts = result.get("alternative_slots") or []
+        if alts:
+            return f"ওই সময়টা বুক হয়ে গেছে। এই সময়গুলো ফাঁকা আছে: {', '.join(alts)}। কোনটা চান?"
+        return "ওই সময়টা বুক হয়ে গেছে। আপনার আগের অ্যাপয়েন্টমেন্টটা ঠিক আগের মতোই আছে।"
+    return "দুঃখিত, অ্যাপয়েন্টমেন্টটা পাল্টানো গেল না। আপনার আগের অ্যাপয়েন্টমেন্টটা ঠিক আগের মতোই আছে।"
+
+
+def cancel_reply(result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.cancel_reply(result, lang)
+    reason = result.get("reason")
+    if reason == "charge_confirmation_required":
+        charge = result["charge_inr"]
+        return (f"এই সময়ে বাতিল করলে {charge} টাকা কাটা যাবে। তাও কি বাতিল করব?")
+    if result.get("success"):
+        charge = result.get("charge_inr") or 0
+        if charge:
+            return f"আপনার অ্যাপয়েন্টমেন্টটা বাতিল করা হয়েছে। {charge} টাকা কাটা হয়েছে।"
+        return "আপনার অ্যাপয়েন্টমেন্টটা কোনো চার্জ ছাড়াই বাতিল করা হয়েছে।"
+    if reason == "not_found":
+        return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো অ্যাপয়েন্টমেন্ট খুঁজে পেলাম না।"
+    return "দুঃখিত, বাতিল করা গেল না। কাউন্টারে যোগাযোগ করুন।"
+
+
+def lookup_reply(bookings: list[dict], lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.lookup_reply(bookings, lang)
+    if not bookings:
+        return "দুঃখিত, আপনার নামে কোনো আসন্ন অ্যাপয়েন্টমেন্ট খুঁজে পেলাম না।"
+    b = bookings[0]
+    return (f"আপনার পরবর্তী অ্যাপয়েন্টমেন্ট: {b.get('doctor_name')} ডাক্তারের কাছে, "
+            f"{b['date']} তারিখে, সময় {b['time_slot']}-এ। কনফার্মেশন নম্বর: {b['confirmation_id']}। "
+            f"লিখিত কনফার্মেশনটা আবার পাঠিয়ে দিতে পারি, চাইলে বলবেন।")
+
+
+def multi_test_reply(result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.multi_test_reply(result, lang)
+    if not result.get("success"):
+        return "দুঃখিত, টেস্টগুলো বুক করা গেল না। একটু পরে আবার চেষ্টা করুন।"
+    names = "、".join(result["test_names"])
+    reply = (f"{names} -- এই টেস্টগুলো {result['date']} তারিখে বুক করা হয়েছে। "
+             f"মোট খরচ {result['total_rate_inr']} টাকা। কনফার্মেশন নম্বর: {result['confirmation_id']}।")
+    if result.get("combined_prep"):
+        reply += f" প্রস্তুতি: {result['combined_prep']}"
+    return reply
+
+
+def add_test_reply(result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.add_test_reply(result, lang)
+    if result.get("success"):
+        return f"{result['test_name']} টেস্টটা আপনার {result['date']} তারিখের বুকিং-এ যোগ করা হয়েছে।"
+    reason = result.get("reason")
+    if reason == "not_found":
+        return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো টেস্ট বুকিং খুঁজে পেলাম না।"
+    if reason == "test_not_found":
+        return "দুঃখিত, এই নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
+    if reason == "already_booked":
+        return "এই টেস্টটা তো আগে থেকেই আপনার বুকিং-এ আছে।"
+    return "দুঃখিত, টেস্টটা যোগ করা গেল না।"
+
+
+def resend_reply(result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.resend_reply(result, lang)
+    if result.get("success"):
+        return f"কনফার্মেশনটা আবার পাঠিয়ে দেওয়া হয়েছে, নম্বর শেষ হচ্ছে {result['sent_to_last4']} দিয়ে।"
+    reason = result.get("reason")
+    if reason == "rate_limited":
+        return "একটু আগেই পাঠানো হয়েছে। একটু অপেক্ষা করে আবার বলবেন।"
+    return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো বুকিং খুঁজে পেলাম না।"
+
+
+def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.department_route_reply(result, symptom, lang)
+    if result.get("matched"):
+        # Administrative routing only, never a diagnosis.
+        return f"এই সমস্যার জন্য {result['department_name']} বিভাগে দেখানো ভালো হবে। ডাক্তারের অ্যাপয়েন্টমেন্ট করে দেব?"
+    if result.get("ambiguous"):
+        return f"এটা {' অথবা '.join(result['candidates'])} -- দুটোর যেকোনো একটা বিভাগ হতে পারে। কোনটা বলবেন?"
+    return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
+
+
+def conflict_reply(conflict: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.conflict_reply(conflict, lang)
+    return (f"আপনার তো ওই সময়ে আগে থেকেই একটা অ্যাপয়েন্টমেন্ট আছে -- {conflict.get('doctor_name')} ডাক্তারের কাছে, "
+            f"{conflict['date']} তারিখে, সময় {conflict['time_slot']}-এ। আগেরটা রাখব, পাল্টাব, নাকি নতুন করে যোগ করব?")
+
+
+def earliest_available_reply(result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.earliest_available_reply(result, lang)
+    if not result.get("found"):
+        return f"দুঃখিত, '{result.get('query')}' নামে কোনো ডাক্তার খুঁজে পেলাম না।"
+    if not result.get("available"):
+        return f"দুঃখিত, {result.get('doctor_name')} ডাক্তারের কাছাকাছি সময়ে কোনো ফাঁকা সময় নেই। পরে আবার ফোন করলে জানাতে পারব।"
+    reply = f"সবচেয়ে তাড়াতাড়ি ফাঁকা আছে {result['date']} তারিখে, সময় {result['time_slot']}-এ।"
+    alts = result.get("alternatives") or []
+    if alts:
+        reply += f" এছাড়াও: {', '.join(alts)}।"
+    return reply
+
+
+def draft_resume_reply(draft: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.draft_resume_reply(draft, lang)
+    return "গত বার কল কেটে গিয়েছিল, আপনার বুকিং শেষ হয়নি। যেখানে ছিলাম সেখান থেকে চালিয়ে যাব, নাকি নতুন করে শুরু করব?"
+
+
+def spelling_prompt(lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.spelling_prompt(lang)
+    return "নামটা একটু বানান করে বলবেন, এক একটা অক্ষর করে?"
+
+
+def spelling_readback(spelled: str, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.spelling_readback(spelled, lang)
+    return f"আমি শুনলাম {spelled.upper()} -- ঠিক আছে?"

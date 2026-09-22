@@ -35,7 +35,11 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
 
 VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment",
-                  "test_prep", "clinic_faq", "smalltalk", "unclear"}
+                  "test_prep", "clinic_faq", "smalltalk", "unclear",
+                  # Epic E26 -- booking, rescheduling and cancellation
+                  "book_test", "reschedule_appointment", "cancel_appointment",
+                  "lookup_booking", "add_test_booking", "resend_confirmation",
+                  "department_query"}
 
 # The FAQ topic keys FastPath.FAQCatalogue matches locally against
 # /api/v1/catalogue's faq_topics. Kept here too, as a fixed enum for the
@@ -56,7 +60,14 @@ YOUR ONLY JOB is to classify intent and pull out slots that are LITERALLY presen
 INTENTS (exactly one):
 - "test_rate": caller is asking the price/rate of a diagnostic test.
 - "doctor_availability": caller is asking whether/when a named doctor is available.
-- "book_appointment": caller wants to book, confirm, or reschedule an appointment.
+- "book_appointment": caller wants to book a NEW appointment with a doctor.
+- "book_test": caller wants to book a lab test (or several), as opposed to just asking its price or prep.
+- "reschedule_appointment": caller wants to MOVE an appointment they already have to a different date/time. Fill "confirmation_id" if they state one, otherwise leave it null -- the system looks it up by phone instead.
+- "cancel_appointment": caller wants to cancel an appointment or test booking they already have.
+- "lookup_booking": caller is asking what they already have booked ("what's my appointment", "do I have anything booked").
+- "add_test_booking": caller wants to add a test to a booking they already have, rather than book a new, separate one.
+- "resend_confirmation": caller wants the confirmation message sent again (they lost it, didn't get it, etc.).
+- "department_query": caller describes a symptom or problem and needs to be routed to the right department, without naming a doctor or department themselves. Fill "symptom_description" with what they said, verbatim.
 - "test_prep": caller is asking how to prepare for a test (fasting, before/after instructions).
 - "clinic_faq": caller is asking a general clinic question with no specific test or doctor -- hours, location, payment methods, insurance, parking, report collection, contact number, or home sample collection. Fill "faq_topic" with exactly one of: {faq_topics}. If the question doesn't clearly match one of those topics, use "unclear" instead of guessing a topic.
 - "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself for this case only, in {language_name}, in that language's own script.
@@ -64,22 +75,38 @@ INTENTS (exactly one):
 
 SLOT RULES:
 - Only fill a slot if the caller's words support it. Leave it null rather than inferring.
-- "date": resolve relative time words (Bengali আজ/কাল/পরশু, Hindi आज/कल/परसों, English today/tomorrow/day after tomorrow, and this/next weekday names in any of these languages; আজ/आज=today, কাল/कल=tomorrow, পরশু/परसों=day after tomorrow) to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today".
+- "date" / "new_date": resolve relative time words (Bengali আজ/কাল/পরশু and "আগামী <weekday>", Hindi आज/कल/परसों and "अगले <weekday>", English today/tomorrow/day after tomorrow/"this <weekday>"/"next <weekday>") to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today". If the resolved date is clearly in the past, still return it as stated -- the system rejects and corrects past dates itself; you must never silently roll a date forward.
 - "test_name" / "doctor_name": copy the term as the caller said it (in {language_name} script, or English if they said it in English), do not translate or normalize it -- the lookup service handles matching.
+- "test_names": for "book_test", a list of every test name mentioned this turn, each copied as the caller said it, same rule as "test_name".
 - "faq_topic": only for "clinic_faq" -- one of the fixed topic keys above, never free text.
-- "phone": only if a phone number is explicitly spoken, digits only.
-- Never invent a patient name, phone number, or date that was not said.
+- "phone": the number to send the confirmation to, only if explicitly spoken, digits only.
+- "contact_phone": a phone number the caller gives that is DIFFERENT from the number they are calling from, for the confirmation message -- only when they say so explicitly (e.g. "send it to a different number").
+- "relationship": only when the caller says who the patient is to them and it is not themselves, e.g. "mother", "son", "wife" -- copy the relationship word as said, in {language_name}. Leave null if they are booking for themselves.
+- "patient_age": only if an age is explicitly spoken, as a number.
+- "confirmation_id" / "new_time_slot": only if explicitly spoken/known this turn.
+- "spelled_letters": if the caller is spelling a name letter by letter (e.g. "R, A, V, I"), a list of the individual letters in order, lowercase. Otherwise null.
+- "symptom_description": only for "department_query" -- the caller's own words describing the problem, never your own paraphrase or a diagnosis.
+- Never invent a patient name, phone number, confirmation number, or date that was not said.
 
 Output ONLY a single valid JSON object, no other text, in exactly this shape:
 {{
-  "intent": "test_rate" | "doctor_availability" | "book_appointment" | "test_prep" | "clinic_faq" | "smalltalk" | "unclear",
+  "intent": "test_rate" | "doctor_availability" | "book_appointment" | "book_test" | "reschedule_appointment" | "cancel_appointment" | "lookup_booking" | "add_test_booking" | "resend_confirmation" | "department_query" | "test_prep" | "clinic_faq" | "smalltalk" | "unclear",
   "slots": {{
     "test_name": string or null,
+    "test_names": array of strings or null,
     "doctor_name": string or null,
     "date": string or null,
     "time_slot": string or null,
+    "new_date": string or null,
+    "new_time_slot": string or null,
+    "confirmation_id": string or null,
     "patient_name": string or null,
+    "patient_age": number or null,
     "phone": string or null,
+    "contact_phone": string or null,
+    "relationship": string or null,
+    "spelled_letters": array of strings or null,
+    "symptom_description": string or null,
     "faq_topic": string or null
   }},
   "direct_reply_bn": string or null
@@ -125,7 +152,10 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
     if not isinstance(slots, dict):
         errors.append("slots: expected object")
     else:
-        for key in ("test_name", "doctor_name", "date", "time_slot", "patient_name", "phone", "faq_topic"):
+        for key in ("test_name", "test_names", "doctor_name", "date", "time_slot", "new_date",
+                    "new_time_slot", "confirmation_id", "patient_name", "patient_age", "phone",
+                    "contact_phone", "relationship", "spelled_letters", "symptom_description",
+                    "faq_topic"):
             if key not in slots:
                 errors.append(f"slots.{key}: missing")
     if data.get("intent") != "smalltalk" and data.get("direct_reply_bn") not in (None, ""):
