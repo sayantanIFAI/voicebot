@@ -306,6 +306,148 @@ def test_reschedule_onto_a_taken_slot_leaves_the_original_intact(clinic_modules)
         db.close()
 
 
+# ============================================================ KCD-486
+# "A confirmation number is spoken only after the write is verified" --
+# confirm_booking/reschedule_appointment now re-read the row after commit
+# rather than trusting that db.commit() not raising means the caller's
+# specific values landed. See booking_service._verify_appointment_persisted's
+# own docstring for why this matters more once a real system of record is
+# behind this function than it does against this prototype's SQLite today.
+
+def test_write_is_verified_before_a_confirmation_number_is_returned(clinic_modules):
+    # The ordinary path: verification passes, success looks exactly as it
+    # always did -- this is a regression guard that adding the check did
+    # not change the happy path's outcome shape.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        result = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "X", "111", "111")
+        assert result["success"] is True
+        assert result["confirmation_id"].startswith("KCD-")
+    finally:
+        db.close()
+
+
+def test_an_unverifiable_booking_write_holds_instead_of_confirming(clinic_modules):
+    # Simulates the system-of-record verification failing (the case that
+    # can't actually happen against this prototype's own SQLite -- see
+    # _verify_appointment_persisted's docstring) by monkeypatching it
+    # directly, to prove the CALLER (main.py) gets a distinct outcome it
+    # can hold-and-escalate on, never a confirmation number for a write
+    # that wasn't actually confirmed as landed.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+
+        original = bs._verify_appointment_persisted
+        bs._verify_appointment_persisted = lambda *a, **kw: False
+        try:
+            result = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "X", "111", "111")
+        finally:
+            bs._verify_appointment_persisted = original
+
+        assert result["success"] is False
+        assert result["reason"] == "write_unverified"
+        assert result["confirmation_id"].startswith("KCD-")   # logged, never spoken as confirmed
+    finally:
+        db.close()
+
+
+def test_an_unverifiable_reschedule_write_holds_instead_of_confirming(clinic_modules):
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slots = bs.available_slots(db, doc.id, date)
+        old_slot, new_slot = slots[0], slots[1]
+        hold = bs.hold_slot(db, doc.id, date, old_slot)
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, old_slot, "X", "111", "111")
+
+        original = bs._verify_appointment_persisted
+        bs._verify_appointment_persisted = lambda *a, **kw: False
+        try:
+            result = bs.reschedule_appointment(db, booked["confirmation_id"], date, new_slot)
+        finally:
+            bs._verify_appointment_persisted = original
+
+        assert result["success"] is False
+        assert result["reason"] == "write_unverified"
+    finally:
+        db.close()
+
+
+# ============================================================ KCD-487
+# "A reschedule swaps atomically or leaves the original intact... The
+# failure path is exercised by fault injection in the integration suite."
+# test_reschedule_onto_a_taken_slot_leaves_the_original_intact (above)
+# already covers the ORDINARY business-logic failure (slot taken); this
+# covers a genuine unexpected crash mid-transaction, which is what "fault
+# injection" actually means -- proving the atomicity guarantee holds even
+# when something goes wrong that the code did not anticipate, not just
+# when it correctly detects an expected condition.
+
+def test_a_fault_during_reschedule_leaves_the_original_appointment_untouched(clinic_modules):
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        doctor_id = doc.id   # captured now: `doc` is detached once this session closes below
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slots = bs.available_slots(db, doc.id, date)
+        old_slot, new_slot = slots[0], slots[1]
+        hold = bs.hold_slot(db, doc.id, date, old_slot)
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, old_slot, "X", "111", "111")
+        confirmation_id = booked["confirmation_id"]
+
+        # Let the FIRST db.commit() (hold_slot's own, claiming the new
+        # slot) succeed normally, then raise on the SECOND (reschedule_
+        # appointment's own final commit) -- simulating a crash after the
+        # new slot is provisionally held but before the swap is durable.
+        real_commit = db.commit
+        calls = {"n": 0}
+
+        def flaky_commit():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return real_commit()
+            raise RuntimeError("simulated database failure mid-reschedule")
+
+        db.commit = flaky_commit
+        try:
+            with pytest.raises(RuntimeError, match="simulated database failure"):
+                bs.reschedule_appointment(db, confirmation_id, date, new_slot)
+        finally:
+            db.commit = real_commit
+            db.rollback()
+    finally:
+        db.close()
+
+    # Verify from a FRESH session/connection, not the one the fault was
+    # injected into -- proves the failure never reached the database at
+    # all, not just that this session's own view looks right.
+    with db_mod.SessionLocal() as verify:
+        appt = verify.query(m.Appointment).filter_by(confirmation_id=confirmation_id).one()
+        assert appt.status == "confirmed"
+        assert appt.time_slot == old_slot, "the original appointment must be untouched by the failed swap"
+
+        leaked = verify.query(m.Appointment).filter_by(
+            doctor_id=doctor_id, date=date, time_slot=new_slot).all()
+        assert leaked == [], "no new appointment row may exist for a swap that never committed"
+
+        old_lock = verify.get(m.SlotLock, (doctor_id, date, old_slot))
+        assert old_lock is not None and old_lock.status == "confirmed", \
+            "the original slot lock must still be held, never deleted by the failed swap"
+
+
 def test_earliest_available_finds_the_soonest_free_slot(clinic_modules):
     # KCD-360: caller asks for the earliest available appointment.
     bs, db_mod, m = clinic_modules

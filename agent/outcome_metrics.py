@@ -71,3 +71,18 @@ fast_path_served = OutcomeCounter()
 # would justify the larger AEC-based barge-in project later. `intent` is
 # reused as a fixed literal key ("manual"); `lang` is the call's language.
 barge_in_interrupts = OutcomeCounter()
+
+# Call-intelligence outcomes (audio quality, re-asks, senior mode, language).
+# reask_outcomes: reason -> action ("reask" | "handoff") per language, so a
+# rising handoff share for one reason (say "crosstalk") is visible.
+reask_outcomes = OutcomeCounter()
+# audio_issue_buckets: what agent/audio_quality.py found on live turns,
+# whether or not the turn then failed -- the distribution to recalibrate
+# its thresholds against.
+audio_issue_buckets = OutcomeCounter()
+# language_mismatches: a reply in a different language from the question
+# (agent/language_policy.py). Should stay at zero; anything else is a defect.
+language_mismatches = OutcomeCounter()
+# senior_detections: how the senior mode was triggered (acoustic /
+# requested_slower / self_described / stated_age / remembered).
+senior_detections = OutcomeCounter()

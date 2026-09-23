@@ -233,3 +233,38 @@ before fixing; none were false positives, all 10 were applied:
   failures off-pod. That's expected — `scripts/gate.sh` itself only runs
   it when `VOICE_AGENT_ON_POD=1` is set. Don't mistake those failures for
   regressions from anything in this session's diff.
+
+---
+
+## 7. Update -- later the same day (read this before trusting section 2)
+
+Sections 1-6 describe the state at commit `02d7ae1`. Everything below was
+built AFTER it. Same rule as before: proven by local unit tests, not on a pod.
+
+### Done, tested, and wired into the call path
+| Story | What | Where |
+|---|---|---|
+| KCD-483..488 (E32) | 483/484/485 verified already satisfied; **486** post-commit write verification + hold/escalate; **487** fault-injection test; **488** versioned `CancellationPolicy` table. Also fixed `classify_yes_no("not sure") -> "yes"`. | `clinic-api/booking_service.py`, `models.py`, `agent/booking_flow.py` |
+| KCD-162 / 164 | Prosody logic extracted to `agent/prosody.py` and made testable; `.` sentence splitting, punctuation-aware pauses, every parameter per-request tunable. Audio cache pre-warm fixed to warm the SAME clauses `_speak` sends (my KCD-462 change had silently broken it). | `agent/prosody.py`, `tts_server.py`, `agent/tts.py` |
+| KCD-157 | Phone/ID grouping. **Fixed a real bug: `speed=0.8` was being sent as Coqui `length_scale`, so prices/phones were spoken ~35% FASTER, not slower.** Server now treats `speed` as a rate. | `agent/figures.py`, `agent/prosody.resolve_length_scale` |
+| KCD-149 / 155 / 084 / 087 | Appendix C speech policy, acknowledgement templates, senior-voice detector + persistence (`Patient.senior_mode`), language policy. | `agent/speech_policy.py`, `acknowledgement.py`, `senior_voice.py`, `language_policy.py` |
+| KCD-159 | Explicit pronunciation path (lexicon + acronym spelling; unknown words still block, KCD-455). | `agent/pronunciation.py` |
+| Audio robustness | Cross-talk (two-pitch) detection, Wiener-style noise filter + level gain, jumbled-transcript detection, and **empathetic re-ask (twice) before any hand-off**. | `agent/audio_quality.py`, `agent/reask_policy.py` |
+
+### NOT done -- do not report these as complete
+- **KCD-321** kill switch (per-intent/department, non-engineer UI, clean finish of in-flight calls)
+- **KCD-322** graceful drain on SIGTERM
+- **KCD-326** per-call resource bounds
+- **KCD-151** per-language verbalisation table registry + table-driven tests
+- **KCD-160 / 167** voice identity document + automated audio-fingerprint drift check
+- **KCD-161** first-clause streaming synthesis on the TTS server
+- **KCD-163** cancellable synthesis/playback (note: after a manual interrupt the server can still send already-rendered clauses)
+- **KCD-131 / 132** External-gated (real hospital/lab systems)
+- **KCD-150** External-gated (native-reviewer sign-off); KCD-159's 200-term sign-off also pending. ~70 lexicon entries exist, all unreviewed.
+
+### Things a reviewer must know
+- Every audio threshold (`audio_quality.py`, `senior_voice.py`) is REASONED and validated on SYNTHETIC signals only. The cross-talk threshold is *measured* on synthetic data (single voices <= 0.012, mixes >= 0.13); real handset audio will be messier. Recalibrate on real calls before trusting.
+- `senior_voice.py` is a heuristic prior, not an age classifier. It needs evidence over >= 2 clips, or an explicit request/stated age.
+- One existing test assertion was changed on purpose: `tests/test_speech_norm.py` pinned the *ungrouped* phone reading, which KCD-157 deliberately changes.
+- `/api/v1/patients/senior` is unauthenticated like every other clinic-api endpoint (Epic E14 gap); it exposes only a delivery-mode boolean per phone number.
+- `main.py` changes are compiled + PCM-regenerated + checked for undefined names; they are not exercised end-to-end.

@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import re
 
+from agent import pronunciation
+from agent.figures import id_groups, phone_groups, speak_grouped
+
 # ---------------------------------------------------------------- numbers
 
 _ONES_TO_99 = [
@@ -162,15 +165,6 @@ _RE_INT = re.compile(r"\d+")
 # owns the Bengali aliases (clinic-api seeds aliases_bn); this table is the
 # last-resort spoken form for the handful of fields the API returns in
 # English regardless of how the caller phrased the question.
-_LATIN_SPOKEN_BN = {
-    "blood": "রক্ত",
-    "urine": "মূত্র",
-    "stool": "মল",
-    "serum": "সিরাম",
-    "saliva": "লালা",
-    "swab": "সোয়াব",
-    "plasma": "প্লাজমা",
-}
 
 
 def _sub_int(match: re.Match) -> str:
@@ -199,8 +193,9 @@ def verbalize(text: str) -> str:
                    f"{time_to_bn_words(int(m.group(3)), int(m.group(4)))} পর্যন্ত"), text,
     )
     text = _RE_TIME.sub(lambda m: time_to_bn_words(int(m.group(1)), int(m.group(2))), text)
-    text = _RE_CONF_ID.sub(lambda m: spell_out(m.group(1)), text)
-    text = _RE_PHONE.sub(lambda m: digits_one_by_one(m.group(1)), text)
+    # KCD-157: grouped, with a beat between groups, so it can be written down.
+    text = _RE_CONF_ID.sub(lambda m: speak_grouped(id_groups(m.group(1)), spell_out), text)
+    text = _RE_PHONE.sub(lambda m: speak_grouped(phone_groups(m.group(1)), digits_one_by_one), text)
     text = _RE_DECIMAL.sub(
         lambda m: f"{number_to_bn_words(int(m.group(1)))} দশমিক {digits_one_by_one(m.group(2))}", text,
     )
@@ -209,8 +204,10 @@ def verbalize(text: str) -> str:
     # Whole-word, case-insensitive: only rewrites a Latin word we have a
     # spoken Bengali form for. Anything else Latin is left alone and
     # reported by `unspeakable_spans()` rather than silently mangled.
-    for latin, bn in _LATIN_SPOKEN_BN.items():
-        text = re.sub(rf"\b{latin}\b", bn, text, flags=re.IGNORECASE)
+    # KCD-159: the explicit pronunciation path (agent/pronunciation.py): a curated
+    # spoken form, an unlisted acronym spelled out, and anything else left Latin
+    # for unspeakable_spans() to report and block (KCD-455), never guessed at.
+    text = pronunciation.apply(text, "bn", _LETTER_BN)
 
     return re.sub(r"\s{2,}", " ", text).strip()
 

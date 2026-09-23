@@ -792,6 +792,22 @@ def lookup_booking(phone: str | None = Query(None), confirmation_id: str | None 
     return {"found": bool(rows), "bookings": rows}
 
 
+class SeniorModeRequest(BaseModel):
+    phone: str
+    senior: bool = True
+
+
+@app.post("/api/v1/patients/senior")
+def set_patient_senior(req: SeniorModeRequest, db: Session = Depends(get_db)):
+    """KCD-084: persist the delivery mode against the patient. Boolean only."""
+    return {"updated": bs.set_patient_senior(db, req.phone, req.senior)}
+
+
+@app.get("/api/v1/patients/senior")
+def get_patient_senior(phone: str = Query(...), db: Session = Depends(get_db)):
+    return {"senior": bs.get_patient_senior(db, phone)}
+
+
 @app.get("/api/v1/bookings/conflict")
 def booking_conflict(phone: str = Query(...), date: str = Query(...), time_slot: str = Query(...),
                       db: Session = Depends(get_db)):

@@ -49,9 +49,16 @@ voice sound like a machine, and it is fixable without changing models:
 Every one of these is tunable per-request (see SynthesizeRequest) so the
 settings can be A/B'd against a real handset without a redeploy.
 """
+import dataclasses
 import io
 import os
-import re
+
+# Pure prosody logic (splitting, pauses, trim, normalise) lives in
+# agent/prosody.py so it can be unit tested without a GPU; the repo root is
+# on PYTHONPATH (deploy/env.sh). Imported BEFORE the chdir below.
+from agent.prosody import (
+    ProsodyParams, assemble, resolve_length_scale, resolve_params, split_for_prosody,
+)
 
 # The AI4Bharat checkpoint's speaker manager resolves a RELATIVE path
 # ("models/v1/bn/fastpitch/speakers.pth") baked in at save time, against
@@ -98,91 +105,51 @@ DEFAULT_SPEAKER = os.environ.get("TTS_SPEAKER", "female")
 
 # >1 slows delivery. 1.08 measured as the point where the line stops
 # sounding hurried without starting to drag -- tune via /synthesize's
-# `speed` override before changing this default.
+# `length_scale` (raw) or `speed` (rate multiplier) override before
+# changing this default.
 DEFAULT_LENGTH_SCALE = float(os.environ.get("TTS_LENGTH_SCALE", "1.08"))
 
-# Silence inserted AFTER a chunk, by the punctuation that ended it.
-PAUSE_S = {"sentence": 0.28, "clause": 0.14, "none": 0.06}
-
-TARGET_PEAK = 0.89          # ~-1 dBFS; loud without clipping on phone speakers
-TRIM_THRESHOLD = 0.012      # below this is padding, not speech
-
-# Bengali sentence enders (danda + Latin punctuation, since clinic data
-# mixes both) and clause separators.
-_RE_SENTENCE = re.compile(r"([^।?!\n]+[।?!\n]?)")
-_RE_CLAUSE = re.compile(r"([^,;:]+[,;:]?)")
-
-MAX_CHUNK_CHARS = 90        # long single clauses still get a breath
+# Server-side defaults for every prosody parameter (agent/prosody.py
+# ProsodyParams). Any of them can be overridden on a single /synthesize
+# request, so delivery can be A/B tested against a real handset without a
+# redeploy (KCD-162).
+DEFAULT_PROSODY = ProsodyParams()
 
 
-def _split_for_prosody(text: str) -> list[tuple[str, str]]:
-    """-> [(chunk_text, pause_kind)]. Sentences first, then clauses inside
-    any sentence long enough that a listener would expect a breath."""
-    out: list[tuple[str, str]] = []
-    for raw_sentence in _RE_SENTENCE.findall(text):
-        sentence = raw_sentence.strip()
-        if not sentence:
-            continue
-        if len(sentence) <= MAX_CHUNK_CHARS:
-            out.append((sentence, "sentence"))
-            continue
-        clauses = [c.strip() for c in _RE_CLAUSE.findall(sentence) if c.strip()]
-        for i, clause in enumerate(clauses):
-            out.append((clause, "sentence" if i == len(clauses) - 1 else "clause"))
-    if not out:
-        out = [(text.strip(), "sentence")]
-    return out
-
-
-def _trim_silence(wav: np.ndarray) -> np.ndarray:
-    loud = np.where(np.abs(wav) > TRIM_THRESHOLD)[0]
-    if loud.size == 0:
-        return wav[:0]
-    return wav[loud[0]:loud[-1] + 1]
-
-
-def _normalize_peak(wav: np.ndarray) -> np.ndarray:
-    peak = float(np.max(np.abs(wav))) if wav.size else 0.0
-    return wav * (TARGET_PEAK / peak) if peak > 1e-6 else wav
-
-
-def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool) -> tuple[np.ndarray, int]:
+def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool,
+            params: ProsodyParams) -> tuple[np.ndarray, int]:
     synth = SYNTHESIZERS[lang]
     sample_rate = SAMPLE_RATES[lang]
     if hasattr(synth.tts_model, "length_scale"):
         synth.tts_model.length_scale = speed
 
-    chunks = _split_for_prosody(text) if pauses else [(text, "sentence")]
-    pieces: list[np.ndarray] = []
-
+    chunks = split_for_prosody(text, params.max_chunk_chars) if pauses else [(text, "sentence")]
+    rendered = []
     for chunk_text, pause_kind in chunks:
-        # split_sentences=False: this module already decided the chunking,
-        # and letting Coqui re-split would reintroduce the ragged joins.
-        raw = synth.tts(chunk_text, speaker_name=speaker, split_sentences=False)
-        wav = _trim_silence(np.asarray(raw, dtype=np.float32))
-        if wav.size == 0:
-            continue
-        pieces.append(wav)
-        if pauses:
-            pieces.append(np.zeros(int(PAUSE_S[pause_kind] * sample_rate), dtype=np.float32))
-
-    if not pieces:
-        return np.zeros(int(0.2 * sample_rate), dtype=np.float32), sample_rate
-
-    joined = np.concatenate(pieces)
-    # A short lead-in stops the very first phoneme being clipped by
-    # playback devices that ramp up on stream start.
-    return _normalize_peak(
-        np.concatenate([np.zeros(int(0.04 * sample_rate), dtype=np.float32), joined]),
-    ), sample_rate
+        # split_sentences=False: agent/prosody.py already decided the
+        # chunking, and letting Coqui re-split would reintroduce the
+        # ragged joins.
+        rendered.append((synth.tts(chunk_text, speaker_name=speaker, split_sentences=False), pause_kind))
+    return assemble(rendered, sample_rate, params, pauses), sample_rate
 
 
 class SynthesizeRequest(BaseModel):
     text: str
     lang: str = "bn"
     speaker: str | None = None
-    speed: float | None = None      # length_scale; >1 slower
+    speed: float | None = None      # speaking RATE multiplier: 1.0 normal, <1 slower (KCD-157)
+    length_scale: float | None = None   # raw FastPitch duration multiplier, >1 slower; wins over speed
     pauses: bool = True
+    # KCD-162: every prosody parameter tunable per request. Bounds are
+    # enforced by agent.prosody.resolve_params (a bad value is a 422, not
+    # a silent clamp).
+    pause_sentence_s: float | None = None
+    pause_clause_s: float | None = None
+    pause_none_s: float | None = None
+    trim_threshold: float | None = None
+    target_peak: float | None = None
+    max_chunk_chars: int | None = None
+    lead_in_s: float | None = None
 
 
 class UnsupportedLanguage(Exception):
@@ -197,6 +164,7 @@ def health():
         "speaker": DEFAULT_SPEAKER,
         "sample_rates": SAMPLE_RATES,
         "length_scale": DEFAULT_LENGTH_SCALE,
+        "prosody_defaults": dataclasses.asdict(DEFAULT_PROSODY),
     }
 
 
@@ -211,11 +179,18 @@ def synthesize(req: SynthesizeRequest):
             content=f'{{"error":"unsupported lang {req.lang!r}, have {list(SYNTHESIZERS)}"}}',
             media_type="application/json", status_code=422,
         )
+    overrides = {f: getattr(req, f) for f in dataclasses.asdict(DEFAULT_PROSODY)}
+    try:
+        length_scale = resolve_length_scale(DEFAULT_LENGTH_SCALE, req.speed, req.length_scale)
+        params = resolve_params(DEFAULT_PROSODY, overrides)
+    except ValueError as e:
+        return Response(content=f'{{"error":"{e}"}}', media_type="application/json", status_code=422)
     wav, sample_rate = _render(
         req.lang, req.text,
         req.speaker or DEFAULT_SPEAKER,
-        req.speed or DEFAULT_LENGTH_SCALE,
+        length_scale,
         req.pauses,
+        params,
     )
     buf = io.BytesIO()
     sf.write(buf, wav, sample_rate, format="WAV", subtype="PCM_16")
