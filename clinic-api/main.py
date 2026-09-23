@@ -63,6 +63,13 @@ def _ensure_seeded():
     from booking_migrate import migrate_booking_schema
     logging.getLogger("clinic-api").info("booking schema migration: %s", migrate_booking_schema())
 
+    # Epic E27 (information and enquiry): new columns on `lab_tests`.
+    # Column-ALTER only, same "before any ORM query" reasoning, same
+    # class of bug if this ran after the LabTest.count() query below
+    # instead of before it.
+    from enquiry_migrate import add_enquiry_columns
+    logging.getLogger("clinic-api").info("enquiry schema migration: %s", add_enquiry_columns())
+
     db = SessionLocal()
     try:
         if db.query(LabTest).count() == 0:
@@ -74,13 +81,17 @@ def _ensure_seeded():
             from seed import backfill_i18n
             logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
 
-        # Only now do departments/doctors definitely have rows -- either
-        # seed() just created them, or they already existed. Calling this
-        # any earlier seeds zero department routes on a brand-new database,
-        # because `departments` is still empty at that point in startup.
+        # Only now do departments/doctors/tests definitely have rows --
+        # either seed() just created them, or they already existed.
+        # Calling either of these any earlier seeds zero rows on a
+        # brand-new database, the exact bug finish_booking_schema_setup's
+        # own docstring documents.
         from booking_migrate import finish_booking_schema_setup
         logging.getLogger("clinic-api").info(
             "booking schema setup (routes/fees): %s", finish_booking_schema_setup())
+        from enquiry_migrate import backfill_enquiry_facts
+        logging.getLogger("clinic-api").info(
+            "enquiry facts backfill: %s", backfill_enquiry_facts(db))
     finally:
         db.close()
 

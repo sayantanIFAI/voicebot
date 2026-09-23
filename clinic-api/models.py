@@ -88,6 +88,19 @@ class LabTest(Base):
     prep_instructions_bn = Column(String, nullable=False, default="")
     prep_instructions_hi = Column(String, nullable=False, default="")
     prep_instructions_en = Column(String, nullable=False, default="")
+    # Structured prep facts (KCD-381/382), added by
+    # enquiry_migrate.add_enquiry_columns() on an existing DB. Kept
+    # alongside the free-text prep_instructions_* above (which stay the
+    # full spoken description) specifically so KCD-382's "merge to the
+    # strictest constraint across several tests" is a real MAX() over
+    # numbers, not string surgery on prose.
+    fasting_hours = Column(Integer, nullable=True)          # null = no fasting requirement
+    water_allowed_while_fasting = Column(Boolean, nullable=False, default=True)
+    home_collection_eligible = Column(Boolean, nullable=False, default=True)
+    prescription_required = Column(Boolean, nullable=False, default=False)
+    prescription_note_bn = Column(String, nullable=False, default="")
+    prescription_note_hi = Column(String, nullable=False, default="")
+    prescription_note_en = Column(String, nullable=False, default="")
 
 
 class FAQ(Base):
@@ -269,3 +282,200 @@ class DepartmentRoute(Base):
     keywords_en = Column(String, nullable=False, default="")
 
     department = relationship("Department")
+
+
+# =============================================================================
+# Epic E27: Information and Enquiry
+# =============================================================================
+
+class LabReport(Base):
+    """KCD-383/384: whether a report is ready, and delivering it. No
+    clinical VALUE is ever stored here -- the story is explicit that
+    nothing clinical is read aloud under it -- only the fact of
+    readiness, which is the only thing this file is allowed to state."""
+    __tablename__ = "lab_reports"
+    id = Column(Integer, primary_key=True)
+    confirmation_id = Column(String, nullable=False, index=True)   # the booking this report is for
+    patient_phone = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending")     # pending | ready
+    ready_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+
+
+class ReportDeliveryOTP(Base):
+    """The verify-then-deliver gate KCD-384 requires. Same placeholder
+    discipline as booking_service.queue_sms: the OTP is generated and
+    logged here, never actually sent by this prototype -- see
+    booking_service.queue_sms's docstring for the real send-path
+    integration point this would go through."""
+    __tablename__ = "report_delivery_otps"
+    id = Column(Integer, primary_key=True)
+    report_id = Column(Integer, ForeignKey("lab_reports.id"), nullable=False)
+    phone = Column(String, nullable=False)
+    otp_code = Column(String, nullable=False)
+    verified = Column(Boolean, nullable=False, default=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+
+class ReportDeliveryAudit(Base):
+    """Every delivery, with recipient and verification path -- KCD-384's
+    explicit audit requirement."""
+    __tablename__ = "report_delivery_audit"
+    id = Column(Integer, primary_key=True)
+    report_id = Column(Integer, ForeignKey("lab_reports.id"), nullable=False)
+    recipient_phone = Column(String, nullable=False)
+    verification_method = Column(String, nullable=False)   # "otp"
+    link_token = Column(String, nullable=False)
+    link_expires_at = Column(DateTime, nullable=False)
+    delivered_at = Column(DateTime, nullable=False)
+
+
+class DoctorLeave(Base):
+    """KCD-385: a doctor not sitting on an otherwise-scheduled day, with
+    a return date if known -- distinct from simply not having a
+    DoctorSchedule row for that weekday at all."""
+    __tablename__ = "doctor_leaves"
+    id = Column(Integer, primary_key=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
+    start_date = Column(String, nullable=False)     # ISO yyyy-mm-dd
+    end_date = Column(String, nullable=False)
+    return_date = Column(String, nullable=True)      # may be unknown
+
+    doctor = relationship("Doctor")
+
+
+class Package(Base):
+    """KCD-380/397: a health package bundling several tests at a bundled
+    price, so the comparison against booking them separately is a live
+    arithmetic computation (rate_inr sum from LabTest), never a number
+    the model states on its own."""
+    __tablename__ = "packages"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    name_bn = Column(String, nullable=False, default="")
+    name_hi = Column(String, nullable=False, default="")
+    bundled_price_inr = Column(Integer, nullable=False)
+    branch_restricted = Column(Boolean, nullable=False, default=False)
+
+
+class PackageTest(Base):
+    __tablename__ = "package_tests"
+    id = Column(Integer, primary_key=True)
+    package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=False)
+
+    package = relationship("Package")
+    lab_test = relationship("LabTest")
+
+
+class WalkInPolicy(Base):
+    """KCD-393: per-department (lab_test_id null) or per-test walk-in
+    eligibility. `queue_note_*` is a clinician-set, non-live expectation
+    string -- the story is explicit that the agent must never promise a
+    wait time it cannot verify, so this is deliberately NOT a live queue
+    count."""
+    __tablename__ = "walk_in_policies"
+    id = Column(Integer, primary_key=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=True)
+    allowed = Column(Boolean, nullable=False, default=True)
+    queue_note_bn = Column(String, nullable=False, default="")
+    queue_note_hi = Column(String, nullable=False, default="")
+    queue_note_en = Column(String, nullable=False, default="")
+
+
+class BillingLineItem(Base):
+    """KCD-389: what a patient owes. Owned by the hospital's own billing
+    system, which clinic-api simulates the same way it simulates the
+    rest of the hospital backend (unlike SMS or insurance, this is not a
+    third-party integration) -- see clinic-api/main.py's module
+    docstring for that framing."""
+    __tablename__ = "billing_line_items"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    confirmation_id = Column(String, nullable=True)
+    description = Column(String, nullable=False)
+    amount_inr = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="outstanding")   # outstanding | paid
+    created_at = Column(DateTime, nullable=False)
+
+
+class HomeCollectionCoverage(Base):
+    """KCD-387: postal-code serviceability for home sample collection,
+    a real coverage table rather than an estimate."""
+    __tablename__ = "home_collection_coverage"
+    id = Column(Integer, primary_key=True)
+    postal_code = Column(String, nullable=False, unique=True)
+    serviceable = Column(Boolean, nullable=False, default=False)
+    charge_inr = Column(Integer, nullable=False, default=0)
+    slot_note_bn = Column(String, nullable=False, default="")
+    slot_note_hi = Column(String, nullable=False, default="")
+    slot_note_en = Column(String, nullable=False, default="")
+
+
+class InsurancePolicy(Base):
+    """KCD-388: mock insurer-side policy records. Simulates what an
+    external insurer's API would return -- this prototype has no real
+    insurer integration, the same disclosed-placeholder discipline as
+    booking_service.queue_sms, and insurance_service.check_coverage()'s
+    docstring says so explicitly at the point a real integration would
+    replace this table with an HTTP call."""
+    __tablename__ = "insurance_policies"
+    id = Column(Integer, primary_key=True)
+    policy_number = Column(String, nullable=False, unique=True)
+    insurer_name = Column(String, nullable=False)
+    patient_phone = Column(String, nullable=False)
+    active = Column(Boolean, nullable=False, default=True)
+
+
+class InsuranceCoverageRule(Base):
+    __tablename__ = "insurance_coverage_rules"
+    id = Column(Integer, primary_key=True)
+    insurer_name = Column(String, nullable=False)
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=True)   # null = applies to all tests
+    coverage_percent = Column(Integer, nullable=False)
+    co_payment_inr = Column(Integer, nullable=False, default=0)
+
+
+class CallOutcome(Base):
+    """KCD-394: an out-of-scope question, captured rather than dropped --
+    feeds the coverage backlog by reason code."""
+    __tablename__ = "call_outcomes"
+    id = Column(Integer, primary_key=True)
+    call_id = Column(String, nullable=False)
+    reason_code = Column(String, nullable=False, default="out_of_scope")
+    caller_question = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+
+class DepartmentHours(Base):
+    """KCD-386: per-department hours, overriding the clinic-wide FAQ
+    "hours" entry where a department keeps different timing. Scoped to
+    department only, not department-and-branch: this prototype's seed
+    data (seed.py) models a single clinic with no branch concept
+    anywhere else in the schema, so adding one here alone, for one
+    story, would be schema surgery the rest of the system does not
+    support or need yet."""
+    __tablename__ = "department_hours"
+    id = Column(Integer, primary_key=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, unique=True)
+    hours_bn = Column(String, nullable=False)
+    hours_hi = Column(String, nullable=False, default="")
+    hours_en = Column(String, nullable=False, default="")
+    effective_from = Column(String, nullable=True)   # ISO date, null = always in effect
+
+
+class CallbackRequest(Base):
+    """KCD-398: a promised callback. No real outbound-calling system
+    exists (Epic E22/telephony infra) -- this records the promise and
+    its fulfilment status, the placeholder half of the same discipline
+    as SMS: never claim a call was placed that was not."""
+    __tablename__ = "callback_requests"
+    id = Column(Integer, primary_key=True)
+    phone = Column(String, nullable=False)
+    call_id = Column(String, nullable=False)
+    requested_window = Column(String, nullable=False)
+    reason = Column(String, nullable=False, default="")
+    status = Column(String, nullable=False, default="scheduled")   # scheduled | fulfilled | cancelled
+    created_at = Column(DateTime, nullable=False)
