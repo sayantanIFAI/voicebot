@@ -18,6 +18,7 @@ import unicodedata
 import uuid
 
 import booking_service as bs
+import enquiry_service as eq
 from db import SessionLocal, get_db
 from fastapi import Depends, FastAPI, Query
 from models import FAQ, Appointment, Department, Doctor, DoctorSchedule, LabTest
@@ -718,3 +719,139 @@ def save_draft_endpoint(req: DraftRequest, db: Session = Depends(get_db)):
 def get_draft_endpoint(phone: str = Query(...), db: Session = Depends(get_db)):
     draft = bs.find_draft(db, phone)
     return {"found": draft is not None, "draft": draft}
+
+
+# =============================================================================
+# Epic E27: information and enquiry
+# =============================================================================
+
+@app.get("/api/v1/doctors/{doctor_name}/leave")
+def doctor_leave_endpoint(doctor_name: str, date: str = Query(...), db: Session = Depends(get_db)):
+    doctor = _find_doctor(db, doctor_name)
+    if not doctor:
+        return {"found": False, "query": doctor_name}
+    leave = eq.doctor_leave_on(db, doctor.id, date)
+    return {"found": True, "doctor_name": doctor.name, "on_leave": leave is not None, "leave": leave}
+
+
+class PrepMergeRequest(BaseModel):
+    test_names: list[str]
+
+
+@app.post("/api/v1/tests/prep/merge")
+def prep_merge_endpoint(req: PrepMergeRequest, db: Session = Depends(get_db)):
+    ids, not_found = [], []
+    for name in req.test_names:
+        t = _find_test(db, name)
+        (ids if t else not_found).append(t.id if t else name)
+    result = eq.merge_prep_instructions(db, ids)
+    result["not_found"] = not_found
+    return result
+
+
+@app.get("/api/v1/packages/{name}")
+def package_endpoint(name: str, db: Session = Depends(get_db)):
+    return eq.compare_package_vs_separate(db, name)
+
+
+@app.get("/api/v1/walk-in")
+def walk_in_endpoint(department: str | None = Query(None), test_name: str | None = Query(None),
+                      db: Session = Depends(get_db)):
+    dept_id = None
+    if department:
+        dept = db.query(Department).filter(Department.name.ilike(f"%{department}%")).first()
+        dept_id = dept.id if dept else None
+    test_id = None
+    if test_name:
+        t = _find_test(db, test_name)
+        test_id = t.id if t else None
+    return eq.walk_in_policy(db, department_id=dept_id, lab_test_id=test_id)
+
+
+@app.get("/api/v1/billing/outstanding")
+def billing_outstanding_endpoint(phone: str = Query(...), db: Session = Depends(get_db)):
+    return eq.outstanding_balance(db, phone)
+
+
+@app.get("/api/v1/home-collection/eligibility")
+def home_collection_endpoint(test_name: str = Query(...), postal_code: str = Query(...),
+                              db: Session = Depends(get_db)):
+    t = _find_test(db, test_name)
+    if not t:
+        return {"found": False, "query": test_name}
+    return eq.home_collection_eligibility(db, t.id, postal_code)
+
+
+@app.get("/api/v1/insurance/coverage")
+def insurance_coverage_endpoint(policy_number: str = Query(...), test_name: str | None = Query(None),
+                                 db: Session = Depends(get_db)):
+    test_id = None
+    if test_name:
+        t = _find_test(db, test_name)
+        test_id = t.id if t else None
+    return eq.check_insurance_coverage(db, policy_number, test_id)
+
+
+@app.get("/api/v1/tests/{test_name}/prescription-requirement")
+def prescription_requirement_endpoint(test_name: str, lang: str = Query("bn"), db: Session = Depends(get_db)):
+    t = _find_test(db, test_name)
+    if not t:
+        return {"found": False, "query": test_name}
+    return eq.prescription_requirement(db, t.id, lang)
+
+
+class OutOfScopeRequest(BaseModel):
+    call_id: str
+    caller_question: str
+    reason_code: str = "out_of_scope"
+
+
+@app.post("/api/v1/calls/out-of-scope")
+def out_of_scope_endpoint(req: OutOfScopeRequest, db: Session = Depends(get_db)):
+    return eq.record_out_of_scope(db, req.call_id, req.caller_question, req.reason_code)
+
+
+class CallbackRequestBody(BaseModel):
+    phone: str
+    call_id: str
+    requested_window: str
+    reason: str = ""
+
+
+@app.post("/api/v1/callbacks")
+def callback_endpoint(req: CallbackRequestBody, db: Session = Depends(get_db)):
+    return eq.request_callback(db, req.phone, req.call_id, req.requested_window, req.reason)
+
+
+@app.get("/api/v1/reports/status")
+def report_status_endpoint(confirmation_id: str = Query(...), db: Session = Depends(get_db)):
+    return eq.report_status(db, confirmation_id)
+
+
+class ReportOTPRequest(BaseModel):
+    confirmation_id: str
+    phone: str
+
+
+@app.post("/api/v1/reports/request-otp")
+def report_request_otp_endpoint(req: ReportOTPRequest, db: Session = Depends(get_db)):
+    return eq.request_report_otp(db, req.confirmation_id, req.phone)
+
+
+class ReportDeliverRequest(BaseModel):
+    confirmation_id: str
+    otp_code: str
+
+
+@app.post("/api/v1/reports/deliver")
+def report_deliver_endpoint(req: ReportDeliverRequest, db: Session = Depends(get_db)):
+    return eq.deliver_report(db, req.confirmation_id, req.otp_code)
+
+
+@app.get("/api/v1/departments/{department_name}/hours")
+def department_hours_endpoint(department_name: str, lang: str = Query("bn"), db: Session = Depends(get_db)):
+    dept = db.query(Department).filter(Department.name.ilike(f"%{department_name}%")).first()
+    if not dept:
+        return {"found": False, "query": department_name}
+    hours = eq.department_hours(db, dept.id, lang)
+    return hours or {"found": False}
