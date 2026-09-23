@@ -152,6 +152,40 @@ def test_cancel_outside_the_charging_window_is_free(clinic_modules):
         db.close()
 
 
+def test_a_cancelled_slot_can_actually_be_rebooked_by_a_second_caller(clinic_modules):
+    # CodeRabbit-flagged, real bug: available_slots() correctly showed the
+    # slot free again (the test above), but the OLD blanket
+    # UniqueConstraint("doctor_id", "date", "time_slot") on Appointment
+    # still had the CANCELLED row occupying that key, so the second
+    # caller's confirm_booking raised an uncaught IntegrityError on
+    # INSERT -- "free" and "actually rebookable" were not the same thing.
+    # Fixed via models.Appointment's partial unique index (status='confirmed'
+    # only) plus booking_migrate.rebuild_appointments_partial_unique_index()
+    # for an existing database. This test proves the FULL cycle, not just
+    # that SlotLock looks clear.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+
+        hold1 = bs.hold_slot(db, doc.id, date, slot)
+        first = bs.confirm_booking(db, hold1["hold_token"], doc.id, date, slot, "First Patient", "111", "111")
+        assert first["success"]
+
+        cancelled = bs.cancel_appointment(db, first["confirmation_id"])
+        assert cancelled["success"]
+
+        hold2 = bs.hold_slot(db, doc.id, date, slot)
+        assert hold2["success"]
+        second = bs.confirm_booking(db, hold2["hold_token"], doc.id, date, slot, "Second Patient", "222", "222")
+        assert second["success"], second   # used to raise IntegrityError here
+        assert second["confirmation_id"] != first["confirmation_id"]
+    finally:
+        db.close()
+
+
 def test_cancel_inside_the_charging_window_requires_explicit_confirmation(clinic_modules):
     bs, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
@@ -173,6 +207,48 @@ def test_cancel_inside_the_charging_window_requires_explicit_confirmation(clinic
 
         second = bs.cancel_appointment(db, booked["confirmation_id"], confirm_charge=True)
         assert second["success"] is True and second["charge_inr"] == first["charge_inr"]
+    finally:
+        db.close()
+
+
+def test_available_slots_excludes_already_passed_times_today(clinic_modules):
+    # CodeRabbit-flagged, real bug: available_slots() only checked
+    # SlotLock, never the current time-of-day, so "today at 10am" stayed
+    # offerable (and directly bookable) at 3pm.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        today = datetime.date.today()
+        # Overwrite the schedule to span the whole day, so this test's
+        # expectations do not depend on the seeded doctor's actual
+        # chamber hours relative to whenever it happens to run.
+        sched = db.query(m.DoctorSchedule).filter_by(doctor_id=doc.id, weekday=today.weekday()).first()
+        if not sched:
+            sched = m.DoctorSchedule(doctor_id=doc.id, weekday=today.weekday(),
+                                     start_time="00:00", end_time="23:45")
+            db.add(sched)
+        else:
+            sched.start_time, sched.end_time = "00:00", "23:45"
+        db.commit()
+
+        now = datetime.datetime.now()
+        now_minutes = now.hour * 60 + now.minute
+        # Slots are on 15-minute boundaries (SLOT_STEP_MIN) starting at
+        # 00:00 -- round to one to guarantee it is actually IN the
+        # generated list, not just near a real clock time.
+        def _slot_at(offset_minutes: int) -> str:
+            total = max(0, min(23 * 60 + 45, (now_minutes // 15) * 15 + offset_minutes))
+            return f"{total // 60:02d}:{total % 60:02d}"
+
+        past_slot = _slot_at(-60) if now_minutes >= 75 else None
+        future_slot = _slot_at(60) if now_minutes <= 22 * 60 + 45 else None
+
+        free = bs.available_slots(db, doc.id, today.isoformat())
+        if past_slot:
+            assert past_slot not in free
+        if future_slot:
+            assert future_slot in free
     finally:
         db.close()
 
@@ -343,6 +419,51 @@ def test_resend_confirmation_is_rate_limited(clinic_modules):
         assert first["success"] and first["sent_to_last4"] == "0001"
         second = bs.resend_confirmation(db, booked["confirmation_id"])
         assert second == {"success": False, "reason": "rate_limited"}
+    finally:
+        db.close()
+
+
+# ============================== CodeRabbit-flagged: "not_provided" sentinel
+
+def test_two_different_patients_who_both_decline_a_phone_are_never_merged(clinic_modules):
+    # Real bug: find_or_create_patient looked up by (name, phone), and
+    # "not_provided" is not a real phone -- two DIFFERENT "Ravi Das"es who
+    # both declined a number used to become the SAME Patient row.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        p1 = bs.find_or_create_patient(db, "Ravi Das", bs.NOT_PROVIDED_PHONE)
+        p2 = bs.find_or_create_patient(db, "Ravi Das", bs.NOT_PROVIDED_PHONE)
+        assert p1.id != p2.id
+    finally:
+        db.close()
+
+
+def test_a_declined_phone_never_gets_a_queued_sms(clinic_modules):
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        result = bs.queue_sms(db, bs.NOT_PROVIDED_PHONE, "booking_confirmed", "hi")
+        assert result == {"queued": False, "reason": "no_phone_on_file"}
+        assert db.query(m.SmsOutbox).count() == 0
+    finally:
+        db.close()
+
+
+def test_resend_confirmation_on_a_declined_phone_gives_an_honest_reason_not_a_nonsense_last4(clinic_modules):
+    # Real bug: "not_provided"[-4:] == "ided", spoken as if it were a
+    # real phone number's last four digits.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot,
+                                     "X", bs.NOT_PROVIDED_PHONE, bs.NOT_PROVIDED_PHONE)
+        result = bs.resend_confirmation(db, booked["confirmation_id"])
+        assert result == {"success": False, "reason": "no_phone_on_file"}
     finally:
         db.close()
 

@@ -262,6 +262,20 @@ def verbalize(text: str, lang: str = "bn") -> str:
     return bn_normalize.verbalize(text)
 
 
+_RE_PRICE = re.compile(r"\d[\d,]*\s*(টাকা|rupees|रुपये|₹)")
+
+
+def contains_critical_figure(text: str) -> bool:
+    """KCD-456: does this reply carry a price, phone number or reference
+    ID -- something a caller needs to write down, not just hear. Checked
+    against the RAW template text (before verbalize() spells the digits
+    out), so the same phone/confirmation-ID/price patterns
+    speech_norm.py already recognises decide this too, rather than a
+    second, independent definition of "a figure" drifting from the one
+    that actually gets spelled out."""
+    return bool(_RE_PHONE.search(text) or _RE_CONF_ID.search(text) or _RE_PRICE.search(text))
+
+
 def unspeakable_spans(text: str, lang: str = "bn") -> list[str]:
     """Spans the voice for `lang` will silently drop, so the gap shows up in
     the logs instead of only in a caller's ear."""

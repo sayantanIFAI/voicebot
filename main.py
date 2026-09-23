@@ -72,6 +72,7 @@ from agent.asr_router import ASRRouter, HTTPASREngine, UnroutableLanguageError
 from agent.booking_flow import (
     BookingState,
     classify_yes_no,
+    correction_acknowledgement,
     effective_phone,
     is_ready_to_confirm,
     mark_awaiting_charge_confirm,
@@ -81,7 +82,10 @@ from agent.booking_flow import (
     missing_required,
     new_state,
 )
+from agent.confidence_gate import should_withhold_factual_answer
+from agent.enquiry_followup import entities_from_turn, resolve_followup_slot
 from agent.fast_path import Catalogue, FastPath
+from agent.outcome_metrics import insufficient_information
 from agent.lang_select import languages_to_verify, pick_candidate
 from agent.lang_select import speakable as _speakable
 from agent.language_switch import detect_language_switch_request
@@ -102,9 +106,11 @@ from agent.reply_templates import (
     conflict_reply,
     department_route_reply,
     doctor_availability_reply,
+    insufficient_information_reply,
     lookup_reply,
     missing_slot_prompt,
     multi_test_reply,
+    multiple_bookings_reply,
     reschedule_reply,
     resend_reply,
     spelling_prompt,
@@ -114,8 +120,9 @@ from agent.reply_templates import (
 )
 from agent.semantic_cache import SemanticCache
 from agent.semantic_cache import embed as _embed_probe
+from agent.speech_norm import contains_critical_figure
 from agent.tools_client import ClinicToolsClient, ToolCallError
-from agent.tts import TTSClient
+from agent.tts import FIGURE_SPEECH_SPEED, TTSClient, UnspeakableTextError
 from agent.tts_router import TTSRouter
 from agent.vad_stream import TurnDetector
 
@@ -422,6 +429,7 @@ async def stats():
         "intent_cache": _intent_cache.snapshot() if _intent_cache else None,
         "tts_cache": _tts.snapshot() if _tts else None,
         "admission": _admission.snapshot() if _admission else None,
+        "insufficient_information": insufficient_information.snapshot(),
     }
 
 
@@ -511,6 +519,14 @@ class CallSession:
         # SIP CallerID can be until that lands.
         self.booking: BookingState | None = None
 
+        # KCD-395/KCD-396: what the last answered enquiry turn(s) were
+        # about (agent/enquiry_followup.EnquiryEntity), so a bare
+        # elliptical follow-up ("and the sample for that?") can resolve
+        # without asking the caller to repeat the test/doctor name.
+        # Booking turns neither read nor write this -- it is scoped to
+        # the stateless enquiry intents only.
+        self.last_enquiry_entities: list = []
+
     def hold_gate_for(self, audio_duration_s: float):
         """Called before each reply goes out. Extends rather than replaces
         the deadline: replies queue on the client, so a second clip starts
@@ -546,11 +562,26 @@ class CallSession:
 async def _speak(session: CallSession, text: str, lang: str | None = None,
                  fallback_reason: str | None = None) -> float:
     """Speak `text` in `lang` (default: the call's current language).
-    Returns the audio duration in seconds."""
+    Returns the audio duration in seconds.
+
+    KCD-456: automatically slower for a reply carrying a price, phone
+    number or reference ID (agent.speech_norm.contains_critical_figure)
+    -- decided here, once, rather than at every call site that happens to
+    produce such a reply, so no future reply_templates.py addition can
+    forget to ask for it."""
     lang = lang or session.lang
     await session.send_json("AI", text)
+    speed = FIGURE_SPEECH_SPEED if contains_critical_figure(text) else 1.0
     try:
-        wav = await _tts_router.synthesize(lang, text)
+        wav = await _tts_router.synthesize(lang, text, speed=speed)
+    except UnspeakableTextError as e:
+        # KCD-455: a production occurrence is an alert, not routine
+        # noise -- distinct log level and reason from an ordinary TTS
+        # infra failure below, even though both fall back to the same
+        # pre-recorded apology.
+        logger.error("[%s] reply blocked, unspeakable spans %s in %r",
+                     session.call_id, e.spans, text)
+        wav = _tts.fallback_audio(fallback_reason or "tts_failure", lang)
     except Exception as e:  # noqa: BLE001 - TTS is the last mile, must not raise past here
         logger.warning("[%s] TTS failed (%s) -- using fallback audio", session.call_id, e)
         wav = _tts.fallback_audio(fallback_reason or "tts_failure", lang)
@@ -634,6 +665,102 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
                 session.call_id, diag["total_time_s"], diag["attempts"])
     await asyncio.to_thread(_intent_cache.put, key, data)
     return data
+
+
+# CodeRabbit-flagged, real bug: a failed hold used to ALWAYS clear
+# time_slot, regardless of why hold_slot actually failed ("keep
+# doctor/date, re-collect just the time" -- true only for a slot-shaped
+# failure). For "doctor_not_found" or a date-shaped failure, the ACTUAL
+# problem field was never cleared, so missing_required() still saw
+# doctor_name/date as present and the SAME bad hold was retried forever
+# on every subsequent turn, having only pointlessly re-asked for a time
+# that was never the issue.
+_HOLD_FAILURE_FIELD = {
+    "doctor_not_found": "doctor_name",
+    "invalid_date": "date",
+    "date_in_past": "date",
+    "doctor_not_available_that_day": "date",
+}
+
+
+def _field_to_reclear_on_hold_failure(reason: str | None) -> str:
+    return _HOLD_FAILURE_FIELD.get(reason, "time_slot")
+
+
+async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | None:
+    """Tool call + reply-template for one of the stateless enquiry
+    intents (agent.enquiry_followup.ENQUIRY_INTENTS). Returns None when
+    the intent's required slot is missing -- the caller decides whether
+    that means "ask the caller" (the turn's primary question) or
+    "silently skip" (a KCD-395 secondary question), never this function.
+    The single implementation per intent here is also what a secondary
+    question is answered with, so there is exactly one place each
+    intent's tool call and reply template are wired together."""
+    if intent == "test_rate":
+        if not slots.get("test_name"):
+            return None
+        result = await _tools.get_test_rate(slots["test_name"])
+        return test_rate_reply(slots, result, lang)
+    if intent == "doctor_availability":
+        if not slots.get("doctor_name"):
+            return None
+        result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
+        return doctor_availability_reply(slots, result, lang)
+    if intent == "test_prep":
+        if not slots.get("test_name"):
+            return None
+        result = await _tools.get_test_prep(slots["test_name"], lang)
+        return test_prep_reply(slots, result, lang)
+    if intent == "clinic_faq":
+        if not slots.get("faq_topic"):
+            return None
+        result = await _tools.get_faq(slots["faq_topic"], lang)
+        return clinic_faq_reply(slots, result, lang)
+    if intent == "department_query":
+        symptom = slots.get("symptom_description")
+        if not symptom:
+            return None
+        result = await _tools.route_department(symptom, lang)
+        return department_route_reply(result, symptom, lang)
+    return None
+
+
+async def _finish_enquiry_turn(session: CallSession, text: str, lang: str,
+                               intent: str, slots: dict, base_reply: str, data: dict) -> None:
+    """Shared tail for every stateless enquiry branch (KCD-395/KCD-396):
+    answers `secondary_intent` if the model extracted one this turn,
+    remembers this turn's entities for the NEXT turn's coreference
+    resolution, then speaks the combined reply.
+
+    A secondary lookup that fails (ToolCallError) never discards the
+    primary answer the caller already got -- it is reported as "couldn't
+    check that" addendum instead, same as this call's own primary
+    ToolCallError handling one level up in _dispatch_turn, just scoped
+    so a second-question failure cannot blow away a first-question
+    success."""
+    turn_entities = [(intent, slots)]
+    secondary_intent = data.get("secondary_intent")
+    if secondary_intent:
+        secondary_slots = data.get("secondary_slots") or {}
+        secondary_slots, _ = resolve_followup_slot(
+            secondary_intent, secondary_slots, text, lang, session.last_enquiry_entities)
+        addendum = None
+        try:
+            reply2 = await _answer_enquiry_intent(secondary_intent, secondary_slots, lang)
+        except ToolCallError as e:
+            logger.warning("[%s] secondary-question lookup failed (%s) -- keeping the first answer",
+                           session.call_id, e)
+            reply2, addendum = None, phrase("tool_failure", lang)
+        if reply2:
+            base_reply = f"{base_reply} {reply2}"
+            turn_entities.append((secondary_intent, secondary_slots))
+        else:
+            # A second question was asked but could not be answered this
+            # turn (missing slot, or the lookup itself failed) -- KCD-395
+            # requires it be explicitly addressed, never silently dropped.
+            base_reply = f"{base_reply} {addendum or phrase('unclear', lang)}"
+    session.last_enquiry_entities = entities_from_turn(*turn_entities)
+    await _speak(session, base_reply, lang)
 
 
 async def _route_and_transcribe(session: CallSession, utterance_wav: str):
@@ -749,43 +876,83 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
 
         if intent == "unclear":
-            await _speak(session, phrase("unclear", lang), lang)
+            # CodeRabbit-flagged, real gap: the "confirming"/
+            # "awaiting_charge_confirm" short-circuit above only covers
+            # the yes/no step. During ordinary "collecting"-stage slot
+            # filling, a bare answer with no sentence structure to key
+            # off ("Ravi Das", a bare 10-digit number) is exactly the
+            # kind of turn the LLM classifies "unclear" even when it DID
+            # correctly extract the slot into `slots` -- and nothing
+            # routed it back to the active booking, silently stalling
+            # the guided one-slot-per-turn flow on the minimal answers
+            # it is meant to collect. Re-attempt this turn as the active
+            # action instead of bailing, as long as the state is not
+            # stale (is_stale() -- previously never called anywhere,
+            # per CodeRabbit -- guards against resurrecting a booking
+            # the caller has plainly moved on from).
+            if session.booking is not None and session.booking.stage == "collecting" \
+                    and not session.booking.is_stale():
+                intent = session.booking.action
+            else:
+                await _speak(session, phrase("unclear", lang), lang)
+                return
+
+        # KCD-442/KCD-447: a turn the two ASR decoders disagreed on is not
+        # trusted to drive a factual lookup at all -- acting on a misheard
+        # test/doctor name would produce a confident, wrong answer about
+        # something else, which is worse than asking the caller to repeat
+        # themselves. Checked before the tool call, not after: the point
+        # is to never RUN the lookup on an unreliable entity, not merely
+        # to hedge the reply once it comes back.
+        if should_withhold_factual_answer(intent, asr_result.decoder_agreement):
+            logger.info("[%s] withholding %s answer: decoder_agreement=%.2f below floor",
+                        session.call_id, intent, asr_result.decoder_agreement)
+            insufficient_information.record("low_decoder_agreement", intent, lang)
+            await _speak(session, insufficient_information_reply(lang), lang)
             return
 
         try:
             if intent == "test_rate":
-                if not slots.get("test_name"):
+                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                reply = await _answer_enquiry_intent(intent, slots, lang)
+                if reply is None:
                     await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                     return
-                result = await _tools.get_test_rate(slots["test_name"])
-                await _speak(session, test_rate_reply(slots, result, lang), lang)
+                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "doctor_availability":
-                if not slots.get("doctor_name"):
+                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                reply = await _answer_enquiry_intent(intent, slots, lang)
+                if reply is None:
                     await _speak(session, missing_slot_prompt(intent, "doctor_name", lang), lang)
                     return
-                result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
-                await _speak(session, doctor_availability_reply(slots, result, lang), lang)
+                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "test_prep":
-                if not slots.get("test_name"):
+                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                reply = await _answer_enquiry_intent(intent, slots, lang)
+                if reply is None:
                     await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                     return
-                result = await _tools.get_test_prep(slots["test_name"], lang)
-                await _speak(session, test_prep_reply(slots, result, lang), lang)
+                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "clinic_faq":
-                if not slots.get("faq_topic"):
+                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                reply = await _answer_enquiry_intent(intent, slots, lang)
+                if reply is None:
                     await _speak(session, missing_slot_prompt(intent, "faq_topic", lang), lang)
                     return
-                result = await _tools.get_faq(slots["faq_topic"], lang)
-                await _speak(session, clinic_faq_reply(slots, result, lang), lang)
+                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "book_appointment":
                 if session.booking is None or session.booking.action != "book_appointment":
                     session.booking = new_state("book_appointment")
                 st = session.booking
-                merge_slots(st, slots)
+                prior_slots = dict(st.slots)
+                changed = merge_slots(st, slots)
+                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+                if ack:
+                    await _speak(session, ack, lang)
 
                 # Secure the hold as soon as doctor+date+time are known, even
                 # if patient details are still missing -- KCD-376: the
@@ -796,7 +963,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     hold = await _tools.hold_slot(st.slots["doctor_name"], st.slots["date"], st.slots["time_slot"])
                     if not hold.get("success"):
                         await _speak(session, booking_reply(st.slots, hold, lang), lang)
-                        st.slots.pop("time_slot", None)   # keep doctor/date, re-collect just the time
+                        st.slots.pop(_field_to_reclear_on_hold_failure(hold.get("reason")), None)
                         return
                     st.hold_token, st.hold_doctor_id = hold["hold_token"], hold["doctor_id"]
 
@@ -855,7 +1022,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if session.booking is None or session.booking.action != "book_test":
                     session.booking = new_state("book_test")
                 st = session.booking
-                merge_slots(st, slots)
+                prior_slots = dict(st.slots)
+                changed = merge_slots(st, slots)
+                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+                if ack:
+                    await _speak(session, ack, lang)
                 st.slots["_test_names_display"] = st.test_names
                 missing = missing_required(st)
                 if missing:
@@ -879,11 +1050,22 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if session.booking is None or session.booking.action != "reschedule_appointment":
                     session.booking = new_state("reschedule_appointment")
                 st = session.booking
-                merge_slots(st, slots)
+                prior_slots = dict(st.slots)
+                changed = merge_slots(st, slots)
+                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+                if ack:
+                    await _speak(session, ack, lang)
                 if not st.slots.get("confirmation_id") and slots.get("phone"):
                     found = await _tools.lookup_bookings(phone=slots["phone"])
-                    if found.get("bookings"):
-                        st.slots["confirmation_id"] = found["bookings"][0]["confirmation_id"]
+                    bookings = found.get("bookings") or []
+                    if len(bookings) > 1:
+                        # CodeRabbit-flagged: never silently act on
+                        # bookings[0] -- a caller with several bookings
+                        # names which one before anything proceeds.
+                        await _speak(session, multiple_bookings_reply(bookings, lang), lang)
+                        return
+                    if bookings:
+                        st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
                 missing = missing_required(st)
                 if missing:
                     await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
@@ -896,11 +1078,19 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if session.booking is None or session.booking.action != "cancel_appointment":
                     session.booking = new_state("cancel_appointment")
                 st = session.booking
-                merge_slots(st, slots)
+                prior_slots = dict(st.slots)
+                changed = merge_slots(st, slots)
+                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+                if ack:
+                    await _speak(session, ack, lang)
                 if not st.slots.get("confirmation_id") and slots.get("phone"):
                     found = await _tools.lookup_bookings(phone=slots["phone"])
-                    if found.get("bookings"):
-                        st.slots["confirmation_id"] = found["bookings"][0]["confirmation_id"]
+                    bookings = found.get("bookings") or []
+                    if len(bookings) > 1:
+                        await _speak(session, multiple_bookings_reply(bookings, lang), lang)
+                        return
+                    if bookings:
+                        st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
                 missing = missing_required(st)
                 if missing:
                     await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
@@ -913,7 +1103,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if session.booking is None or session.booking.action != "add_test_booking":
                     session.booking = new_state("add_test_booking")
                 st = session.booking
-                merge_slots(st, slots)
+                prior_slots = dict(st.slots)
+                changed = merge_slots(st, slots)
+                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+                if ack:
+                    await _speak(session, ack, lang)
                 missing = missing_required(st)
                 if missing:
                     await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
@@ -934,8 +1128,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 confirmation_id = slots.get("confirmation_id")
                 if not confirmation_id and slots.get("phone"):
                     found = await _tools.lookup_bookings(phone=slots["phone"])
-                    if found.get("bookings"):
-                        confirmation_id = found["bookings"][0]["confirmation_id"]
+                    bookings = found.get("bookings") or []
+                    if len(bookings) > 1:
+                        await _speak(session, multiple_bookings_reply(bookings, lang), lang)
+                        return
+                    if bookings:
+                        confirmation_id = bookings[0]["confirmation_id"]
                 if not confirmation_id:
                     await _speak(session, missing_slot_prompt("cancel_appointment", "confirmation_id", lang), lang)
                     return
@@ -943,12 +1141,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 await _speak(session, resend_reply(result, lang), lang)
 
             elif intent == "department_query":
-                symptom = slots.get("symptom_description")
-                if not symptom:
+                reply = await _answer_enquiry_intent(intent, slots, lang)
+                if reply is None:
                     await _speak(session, phrase("unclear", lang), lang)
                     return
-                result = await _tools.route_department(symptom, lang)
-                await _speak(session, department_route_reply(result, symptom, lang), lang)
+                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)

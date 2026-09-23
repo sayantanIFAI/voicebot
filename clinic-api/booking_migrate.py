@@ -19,7 +19,13 @@ APPOINTMENT_BOOKING_COLUMNS: dict[str, str] = {
     "patient_id": "INTEGER",
     "caller_phone": "VARCHAR",
     "status": "VARCHAR NOT NULL DEFAULT 'confirmed'",
-    "cancelled_at": "DATETIME",
+    # TIMESTAMP, not DATETIME (CodeRabbit-flagged): SQLite treats both
+    # identically (neither matches its INT/CHAR/TEXT/CLOB/BLOB/REAL/FLOA/
+    # DOUB affinity rules, so both fall through to the same NUMERIC
+    # affinity -- behaviourally a no-op change here), but DATETIME is not
+    # a real PostgreSQL type, and db.py's own docstring states pointing
+    # DATABASE_URL at a real Postgres is meant to be a one-line change.
+    "cancelled_at": "TIMESTAMP",
     "cancellation_charge_inr": "INTEGER",
     "rescheduled_from_id": "INTEGER",
     "booking_group_id": "VARCHAR",
@@ -44,6 +50,107 @@ def add_appointment_booking_columns() -> list[str]:
                 conn.execute(text(f"ALTER TABLE appointments ADD COLUMN {col} {decl}"))
                 added.append(f"appointments.{col}")
     return added
+
+
+def _has_blanket_unique_slot_index(conn) -> bool:
+    """True if `appointments` still has a UNIQUE index over exactly
+    (doctor_id, date, time_slot) that is NOT partial -- i.e. the old
+    blanket constraint, regardless of what it happened to be named (a
+    hand-built old-schema fixture may use a bare UNIQUE(...) column
+    clause instead of a named CONSTRAINT; a real database created by an
+    earlier version of models.py always named it "uq_doctor_slot", but
+    this check does not rely on that name, only on the SHAPE, so it
+    catches either). Uses PRAGMA index_list/index_info rather than
+    string-matching sqlite_master's CREATE TABLE text, which is exact
+    but fragile to phrasing differences that carry the same meaning."""
+    rows = conn.execute(text("PRAGMA index_list('appointments')")).fetchall()
+    for row in rows:
+        # (seq, name, unique, origin, partial) -- column order is stable
+        # across SQLite versions for this pragma, but accessed by name
+        # via ._mapping to be explicit rather than trust positional index.
+        m = row._mapping
+        if not m["unique"] or m["partial"]:
+            continue
+        cols = [r._mapping["name"] for r in conn.execute(text(f"PRAGMA index_info('{m['name']}')")).fetchall()]
+        if cols == ["doctor_id", "date", "time_slot"]:
+            return True
+    return False
+
+
+def rebuild_appointments_partial_unique_index() -> bool:
+    """Moves an EXISTING SQLite database off the old blanket
+    UniqueConstraint("doctor_id", "date", "time_slot") the appointments
+    table originally shipped with, onto the partial unique index (scoped
+    to status='confirmed') models.Appointment now defines instead --
+    CodeRabbit-flagged, real bug: the blanket constraint also blocked a
+    CANCELLED slot's row from ever being rebooked, since a cancelled row
+    still occupies that key; a second caller who legitimately holds and
+    confirms the now-free slot hit an uncaught IntegrityError on the
+    INSERT. See models.Appointment's own docstring.
+
+    Idempotent (see _has_blanket_unique_slot_index) -- a no-op on a
+    database that never had the blanket form, including every freshly
+    create_all()'d one, since the model no longer defines it.
+
+    MUST run after add_appointment_booking_columns(): the copy below
+    references `status`, which does not exist yet on a database that
+    predates Epic E26 entirely.
+
+    SQLite cannot ALTER a table to drop or narrow a UNIQUE constraint,
+    only rebuild it -- the standard recipe: rename the old table aside,
+    let SQLAlchemy CREATE the new one directly from models.Appointment
+    (so this migration can never drift from the model it targets), copy
+    every row across by explicit column name, then drop the renamed
+    original. All inside one transaction."""
+    from models import Appointment
+
+    insp = inspect(engine)
+    if "appointments" not in insp.get_table_names():
+        return False
+
+    # This whole function runs on ONE connection in AUTOCOMMIT mode, not
+    # engine.begin()'s usual transaction wrapper -- SQLite refuses to
+    # change `PRAGMA foreign_keys` at all while a transaction is open
+    # (silently a no-op, confirmed empirically), and db.py's own
+    # on-connect handler sets foreign_keys=ON for every new connection,
+    # so the toggle has to happen, and stick, on the specific connection
+    # that then does the rename. The risky middle section (rename,
+    # create, copy, drop) is wrapped in an explicit SQL transaction
+    # issued as raw statements instead, so it is still all-or-nothing.
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        if not _has_blanket_unique_slot_index(conn):
+            return False
+
+        # Without foreign_keys=OFF, SQLite (3.25+) "helpfully" rewrites
+        # every OTHER table's foreign key that points at `appointments`
+        # (slot_locks, test_bookings, ...) to follow the RENAME below, so
+        # they end up pointing at appointments_pre_partial_index instead
+        # of the new `appointments` table created two statements later --
+        # then DROP TABLE at the end leaves those foreign keys dangling.
+        # legacy_alter_table restores the pre-3.25 rename behaviour on
+        # top of that (belt and braces; foreign_keys=OFF alone is
+        # sufficient in modern SQLite, but costs nothing to also set).
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(text("PRAGMA legacy_alter_table=ON"))
+        try:
+            conn.execute(text("BEGIN IMMEDIATE"))
+            conn.execute(text("ALTER TABLE appointments RENAME TO appointments_pre_partial_index"))
+            Appointment.__table__.create(conn)
+
+            columns = ", ".join(Appointment.__table__.columns.keys())
+            conn.execute(text(
+                f"INSERT INTO appointments ({columns}) "
+                f"SELECT {columns} FROM appointments_pre_partial_index"
+            ))
+            conn.execute(text("DROP TABLE appointments_pre_partial_index"))
+            conn.execute(text("COMMIT"))
+        except Exception:
+            conn.execute(text("ROLLBACK"))
+            raise
+        finally:
+            conn.execute(text("PRAGMA legacy_alter_table=OFF"))
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+    return True
 
 
 def add_doctor_booking_columns() -> list[str]:
@@ -170,7 +277,11 @@ def migrate_booking_schema() -> dict:
     silently seeded zero department routes on every fresh database,
     caught by tests/test_booking_endpoints.py::test_department_route_endpoint
     failing against a throwaway DB."""
-    return {"columns_added": add_appointment_booking_columns() + add_doctor_booking_columns()}
+    columns_added = add_appointment_booking_columns() + add_doctor_booking_columns()
+    # Must run AFTER add_appointment_booking_columns(): see this
+    # function's own docstring for why.
+    rebuilt = rebuild_appointments_partial_unique_index()
+    return {"columns_added": columns_added, "appointments_table_rebuilt": rebuilt}
 
 
 def finish_booking_schema_setup() -> dict:

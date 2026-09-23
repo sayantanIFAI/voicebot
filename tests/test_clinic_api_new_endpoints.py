@@ -110,3 +110,68 @@ def test_existing_test_search_endpoint_still_works(clinic_client):
     body = resp.json()
     assert body["found"] is True
     assert body["rate_inr"] == 400
+
+
+# ============================================================== KCD-446
+
+def test_search_offers_near_matches_for_a_genuinely_ambiguous_name(clinic_client):
+    # "সুগার" (sugar) alone matches BOTH "Blood Sugar Fasting" (alias
+    # "সুগার ফাস্টিং") and "Blood Sugar PP" (alias "পিপি সুগার") equally
+    # well -- silently picking one would risk quoting the wrong test's
+    # price for something that genuinely exists under two names.
+    resp = clinic_client.get("/api/v1/tests/search", params={"name": "সুগার"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["found"] is False
+    assert body["ambiguous"] is True
+    assert "Blood Sugar Fasting" in body["did_you_mean"]
+    assert "Blood Sugar PP" in body["did_you_mean"]
+    assert len(body["did_you_mean"]) <= 3
+
+
+def test_prep_also_offers_near_matches_for_an_ambiguous_name(clinic_client):
+    resp = clinic_client.get("/api/v1/tests/prep", params={"name": "সুগার"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["found"] is False
+    assert body["ambiguous"] is True
+    assert len(body["did_you_mean"]) >= 2
+
+
+def test_a_genuinely_unambiguous_name_is_not_flagged_ambiguous(clinic_client):
+    resp = clinic_client.get("/api/v1/tests/search", params={"name": "সিবিসি"})
+    body = resp.json()
+    assert body["found"] is True
+    assert "ambiguous" not in body
+
+
+# ============================================================== KCD-449
+
+def test_repeating_the_same_question_three_times_gives_the_identical_answer(clinic_client):
+    """"The same question gets the same answer within one call" -- three
+    repeats with the backend unchanged (KCD-444, Done, already keeps
+    every hit live -- this is the consistency PROOF that live-fetching
+    actually implies, not a new fetch behaviour)."""
+    answers = [clinic_client.get("/api/v1/tests/search", params={"name": "সিবিসি"}).json()
+               for _ in range(3)]
+    assert answers[0] == answers[1] == answers[2]
+
+
+def test_a_real_data_change_is_reflected_on_the_very_next_call(clinic_client):
+    """The other half of KCD-449: consistency holds ONLY while the data is
+    unchanged -- a genuine change must show up immediately, not be
+    masked by whatever made the repeats above consistent."""
+    before = clinic_client.get("/api/v1/tests/search", params={"name": "সিবিসি"}).json()
+
+    import db as db_mod  # noqa: PLC0415 - clinic-api module, imported by the fixture's sys.path setup
+    import models as m  # noqa: PLC0415
+    db = db_mod.SessionLocal()
+    try:
+        test_row = db.query(m.LabTest).filter_by(name="Complete Blood Count (CBC)").one()
+        test_row.rate_inr = before["rate_inr"] + 50
+        db.commit()
+    finally:
+        db.close()
+
+    after = clinic_client.get("/api/v1/tests/search", params={"name": "সিবিসি"}).json()
+    assert after["rate_inr"] == before["rate_inr"] + 50

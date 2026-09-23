@@ -53,3 +53,40 @@ def test_model_overstepping_direct_reply_on_a_non_smalltalk_intent_is_stripped()
     ok, _ = _validate(data)
     assert ok
     assert data["direct_reply_bn"] is None    # the model never gets to state a fact
+
+
+# ===================================================== single-item list collapse
+# CodeRabbit-flagged, real bug: Ollama's JSON mode only enforces valid
+# JSON, not this schema's shape. A documented single-item-list failure
+# mode is the model returning a bare string instead of a one-element
+# list -- agent/booking_flow.merge_slots then iterates the STRING's
+# individual characters as if each were a separate test name.
+
+def test_a_single_test_name_returned_as_a_bare_string_is_wrapped_not_iterated():
+    data = {"intent": "book_test", "slots": _full_slots(test_names="CBC"), "direct_reply_bn": None}
+    ok, _ = _validate(data)
+    assert ok
+    assert data["slots"]["test_names"] == ["CBC"]   # never ["C", "B", "C"]
+
+
+def test_a_normal_test_names_list_is_left_untouched():
+    data = {"intent": "book_test", "slots": _full_slots(test_names=["CBC", "Lipid Profile"]),
+            "direct_reply_bn": None}
+    ok, _ = _validate(data)
+    assert ok
+    assert data["slots"]["test_names"] == ["CBC", "Lipid Profile"]
+
+
+def test_spelled_letters_returned_as_a_bare_string_is_split_into_letters():
+    data = {"intent": "book_appointment", "slots": _full_slots(spelled_letters="ravi"),
+            "direct_reply_bn": None}
+    ok, _ = _validate(data)
+    assert ok
+    assert data["slots"]["spelled_letters"] == ["r", "a", "v", "i"]
+
+
+def test_a_non_string_garbage_value_in_a_list_slot_is_dropped_to_null():
+    data = {"intent": "book_test", "slots": _full_slots(test_names=[1, 2, 3]), "direct_reply_bn": None}
+    ok, _ = _validate(data)
+    assert ok
+    assert data["slots"]["test_names"] is None

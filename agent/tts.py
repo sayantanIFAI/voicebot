@@ -44,8 +44,31 @@ from agent.speech_norm import unspeakable_spans, verbalize
 
 logger = logging.getLogger("tts")
 
+
+class UnspeakableTextError(Exception):
+    """KCD-455: raised instead of silently synthesizing a reply with a
+    hole in it. The measured incident this guards against: the English
+    word after a colon vanished from a Bengali reply because the Bengali
+    tokenizer drops Latin script outright -- logged at the time, sent to
+    the caller anyway. Callers (main.py's _speak) must treat this as its
+    own named failure path, the same as an ASR/LLM/tool failure, rather
+    than let it reach the vocoder."""
+
+    def __init__(self, spans: list[str]):
+        self.spans = spans
+        super().__init__(f"unspeakable spans: {spans}")
+
 TTS_URL = os.environ.get("TTS_URL", "http://localhost:8002/synthesize")
 TTS_TIMEOUT_S = float(os.environ.get("TTS_TIMEOUT_S", "20"))
+
+# KCD-456: the rate a price, phone number, or reference ID is spoken at --
+# slow enough that a caller writing it down does not have to ask twice.
+# REASONED, not measured: there is no real-call transcription-accuracy
+# corpus locally to calibrate against (the story's own "listening test
+# confirms callers transcribe correctly on first hearing" is exactly that
+# missing measurement). 0.8 is a conservative first cut, a fifth slower
+# than normal speech, pending that measurement.
+FIGURE_SPEECH_SPEED = 0.8
 
 FALLBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "fallback_audio")
 
@@ -110,28 +133,42 @@ class TTSClient:
             while len(self._audio_cache) > AUDIO_CACHE_MAX:
                 self._audio_cache.popitem(last=False)
 
-    async def synthesize(self, text: str, lang: str = "bn") -> bytes:
-        """Returns WAV bytes, or raises. Callers should catch and fall back
-        to `fallback_audio()` -- see main.py's _speak()."""
+    async def synthesize(self, text: str, lang: str = "bn", speed: float = 1.0) -> bytes:
+        """Returns WAV bytes, or raises. Callers should catch ToolCallError-
+        shaped infra failures and UnspeakableTextError separately (see
+        main.py's _speak()) and fall back to `fallback_audio()`.
+
+        `speed` (KCD-456): 1.0 is the voice's normal rate; a caller passes
+        a lower value for a reply carrying a price, phone number or
+        reference the listener needs to write down (see
+        agent/tts_router.py's docstring -- delivery parameters are decided
+        by the caller of this client, never here)."""
         spoken = verbalize(text, lang)
 
-        # Anything the voice cannot pronounce is dropped by its tokenizer
-        # exactly the way the digits were. Log it so the gap is visible
-        # here rather than only to whoever is on the phone.
+        # KCD-455: anything the voice cannot pronounce is dropped by its
+        # tokenizer entirely -- not mispronounced, ABSENT -- so this must
+        # block the reply rather than let it reach the vocoder with a
+        # silent hole in it. The measured incident this guards against is
+        # in this exception's own docstring.
         leftovers = unspeakable_spans(spoken, lang)
         if leftovers:
-            logger.warning("[%s] unpronounceable spans will be dropped by TTS: %s", lang, leftovers)
+            logger.error("[%s] unspeakable spans blocked this reply: %s", lang, leftovers)
+            raise UnspeakableTextError(leftovers)
 
-        # The language is part of the key: identical text can be a valid
-        # sentence in two languages (a bare number, an ID) and must not
-        # return the other voice's audio.
-        key = self._key(f"{lang}\x00{spoken}")
+        # The language and speed are both part of the key: identical text
+        # can be a valid sentence in two languages (a bare number, an ID)
+        # and must not return the other voice's audio, and a slow-rate
+        # clip must not be served for a normal-rate request or vice versa.
+        key = self._key(f"{lang}\x00{speed}\x00{spoken}")
         cached = self._cache_get(key)
         if cached is not None:
             return cached
 
         self.stats["misses"] += 1
-        r = await self._client.post(self.base_url, json={"text": spoken, "lang": lang})
+        payload = {"text": spoken, "lang": lang}
+        if speed != 1.0:
+            payload["speed"] = speed
+        r = await self._client.post(self.base_url, json=payload)
         r.raise_for_status()
         wav = r.content
         self._cache_put(key, wav)
@@ -203,5 +240,5 @@ class LanguageVoice:
         self._client = client
         self.lang = lang
 
-    async def synthesize(self, text: str, **_speech_params) -> bytes:
-        return await self._client.synthesize(text, self.lang)
+    async def synthesize(self, text: str, **speech_params) -> bytes:
+        return await self._client.synthesize(text, self.lang, **speech_params)

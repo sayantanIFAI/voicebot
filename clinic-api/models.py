@@ -13,9 +13,11 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -126,11 +128,19 @@ class FAQ(Base):
 class Appointment(Base):
     """A CONFIRMED doctor appointment. Concurrency is not guarded here --
     see SlotLock below -- so this row is only ever created once a hold on
-    (doctor_id, date, time_slot) has already been won atomically. The
-    original UniqueConstraint stays for defence in depth, but it is no
-    longer the primary race guard, because it would also block a cancelled
-    slot from ever being rebooked and SQLite cannot narrow an existing
-    UNIQUE constraint to a partial one without rebuilding the table."""
+    (doctor_id, date, time_slot) has already been won atomically.
+
+    The uniqueness guard against double-booking the same slot is a
+    PARTIAL unique index, scoped to status='confirmed' -- CodeRabbit-
+    flagged, real bug: a blanket UniqueConstraint here (this table's
+    original defence-in-depth design) also blocks a CANCELLED slot's row
+    from ever being rebooked, since a cancelled row still occupies the
+    key; a second caller who legitimately holds and confirms that freed
+    slot hit an uncaught IntegrityError. booking_migrate.py's
+    rebuild_appointments_partial_unique_index() moves an existing SQLite
+    database from the old blanket constraint to this one (SQLite cannot
+    narrow an existing UNIQUE constraint via ALTER TABLE, only by
+    rebuilding the table) -- see that function's docstring."""
     __tablename__ = "appointments"
     id = Column(Integer, primary_key=True)
     confirmation_id = Column(String, nullable=False, unique=True)
@@ -153,7 +163,10 @@ class Appointment(Base):
 
     doctor = relationship("Doctor")
 
-    __table_args__ = (UniqueConstraint("doctor_id", "date", "time_slot", name="uq_doctor_slot"),)
+    __table_args__ = (
+        Index("ux_doctor_slot_confirmed", "doctor_id", "date", "time_slot",
+              unique=True, sqlite_where=text("status = 'confirmed'")),
+    )
 
 
 class SlotLock(Base):

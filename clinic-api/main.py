@@ -235,6 +235,48 @@ def _find_test(db: Session, name: str) -> LabTest | None:
     return None
 
 
+def _find_test_candidates(db: Session, name: str) -> list[LabTest]:
+    """KCD-446: every test matching `name` at the FIRST cascade tier that
+    produces any match at all (exact substring, then alias, then
+    normalised containment) -- the same first three tiers _find_test
+    uses, but collecting every match at the winning tier instead of
+    silently returning the first one.
+
+    Deliberately stops BEFORE _find_test's fourth, phonetic-fold tier
+    (KCD-434): that tier is a loose, best-effort fallback for
+    mishearings and romanised spellings, and its short folded keys are
+    short precisely because they are generic -- gating IT on "more than
+    one match" would flag routine romanised lookups (e.g. "sibisi" for
+    "সিবিসি") as ambiguous and break KCD-434's own resolution, which
+    this function's callers fall through to _find_test for unchanged
+    when tiers 1-3 find nothing here."""
+    all_tests = db.query(LabTest).all()
+
+    exact = [t for t in all_tests if name.lower() in t.name.lower()]
+    if exact:
+        return exact
+
+    alias_matches = []
+    for t in all_tests:
+        aliases = [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+        if any(name in alias or alias in name for alias in aliases):
+            alias_matches.append(t)
+    if alias_matches:
+        return alias_matches
+
+    q = _norm_name(name)
+    norm_matches = []
+    if q:
+        for t in all_tests:
+            forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+            if any(_norm_name(f) and (q in _norm_name(f) or _norm_name(f) in q) for f in forms):
+                norm_matches.append(t)
+    if norm_matches:
+        return norm_matches
+
+    return []
+
+
 def _test_suggestions(db: Session, name: str) -> list[str]:
     all_tests = db.query(LabTest).all()
     candidates = []
@@ -257,7 +299,16 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
     # with Latin script, so substring AND fuzzy matching against the
     # English column alone can NEVER succeed on Bengali input, regardless
     # of how close the pronunciation is.
-    found = _find_test(db, name)
+    # KCD-446: two or three catalogue rows matching equally well is a
+    # genuinely different outcome from "nothing matched" -- silently
+    # picking one (what _find_test does, correctly, for booking) would
+    # risk quoting the price of a DIFFERENT test than the one meant.
+    candidates = _find_test_candidates(db, name)
+    if len(candidates) > 1:
+        return {"found": False, "query": name, "ambiguous": True,
+                "did_you_mean": [t.name for t in candidates[:3]]}
+
+    found = candidates[0] if candidates else _find_test(db, name)
     if found:
         return _test_reply_dict(found)
 
@@ -294,7 +345,12 @@ def test_prep(name: str = Query(...), lang: str = Query("bn"), db: Session = Dep
     (Blueprint 2.2) conceptually distinct from the Tier-1 price/turnaround
     facts search_test returns, and the two may end up backed by different
     systems of record later."""
-    found = _find_test(db, name)
+    candidates = _find_test_candidates(db, name)   # KCD-446: see search_test's own comment
+    if len(candidates) > 1:
+        return {"found": False, "query": name, "ambiguous": True,
+                "did_you_mean": [t.name for t in candidates[:3]]}
+
+    found = candidates[0] if candidates else _find_test(db, name)
     if found:
         return _test_prep_reply_dict(found, lang)
     return {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}
@@ -457,6 +513,20 @@ def _generate_slots(start: str, end: str, step_min: int = SLOT_STEP_MIN) -> list
 
 @app.post("/api/v1/appointments")
 def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
+    """This is the ORIGINAL, pre-Epic-E26 booking endpoint, kept for
+    backward compatibility. CodeRabbit-flagged, real bug: it used to
+    create an Appointment row directly, with its own "taken" check
+    against nothing but a raw Appointment query (which did not even
+    filter by status, so a CANCELLED row here blocked the slot forever)
+    and total invisibility to models.SlotLock -- the actual atomicity
+    guard hold_slot()/confirm_booking() give the newer /api/v1/bookings/*
+    flow (KCD-376). A slot booked through this endpoint was silently NOT
+    reflected in available_slots() (which only reads SlotLock), so the
+    voice agent could offer and double-book it, and conversely a slot
+    HELD by the voice agent was invisible here too. Fixed by routing
+    through the SAME hold_slot()/confirm_booking() primitives instead of
+    maintaining a second, unguarded booking path -- one atomicity
+    guarantee, not two that can silently disagree."""
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
         return {"success": False, "reason": "doctor_not_found"}
@@ -478,28 +548,21 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
     if req.time_slot not in valid_slots:
         return {"success": False, "reason": "slot_taken", "alternative_slots": valid_slots[:3]}
 
-    taken = {
-        a.time_slot for a in db.query(Appointment).filter_by(
-            doctor_id=doctor.id, date=req.date,
-        ).all()
-    }
-    if req.time_slot in taken:
-        free = [s for s in valid_slots if s not in taken][:3]
-        return {"success": False, "reason": "slot_taken", "alternative_slots": free}
+    hold = bs.hold_slot(db, doctor.id, req.date, req.time_slot)
+    if not hold["success"]:
+        return {"success": False, "reason": "slot_taken",
+                "alternative_slots": bs.available_slots(db, doctor.id, req.date)[:3]}
 
     # 8 hex chars, not 4 -- see booking_service._confirmation_id's comment:
     # this ID is now also accepted by /api/v1/bookings/lookup, unauthenticated.
-    confirmation_id = f"KCD-{req.date.replace('-', '')}-{uuid.uuid4().hex[:8].upper()}"
-    appt = Appointment(
-        confirmation_id=confirmation_id, doctor_id=doctor.id, date=req.date,
-        time_slot=req.time_slot, patient_name=req.patient_name, phone=req.phone,
-        created_at=datetime.datetime.now(),
-    )
-    db.add(appt)
-    db.commit()
+    result = bs.confirm_booking(db, hold["hold_token"], doctor.id, req.date, req.time_slot,
+                                 req.patient_name, req.phone, req.phone)
+    if not result["success"]:
+        return {"success": False, "reason": "slot_taken",
+                "alternative_slots": bs.available_slots(db, doctor.id, req.date)[:3]}
 
     return {
-        "success": True, "confirmation_id": confirmation_id,
+        "success": True, "confirmation_id": result["confirmation_id"],
         "doctor_name": doctor.name,
         "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
                 "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": req.date, "time_slot": req.time_slot,
@@ -540,13 +603,12 @@ class HoldRequest(BaseModel):
     time_slot: str
 
 
-@app.post("/api/v1/bookings/hold")
-def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
-    doctor = _find_doctor(db, req.doctor_name)
-    if not doctor:
-        return {"success": False, "reason": "doctor_not_found"}
+def _validate_date_not_past(date_str: str) -> dict | None:
+    """Shared by every booking endpoint that takes a caller-supplied
+    date. Returns an error dict in hold_booking's own shape, or None
+    when the date is at least parseable and not in the past."""
     try:
-        target = datetime.date.fromisoformat(req.date)
+        target = datetime.date.fromisoformat(date_str)
     except ValueError:
         return {"success": False, "reason": "invalid_date"}
     if target < datetime.date.today():
@@ -554,13 +616,57 @@ def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
         # forward -- the caller is told plainly (main.py's reply template)
         # and offered the same weekday next week.
         return {"success": False, "reason": "date_in_past"}
+    return None
 
+
+def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot: str) -> dict | None:
+    """CodeRabbit-flagged: this used to live only inside hold_booking,
+    which reschedule_booking never called -- it went straight to
+    bs.reschedule_appointment(), which calls hold_slot(), a bare
+    ATOMICITY primitive that deliberately does not validate against the
+    doctor's schedule at all (see its own docstring). A malformed date
+    (a bad LLM extraction) or a genuinely past date could reach a
+    "successful" reschedule to a broken state, confirmed to the caller,
+    then crash something unrelated later (e.g. cancellation_charge()
+    parsing that date/time). Extracted so every endpoint that resolves a
+    date+slot against a specific doctor applies the SAME checks."""
+    err = _validate_date_not_past(date_str)
+    if err:
+        return err
+    target = datetime.date.fromisoformat(date_str)
     sched = _schedule_for_weekday(db, doctor.id, target.weekday())
     if not sched:
         return {"success": False, "reason": "doctor_not_available_that_day"}
     valid_slots = _generate_slots(sched.start_time, sched.end_time)
-    if req.time_slot not in valid_slots:
+    if time_slot not in valid_slots:
         return {"success": False, "reason": "invalid_slot", "valid_slots": valid_slots}
+    if target == datetime.date.today():
+        # CodeRabbit-flagged, real bug: _validate_date_not_past is
+        # DATE-level only ("target < today"), so a same-day slot earlier
+        # than right now was still requestable and holdable directly
+        # (available_slots() no longer OFFERS it -- see that function's
+        # own fix -- but nothing stopped a caller from asking for it by
+        # name anyway).
+        now = datetime.datetime.now()
+        try:
+            slot_h, slot_m = (int(x) for x in time_slot.split(":"))
+        except ValueError:
+            return {"success": False, "reason": "invalid_slot", "valid_slots": valid_slots}
+        if slot_h * 60 + slot_m <= now.hour * 60 + now.minute:
+            return {"success": False, "reason": "invalid_slot",
+                    "valid_slots": [s for s in valid_slots
+                                    if int(s.split(":")[0]) * 60 + int(s.split(":")[1]) > now.hour * 60 + now.minute]}
+    return None
+
+
+@app.post("/api/v1/bookings/hold")
+def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
+    doctor = _find_doctor(db, req.doctor_name)
+    if not doctor:
+        return {"success": False, "reason": "doctor_not_found"}
+    err = _validate_doctor_slot(db, doctor, req.date, req.time_slot)
+    if err:
+        return err
 
     result = bs.hold_slot(db, doctor.id, req.date, req.time_slot)
     if not result["success"]:
@@ -599,6 +705,13 @@ class RescheduleRequest(BaseModel):
 
 @app.post("/api/v1/bookings/reschedule")
 def reschedule_booking(req: RescheduleRequest, db: Session = Depends(get_db)):
+    appt = db.query(Appointment).filter_by(confirmation_id=req.confirmation_id, status="confirmed").first()
+    if not appt:
+        return {"success": False, "reason": "not_found"}
+    doctor = db.get(Doctor, appt.doctor_id)
+    err = _validate_doctor_slot(db, doctor, req.new_date, req.new_time_slot)
+    if err:
+        return err
     return bs.reschedule_appointment(db, req.confirmation_id, req.new_date, req.new_time_slot)
 
 
@@ -640,6 +753,9 @@ class TestsBookingRequest(BaseModel):
 
 @app.post("/api/v1/bookings/tests")
 def book_tests_endpoint(req: TestsBookingRequest, db: Session = Depends(get_db)):
+    err = _validate_date_not_past(req.date)
+    if err:
+        return err
     ids, not_found = [], []
     for name in req.test_names:
         t = _find_test(db, name)

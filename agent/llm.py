@@ -31,6 +31,8 @@ import json
 import time
 import urllib.request
 
+from agent.enquiry_followup import ENQUIRY_INTENTS
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
 
@@ -73,6 +75,18 @@ INTENTS (exactly one):
 - "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself for this case only, in {language_name}, in that language's own script.
 - "unclear": you cannot confidently tell what the caller wants, or the utterance is empty/garbled ASR noise.
 
+SECOND QUESTION IN THE SAME TURN:
+A caller sometimes asks two separate, answerable questions in one breath
+("what's the CBC rate, and is Dr. Sen available tomorrow?"). When -- and
+ONLY when -- the utterance clearly contains a SECOND, DISTINCT question,
+fill "secondary_intent" and "secondary_slots" the same way you filled
+"intent" and "slots" for the first one. Leave both null for an ordinary
+single-question turn; never split one question into two, and never use
+this for anything except "test_rate", "doctor_availability", "test_prep",
+"clinic_faq" or "department_query" -- if the second thing the caller said
+is a booking/reschedule/cancel action or is itself unclear, leave
+"secondary_intent" null rather than guessing.
+
 SLOT RULES:
 - Only fill a slot if the caller's words support it. Leave it null rather than inferring.
 - "date" / "new_date": resolve relative time words (Bengali আজ/কাল/পরশু and "আগামী <weekday>", Hindi आज/कल/परसों and "अगले <weekday>", English today/tomorrow/day after tomorrow/"this <weekday>"/"next <weekday>") to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today". If the resolved date is clearly in the past, still return it as stated -- the system rejects and corrects past dates itself; you must never silently roll a date forward.
@@ -109,6 +123,14 @@ Output ONLY a single valid JSON object, no other text, in exactly this shape:
     "symptom_description": string or null,
     "faq_topic": string or null
   }},
+  "secondary_intent": "test_rate" | "doctor_availability" | "test_prep" | "clinic_faq" | "department_query" | null,
+  "secondary_slots": {{
+    "test_name": string or null,
+    "doctor_name": string or null,
+    "date": string or null,
+    "faq_topic": string or null,
+    "symptom_description": string or null
+  }} or null,
   "direct_reply_bn": string or null
 }}
 
@@ -144,6 +166,33 @@ def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
     return body.get("response", "")
 
 
+def _normalize_list_slot(slots: dict, key: str) -> None:
+    """CodeRabbit-flagged, real bug: Ollama's JSON mode enforces valid
+    JSON syntax, not this schema's shape -- a documented failure mode for
+    a single-item list is the model collapsing it to a bare string
+    ("test_names": "CBC" instead of ["CBC"]). agent/booking_flow.merge_slots
+    does `for t in incoming_tests: ...` on whatever this slot holds; over
+    a STRING that iterates its individual CHARACTERS, each one then
+    treated as an entered test name -- exactly the class of silent,
+    confident-but-wrong fact CLAUDE.md's truth boundary exists to catch,
+    here self-inflicted by a schema-shape slip rather than a bad lookup.
+
+    A bare string is wrapped as a single-element list (test_names: one
+    test was meant) or split into characters (spelled_letters: the slot
+    IS the individual letters, so a collapsed string's characters ARE
+    the letters). Anything else that is not a list of strings is dropped
+    to null rather than guessed."""
+    val = slots.get(key)
+    if val is None:
+        return
+    if isinstance(val, str):
+        slots[key] = [val] if key == "test_names" else list(val)
+        return
+    if isinstance(val, list) and all(isinstance(v, str) for v in val):
+        return
+    slots[key] = None
+
+
 def _validate(data: dict) -> tuple[bool, list[str]]:
     errors = []
     if data.get("intent") not in VALID_INTENTS:
@@ -170,6 +219,30 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
         # /api/v1/faq, which would just 404 -- same "the model proposes,
         # code decides" discipline as direct_reply_bn above.
         slots["faq_topic"] = None
+
+    if isinstance(slots, dict):
+        _normalize_list_slot(slots, "test_names")
+        _normalize_list_slot(slots, "spelled_letters")
+
+    # KCD-395: a second question in the same turn. Optional and defended
+    # the same way as direct_reply_bn/faq_topic above -- an older cached
+    # intent (from before this field existed) or a model that omits it
+    # entirely is just "no second question", never a hard failure of the
+    # whole extraction. Restricted to the stateless, single-tool-call
+    # intents (agent/enquiry_followup.ENQUIRY_INTENTS) -- a booking action
+    # or "unclear" as a secondary_intent is defensively dropped here too,
+    # not just described-away in the prompt, because a model ignoring an
+    # instruction is exactly the failure mode this schema-level check
+    # exists to catch instead of trust.
+    secondary_intent = data.get("secondary_intent")
+    if secondary_intent not in (None, *ENQUIRY_INTENTS):
+        secondary_intent = None
+    secondary_slots = data.get("secondary_slots")
+    if secondary_intent is None or not isinstance(secondary_slots, dict):
+        secondary_intent, secondary_slots = None, None
+    data["secondary_intent"] = secondary_intent
+    data["secondary_slots"] = secondary_slots
+
     return (len([e for e in errors if "missing" not in e or "intent" in e or "slots: expected" in e]) == 0
             and "slots" in data, errors)
 

@@ -71,6 +71,12 @@ _EN_MISSING_DEFAULT = "Sorry, could you say that a little more clearly?"
 _SPECIMENS = {"blood", "urine", "stool", "serum", "saliva", "swab", "plasma"}
 
 
+def insufficient_information_reply(lang: str) -> str:
+    if lang == "hi":
+        return "माफ़ कीजिए, ठीक से सुन नहीं पाई। क्या आप फिर से थोड़ा साफ़ बोलेंगे?"
+    return "Sorry, I didn't catch that clearly enough. Could you say it again?"
+
+
 def missing_slot_prompt(intent: str, missing: str, lang: str) -> str:
     if lang == "hi":
         return _HI_MISSING.get((intent, missing), _HI_MISSING_DEFAULT)
@@ -142,6 +148,11 @@ def test_rate_reply(slots: dict, result: dict, lang: str) -> str:
 def _not_found_test(slots: dict, result: dict, lang: str) -> str:
     q = _query(slots, "test_name", lang)
     sugg = _suggestions(result, lang)
+    if result.get("ambiguous") and sugg:
+        # KCD-446: exists, but matched more than one row equally well --
+        # distinct framing from "not found" below, which would be false.
+        return (f"एक से ज़्यादा टेस्ट मिले -- कौन सा: {' या '.join(sugg)}?" if lang == "hi"
+                else f"I found more than one test -- which one did you mean: {' or '.join(sugg)}?")
     if lang == "hi":
         if sugg:
             return (f"'{q}' नाम का टेस्ट नहीं मिला। क्या आप यह कहना चाह रहे हैं: {', '.join(sugg)}?"
@@ -333,6 +344,15 @@ def lookup_reply(bookings: list[dict], lang: str) -> str:
             f"Confirmation number: {b['confirmation_id']}. I can resend the written confirmation if you'd like.")
 
 
+def multiple_bookings_reply(bookings: list[dict], lang: str) -> str:
+    hi = lang == "hi"
+    parts = [f"{b.get('doctor_name')} डॉक्टर के पास {b['date']} की" for b in bookings[:3]] if hi \
+        else [f"with {b.get('doctor_name')} on {b['date']}" for b in bookings[:3]]
+    if hi:
+        return f"आपके नाम कई बुकिंग हैं -- {', '.join(parts)}। कौन सी बुकिंग, कन्फ़र्मेशन नंबर बताइए?"
+    return f"You have more than one booking -- {', '.join(parts)}. Which one -- could you give me the confirmation number?"
+
+
 def multi_test_reply(result: dict, lang: str) -> str:
     hi = lang == "hi"
     if not result.get("success"):
@@ -375,6 +395,9 @@ def resend_reply(result: dict, lang: str) -> str:
                 else f"The confirmation has been resent, to the number ending in {result['sent_to_last4']}.")
     if result.get("reason") == "rate_limited":
         return "अभी थोड़ी देर पहले ही भेजा गया था। थोड़ी देर बाद फिर कहिए।" if hi else "It was already sent a moment ago. Please ask again shortly."
+    if result.get("reason") == "no_phone_on_file":
+        return ("माफ़ कीजिए, इस बुकिंग के लिए कोई फ़ोन नंबर दर्ज नहीं है, इसलिए भेज नहीं पा रही।" if hi
+                else "Sorry, there's no phone number on file for this booking, so I can't send it.")
     return "माफ़ कीजिए, इस कन्फ़र्मेशन नंबर पर कोई बुकिंग नहीं मिली।" if hi else "Sorry, I couldn't find a booking with that confirmation number."
 
 

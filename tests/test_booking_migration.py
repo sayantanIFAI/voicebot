@@ -103,6 +103,50 @@ def test_old_appointments_table_gains_columns_without_losing_the_existing_row(ol
     assert finish["department_routes_added"] == 1   # the fixture's one department
 
 
+def test_old_blanket_unique_constraint_is_rebuilt_into_a_partial_index(old_db):
+    """CodeRabbit-flagged, real bug: this fixture's old appointments table
+    (line ~52 above) has the ORIGINAL blanket UNIQUE(doctor_id, date,
+    time_slot) baked in via raw SQL, with an existing CONFIRMED row
+    already occupying (doctor_id=1, date='2026-01-05', time_slot='10:15').
+    Proves the full end-to-end consequence on an actually-migrated
+    database: cancel that row, then rebook the SAME slot -- which used to
+    raise an uncaught IntegrityError on the INSERT, because the cancelled
+    row still occupied the old constraint's key."""
+    booking_migrate = importlib.import_module("booking_migrate")
+    models = importlib.import_module("models")
+    db_mod = importlib.import_module("db")
+    booking_service = importlib.import_module("booking_service")
+
+    models.Base.metadata.create_all(db_mod.engine)
+    result = booking_migrate.migrate_booking_schema()
+    assert result["appointments_table_rebuilt"] is True
+
+    db = db_mod.SessionLocal()
+    try:
+        # The pre-existing row survived the table rebuild.
+        appt = db.query(models.Appointment).filter_by(confirmation_id="KCD-OLD-0001").one()
+        assert appt.patient_name == "Existing Patient"
+        assert appt.status == "confirmed"
+
+        # confirm_charge=True unconditionally: the fixture's fixed date
+        # (2026-01-05) is in the past relative to whenever this test
+        # actually runs, which cancellation_charge() reads as "inside
+        # the charging window" and would otherwise refuse the first call.
+        cancelled = booking_service.cancel_appointment(db, "KCD-OLD-0001", confirm_charge=True)
+        assert cancelled["success"], cancelled
+
+        hold = booking_service.hold_slot(db, 1, "2026-01-05", "10:15")
+        assert hold["success"]
+        rebooked = booking_service.confirm_booking(
+            db, hold["hold_token"], 1, "2026-01-05", "10:15", "New Patient", "9111111111", "9111111111")
+        assert rebooked["success"], rebooked   # used to raise IntegrityError here
+    finally:
+        db.close()
+
+    # Idempotent: a second call on the now-rebuilt table is a no-op.
+    assert booking_migrate.migrate_booking_schema()["appointments_table_rebuilt"] is False
+
+
 def test_migration_is_idempotent_and_never_overwrites_a_hand_edited_fee(old_db):
     booking_migrate = importlib.import_module("booking_migrate")
     models = importlib.import_module("models")

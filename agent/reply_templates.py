@@ -70,11 +70,28 @@ def missing_slot_prompt(intent: str, missing: str, lang: str = "bn") -> str:
     return prompts.get((intent, missing), "দুঃখিত, একটু স্পষ্ট করে বলবেন?")
 
 
+def insufficient_information_reply(lang: str = "bn") -> str:
+    """KCD-442: a distinct THIRD outcome, neither "this does not exist"
+    (KCD-443's not-found path) nor "the system is unreachable"
+    (phrase("tool_failure", lang)) -- the turn itself was heard too
+    unclearly (agent/confidence_gate.py) to trust running a lookup on
+    what was extracted from it at all. Saying so plainly beats a
+    confident answer about the wrong test."""
+    if lang != "bn":
+        return _i18n.insufficient_information_reply(lang)
+    return "দুঃখিত, ঠিক শুনতে পাইনি। আপনি কি আবার একটু স্পষ্ট করে বলবেন?"
+
+
 def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.test_rate_reply(slots, result, lang)
     if not result.get("found"):
         suggestions = result.get("did_you_mean") or []
+        if result.get("ambiguous") and suggestions:
+            # KCD-446: this test EXISTS -- several rows matched equally
+            # well -- distinct from the not-found framing below, which
+            # would tell the caller something untrue.
+            return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
             return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
                      f"আপনি কি বলতে চাইছেন: {', '.join(suggestions)}?")
@@ -115,6 +132,8 @@ def test_prep_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         return _i18n.test_prep_reply(slots, result, lang)
     if not result.get("found"):
         suggestions = result.get("did_you_mean") or []
+        if result.get("ambiguous") and suggestions:
+            return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
             return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
                      f"আপনি কি বলতে চাইছেন: {', '.join(suggestions)}?")
@@ -169,13 +188,29 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") ->
     if lang != "bn":
         return _i18n.booking_confirmation_readback(slots, action, lang)
     if action == "book_appointment":
+        # KCD-448: read back the number the confirmation actually goes to
+        # (contact_phone wins over phone, same precedence as
+        # booking_flow.effective_phone) -- never the raw `phone` slot,
+        # which is None whenever the caller gave a different contact
+        # number or declined one, both of which would otherwise be read
+        # back as the literal word "None". A declined phone has already
+        # been announced separately (phrase("no_confirmation_number", lang)
+        # in main.py, before this readback runs) so it is omitted here
+        # rather than repeated.
+        phone = slots.get("contact_phone") or slots.get("phone")
+        phone_clause = f", ফোন নম্বর {phone} " if phone else " "
         return (f"তাহলে {slots.get('doctor_name')} ডাক্তারের কাছে {slots.get('date')} তারিখে, "
-                f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')}, "
-                f"ফোন নম্বর {slots.get('phone')} -- এই অ্যাপয়েন্টমেন্টটা কনফার্ম করব?")
+                f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')}"
+                f"{phone_clause}-- এই অ্যাপয়েন্টমেন্টটা কনফার্ম করব?")
     if action == "book_test":
-        tests = "、".join(slots.get("_test_names_display", [])) or "টেস্ট"
-        return (f"তাহলে {slots.get('date')} তারিখে {tests} -- রোগীর নাম {slots.get('patient_name')}, "
-                f"ফোন নম্বর {slots.get('phone')} -- এই বুকিংটা কনফার্ম করব?")
+        # ", " not the ideographic "、" -- a stray full-width character
+        # from an earlier edit, inconsistent with every other list-join
+        # in this file and in reply_templates_i18n.py.
+        tests = ", ".join(slots.get("_test_names_display", [])) or "টেস্ট"
+        phone = slots.get("contact_phone") or slots.get("phone")
+        phone_clause = f", ফোন নম্বর {phone} " if phone else " "
+        return (f"তাহলে {slots.get('date')} তারিখে {tests} -- রোগীর নাম {slots.get('patient_name')}"
+                f"{phone_clause}-- এই বুকিংটা কনফার্ম করব?")
     if action == "reschedule_appointment":
         return f"তাহলে অ্যাপয়েন্টমেন্টটা {slots.get('new_date')} তারিখে, সময় {slots.get('new_time_slot')}-এ নিয়ে যাব?"
     if action == "cancel_appointment":
@@ -235,9 +270,9 @@ def multi_test_reply(result: dict, lang: str = "bn") -> str:
         return _i18n.multi_test_reply(result, lang)
     if not result.get("success"):
         return "দুঃখিত, টেস্টগুলো বুক করা গেল না। একটু পরে আবার চেষ্টা করুন।"
-    names = "、".join(result["test_names"])
+    names = ", ".join(result["test_names"])
     reply = (f"{names} -- এই টেস্টগুলো {result['date']} তারিখে বুক করা হয়েছে। "
-             f"মোট খরচ {result['total_rate_inr']} টাকা। কনফার্মেশন নম্বর: {result['confirmation_id']}।")
+             f"মোট খরচ {result['total_rate_inr']} টাকা। কনফার্মেশন নম্বর {result['confirmation_id']}।")
     if result.get("combined_prep"):
         reply += f" প্রস্তুতি: {result['combined_prep']}"
     return reply
@@ -266,6 +301,11 @@ def resend_reply(result: dict, lang: str = "bn") -> str:
     reason = result.get("reason")
     if reason == "rate_limited":
         return "একটু আগেই পাঠানো হয়েছে। একটু অপেক্ষা করে আবার বলবেন।"
+    if reason == "no_phone_on_file":
+        # Distinct from "booking not found" (below) -- the booking DOES
+        # exist, there is simply no number on file to send anything to,
+        # since the caller declined to give one at booking time.
+        return "দুঃখিত, এই বুকিং-এর জন্য কোনো ফোন নম্বর রাখা নেই, তাই পাঠাতে পারছি না।"
     return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো বুকিং খুঁজে পেলাম না।"
 
 
@@ -305,6 +345,22 @@ def draft_resume_reply(draft: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.draft_resume_reply(draft, lang)
     return "গত বার কল কেটে গিয়েছিল, আপনার বুকিং শেষ হয়নি। যেখানে ছিলাম সেখান থেকে চালিয়ে যাব, নাকি নতুন করে শুরু করব?"
+
+
+def multiple_bookings_reply(bookings: list[dict], lang: str = "bn") -> str:
+    """KCD/CodeRabpit-flagged: resolving a reschedule/cancel/resend target
+    by phone alone used to silently take bookings[0] with no
+    disambiguation and no statement of which one -- a caller with
+    several bookings (their own, or a proxy's) could have a "yes" act on
+    the WRONG one. Lists up to three by doctor+date+time (same cap as
+    KCD-446's near-match offer) and asks for the confirmation number,
+    the same deterministic bearer-token identifier every other lookup
+    path in this codebase already uses to pick exactly one booking."""
+    if lang != "bn":
+        return _i18n.multiple_bookings_reply(bookings, lang)
+    parts = [f"{b.get('doctor_name')} ডাক্তারের {b['date']} তারিখের" for b in bookings[:3]]
+    return (f"আপনার নামে একাধিক বুকিং আছে -- {', '.join(parts)}। "
+            f"কোনটার কথা বলছেন, কনফার্মেশন নম্বরটা বলবেন?")
 
 
 def spelling_prompt(lang: str = "bn") -> str:

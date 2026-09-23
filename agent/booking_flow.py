@@ -21,6 +21,7 @@ CLAUDE.md's truth boundary) and fast (zero extra round trip to Qwen).
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -183,11 +184,40 @@ _YES_WORDS = {
     "hi": ("हाँ", "हां", "ठीक है", "ओके", "कन्फर्म", "बुक कर दीजिए"),
     "en": ("yes", "yeah", "yep", "confirm", "ok", "okay", "correct", "right", "sure"),
 }
+# "cancel"/"ক্যানসেল"/"বাতিল"/"कैंसल"/"रद्द" are deliberately NOT here.
+# classify_yes_no is only ever asked as an answer to "shall I <action>
+# this?" (main.py only calls it during booking.stage in
+# ("confirming", "awaiting_charge_confirm")) -- when the pending action
+# IS itself a cancellation, an affirmative answer is exactly "yes,
+# cancel it", which contains the word "cancel". Treating that word as a
+# NO-signal misread a caller's own "yes" as "no" and left their
+# cancellation un-actioned -- CodeRabbit-flagged, confirmed by tracing
+# this exact call path. A caller who says a bare "cancel" with no other
+# word now gets None (asked again) rather than a guessed answer, which
+# is the safe direction to be wrong in.
 _NO_WORDS = {
-    "bn": ("না", "নয়", "ক্যানসেল", "বাতিল", "ঠিক না"),
-    "hi": ("नहीं", "नही", "कैंसल", "रद्द", "गलत"),
-    "en": ("no", "nope", "cancel", "wrong", "not correct"),
+    "bn": ("না", "নয়", "ঠিক না"),
+    "hi": ("नहीं", "नही", "गलत"),
+    "en": ("no", "nope", "wrong", "not correct"),
 }
+
+_RE_TOKEN_SPLIT = re.compile(r"[\s,.!?।|]+")
+
+
+def _tokenize(t: str) -> list[str]:
+    return [tok for tok in _RE_TOKEN_SPLIT.split(t) if tok]
+
+
+def _has_phrase(tokens: list[str], phrase: str) -> bool:
+    """A single-word cue matches only a WHOLE token (never a substring --
+    "ok" must not fire on "book", "no" must not fire on "know"). A
+    multi-word phrase ("not correct", "ঠিক না") matches a contiguous run
+    of tokens, not a raw substring of the sentence."""
+    phrase_tokens = phrase.split()
+    if len(phrase_tokens) == 1:
+        return phrase in tokens
+    n = len(phrase_tokens)
+    return any(tokens[i:i + n] == phrase_tokens for i in range(len(tokens) - n + 1))
 
 
 def classify_yes_no(transcript: str, lang: str) -> str | None:
@@ -196,15 +226,21 @@ def classify_yes_no(transcript: str, lang: str) -> str | None:
     out of the model's hands (CLAUDE.md's truth boundary) and off the
     Qwen round trip (this session's zero-latency requirement). Returns
     "yes", "no", or None if neither matched -- callers treat None as
-    "unclear", the same as any other unrecognised turn."""
+    "unclear", the same as any other unrecognised turn.
+
+    Token-based, not raw substring matching (see _has_phrase) -- a
+    substring check let "book it" match "ok" and "I don't know" match
+    "no" (via "know"), both CodeRabbit-flagged and confirmed by tracing
+    this function against those exact utterances."""
     t = transcript.strip().lower()
+    tokens = _tokenize(t)
     yes_words = _YES_WORDS.get(lang, _YES_WORDS["en"])
     no_words = _NO_WORDS.get(lang, _NO_WORDS["en"])
     # "no" is checked first: "not correct" / "ঠিক না" contain "correct"/
     # "ঠিক", which are also yes-leaning words on their own.
-    if any(w in t for w in no_words):
+    if any(_has_phrase(tokens, w) for w in no_words):
         return "no"
-    if any(w in t for w in yes_words):
+    if any(_has_phrase(tokens, w) for w in yes_words):
         return "yes"
     return None
 
@@ -237,3 +273,58 @@ def merge_spelling(state: BookingState, letters_spoken: list[str]) -> str:
     state.slots["_spelling_buffer"] = combined
     state.touch()
     return combined
+
+
+# ------------------------------------------------------------- corrections
+
+# Which fields KCD-453 acknowledges by name when corrected -- the
+# free-text/internal ones (_spelling_buffer, symptom_description) are
+# left out because restating them verbatim would be noise, not
+# confirmation; a caller correcting one of those hears it through the
+# ordinary readback/reply instead.
+_CORRECTABLE_FIELDS = ("doctor_name", "date", "time_slot", "patient_name", "phone",
+                       "contact_phone", "confirmation_id", "new_date", "new_time_slot", "relationship")
+
+# A natural CLAUSE per field, never a "label: value" pair (KCD-454 --
+# spoken punctuation artefacts are never acceptable, including ones this
+# module itself might otherwise introduce).
+_FIELD_CLAUSE = {
+    "bn": {"doctor_name": "ডাক্তার {v}", "date": "{v} তারিখে", "time_slot": "{v} সময়ে",
+           "patient_name": "নাম {v}", "phone": "ফোন নম্বর {v}", "contact_phone": "ফোন নম্বর {v}",
+           "confirmation_id": "কনফার্মেশন নম্বর {v}", "new_date": "নতুন তারিখ {v}",
+           "new_time_slot": "নতুন সময় {v}", "relationship": "সম্পর্ক {v}"},
+    "hi": {"doctor_name": "डॉक्टर {v}", "date": "{v} तारीख को", "time_slot": "{v} बजे",
+           "patient_name": "नाम {v}", "phone": "फ़ोन नंबर {v}", "contact_phone": "फ़ोन नंबर {v}",
+           "confirmation_id": "कन्फ़र्मेशन नंबर {v}", "new_date": "नई तारीख {v}",
+           "new_time_slot": "नया समय {v}", "relationship": "रिश्ता {v}"},
+    "en": {"doctor_name": "doctor {v}", "date": "{v}", "time_slot": "{v}",
+           "patient_name": "the name {v}", "phone": "the phone number {v}", "contact_phone": "the phone number {v}",
+           "confirmation_id": "confirmation number {v}", "new_date": "{v}",
+           "new_time_slot": "{v}", "relationship": "relationship {v}"},
+}
+
+
+def correction_acknowledgement(changed: list[str], prior_slots: dict, new_slots: dict, lang: str) -> str | None:
+    """KCD-453: a caller correcting a value already captured gets an
+    explicit acknowledgment and restatement -- never a silent overwrite,
+    and the agent never re-asserts the value it is replacing. Returns
+    None when `changed` has nothing that counts as a CORRECTION: a field
+    filled in for the first time this call is ordinary slot-filling, not
+    a correction, and gets its usual flow/prompt instead, not this.
+
+    Only the field's OWN new value is restated -- this is deliberately
+    not a full booking_confirmation_readback, which already exists and
+    still runs before anything is written; this is the narrower "I heard
+    you, here is what changed" turn a caller expects immediately after
+    correcting themselves, which the readback alone does not give them
+    on an intermediate slot-filling turn."""
+    corrected = [f for f in changed if f in _CORRECTABLE_FIELDS and prior_slots.get(f) not in (None, "")]
+    if not corrected:
+        return None
+    clauses = _FIELD_CLAUSE.get(lang, _FIELD_CLAUSE["en"])
+    parts = [clauses[f].format(v=new_slots.get(f)) for f in corrected]
+    if lang == "hi":
+        return f"ठीक है, अब {', '.join(parts)} -- सही कर दिया।"
+    if lang == "en":
+        return f"Got it, changed to {', '.join(parts)}."
+    return f"ঠিক আছে, বদলে {', '.join(parts)} করে দিলাম।"

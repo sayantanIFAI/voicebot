@@ -125,7 +125,16 @@ def available_slots(db: Session, doctor_id: int, date: str) -> list[str]:
         return []
     all_slots = _generate_slots(sched.start_time, sched.end_time)
     taken = _taken_slots(db, doctor_id, date)
-    return [s for s in all_slots if s not in taken]
+    free = [s for s in all_slots if s not in taken]
+    now = _now()
+    if target == now.date():
+        # CodeRabbit-flagged, real bug: a same-day slot earlier than the
+        # current time was offered and bookable -- hold_booking's own
+        # date check is date-level only ("target < today"), never
+        # time-of-day, so "today at 10am" stayed offerable at 3pm.
+        now_minutes = now.hour * 60 + now.minute
+        free = [s for s in free if _slot_minutes(s) > now_minutes]
+    return free
 
 
 def earliest_available(db: Session, doctor_id: int, from_date: datetime.date,
@@ -162,7 +171,28 @@ def nearest_alternatives(db: Session, doctor_id: int, date: str, time_slot: str)
 
 # ========================================================== patients
 
+# Mirrors agent/booking_flow.py's effective_phone() sentinel by VALUE,
+# not by import -- clinic-api is a separate service this repo does not
+# own (see this module's own docstring / CLAUDE.md's service-boundary
+# discipline), the same reason agent/phonetic_match.py and
+# clinic-api/phonetic_match.py are deliberately duplicated rather than
+# shared.
+NOT_PROVIDED_PHONE = "not_provided"
+
+
 def find_or_create_patient(db: Session, name: str, phone: str, age: int | None = None) -> Patient:
+    """CodeRabbit-flagged, real bug: the "not_provided" sentinel (a
+    caller who declined to give any phone number) used to be looked up
+    like a real phone value -- two DIFFERENT patients who share a name
+    and BOTH decline a number would silently become the SAME Patient
+    row, cross-contaminating whatever booking history/proxy
+    authorisation is attached to it. A declined phone always creates a
+    fresh Patient instead of searching for one."""
+    if phone == NOT_PROVIDED_PHONE:
+        p = Patient(name=name, phone=phone, age=age, created_at=_now())
+        db.add(p)
+        db.flush()
+        return p
     p = db.query(Patient).filter_by(name=name, phone=phone).first()
     if p:
         if age and not p.age:
@@ -339,7 +369,29 @@ def reschedule_appointment(db: Session, confirmation_id: str, new_date: str, new
 
 
 def lookup_bookings(db: Session, phone: str | None = None, confirmation_id: str | None = None,
-                     name: str | None = None, upcoming_only: bool = True) -> list[dict]:
+                     name: str | None = None, upcoming_only: bool = True,
+                     caller_phone: str | None = None) -> list[dict]:
+    """SECURITY (CWE-639/IDOR, CodeRabbit-flagged): every row this used to
+    return on a bare phone/name search, unauthenticated -- anyone who
+    spoke a phone number, guessed or overheard, could hear a stranger's
+    doctor/date/time/name. authorize_disclosure() already existed for
+    exactly this (its own docstring says so) but was never called
+    anywhere. Fixed here, the one place every phone/confirmation_id/name
+    lookup in the codebase funnels through.
+
+    A caller who supplies the exact confirmation_id already holds the
+    bearer token for that one row (unchanged from before -- 8 random hex
+    chars is the existing access-control model for that path, per
+    _confirmation_id's own comment) and skips the extra check. A caller
+    searching by PHONE or NAME ALONE must additionally be authorized for
+    EACH row: `caller_phone` (defaulting to `phone`, since every existing
+    call site already treats the phone it searches by as the asking
+    caller's own number) is checked against the row's patient via
+    authorize_disclosure -- the same self/proxy/dob-confirmed tiers
+    booking time already builds and records, now actually load-bearing.
+    A name-only search with no phone at all now discloses nothing: a
+    name alone was never a meaningful access-control check to begin
+    with."""
     q = db.query(Appointment).filter(Appointment.status == "confirmed")
     if confirmation_id:
         q = q.filter(Appointment.confirmation_id == confirmation_id)
@@ -350,8 +402,16 @@ def lookup_bookings(db: Session, phone: str | None = None, confirmation_id: str 
     if upcoming_only:
         q = q.filter(Appointment.date >= _now().date().isoformat())
     rows = q.order_by(Appointment.date, Appointment.time_slot).all()
+
+    require_auth = not confirmation_id
+    asking_as = caller_phone or phone
+
     out = []
     for a in rows:
+        if require_auth:
+            patient = db.get(Patient, a.patient_id) if a.patient_id else None
+            if not patient or not asking_as or not authorize_disclosure(db, patient, asking_as):
+                continue
         doctor = db.get(Doctor, a.doctor_id)
         out.append({"confirmation_id": a.confirmation_id, "doctor_name": doctor.name if doctor else None,
                      "date": a.date, "time_slot": a.time_slot, "patient_name": a.patient_name})
@@ -425,7 +485,15 @@ def queue_sms(db: Session, to_phone: str, template_key: str, message: str,
     never "sent". Wiring a real SMS/WhatsApp provider means implementing
     send() in a new clinic-api/notifications.py and calling it from here;
     nothing else in this module needs to change, and nothing anywhere else
-    claims a message reached a caller's phone until that exists."""
+    claims a message reached a caller's phone until that exists.
+
+    CodeRabbit-flagged: a caller who declined to give any phone number
+    (NOT_PROVIDED_PHONE) has nowhere to send anything -- queuing a row
+    addressed to the literal string "not_provided" is not merely useless,
+    it is a fake record of an outbound message that was never actually
+    addressable. Skipped, with a distinct, honest outcome."""
+    if to_phone == NOT_PROVIDED_PHONE:
+        return {"queued": False, "reason": "no_phone_on_file"}
     row = SmsOutbox(to_phone=to_phone, template_key=template_key, message=message,
                      status="queued", related_confirmation_id=related_confirmation_id, created_at=_now())
     db.add(row)
@@ -446,6 +514,12 @@ def resend_confirmation(db: Session, confirmation_id: str) -> dict:
             message = f"Your test booking ({confirmation_id}) is confirmed for {tb.date}."
     if not to_phone:
         return {"success": False, "reason": "not_found"}
+    if to_phone == NOT_PROVIDED_PHONE:
+        # CodeRabbit-flagged: to_phone[-4:] on the literal sentinel string
+        # produced the nonsense "ided" (the last 4 characters of
+        # "not_provided") as if it were a real phone's last 4 digits --
+        # confusing at best, and could read as a real (wrong) number.
+        return {"success": False, "reason": "no_phone_on_file"}
 
     last = (db.query(SmsOutbox).filter_by(related_confirmation_id=confirmation_id, template_key="resend")
             .order_by(SmsOutbox.created_at.desc()).first())

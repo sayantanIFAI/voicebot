@@ -8,6 +8,7 @@ import time
 
 from agent.booking_flow import (
     classify_yes_no,
+    correction_acknowledgement,
     effective_phone,
     is_ready_to_confirm,
     mark_confirming,
@@ -131,6 +132,32 @@ def test_classify_yes_no_checks_no_before_yes_for_negated_correct():
     assert classify_yes_no("ঠিক না", "bn") == "no"
 
 
+def test_an_affirmative_cancel_confirmation_is_never_misread_as_no():
+    # CodeRabbit-flagged, real bug: "cancel" used to be a NO-word, so a
+    # caller confirming "shall I cancel your appointment?" with "yes,
+    # cancel it" was told "okay, unchanged" -- the opposite of what they
+    # asked. classify_yes_no is only ever asked during a confirming-stage
+    # turn, so when the PENDING action is itself a cancellation, "cancel"
+    # in the answer is affirmative, never negative.
+    assert classify_yes_no("yes, cancel it", "en") == "yes"
+    assert classify_yes_no("হ্যাঁ, ক্যানসেল করে দিন", "bn") == "yes"
+    assert classify_yes_no("हाँ, कैंसल कर दीजिए", "hi") == "yes"
+
+
+def test_a_bare_cancel_with_no_other_signal_is_unclear_not_a_guess():
+    # Ambiguous on its own (could be "yes, [please] cancel" or a stray
+    # utterance) -- asked again rather than guessed, the safe direction.
+    assert classify_yes_no("cancel", "en") is None
+
+
+def test_substring_false_positives_are_no_longer_misclassified():
+    # "book it" contains "ok" as a raw substring; "I don't know" contains
+    # "no" (via "know"). Both were real false positives under substring
+    # matching -- fixed by token-based matching (_has_phrase).
+    assert classify_yes_no("book it", "en") is None
+    assert classify_yes_no("I don't know", "en") is None
+
+
 def test_spelling_assembly_ignores_non_letters():
     assert try_assemble_spelling(["r", "a", "3", "v", "", "i"]) == "ravi"
     assert try_assemble_spelling(["", "  "]) is None
@@ -161,3 +188,54 @@ def test_effective_phone_prefers_contact_phone_then_falls_back_to_sentinel():
     assert effective_phone(state) == "9800000001"
     merge_slots(state, {"contact_phone": "9800000099"})
     assert effective_phone(state) == "9800000099"
+
+
+# ------------------------------------------------------------- KCD-453
+
+def test_first_time_slot_fill_is_not_a_correction():
+    state = new_state("book_appointment")
+    prior = dict(state.slots)
+    changed = merge_slots(state, {"doctor_name": "Sen"})
+    assert correction_acknowledgement(changed, prior, state.slots, "en") is None
+
+
+def test_changing_an_already_given_value_is_a_correction():
+    state = new_state("book_appointment")
+    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01"})
+    prior = dict(state.slots)
+    changed = merge_slots(state, {"doctor_name": "Roy"})
+    ack = correction_acknowledgement(changed, prior, state.slots, "en")
+    assert ack is not None
+    assert "Roy" in ack
+    assert "Sen" not in ack   # the agent restates the new value, never defends the old one
+
+
+def test_correction_acknowledgement_never_speaks_a_label_colon():
+    state = new_state("book_appointment")
+    merge_slots(state, {"patient_name": "Ravi", "phone": "9800000001"})
+    prior = dict(state.slots)
+    changed = merge_slots(state, {"phone": "9800000099"})
+    for lang in ("bn", "hi", "en"):
+        ack = correction_acknowledgement(changed, prior, state.slots, lang)
+        assert ":" not in ack and "[" not in ack and "]" not in ack
+
+
+def test_correction_acknowledgement_is_localised_per_language():
+    state = new_state("book_appointment")
+    merge_slots(state, {"date": "2026-10-01"})
+    prior = dict(state.slots)
+    changed = merge_slots(state, {"date": "2026-10-05"})
+    assert "2026-10-05" in correction_acknowledgement(changed, prior, state.slots, "bn")
+    assert "2026-10-05" in correction_acknowledgement(changed, prior, state.slots, "hi")
+    assert "2026-10-05" in correction_acknowledgement(changed, prior, state.slots, "en")
+
+
+def test_uncorrectable_internal_fields_are_never_acknowledged():
+    # _spelling_buffer is not in _CORRECTABLE_FIELDS -- restating it would
+    # be noise, and merge_slots itself never puts it in `changed` (it is
+    # written directly by merge_spelling, not through merge_slots).
+    state = new_state("book_appointment")
+    merge_slots(state, {"symptom_description": "chest pain"})
+    prior = dict(state.slots)
+    changed = merge_slots(state, {"symptom_description": "shortness of breath"})
+    assert correction_acknowledgement(changed, prior, state.slots, "en") is None

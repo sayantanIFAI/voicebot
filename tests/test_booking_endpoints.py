@@ -40,7 +40,13 @@ def clinic_client():
         pass
 
 
-def _next_weekday_with_schedule(client, doctor_name: str, min_days_ahead: int = 0) -> str:
+def _next_weekday_with_schedule(client, doctor_name: str, min_days_ahead: int = 1) -> str:
+    # Defaults to tomorrow onward, not today: booking_service.available_slots
+    # (and now clinic-api/main.py's _validate_doctor_slot) correctly
+    # exclude a same-day slot whose time has already passed, so a test
+    # that does not care about same-day/past-time behaviour specifically
+    # should not pick a "today" date whose first chamber slot may already
+    # be behind the current wall-clock time.
     for i in range(min_days_ahead, min_days_ahead + 14):
         d = datetime.date.today() + datetime.timedelta(days=i)
         r = client.get("/api/v1/doctors/availability", params={"name": doctor_name, "date": d.isoformat()})
@@ -151,3 +157,138 @@ def test_conflict_endpoint_detects_double_booking(clinic_client):
     conflict = c.get("/api/v1/bookings/conflict",
                       params={"phone": "9222222222", "date": date, "time_slot": slot}).json()
     assert conflict["conflict"] is True
+
+
+# ==================== legacy /api/v1/appointments -- CodeRabbit-flagged ====
+
+def test_legacy_endpoint_books_successfully(clinic_client):
+    c = clinic_client
+    cat = c.get("/api/v1/catalogue").json()
+    doctor_name = cat["doctors"][0]["name"]
+    date = _next_weekday_with_schedule(c, doctor_name)
+    # A real valid slot, via a throwaway hold probe (same trick the other tests use).
+    hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": "__probe__"}).json()
+    slot = hold["valid_slots"][0]
+
+    result = c.post("/api/v1/appointments", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": slot,
+        "patient_name": "Legacy Patient", "phone": "9333333001",
+    }).json()
+    assert result["success"], result
+    assert result["confirmation_id"].startswith("KCD-")
+
+
+def test_legacy_endpoint_now_sees_a_hold_from_the_new_flow(clinic_client):
+    # CodeRabbit-flagged, real bug: the legacy endpoint used to check only
+    # its own unguarded Appointment query, invisible to models.SlotLock --
+    # a slot HELD (not yet confirmed) via the new /api/v1/bookings/hold
+    # flow could still be double-booked through this one. Now routed
+    # through the same hold_slot()/confirm_booking() primitives, so it
+    # correctly sees the hold and refuses.
+    c = clinic_client
+    cat = c.get("/api/v1/catalogue").json()
+    doctor_name = cat["doctors"][0]["name"]
+    date = _next_weekday_with_schedule(c, doctor_name)
+    hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": "__probe__"}).json()
+    slot = hold["valid_slots"][0]
+
+    new_flow_hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": slot}).json()
+    assert new_flow_hold["success"]
+
+    legacy_result = c.post("/api/v1/appointments", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": slot,
+        "patient_name": "Double Booker", "phone": "9333333002",
+    }).json()
+    assert legacy_result["success"] is False
+    assert legacy_result["reason"] == "slot_taken"
+
+
+def test_new_flow_now_sees_a_legacy_booking(clinic_client):
+    # The other half: a slot booked through the legacy endpoint must show
+    # up as unavailable to the new flow too (available_slots() reads
+    # SlotLock, which the legacy endpoint now populates).
+    c = clinic_client
+    cat = c.get("/api/v1/catalogue").json()
+    doctor_name = cat["doctors"][0]["name"]
+    date = _next_weekday_with_schedule(c, doctor_name)
+    hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": "__probe__"}).json()
+    slot = hold["valid_slots"][0]
+
+    legacy_result = c.post("/api/v1/appointments", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": slot,
+        "patient_name": "Legacy Patient", "phone": "9333333003",
+    }).json()
+    assert legacy_result["success"]
+
+    new_hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": slot}).json()
+    assert new_hold["success"] is False
+    assert new_hold["reason"] == "slot_taken"
+
+
+# ============ reschedule/book-tests now validate like hold does (CodeRabbit) ==
+
+def test_reschedule_rejects_a_past_date(clinic_client):
+    c = clinic_client
+    cat = c.get("/api/v1/catalogue").json()
+    doctor_name = cat["doctors"][0]["name"]
+    date = _next_weekday_with_schedule(c, doctor_name, min_days_ahead=2)
+    hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": "__probe__"}).json()
+    slot = hold["valid_slots"][0]
+    hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": slot}).json()
+    confirm = c.post("/api/v1/bookings/confirm", json={
+        "hold_token": hold["hold_token"], "doctor_id": hold["doctor_id"], "date": date,
+        "time_slot": slot, "patient_name": "Test Patient", "phone": "9123456781",
+        "caller_phone": "9123456781",
+    }).json()
+    assert confirm["success"]
+
+    past = (datetime.date.today() - datetime.timedelta(days=5)).isoformat()
+    result = c.post("/api/v1/bookings/reschedule", json={
+        "confirmation_id": confirm["confirmation_id"], "new_date": past, "new_time_slot": "10:00",
+    }).json()
+    # Used to skip validation entirely and attempt a hold on a past date.
+    assert result == {"success": False, "reason": "date_in_past"}
+
+
+def test_reschedule_rejects_a_slot_outside_chamber_hours(clinic_client):
+    c = clinic_client
+    cat = c.get("/api/v1/catalogue").json()
+    doctor_name = cat["doctors"][0]["name"]
+    date = _next_weekday_with_schedule(c, doctor_name, min_days_ahead=2)
+    hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": "__probe__"}).json()
+    slot = hold["valid_slots"][0]
+    hold = c.post("/api/v1/bookings/hold", json={
+        "doctor_name": doctor_name, "date": date, "time_slot": slot}).json()
+    confirm = c.post("/api/v1/bookings/confirm", json={
+        "hold_token": hold["hold_token"], "doctor_id": hold["doctor_id"], "date": date,
+        "time_slot": slot, "patient_name": "Test Patient", "phone": "9123456782",
+        "caller_phone": "9123456782",
+    }).json()
+    assert confirm["success"]
+
+    result = c.post("/api/v1/bookings/reschedule", json={
+        "confirmation_id": confirm["confirmation_id"], "new_date": date, "new_time_slot": "03:45",
+    }).json()
+    assert result["success"] is False
+    assert result["reason"] == "invalid_slot"
+
+
+def test_book_tests_rejects_a_past_date(clinic_client):
+    c = clinic_client
+    cat = c.get("/api/v1/catalogue").json()
+    test_name = cat["tests"][0]["name"]
+    past = (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
+    result = c.post("/api/v1/bookings/tests", json={
+        "test_names": [test_name], "date": past, "patient_name": "X",
+        "phone": "9123456783", "caller_phone": "9123456783",
+    }).json()
+    # Used to skip validation and attempt to book tests for a past date.
+    assert result == {"success": False, "reason": "date_in_past"}
