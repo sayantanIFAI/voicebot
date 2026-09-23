@@ -34,12 +34,14 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import json
 import logging
 import os
 import threading
 
 import httpx
 
+from agent.clause_split import split_into_clauses
 from agent.speech_norm import unspeakable_spans, verbalize
 
 logger = logging.getLogger("tts")
@@ -109,7 +111,8 @@ class TTSClient:
         self.base_url = base_url
         self._audio_cache: collections.OrderedDict[str, bytes] = collections.OrderedDict()
         self._cache_lock = threading.Lock()
-        self.stats = {"hits": 0, "misses": 0}
+        self.stats = {"hits": 0, "misses": 0, "evictions": 0}
+        self.prewarmed_clips = 0
 
     async def aclose(self):
         await self._client.aclose()
@@ -132,8 +135,10 @@ class TTSClient:
             self._audio_cache.move_to_end(key)
             while len(self._audio_cache) > AUDIO_CACHE_MAX:
                 self._audio_cache.popitem(last=False)
+                self.stats["evictions"] += 1
 
-    async def synthesize(self, text: str, lang: str = "bn", speed: float = 1.0) -> bytes:
+    async def synthesize(self, text: str, lang: str = "bn", speed: float = 1.0,
+                         prosody: dict | None = None) -> bytes:
         """Returns WAV bytes, or raises. Callers should catch ToolCallError-
         shaped infra failures and UnspeakableTextError separately (see
         main.py's _speak()) and fall back to `fallback_audio()`.
@@ -142,7 +147,13 @@ class TTSClient:
         a lower value for a reply carrying a price, phone number or
         reference the listener needs to write down (see
         agent/tts_router.py's docstring -- delivery parameters are decided
-        by the caller of this client, never here)."""
+        by the caller of this client, never here).
+
+        `prosody` (KCD-162): optional per-request overrides of the TTS
+        server's pause/trim/peak/chunk parameters (agent/prosody.py's
+        ProsodyParams fields), forwarded as-is so delivery can be tuned
+        against a real handset without a redeploy. Part of the cache key --
+        the same text with different pauses is different audio."""
         spoken = verbalize(text, lang)
 
         # KCD-455: anything the voice cannot pronounce is dropped by its
@@ -159,15 +170,19 @@ class TTSClient:
         # can be a valid sentence in two languages (a bare number, an ID)
         # and must not return the other voice's audio, and a slow-rate
         # clip must not be served for a normal-rate request or vice versa.
-        key = self._key(f"{lang}\x00{speed}\x00{spoken}")
+        prosody = {k: v for k, v in (prosody or {}).items() if v is not None}
+        prosody_key = json.dumps(prosody, sort_keys=True) if prosody else ""
+        key = self._key(f"{lang}\x00{speed}\x00{prosody_key}\x00{spoken}")
         cached = self._cache_get(key)
         if cached is not None:
             return cached
 
-        self.stats["misses"] += 1
+        with self._cache_lock:
+            self.stats["misses"] += 1
         payload = {"text": spoken, "lang": lang}
         if speed != 1.0:
             payload["speed"] = speed
+        payload.update(prosody)
         r = await self._client.post(self.base_url, json=payload)
         r.raise_for_status()
         wav = r.content
@@ -176,16 +191,42 @@ class TTSClient:
 
     async def prewarm(self, lines_by_lang: dict[str, list[str]] | None = None):
         """Best-effort: a failure here must not stop the app from starting.
-        Worst case the first caller pays normal synthesis latency."""
+        Worst case the first caller pays normal synthesis latency.
+
+        KCD-164 -- three things this gets right that matter:
+
+        * Lines are expanded with the SAME split_into_clauses main.py's
+          _speak() uses. _speak synthesizes a long reply one clause at a
+          time (KCD-462), each under its own cache key, so warming the
+          whole sentence would cache audio that is never asked for -- the
+          greeting, the longest and most important line, would still cost
+          a full synthesis on the first call.
+        * Every language's first line (the greeting) is warmed before any
+          language's second, so a slow or failing start-up still leaves
+          the first thing every caller hears ready.
+        * Hit/miss counters are zeroed afterwards. Warm-up is all misses by
+          construction; leaving them in would make the exported hit rate
+          look worse than live traffic ever is.
+        """
         lines_by_lang = lines_by_lang or {"bn": PREWARM_LINES_BN}
-        for lang, lines in lines_by_lang.items():
-            for line in lines:
-                try:
-                    await self.synthesize(line, lang)
-                except Exception as e:  # noqa: BLE001 - prewarm is advisory only
-                    logger.warning("prewarm failed [%s] for %r: %s", lang, line[:32], e)
-                    break
-        logger.info("TTS prewarm complete (%d lines cached)", len(self._audio_cache))
+        queue: list[tuple[str, str]] = []
+        for rank in range(max((len(v) for v in lines_by_lang.values()), default=0)):
+            for lang, lines in lines_by_lang.items():
+                if rank < len(lines):
+                    queue.extend((lang, clause) for clause in split_into_clauses(lines[rank]))
+        failed: set[str] = set()
+        for lang, clause in queue:
+            if lang in failed:
+                continue
+            try:
+                await self.synthesize(clause, lang)
+            except Exception as e:  # noqa: BLE001 - prewarm is advisory only
+                logger.warning("prewarm failed [%s] for %r: %s", lang, clause[:32], e)
+                failed.add(lang)
+        with self._cache_lock:
+            self.stats["hits"] = self.stats["misses"] = self.stats["evictions"] = 0
+            self.prewarmed_clips = len(self._audio_cache)
+        logger.info("TTS prewarm complete (%d clips cached)", self.prewarmed_clips)
 
     def for_language(self, lang: str) -> "LanguageVoice":
         """The TTSEngine (agent/tts_router.py) for one language."""
@@ -196,6 +237,8 @@ class TTSClient:
         return {
             **self.stats,
             "cached_clips": len(self._audio_cache),
+            "max_clips": AUDIO_CACHE_MAX,
+            "prewarmed_clips": self.prewarmed_clips,
             "hit_rate": round(self.stats["hits"] / total, 3) if total else 0.0,
         }
 

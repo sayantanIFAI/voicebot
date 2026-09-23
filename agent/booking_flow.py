@@ -208,16 +208,35 @@ def _tokenize(t: str) -> list[str]:
     return [tok for tok in _RE_TOKEN_SPLIT.split(t) if tok]
 
 
-def _has_phrase(tokens: list[str], phrase: str) -> bool:
-    """A single-word cue matches only a WHOLE token (never a substring --
-    "ok" must not fire on "book", "no" must not fire on "know"). A
-    multi-word phrase ("not correct", "ঠিক না") matches a contiguous run
-    of tokens, not a raw substring of the sentence."""
+def _phrase_starts(tokens: list[str], phrase: str) -> list[int]:
+    """Start index of every occurrence of `phrase` in `tokens`. A
+    single-word cue matches only a WHOLE token (never a substring -- "ok"
+    must not fire on "book", "no" must not fire on "know"). A multi-word
+    phrase ("not correct", "ঠিক না") matches a contiguous run of tokens,
+    not a raw substring of the sentence."""
     phrase_tokens = phrase.split()
-    if len(phrase_tokens) == 1:
-        return phrase in tokens
     n = len(phrase_tokens)
-    return any(tokens[i:i + n] == phrase_tokens for i in range(len(tokens) - n + 1))
+    return [i for i in range(len(tokens) - n + 1) if tokens[i:i + n] == phrase_tokens]
+
+
+def _has_phrase(tokens: list[str], phrase: str) -> bool:
+    return bool(_phrase_starts(tokens, phrase))
+
+
+# KCD-484: "No write proceeds without an affirmative confirmation." A
+# yes-word directly after a negator is not an affirmative -- "not sure"
+# used to classify as "yes" (via "sure") and would have committed a
+# booking write on an explicitly uncertain answer. English only: bn/hi
+# negators ("না", "नहीं") are standalone tokens already caught by the
+# no-words check that runs first, so they never reach this path.
+_NEGATORS_EN = frozenset({
+    "not", "don't", "dont", "doesn't", "doesnt", "isn't", "isnt", "aren't", "arent",
+    "wasn't", "wasnt", "can't", "cant", "cannot", "won't", "wont", "never", "hardly",
+})
+# A negated hedge is uncertainty, not refusal: re-ask instead of treating
+# it as a "no" that reopens slot collection.
+_HEDGE_WORDS_EN = frozenset({"sure"})
+_NEGATION_LOOKBACK = 2   # "not really sure", "don't think so" style gaps
 
 
 def classify_yes_no(transcript: str, lang: str) -> str | None:
@@ -240,9 +259,20 @@ def classify_yes_no(transcript: str, lang: str) -> str | None:
     # "ঠিক", which are also yes-leaning words on their own.
     if any(_has_phrase(tokens, w) for w in no_words):
         return "no"
-    if any(_has_phrase(tokens, w) for w in yes_words):
-        return "yes"
-    return None
+
+    negated_other = False
+    for w in yes_words:
+        for start in _phrase_starts(tokens, w):
+            window = tokens[max(0, start - _NEGATION_LOOKBACK):start]
+            if lang in _YES_WORDS and lang != "en":
+                negated = False
+            else:
+                negated = any(tok in _NEGATORS_EN for tok in window)
+            if not negated:
+                return "yes"
+            if w not in _HEDGE_WORDS_EN:
+                negated_other = True
+    return "no" if negated_other else None
 
 
 # --------------------------------------------------------- spelling capture

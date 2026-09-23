@@ -6,6 +6,8 @@ Pure and offline -- no network, no database, no GPU.
 """
 import time
 
+import pytest
+
 from agent.booking_flow import (
     classify_yes_no,
     correction_acknowledgement,
@@ -239,3 +241,56 @@ def test_uncorrectable_internal_fields_are_never_acknowledged():
     prior = dict(state.slots)
     changed = merge_slots(state, {"symptom_description": "shortness of breath"})
     assert correction_acknowledgement(changed, prior, state.slots, "en") is None
+
+
+# ============================================================ KCD-484
+# "No write proceeds without an affirmative confirmation on the same call."
+# main.py commits only from _handle_booking_confirmation_turn on a
+# classify_yes_no == "yes" (untestable off-pod: main.py cannot be
+# imported here), so what CAN be pinned locally is the two halves it
+# depends on: the state machine never reaches a committed stage on its
+# own, and the classifier never reads an uncertain/negated answer as yes.
+
+def test_a_fully_filled_booking_is_ready_to_confirm_but_never_committed():
+    state = new_state("book_appointment")
+    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
+                         "patient_name": "Ravi", "phone": "9800000001"})
+    assert is_ready_to_confirm(state)
+    assert state.stage == "collecting", "filling every slot must not, by itself, reach a write stage"
+    mark_confirming(state)
+    assert state.stage == "confirming"
+    assert not is_ready_to_confirm(state), "already awaiting the caller's answer, not re-askable as fresh"
+
+
+def test_changing_a_value_while_confirming_reopens_collection():
+    state = new_state("book_appointment")
+    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
+                         "patient_name": "Ravi", "phone": "9800000001"})
+    mark_confirming(state)
+    merge_slots(state, {"time_slot": "18:30"})
+    assert state.stage == "collecting"
+    assert state.slots["time_slot"] == "18:30" and state.slots["doctor_name"] == "Sen"
+
+
+@pytest.mark.parametrize("utterance", [
+    "not sure", "I'm not sure", "not really sure", "don't confirm", "not okay",
+    "no wait", "hmm", "wait a moment", "9800000001", "what", "nope",
+])
+def test_an_uncertain_or_negated_answer_is_never_yes(utterance):
+    assert classify_yes_no(utterance, "en") != "yes"
+
+
+@pytest.mark.parametrize("utterance,expected", [
+    ("yes", "yes"), ("yeah okay", "yes"), ("I am sure", "yes"), ("yes I'm sure", "yes"),
+    ("okay confirm", "yes"), ("no", "no"), ("not correct", "no"), ("not okay", "no"),
+    ("not sure", None), ("hmm", None),
+])
+def test_english_yes_no_classification_including_negation(utterance, expected):
+    assert classify_yes_no(utterance, "en") == expected
+
+
+def test_bengali_and_hindi_negations_are_never_yes():
+    assert classify_yes_no("না", "bn") == "no"                       # na
+    assert classify_yes_no("হাঁ না", "bn") == "no"  # "yes no" -> refusal wins
+    assert classify_yes_no("नहीं", "hi") == "no"          # nahin
+    assert classify_yes_no("ठीक नहीं है", "hi") == "no"  # "theek nahin hai"

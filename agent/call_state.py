@@ -92,3 +92,21 @@ def apply_confidence(state: CallState, requires_confirmation: bool) -> None:
 
 def apply_channel_quality(state: CallState, channel_quality: str) -> None:
     state.channel_quality = channel_quality
+
+
+def apply_caller_state(state: CallState, caller_state: str | None = None,
+                       senior: bool | None = None) -> None:
+    """KCD-149: record the caller's state and re-derive every delivery
+    parameter from Appendix C's table (agent/speech_policy.py) -- the only
+    place those fields are written, so they can never disagree with the
+    state that is supposed to drive them. `None` leaves that signal as it
+    was (senior is sticky for the call: once detected it is not silently
+    cleared by a later turn that merely lacks evidence)."""
+    from agent.speech_policy import as_call_state_fields, derive_policy
+
+    if caller_state is not None:
+        state.caller_state = caller_state if caller_state in VALID_CALLER_STATES else CALLER_STATE_NEUTRAL
+    if senior is not None:
+        state.senior = senior
+    for name, value in as_call_state_fields(derive_policy(state.caller_state, state.senior)).items():
+        setattr(state, name, value)

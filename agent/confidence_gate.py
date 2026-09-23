@@ -20,9 +20,10 @@ Two distinct consequences, matching the two stories:
     WRITE (a booking hold/confirm/cancel/reschedule). Booking actions in
     this codebase already never write without passing through
     booking_flow.mark_confirming + an explicit classify_yes_no "yes" on
-    a LATER turn (see tests/test_confidence_gate.py's
-    test_booking_never_writes_without_a_separate_confirm_turn for the
-    proof this already holds structurally); this module's role for
+    a LATER turn (pinned locally by tests/test_booking_flow.py's KCD-484
+    tests -- the state machine never reaches a write stage on its own and
+    classify_yes_no never reads an uncertain answer as yes; the commit
+    itself lives in main.py and is verified on-pod only); this module's role for
     writes is only to make that guarantee explicit and testable, not to
     add a second gate on top of it.
 

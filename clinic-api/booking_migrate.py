@@ -29,6 +29,13 @@ APPOINTMENT_BOOKING_COLUMNS: dict[str, str] = {
     "cancellation_charge_inr": "INTEGER",
     "rescheduled_from_id": "INTEGER",
     "booking_group_id": "VARCHAR",
+    "cancellation_policy_version": "INTEGER",
+}
+
+PATIENT_COLUMNS: dict[str, str] = {
+    # KCD-084. TRUE/FALSE, not 1/0: PostgreSQL rejects an integer default on
+    # a BOOLEAN column (same reason enquiry_migrate uses them).
+    "senior_mode": "BOOLEAN NOT NULL DEFAULT FALSE",
 }
 
 DOCTOR_BOOKING_COLUMNS: dict[str, str] = {
@@ -174,6 +181,20 @@ def rebuild_appointments_partial_unique_index() -> bool:
     return True
 
 
+def add_patient_columns() -> list[str]:
+    added = []
+    insp = inspect(engine)
+    if "patients" not in insp.get_table_names():
+        return added
+    have = {c["name"] for c in insp.get_columns("patients")}
+    with engine.begin() as conn:
+        for col, decl in PATIENT_COLUMNS.items():
+            if col not in have:
+                conn.execute(text(f"ALTER TABLE patients ADD COLUMN {col} {decl}"))
+                added.append(f"patients.{col}")
+    return added
+
+
 def add_doctor_booking_columns() -> list[str]:
     added = []
     insp = inspect(engine)
@@ -298,11 +319,37 @@ def migrate_booking_schema() -> dict:
     silently seeded zero department routes on every fresh database,
     caught by tests/test_booking_endpoints.py::test_department_route_endpoint
     failing against a throwaway DB."""
-    columns_added = add_appointment_booking_columns() + add_doctor_booking_columns()
+    columns_added = (add_appointment_booking_columns() + add_doctor_booking_columns()
+                     + add_patient_columns())
     # Must run AFTER add_appointment_booking_columns(): see this
     # function's own docstring for why.
     rebuilt = rebuild_appointments_partial_unique_index()
     return {"columns_added": columns_added, "appointments_table_rebuilt": rebuilt}
+
+
+def seed_default_cancellation_policy() -> bool:
+    """KCD-488: without at least one CancellationPolicy row, a versioned
+    lookup at cancellation time would have nothing to find -- this backfills
+    version 1 with exactly the values booking_service's old flat constants
+    used to hardcode (24h free window, 50% charge), so behaviour is
+    unchanged the moment this ships. Idempotent -- only inserts when the
+    table is empty, so a clinician's later addition of version 2+ (or an
+    edit to version 1) is never touched by a re-run, same rule
+    seed_department_routes() already follows."""
+    from models import CancellationPolicy
+
+    db = SessionLocal()
+    try:
+        if db.query(CancellationPolicy).count() > 0:
+            return False
+        db.add(CancellationPolicy(
+            version=1, effective_from="2020-01-01",
+            free_window_hours=24, charge_percent=50, refund_eligible=True,
+        ))
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 def finish_booking_schema_setup() -> dict:
@@ -310,4 +357,6 @@ def finish_booking_schema_setup() -> dict:
     call this AFTER seed() or backfill_i18n() has run, not before."""
     routes_added = seed_department_routes()
     fees_filled = backfill_doctor_fees()
-    return {"department_routes_added": routes_added, "doctor_fees_filled": fees_filled}
+    policy_seeded = seed_default_cancellation_policy()
+    return {"department_routes_added": routes_added, "doctor_fees_filled": fees_filled,
+            "cancellation_policy_seeded": policy_seeded}

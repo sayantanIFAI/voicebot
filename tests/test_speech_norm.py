@@ -80,7 +80,10 @@ def test_dates_times_ranges_ids_and_phones_per_language():
     en = verbalize("On 2026-09-16, 18:00-20:00, confirmation KCD-4471, phone 9876543210.", "en")
     assert "September sixteenth" in en and "six PM to eight PM" in en
     assert "kay see dee" in en and "four four seven one" in en
-    assert "nine eight seven six five four three two one zero" in en
+    # KCD-157: a phone number is dictated in groups (5 + 5), with a beat
+    # between them, so a caller can write it down -- no longer one
+    # unbroken ten-digit run.
+    assert "nine eight seven six five , four three two one zero" in en
     assert not DIGIT.search(en)
 
     hi = verbalize("2026-09-16 को 18:00-20:00, नंबर KCD-4471, फ़ोन 9876543210।", "hi")

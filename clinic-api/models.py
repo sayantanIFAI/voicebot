@@ -160,6 +160,12 @@ class Appointment(Base):
     cancellation_charge_inr = Column(Integer, nullable=True)
     rescheduled_from_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
     booking_group_id = Column(String, nullable=True)  # groups doctor+test bookings made in one call
+    # KCD-488: which CancellationPolicy.version was actually applied, so a
+    # later audit or dispute can see the rule in force at cancellation
+    # time even after the policy itself has since been superseded -- the
+    # charge alone (cancellation_charge_inr) proves an amount, not which
+    # rule produced it.
+    cancellation_policy_version = Column(Integer, nullable=True)
 
     doctor = relationship("Doctor")
 
@@ -216,6 +222,11 @@ class Patient(Base):
     phone = Column(String, nullable=False, index=True)
     age = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False)
+    # KCD-084: "persists against the patient" -- only the DELIVERY MODE
+    # (slower, one question at a time, echo each value), set when the caller
+    # asked for it or an older-caller cue was recognised. Never an age
+    # inference, a score or any audio: see agent/senior_voice.py.
+    senior_mode = Column(Boolean, nullable=False, default=False)
 
 
 class PatientProxy(Base):
@@ -390,6 +401,29 @@ class PackageTest(Base):
 
     package = relationship("Package")
     lab_test = relationship("LabTest")
+
+
+class CancellationPolicy(Base):
+    """KCD-488: cancellation charge/refund rules as VERSIONED, dated
+    configuration -- never a number booking_service.py invents on the
+    spot. Multiple rows may exist; the one actually applied to a given
+    cancellation is whichever has the latest `effective_from` that is not
+    after the moment of cancellation (booking_service.active_cancellation_
+    policy). A brand-new table (Base.metadata.create_all() handles it, no
+    ALTER TABLE migration needed), unlike Appointment.cancellation_
+    policy_version, which records which version applied and DOES need one
+    -- see booking_migrate.APPOINTMENT_BOOKING_COLUMNS."""
+    __tablename__ = "cancellation_policies"
+    id = Column(Integer, primary_key=True)
+    version = Column(Integer, nullable=False, unique=True)
+    effective_from = Column(String, nullable=False)   # ISO yyyy-mm-dd, policy in force ON and AFTER this date
+    free_window_hours = Column(Integer, nullable=False)
+    # Integer percent (0-100), not a float fraction -- avoids SQLite
+    # storing/round-tripping a binary float for what is always a round
+    # clinic-set percentage in practice, and keeps DB values human-
+    # readable for whoever edits this table directly.
+    charge_percent = Column(Integer, nullable=False)
+    refund_eligible = Column(Boolean, nullable=False, default=True)
 
 
 class WalkInPolicy(Base):

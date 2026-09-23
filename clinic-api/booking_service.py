@@ -25,6 +25,7 @@ import uuid
 
 from models import (
     Appointment,
+    CancellationPolicy,
     Department,
     DepartmentRoute,
     Doctor,
@@ -42,8 +43,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 HOLD_TTL_SECONDS = 90
-CANCELLATION_FREE_WINDOW_HOURS = 24
-CANCELLATION_CHARGE_FRACTION = 0.5   # of the doctor's consultation fee, within the charging window
 DRAFT_BOOKING_TTL_MINUTES = 30
 SMS_RESEND_MIN_INTERVAL_S = 60
 
@@ -220,6 +219,31 @@ def find_or_create_patient(db: Session, name: str, phone: str, age: int | None =
     return p
 
 
+def set_patient_senior(db: Session, phone: str, senior: bool) -> int:
+    """KCD-084: remember (or clear) that callers using this phone number are
+    served in senior mode. Applies to every Patient row with that phone --
+    the number is what a returning caller can be recognised by. Returns how
+    many rows changed. A declined number is never a key (it would flag
+    every stranger who withheld one)."""
+    if not phone or phone == NOT_PROVIDED_PHONE:
+        return 0
+    rows = db.query(Patient).filter(Patient.phone == phone).all()
+    changed = 0
+    for p in rows:
+        if bool(p.senior_mode) != bool(senior):
+            p.senior_mode = bool(senior)
+            changed += 1
+    if changed:
+        db.commit()
+    return changed
+
+
+def get_patient_senior(db: Session, phone: str) -> bool:
+    if not phone or phone == NOT_PROVIDED_PHONE:
+        return False
+    return db.query(Patient).filter(Patient.phone == phone, Patient.senior_mode.is_(True)).first() is not None
+
+
 def record_proxy(db: Session, patient: Patient, caller_phone: str,
                   relationship_label: str, verified_by: str) -> None:
     existing = db.query(PatientProxy).filter_by(patient_id=patient.id, caller_phone=caller_phone).first()
@@ -252,6 +276,29 @@ def authorize_disclosure(db: Session, patient: Patient, caller_phone: str,
 
 # ======================================================== appointments
 
+def _verify_appointment_persisted(db: Session, appointment_id: int, expected: dict) -> bool:
+    """KCD-486: "the write is verified in the system of record with the
+    expected values before it is verbalised" -- re-reads the row AFTER
+    commit and checks it, rather than trusting that db.commit() raising
+    nothing means the caller's specific values actually landed. Against
+    this prototype's single-process SQLite this will realistically never
+    fail (a successful commit() IS durable here) -- but that is exactly
+    why this check belongs at this layer rather than being skipped:
+    swapping the real hospital/lab system in behind this same function
+    (this module's own docstring's stated migration path) is precisely
+    the case where "the commit call didn't raise" and "the system of
+    record now reflects it" can come apart, e.g. an async-replicated
+    write or a queue-backed integration. Uses a FRESH query rather than
+    the in-memory `appt` object, which would just echo back the same
+    Python values that were assigned before commit and verify nothing.
+    """
+    db.expire_all()
+    row = db.get(Appointment, appointment_id)
+    if row is None:
+        return False
+    return all(getattr(row, field) == value for field, value in expected.items())
+
+
 def confirm_booking(db: Session, hold_token: str, doctor_id: int, date: str, time_slot: str,
                      patient_name: str, phone: str, caller_phone: str,
                      patient_age: int | None = None, relationship_label: str = "self") -> dict:
@@ -281,6 +328,17 @@ def confirm_booking(db: Session, hold_token: str, doctor_id: int, date: str, tim
     lock.appointment_id = appt.id
     db.commit()
 
+    # KCD-486: a confirmation number is spoken only once the write is
+    # verified -- an unverified write produces a distinct outcome (never
+    # a false "success", and never the ordinary tool_failure apology
+    # either) so main.py can put the caller on hold and escalate instead
+    # of reading out a reference that may not be real.
+    if not _verify_appointment_persisted(db, appt.id, {
+        "confirmation_id": confirmation_id, "doctor_id": doctor_id, "date": date,
+        "time_slot": time_slot, "patient_name": patient_name, "phone": phone, "status": "confirmed",
+    }):
+        return {"success": False, "reason": "write_unverified", "confirmation_id": confirmation_id}
+
     queue_sms(db, phone, "booking_confirmed",
               f"Your appointment with {doctor.name} on {date} at {time_slot} is confirmed. "
               f"Ref: {confirmation_id}.", confirmation_id)
@@ -306,22 +364,55 @@ def find_conflict(db: Session, patient_phone: str, date: str, time_slot: str) ->
             "date": existing.date, "time_slot": existing.time_slot}
 
 
-def cancellation_charge(db: Session, appt: Appointment) -> int:
+def active_cancellation_policy(db: Session, as_of: datetime.date | None = None) -> CancellationPolicy | None:
+    """KCD-488: the policy row IN FORCE at `as_of` (default: today) --
+    versioned configuration with effective dates, never a flat constant a
+    developer would have to redeploy to change. Whichever row has the
+    LATEST `effective_from` that is not after `as_of` wins, so adding a
+    new version with a future effective_from schedules a change without
+    touching any row already applied to a past cancellation."""
+    as_of_iso = (as_of or _now().date()).isoformat()
+    return (db.query(CancellationPolicy)
+            .filter(CancellationPolicy.effective_from <= as_of_iso)
+            .order_by(CancellationPolicy.effective_from.desc(), CancellationPolicy.version.desc())
+            .first())
+
+
+def cancellation_charge(db: Session, appt: Appointment) -> tuple[int, CancellationPolicy | None]:
+    """-> (charge_inr, policy_used). policy_used is None only if the
+    cancellation_policies table has no row at all -- seed_default_
+    cancellation_policy() backfills one on every boot, so this is an
+    infrastructure gap to fix, not a normal outcome; treated as "no
+    charge" rather than raising, so a missing policy row fails open on
+    price (never silently overcharges) but is loud in the return shape
+    for whoever calls this to notice."""
+    policy = active_cancellation_policy(db, datetime.date.fromisoformat(appt.date))
+    if not policy:
+        return 0, None
+    doctor = db.get(Doctor, appt.doctor_id)
+    fee = doctor.consultation_fee_inr or 0
+    # refund_eligible=False marks a NON-REFUNDABLE policy: the full fee is
+    # charged however much notice was given, so free_window_hours and
+    # charge_percent (which only describe the refundable case) are
+    # deliberately ignored -- checked FIRST, otherwise a long-notice
+    # cancellation would fall through the free window and this flag
+    # would never affect anything.
+    if not policy.refund_eligible:
+        return fee, policy
     appt_dt = datetime.datetime.combine(
         datetime.date.fromisoformat(appt.date),
         datetime.datetime.strptime(appt.time_slot, "%H:%M").time(),
     )
-    if appt_dt - _now() >= datetime.timedelta(hours=CANCELLATION_FREE_WINDOW_HOURS):
-        return 0
-    doctor = db.get(Doctor, appt.doctor_id)
-    return round((doctor.consultation_fee_inr or 0) * CANCELLATION_CHARGE_FRACTION)
+    if appt_dt - _now() >= datetime.timedelta(hours=policy.free_window_hours):
+        return 0, policy
+    return round(fee * policy.charge_percent / 100), policy
 
 
 def cancel_appointment(db: Session, confirmation_id: str, confirm_charge: bool = False) -> dict:
     appt = db.query(Appointment).filter_by(confirmation_id=confirmation_id, status="confirmed").first()
     if not appt:
         return {"success": False, "reason": "not_found"}
-    charge = cancellation_charge(db, appt)
+    charge, policy = cancellation_charge(db, appt)
     if charge > 0 and not confirm_charge:
         # Stated BEFORE it is applied (KCD-372) -- the caller must say yes
         # a second time, with the amount already in their ear, before
@@ -334,6 +425,10 @@ def cancel_appointment(db: Session, confirmation_id: str, confirm_charge: bool =
     appt.status = "cancelled"
     appt.cancelled_at = _now()
     appt.cancellation_charge_inr = charge
+    # KCD-488: which rule produced this charge, recorded on the row it
+    # applied to -- so a later audit sees the actual rule in force at
+    # cancellation time, not just today's policy (which may since differ).
+    appt.cancellation_policy_version = policy.version if policy else None
     db.commit()
 
     queue_sms(db, appt.phone, "booking_cancelled",
@@ -375,6 +470,14 @@ def reschedule_appointment(db: Session, confirmation_id: str, new_date: str, new
         db.delete(old_lock)
     appt.status = "rescheduled"
     db.commit()
+
+    # KCD-486, same discipline as confirm_booking: verify before speaking
+    # the new reference number.
+    if not _verify_appointment_persisted(db, new_appt.id, {
+        "confirmation_id": new_confirmation_id, "doctor_id": appt.doctor_id, "date": new_date,
+        "time_slot": new_time_slot, "status": "confirmed",
+    }):
+        return {"success": False, "reason": "write_unverified", "confirmation_id": new_confirmation_id}
 
     queue_sms(db, appt.phone, "booking_rescheduled",
               f"Your appointment with {doctor.name} has been moved to {new_date} at {new_time_slot}. "

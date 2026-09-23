@@ -83,7 +83,11 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from agent.acknowledgement import select_acknowledgement, slot_echo
 from agent.admission import AdmissionController, HealthMonitor, http_probe
+from agent.audio_quality import assess as assess_audio
+from agent.audio_quality import enhance as enhance_audio
+from agent.audio_quality import transcript_problem
 from agent.asr import TurnASR
 from agent.asr_router import ASRRouter, HTTPASREngine, UnroutableLanguageError
 from agent.booking_flow import (
@@ -99,7 +103,9 @@ from agent.booking_flow import (
     missing_required,
     new_state,
 )
-from agent.call_state import CallState, apply_channel_quality, apply_confidence, apply_language, new_call_state
+from agent.call_state import (
+    CallState, apply_caller_state, apply_channel_quality, apply_confidence, apply_language, new_call_state,
+)
 from agent.channel_quality import CHANNEL_CLEAN_16K, classify_channel
 from agent.clause_split import split_into_clauses
 from agent.code_switch import mixture_bucket
@@ -110,9 +116,15 @@ from agent.enquiry_followup import entities_from_turn, resolve_followup_slot
 from agent.fast_path import Catalogue, FastPath
 from agent.filler import await_with_filler
 from agent.latency_metrics import turn_latency_by_language
+from agent.language_policy import language_mismatch
 from agent.outcome_metrics import (
-    barge_in_interrupts, channel_quality_buckets, code_switch_buckets, insufficient_information,
+    audio_issue_buckets, barge_in_interrupts, channel_quality_buckets, code_switch_buckets,
+    insufficient_information, language_mismatches, reask_outcomes, senior_detections,
 )
+from agent.reask_policy import ReaskTracker
+from agent.senior_voice import SeniorEvidence, explicit_senior_cue, stated_age_is_senior
+from agent.senior_voice import estimate as estimate_senior
+from agent.speech_policy import derive_policy, effective_rate, limit_questions
 from agent.lang_select import languages_to_verify, pick_candidate
 from agent.lang_select import speakable as _speakable
 from agent.language_switch import detect_language_switch_request
@@ -197,6 +209,12 @@ FILLER_THRESHOLD_S = 2.5
 # practice on hardware this pipeline already assumes, tight enough that
 # a genuinely pathological clip cannot silently eat into the turn.
 CHANNEL_QUALITY_BUDGET_S = 0.08
+
+# agent/audio_quality.assess + agent/senior_voice.estimate: FFT/autocorrelation
+# over one utterance, run through detector_budget so a pathological clip
+# cannot delay the turn. REASONED, not measured on the pod: generous for a
+# 3-6 s clip on the hardware this pipeline already assumes.
+AUDIO_ANALYSIS_BUDGET_S = 0.5
 
 CLINIC_API_BASE = os.environ.get("CLINIC_API_BASE", "http://localhost:8080")
 
@@ -503,6 +521,10 @@ async def stats():
         "detector_budget": detector_budget_snapshot(),
         "turn_latency_by_language": turn_latency_by_language.snapshot(),
         "barge_in_interrupts": barge_in_interrupts.snapshot(),
+        "reask_outcomes": reask_outcomes.snapshot(),
+        "audio_issue_buckets": audio_issue_buckets.snapshot(),
+        "language_mismatches": language_mismatches.snapshot(),
+        "senior_detections": senior_detections.snapshot(),
     }
 
 
@@ -530,6 +552,42 @@ def _classify_channel_from_wav_path(path: str) -> str:
         return CHANNEL_CLEAN_16K
     samples = np.frombuffer(raw, dtype=np.int16).astype(np.float64) / 32768.0
     return classify_channel(samples, sample_rate)
+
+
+def _read_wav_mono(path: str) -> tuple[np.ndarray, int]:
+    with contextlib.closing(wave.open(path, "rb")) as w:
+        raw, sr, width, channels = w.readframes(w.getnframes()), w.getframerate(), w.getsampwidth(), w.getnchannels()
+    if width != 2:
+        raise ValueError(f"unsupported sample width {width}")
+    x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    return (x.reshape(-1, channels).mean(axis=1) if channels > 1 else x), sr
+
+
+def _analyze_utterance_from_wav_path(path: str) -> dict:
+    """agent/audio_quality.assess (why this clip is hard to hear) plus
+    agent/senior_voice.estimate (does the speaker sound older), on one
+    read of the clip. Sync and CPU-bound: only ever called through
+    detector_budget.run_within_budget."""
+    samples, sr = _read_wav_mono(path)
+    return {"audio": assess_audio(samples, sr), "senior": estimate_senior(samples, sr)}
+
+
+def _enhance_wav_to_path(path: str) -> str | None:
+    """A noise-filtered, level-corrected copy of the clip for a retry, or
+    None if it cannot be produced."""
+    try:
+        samples, sr = _read_wav_mono(path)
+        out = enhance_audio(samples, sr)
+        enhanced = path + ".enh.wav"
+        with contextlib.closing(wave.open(enhanced, "wb")) as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes((np.clip(out, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())
+        return enhanced
+    except Exception as e:  # noqa: BLE001 - enhancement is an optional retry, never a failure
+        logger.warning("enhance failed: %s", e)
+        return None
 
 
 class CallSession:
@@ -609,6 +667,21 @@ class CallSession:
         # docstring).
         self.call_state: CallState = new_call_state()
 
+        # Call intelligence (KCD-084/149/155): the empathetic re-ask tracker,
+        # the older-caller evidence accumulator, and bookkeeping so an
+        # acknowledgement is spoken once per state entry, not every turn.
+        self.reask = ReaskTracker()
+        self.senior_evidence = SeniorEvidence()
+        self.acknowledged_state: str | None = None
+        self.senior_lookup_done = False
+
+    @property
+    def policy(self):
+        """Appendix C's delivery parameters for the caller's CURRENT state
+        (agent/speech_policy.py) -- derived, never stored, so it can never
+        disagree with call_state."""
+        return derive_policy(self.call_state.caller_state, self.call_state.senior)
+
     def hold_gate_for(self, audio_duration_s: float):
         """Called before each reply goes out. Extends rather than replaces
         the deadline: replies queue on the client, so a second clip starts
@@ -642,7 +715,10 @@ class CallSession:
 
 async def _synthesize_one_clause(session: CallSession, clause: str, lang: str,
                                  fallback_reason: str | None) -> bytes:
-    speed = FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else 1.0
+    # KCD-149/157: the caller's policy rate, and slower still for a price,
+    # phone number or reference (the two multiply).
+    speed = effective_rate(session.policy,
+                           FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None)
     try:
         return await _tts_router.synthesize(lang, clause, speed=speed)
     except UnspeakableTextError as e:
@@ -681,6 +757,16 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
     elsewhere in this file, so streaming several clips here is the same,
     already-proven pattern, not a new one."""
     lang = lang or session.lang
+    policy = session.policy
+    if not policy.emergency and policy.questions_per_turn >= 1:
+        # KCD-084/149: one question at a time. Only a SURPLUS question is
+        # ever dropped, never a statement, so no fact is lost.
+        text = limit_questions(text, policy.questions_per_turn)
+    if language_mismatch(lang, text):
+        # KCD-087: a reply in a different language from the caller's is a
+        # defect, made visible rather than discovered on a live call.
+        language_mismatches.record("reply", "mismatch", lang)
+        logger.error("[%s] reply language mismatch (expected %s): %r", session.call_id, lang, text[:60])
     await session.send_json("AI", text)
     clauses = split_into_clauses(text) or [text]
 
@@ -734,6 +820,130 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
     await asyncio.sleep(min(total + 0.5, 20.0))
     with contextlib.suppress(Exception):
         await session.ws.close()
+
+
+async def _reask_or_handoff(session: CallSession, decision, lang: str,
+                            fallback_reason: str | None = None) -> None:
+    """Ask again, kindly, before routing to a person (agent/reask_policy.py).
+    A second consecutive failure also marks the caller "confused", which
+    slows the agent and lowers its escalation threshold for the rest of the
+    call (Appendix C)."""
+    reask_outcomes.record(decision.reason or "unclear", decision.action, lang)
+    if decision.mark_confused:
+        apply_caller_state(session.call_state, caller_state="confused")
+    if decision.action == "handoff":
+        await _speak(session, phrase("reask_final", lang), lang)
+        await _handoff_to_human(session, f"unintelligible:{decision.reason}", (lang,))
+        return
+    await _speak(session, phrase(decision.phrase_key, lang), lang, fallback_reason=fallback_reason)
+
+
+async def _retry_on_enhanced_audio(session: CallSession, wav_path: str, lang: str | None, result,
+                                   audio_issues: list[str], duration_s: float | None):
+    """A failed or doubtful turn on a noisy or faint line gets one more try
+    on a noise-filtered, level-corrected copy of the clip. Only when the
+    first attempt was actually poor -- filtering can hurt a recogniser that
+    coped fine -- and never for cross-talk, which filtering cannot fix."""
+    if lang is None or not ({"noisy", "too_quiet"} & set(audio_issues)):
+        return result
+    poor = (not result.text.strip()
+            or transcript_problem(result.text, lang, duration_s, result.decoder_agreement)
+            or is_low_confidence(result.decoder_agreement))
+    if not poor:
+        return result
+    enhanced = await asyncio.to_thread(_enhance_wav_to_path, wav_path)
+    if not enhanced:
+        return result
+    try:
+        retry = await _asr_router.transcribe(lang, enhanced)
+    except Exception as e:  # noqa: BLE001 - the original result stands
+        logger.warning("[%s] enhanced-audio retry failed: %s", session.call_id, e)
+        return result
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(enhanced)
+    if retry.text.strip() and (not result.text.strip() or retry.decoder_agreement > result.decoder_agreement):
+        logger.info("[%s] enhanced-audio retry improved the transcript", session.call_id)
+        return retry
+    return result
+
+
+def _update_caller_state(session: CallSession, text: str, lang: str, analysis: dict | None) -> None:
+    """KCD-084: the older-caller decision. An explicit request or self-
+    description decides at once; the acoustic estimate needs evidence over
+    several clips (agent/senior_voice.SeniorEvidence). Once senior, sticky
+    for the call."""
+    ev = session.senior_evidence
+    cue = explicit_senior_cue(text, lang)
+    flipped = ev.note_explicit(cue) if cue else (ev.add(analysis["senior"]) if analysis else False)
+    if flipped and not session.call_state.senior:
+        apply_caller_state(session.call_state, senior=True)
+        senior_detections.record(ev.reason or "unknown", "call", lang)
+        logger.info("[%s] senior mode on (%s)", session.call_id, ev.reason)
+
+
+def _note_stated_age(session: CallSession, slots: dict, lang: str) -> None:
+    if stated_age_is_senior(slots.get("patient_age"), slots.get("relationship")):
+        if session.senior_evidence.note_explicit("stated_age") and not session.call_state.senior:
+            apply_caller_state(session.call_state, senior=True)
+            senior_detections.record("stated_age", "call", lang)
+
+
+_ECHOED_FIELDS = ("doctor_name", "date", "time_slot", "patient_name", "phone", "test_name",
+                  "new_date", "new_time_slot")
+
+
+async def _echo_new_slots(session: CallSession, changed: list[str], prior_slots: dict,
+                          slots: dict, lang: str) -> None:
+    """Senior mode's "one question, listen, confirm, next question": say
+    the value just collected back before the next question. Also the moment
+    a phone number first arrives, so a returning older caller is recognised
+    from the record without having to ask for slower speech again."""
+    newly = [f for f in changed if f not in prior_slots]
+    if "phone" in newly:
+        await _remember_senior(session, slots.get("phone"), lang)
+    if not session.policy.confirm_each_slot:
+        return
+    for field in newly:
+        value = slots.get(field)
+        if value and field in _ECHOED_FIELDS:
+            await _speak(session, slot_echo(str(value), lang), lang)
+            return
+
+
+async def _remember_senior(session: CallSession, phone: str | None, lang: str) -> None:
+    if session.senior_lookup_done or not phone:
+        return
+    session.senior_lookup_done = True
+    try:
+        if await _tools.get_patient_senior(phone) and session.senior_evidence.note_explicit("remembered"):
+            apply_caller_state(session.call_state, senior=True)
+            senior_detections.record("remembered", "call", lang)
+    except ToolCallError as e:
+        logger.warning("[%s] senior lookup failed: %s", session.call_id, e)
+
+
+async def _persist_senior(session: CallSession, phone: str | None) -> None:
+    """KCD-084: once a booking is made, remember the delivery mode against
+    the patient -- a boolean only, never a score, an age or any audio."""
+    if not (session.call_state.senior and phone):
+        return
+    try:
+        await _tools.set_patient_senior(phone, True)
+    except ToolCallError as e:
+        logger.warning("[%s] senior persist failed: %s", session.call_id, e)
+
+
+async def _handle_unverified_write(session: CallSession, lang: str) -> None:
+    """KCD-486: a booking/reschedule write whose post-commit verification
+    (clinic-api's _verify_appointment_persisted) did not confirm the
+    expected values. Speaks a hold notice -- distinct from both a
+    confirmation number (which would be an unverified fact) and the
+    generic tool_failure apology (which invites a retry, and the write
+    likely already happened, so a retry risks a second, duplicate one) --
+    then escalates to a human rather than guessing."""
+    await _speak(session, phrase("booking_hold_for_verification", lang), lang)
+    await _handoff_to_human(session, "unverified_booking_write")
 
 
 async def _await_with_filler(session: CallSession, awaitable, lang: str,
@@ -968,6 +1178,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
     async with session.dispatch_lock:
         session.turn_started_at = time.monotonic()
         channel_quality = session.call_state.channel_quality
+        analysis: dict | None = None
+        audio_issues: list[str] = []
         try:
             lang, asr_result = await _route_and_transcribe(session, utterance_wav)
             # KCD-075/KCD-076: measured inside its own budget slice, on
@@ -977,6 +1189,17 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             channel_quality = await run_within_budget(
                 "channel_quality", CHANNEL_QUALITY_BUDGET_S, _classify_channel_from_wav_path,
                 utterance_wav, previous_value=channel_quality)
+            # Why is this clip hard to hear, and does the speaker sound older?
+            # A slow or failed analysis just means no verdict this turn.
+            analysis = await run_within_budget(
+                "audio_quality", AUDIO_ANALYSIS_BUDGET_S, _analyze_utterance_from_wav_path,
+                utterance_wav, previous_value=None)
+            audio_issues = analysis["audio"].issues if analysis else []
+            for issue in audio_issues:
+                audio_issue_buckets.record(issue, "seen", lang or session.lang)
+            asr_result = await _retry_on_enhanced_audio(
+                session, utterance_wav, lang, asr_result, audio_issues,
+                analysis["audio"].duration_s if analysis else None)
         except Exception as e:
             logger.exception("[%s] ASR/LID stage failed: %s", session.call_id, e)
             await _speak(session, phrase("llm_failure", session.lang), session.lang,
@@ -987,7 +1210,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 os.remove(utterance_wav)
 
         if lang is None:
-            await _handoff_to_human(session, "language_ambiguous")
+            # Ask again, kindly, before any hand-off -- an unidentifiable
+            # utterance is usually a faint, noisy or mumbled one, not a
+            # request for a person (agent/reask_policy.py).
+            await _reask_or_handoff(
+                session, session.reask.decide(language_ambiguous=True, audio_issues=audio_issues),
+                session.lang)
             return
         session.lang = lang
         session.lang_router.note_response_language(lang)
@@ -1000,10 +1228,33 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         text = asr_result.text.strip()
         if not text:
             logger.info("[%s] ASR returned empty text", session.call_id)
-            await _speak(session, phrase("asr_empty", lang), lang, fallback_reason="asr_empty")
+            await _reask_or_handoff(
+                session, session.reask.decide(asr_empty=True, audio_issues=audio_issues), lang,
+                fallback_reason="asr_empty")
             return
+        # A yes/no to a confirmation is legitimately one short word; the
+        # jumbled-transcript checks would misread it as a fragment.
+        awaiting_yes_no = (session.booking is not None
+                           and session.booking.stage in ("confirming", "awaiting_charge_confirm"))
+        problem = None if awaiting_yes_no else transcript_problem(
+            text, lang, analysis["audio"].duration_s if analysis else None, asr_result.decoder_agreement)
+        if problem:
+            logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
+            await _reask_or_handoff(
+                session, session.reask.decide(transcript_issue=problem, audio_issues=audio_issues), lang)
+            return
+        session.reask.note_success()
         await session.send_json("User", text)
         code_switch_buckets.record(mixture_bucket(text), "seen", lang)
+
+        # KCD-084/149/155: caller state -> delivery policy, and the
+        # acknowledgement that comes before anything else when the policy
+        # calls for one (once per state entry, not every turn).
+        _update_caller_state(session, text, lang, analysis)
+        ack = select_acknowledgement(session.policy, session.call_state.caller_state, lang)
+        if ack and session.acknowledged_state != session.call_state.caller_state:
+            session.acknowledged_state = session.call_state.caller_state
+            await _speak(session, ack, lang)
 
         # KCD-438: an explicit "speak in Hindi/Bengali/English" request,
         # detected deterministically (no LLM call, same zero-extra-latency
@@ -1038,6 +1289,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
 
         intent = data["intent"]
         slots = data["slots"]
+        _note_stated_age(session, slots, lang)
 
         if intent == "smalltalk":
             reply = data.get("direct_reply_bn")
@@ -1123,6 +1375,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
                 if ack:
                     await _speak(session, ack, lang)
+                else:
+                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
 
                 # Secure the hold as soon as doctor+date+time are known, even
                 # if patient details are still missing -- KCD-376: the
@@ -1197,6 +1451,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
                 if ack:
                     await _speak(session, ack, lang)
+                else:
+                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 st.slots["_test_names_display"] = st.test_names
                 missing = missing_required(st)
                 if missing:
@@ -1225,6 +1481,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
                 if ack:
                     await _speak(session, ack, lang)
+                else:
+                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 if not st.slots.get("confirmation_id") and slots.get("phone"):
                     found = await _tools.lookup_bookings(phone=slots["phone"])
                     bookings = found.get("bookings") or []
@@ -1253,6 +1511,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
                 if ack:
                     await _speak(session, ack, lang)
+                else:
+                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 if not st.slots.get("confirmation_id") and slots.get("phone"):
                     found = await _tools.lookup_bookings(phone=slots["phone"])
                     bookings = found.get("bookings") or []
@@ -1278,6 +1538,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
                 if ack:
                     await _speak(session, ack, lang)
+                else:
+                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 missing = missing_required(st)
                 if missing:
                     await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
@@ -1364,7 +1626,13 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                 st.slots["patient_name"], phone, caller_phone=phone,
                 patient_age=st.slots.get("patient_age"), relationship=st.slots.get("relationship") or "self",
             )
+            if result.get("reason") == "write_unverified":
+                session.booking = None
+                await _handle_unverified_write(session, lang)
+                return
             await _speak(session, booking_reply(st.slots, result, lang), lang)
+            if result.get("success"):
+                await _persist_senior(session, phone)
             if result.get("success") or result.get("reason") != "hold_expired":
                 session.booking = None
             else:
@@ -1383,6 +1651,10 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
         elif st.action == "reschedule_appointment":
             result = await _tools.reschedule_appointment(
                 st.slots["confirmation_id"], st.slots["new_date"], st.slots["new_time_slot"])
+            if result.get("reason") == "write_unverified":
+                session.booking = None
+                await _handle_unverified_write(session, lang)
+                return
             await _speak(session, reschedule_reply(result, lang), lang)
             if result.get("success") or result.get("reason") != "slot_taken":
                 session.booking = None
