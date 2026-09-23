@@ -108,6 +108,27 @@ def rebuild_appointments_partial_unique_index() -> bool:
     if "appointments" not in insp.get_table_names():
         return False
 
+    # CodeRabbit-flagged: everything below this point is SQLite-specific
+    # (PRAGMA index_list/index_info, the rename-rebuild-drop recipe --
+    # PostgreSQL supports neither statement and DOES support dropping/
+    # replacing a constraint directly). An EXISTING PostgreSQL database
+    # still ships the legacy blanket uq_doctor_slot CONSTRAINT (created by
+    # an earlier version of models.py); create_all() never touches an
+    # existing table, so switching DATABASE_URL to Postgres without this
+    # branch would silently leave that constraint in place forever,
+    # continuing to let a cancelled appointment block a real rebooking --
+    # models.Appointment's own postgresql_where handles this only for a
+    # BRAND NEW database, never an existing one.
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE appointments DROP CONSTRAINT IF EXISTS uq_doctor_slot"))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_doctor_slot_confirmed "
+                "ON appointments (doctor_id, date, time_slot) "
+                "WHERE status = 'confirmed'"
+            ))
+        return True
+
     # This whole function runs on ONE connection in AUTOCOMMIT mode, not
     # engine.begin()'s usual transaction wrapper -- SQLite refuses to
     # change `PRAGMA foreign_keys` at all while a transaction is open

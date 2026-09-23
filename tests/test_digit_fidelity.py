@@ -43,8 +43,15 @@ def _digits_from_spoken(spoken_text: str, digit_words: list[str]) -> str:
     return "".join(reverse[tok] for tok in spoken_text.split() if tok in reverse)
 
 
+# CodeRabbit-flagged: seeded, not the module-level random state -- an
+# unseeded generator makes PHONE_CORPUS (and therefore each parametrized
+# test's own ID) change between runs, so a failure on a generated phone
+# number cannot be reproduced by re-running the suite.
+_RNG = random.Random(445)
+
+
 def _random_phone() -> str:
-    return "9" + "".join(str(random.randint(0, 9)) for _ in range(9))
+    return "9" + "".join(str(_RNG.randint(0, 9)) for _ in range(9))
 
 
 PHONE_CORPUS = ["9876543210", "9000000001", "9800000099", "9111111111"] + \

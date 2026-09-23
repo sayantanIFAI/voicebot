@@ -240,6 +240,12 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
     secondary_slots = data.get("secondary_slots")
     if secondary_intent is None or not isinstance(secondary_slots, dict):
         secondary_intent, secondary_slots = None, None
+    elif secondary_slots.get("faq_topic") not in (None, *FAQ_TOPICS):
+        # Same guard as the primary slots' faq_topic above -- an invented
+        # secondary topic must not reach _tools.get_faq, which would 404
+        # and surface as tool_failure instead of the ordinary unclear/
+        # missing-slot prompt the caller actually needs here.
+        secondary_slots["faq_topic"] = None
     data["secondary_intent"] = secondary_intent
     data["secondary_slots"] = secondary_slots
 
@@ -249,14 +255,37 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
 
 _LANGUAGE_NAMES = {"bn": "Bengali", "hi": "Hindi", "en": "English"}
 
+# KCD-465: "a deadline budget rather than a retry count bounds every
+# stage... no path can leave the caller waiting past the total budget."
+# REASONED, not measured against real telephony: agent/asr.py's own
+# module docstring measures a cold Qwen load at ~74s, and this session's
+# earlier work margined _call_ollama's per-attempt timeout at 90s for
+# exactly that case -- but 90s (let alone up to 3 attempts of it) is
+# nowhere near a bound a caller on the line should ever wait behind.
+# DEFAULT_DEADLINE_S is the whole-operation ceiling every retry shares;
+# a caller hits the spoken "llm_failure" apology at a predictable time
+# instead of an unbounded one, exactly the acceptance criterion's own
+# wording. Recalibrate against real telephony latency once measured.
+DEFAULT_DEADLINE_S = 12.0
+_MAX_ATTEMPTS_BACKSTOP = 5   # defence in depth only -- see extract_intent's docstring
 
-def extract_intent(transcript_bn: str, max_retries: int = 2, lang: str = "bn") -> tuple[dict, dict]:
+
+def extract_intent(transcript_bn: str, max_retries: int = 2, lang: str = "bn",
+                    deadline_s: float = DEFAULT_DEADLINE_S) -> tuple[dict, dict]:
     """Returns (parsed JSON dict, diagnostics dict).
 
     `transcript_bn` keeps its historical name for callers; it is the caller's
     utterance in `lang`. Only the prompt's language wording changes -- the
     schema, the slot rules and the never-state-a-fact rule are identical
-    for every language."""
+    for every language.
+
+    `max_retries` is kept only as a defensive attempt-count backstop
+    (capped at _MAX_ATTEMPTS_BACKSTOP regardless of its value) against a
+    pathological case where every attempt somehow returns instantly --
+    `deadline_s` is what actually bounds how long this function may run,
+    and each attempt's own network timeout is clamped to whatever of the
+    deadline remains, so one slow attempt cannot by itself consume the
+    whole budget meant to cover retries too."""
     now = datetime.datetime.now()
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         today_iso=now.strftime("%Y-%m-%d"),
@@ -267,14 +296,19 @@ def extract_intent(transcript_bn: str, max_retries: int = 2, lang: str = "bn") -
     prompt = (f"{system_prompt}\n\nCALLER UTTERANCE ({_LANGUAGE_NAMES.get(lang, 'Bengali')}, "
               f"ASR output):\n{transcript_bn}\n\nJSON:")
 
-    diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": []}
-    last_error = None
+    diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": [], "deadline_s": deadline_s}
+    last_error: Exception | ExtractionError = ExtractionError("no attempt was made")
+    start = time.time()
+    max_attempts = min(max_retries + 2, _MAX_ATTEMPTS_BACKSTOP)
 
-    for attempt in range(1, max_retries + 2):
+    for attempt in range(1, max_attempts + 1):
+        remaining = deadline_s - (time.time() - start)
+        if remaining <= 0:
+            break
         diagnostics["attempts"] = attempt
         t0 = time.time()
         try:
-            raw = _call_ollama(prompt)
+            raw = _call_ollama(prompt, timeout_s=remaining)
             diagnostics["total_time_s"] += time.time() - t0
             data = json.loads(raw)
             ok, errors = _validate(data)
@@ -286,4 +320,7 @@ def extract_intent(transcript_bn: str, max_retries: int = 2, lang: str = "bn") -
             last_error = e
             diagnostics["errors"].append(f"attempt {attempt}: {type(e).__name__}: {e}")
 
-    raise ExtractionError(f"intent extraction failed after {diagnostics['attempts']} attempts: {last_error}")
+    raise ExtractionError(
+        f"intent extraction did not complete within its {deadline_s}s deadline "
+        f"({diagnostics['attempts']} attempt(s), last error: {last_error})"
+    )

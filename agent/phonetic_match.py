@@ -77,15 +77,35 @@ _BENGALI_CLASS = {
     "ড": "3", "ঢ": "3", "দ": "3", "ধ": "3", "ট": "3", "ঠ": "3", "ত": "3", "থ": "3",
     "ল": "4",
     "ম": "5", "ন": "5", "ণ": "5",
-    "র": "6", "ড়": "6", "ঢ়": "6",
+    "র": "6",
 }
 
 _BENGALI_VOWEL_SIGNS = re.compile(
     r"[া-ৌৗঁ-ঃ্]")  # matras, chandrabindu, anusvara, visarga, virama
 
+# CodeRabbit-flagged, real bug: ড়/ঢ় (flap consonants, class "6" same as
+# র) are in Unicode's NFC composition EXCLUSION list for Bengali/
+# Devanagari -- unicodedata.normalize("NFC", "ড়") actually DECOMPOSES
+# the precomposed character to base consonant ড (U+09A1) + nukta (U+09BC),
+# the opposite of what NFC normally does. So the _BENGALI_CLASS entry for
+# the precomposed "ড়" key was dead code: every name this module ever
+# folds has already gone through NFC by the time class-lookup runs, and
+# NFC leaves that pair decomposed, never precomposed. Confirmed empirically:
+#   unicodedata.normalize("NFC", "ড়") == "ড়"  (ড + nukta)
+# The undetected consequence was silent misclassification, not a crash:
+# the base consonant (ড, class "3") got folded on its own and the nukta
+# was stripped as if it were a vowel sign, so "বড়ুয়া" (Barua) folded to
+# the same key as any other class-3-initial name instead of matching
+# "Barua"'s expected class-6 (র) key -- exactly the phonetic-match gap
+# this module exists to close.
+_BENGALI_FLAPS = {"ড়": "র", "ঢ়": "র"}  # ড়->র, ঢ়->র
+
 
 def _fold_bengali(name: str) -> str:
-    stripped = _BENGALI_VOWEL_SIGNS.sub("", unicodedata.normalize("NFC", name))
+    text = unicodedata.normalize("NFC", name)
+    for decomposed, base in _BENGALI_FLAPS.items():
+        text = text.replace(decomposed, base)
+    stripped = _BENGALI_VOWEL_SIGNS.sub("", text)
     classes = [_BENGALI_CLASS[c] for c in stripped if c in _BENGALI_CLASS]
     return _collapse(classes)
 
@@ -100,15 +120,22 @@ _DEVANAGARI_CLASS = {
     "ड": "3", "ढ": "3", "द": "3", "ध": "3", "ट": "3", "ठ": "3", "त": "3", "थ": "3",
     "ल": "4",
     "म": "5", "न": "5", "ण": "5",
-    "र": "6", "ड़": "6", "ढ़": "6",
+    "र": "6",
 }
 
 _DEVANAGARI_VOWEL_SIGNS = re.compile(
     r"[ा-ौ॑-ॗऀ-ः़्]")  # matras, accents, nasals, virama, nukta
 
 
+# Same NFC composition-exclusion issue as _BENGALI_FLAPS above, same fix.
+_DEVANAGARI_FLAPS = {"ड़": "र", "ढ़": "र"}  # (ड+nukta)->र, (ढ+nukta)->र
+
+
 def _fold_devanagari(name: str) -> str:
-    stripped = _DEVANAGARI_VOWEL_SIGNS.sub("", unicodedata.normalize("NFC", name))
+    text = unicodedata.normalize("NFC", name)
+    for decomposed, base in _DEVANAGARI_FLAPS.items():
+        text = text.replace(decomposed, base)
+    stripped = _DEVANAGARI_VOWEL_SIGNS.sub("", text)
     classes = [_DEVANAGARI_CLASS[c] for c in stripped if c in _DEVANAGARI_CLASS]
     return _collapse(classes)
 

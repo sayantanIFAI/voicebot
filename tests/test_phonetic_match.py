@@ -46,3 +46,29 @@ def test_empty_or_no_letters_never_matches_anything():
     assert phonetic_key("123") == ""
     assert not phonetic_match("", "Sen")
     assert not phonetic_match("Sen", "")
+
+
+def test_bengali_flap_consonant_matches_despite_nfc_composition_exclusion():
+    # CodeRabbit-flagged, real bug: unicodedata.normalize("NFC", ...)
+    # DECOMPOSES the Bengali flap consonants (they are in Unicode's NFC
+    # composition exclusion list) instead of composing them, so a name
+    # folded from the precomposed codepoint and one folded from an
+    # already-decomposed base+nukta pair must land on the identical key.
+    # Built with chr()/explicit codepoints, not typed glyphs -- a typed
+    # or pasted glyph is whatever normalization form the editor happened
+    # to save, which would silently defeat this exact test.
+    precomposed = "ব" + "ড়" + "ুয়া"       # BA + precomposed DDA+nukta (U+09DC)
+    decomposed = "ব" + "ড়" + "ুয়া"  # BA + DDA (U+09A1) + nukta (U+09BC)
+    assert precomposed != decomposed, "test fixture must actually differ at the codepoint level"
+    assert phonetic_key(precomposed) == phonetic_key(decomposed)
+    assert phonetic_match(precomposed, "Barua")
+    assert phonetic_match(decomposed, "Barua")
+
+
+def test_devanagari_flap_consonant_matches_despite_nfc_composition_exclusion():
+    precomposed = "ब" + "ड़" + "ुआ"       # BA + precomposed DDA+nukta (U+095C)
+    decomposed = "ब" + "ड़" + "ुआ"  # BA + DDA (U+0921) + nukta (U+093C)
+    assert precomposed != decomposed, "test fixture must actually differ at the codepoint level"
+    assert phonetic_key(precomposed) == phonetic_key(decomposed)
+    assert phonetic_match(precomposed, "Barua")
+    assert phonetic_match(decomposed, "Barua")

@@ -113,6 +113,13 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
     if lang != "bn":
         return _i18n.doctor_availability_reply(slots, result, lang)
     if not result.get("found"):
+        suggestions = result.get("did_you_mean") or []
+        if result.get("ambiguous") and suggestions:
+            # Doctor-side counterpart of KCD-446's test-ambiguity framing.
+            return f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(suggestions)}?"
+        if suggestions:
+            return (f"'{slots.get('doctor_name')}' নামে ডাক্তার খুঁজে পাইনি। "
+                     f"আপনি কি বলতে চাইছেন {', '.join(suggestions)}?")
         return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার আমাদের এখানে নেই।"
 
     name = _spoken_doctor_name(slots, result)

@@ -33,7 +33,7 @@ def clinic_client():
     # Fresh import each time so module-level `engine`/`SessionLocal` in
     # db.py pick up THIS test's CLINIC_DB_PATH rather than a previous
     # test's cached module.
-    for mod in ("main", "db", "models", "seed"):
+    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate", "enquiry_migrate"):
         sys.modules.pop(mod, None)
 
     import main as clinic_main  # noqa: PLC0415
@@ -140,6 +140,39 @@ def test_prep_also_offers_near_matches_for_an_ambiguous_name(clinic_client):
 
 def test_a_genuinely_unambiguous_name_is_not_flagged_ambiguous(clinic_client):
     resp = clinic_client.get("/api/v1/tests/search", params={"name": "সিবিসি"})
+    body = resp.json()
+    assert body["found"] is True
+    assert "ambiguous" not in body
+
+
+# ======================================================= doctor-side KCD-446
+# "AI can ask correct questions back" -- doctor lookup had the same silent-
+# pick-one gap test lookup was fixed for: _find_doctor happily returns
+# whichever seeded doctor scores a hair higher when two surnames both clear
+# the fuzzy floor, which is exactly the "Doctor Nobody" class of bug
+# CLAUDE.md warns about, just with a REAL doctor's schedule read out
+# instead of a fabricated one. _find_doctor_candidates + the ambiguous/
+# did_you_mean branch below close that gap the same way search_test's did.
+
+def test_doctor_availability_offers_a_choice_for_a_genuinely_ambiguous_surname(clinic_client):
+    # "Dr. N. Roy" and "Dr. P. Ray" are both seeded (Cardiology). A short,
+    # garbled fragment like "ry" scores identically (0.8) against both
+    # surnames -- silently picking one would risk reading out a different
+    # cardiologist's real chamber hours.
+    resp = clinic_client.get("/api/v1/doctors/availability", params={"name": "ry"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["found"] is False
+    assert body["ambiguous"] is True
+    assert "Dr. N. Roy" in body["did_you_mean"]
+    assert "Dr. P. Ray" in body["did_you_mean"]
+    assert len(body["did_you_mean"]) <= 3
+
+
+def test_doctor_availability_still_resolves_an_unambiguous_fuzzy_name(clinic_client):
+    # A clear favourite (exact surname) must not be caught by the new
+    # ambiguity check -- regression guard for the existing single-match path.
+    resp = clinic_client.get("/api/v1/doctors/availability", params={"name": "Sen"})
     body = resp.json()
     assert body["found"] is True
     assert "ambiguous" not in body

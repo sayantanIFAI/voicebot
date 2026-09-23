@@ -25,6 +25,14 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "ঠিক আছে, আপনার অ্যাপয়েন্টমেন্টটা যেমন ছিল তেমনই আছে।",
         "no_confirmation_number": "ঠিক আছে, তাহলে বুকিংটা হয়ে যাবে, কিন্তু কোনো লিখিত কনফার্মেশন পাঠাতে পারব না।",
         "language_switched": "ঠিক আছে, এখন থেকে বাংলায় বলছি।",
+        # KCD-461: spoken only when a lookup exceeds FILLER_THRESHOLD_S
+        # (main.py's _await_with_filler) -- pre-warmed and cached like
+        # every other line here, so it costs no synthesis time at the
+        # exact moment the system is already running slow. Wording per
+        # explicit request: the short, informal "আচ্ছা ঠিক আছে" ("okay,
+        # alright") rather than a longer "please hold" phrase -- closer to
+        # what a person at the counter actually says while checking.
+        "please_wait": "আচ্ছা, ঠিক আছে।",
     },
     "hi": {
         "greeting": "नमस्कार, कोलकाता केयर डायग्नोस्टिक्स में आपका स्वागत है। मैं आपकी क्या मदद कर सकती हूँ?",
@@ -38,6 +46,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
         "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
         "language_switched": "ठीक है, अब हिंदी में बात करती हूँ।",
+        "please_wait": "ठीक है।",
     },
     "en": {
         "greeting": "Hello, welcome to Kolkata Care Diagnostics. How can I help you?",
@@ -51,6 +60,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "Okay, your appointment is unchanged.",
         "no_confirmation_number": "Okay, I'll go ahead with the booking, but I won't be able to send you a written confirmation.",
         "language_switched": "Okay, switching to English now.",
+        "please_wait": "Let me check, please.",
     },
 }
 

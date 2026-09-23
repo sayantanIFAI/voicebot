@@ -42,3 +42,32 @@ class OutcomeCounter:
 # and must not be conflated into one counter's key space.
 insufficient_information = OutcomeCounter()
 abstentions = OutcomeCounter()
+
+# KCD-065: how often each script-mixture bucket ("bn", "bn+en", ...)
+# actually occurs on real calls -- the per-bucket breakdown Appendix F
+# asks code-switch accuracy to be reported against, not only in
+# aggregate. `intent` here is reused as the mixture-bucket key itself
+# (OutcomeCounter's shape is generic enough), `lang` left blank.
+code_switch_buckets = OutcomeCounter()
+
+# KCD-075: how often live traffic falls into each channel-quality class,
+# so it can be compared against the evaluation population's own
+# distribution (this module's whole reason to exist).
+channel_quality_buckets = OutcomeCounter()
+
+# KCD-460: fast_path's serve rate, published PER INTENT (not just the
+# aggregate served/abstained fast_path.py's own stats already had) --
+# "a routine question is answered instantly, and their serve rate is
+# published per intent and language" is this story's own wording.
+fast_path_served = OutcomeCounter()
+
+# KCD-464: how often a caller uses the manual interrupt control (main.py's
+# _handle_control, type "interrupt") while the agent is mid-reply. This is
+# NOT acoustic barge-in (main.py's own module docstring: the mic stays
+# muted client-side during playback, and there is no AEC reference signal
+# to detect talk-over on) -- it is a visible "stop" affordance the caller
+# can tap instead. Tracking how often it fires is what tells a human
+# whether callers are actually reaching for it, which is the signal that
+# would justify the larger AEC-based barge-in project later. `intent` is
+# reused as a fixed literal key ("manual"); `lang` is the call's language.
+barge_in_interrupts = OutcomeCounter()

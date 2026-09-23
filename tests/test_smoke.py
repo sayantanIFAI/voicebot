@@ -91,6 +91,18 @@ class TestReplyTemplates:
         out = rt.doctor_availability_reply({"doctor_name": "সেন"}, result)
         assert isinstance(out, str) and len(out) > 0
 
+    def test_doctor_availability_reply_asks_which_doctor_when_ambiguous(self):
+        # Doctor-side counterpart of test_rate_reply's ambiguous framing
+        # (KCD-446) -- "ask correct questions back" instead of silently
+        # picking one of the tied candidates.
+        result = {"found": False, "query": "ry", "ambiguous": True,
+                  "did_you_mean": ["Dr. N. Roy", "Dr. P. Ray"]}
+        out = rt.doctor_availability_reply({"doctor_name": "ry"}, result)
+        assert "Dr. N. Roy" in out and "Dr. P. Ray" in out
+        for lang in ("hi", "en"):
+            out_i18n = rt.doctor_availability_reply({"doctor_name": "ry"}, result, lang)
+            assert isinstance(out_i18n, str) and len(out_i18n) > 0
+
     def test_missing_slot_prompt_is_specific_per_field(self):
         a = rt.missing_slot_prompt("test_rate", "test_name")
         b = rt.missing_slot_prompt("doctor_availability", "doctor_name")

@@ -26,7 +26,8 @@ def clinic_modules():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate", "i18n_content"):
+    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
+                "enquiry_migrate", "i18n_content"):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod
@@ -47,7 +48,13 @@ def clinic_modules():
 
 
 def _next_weekday(target_weekday: int) -> str:
-    d = datetime.date.today()
+    # CodeRabbit-flagged: start tomorrow, not today -- if today IS
+    # target_weekday but this doctor's chamber hours for today have
+    # already passed, available_slots() correctly returns no slots (the
+    # same-day past-time filter), and a caller indexing free[0] fails on
+    # an empty list for a reason that has nothing to do with what the
+    # test is actually checking.
+    d = datetime.date.today() + datetime.timedelta(days=1)
     while d.weekday() != target_weekday:
         d += datetime.timedelta(days=1)
     return d.isoformat()

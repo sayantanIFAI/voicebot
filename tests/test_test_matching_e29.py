@@ -22,7 +22,7 @@ def clinic_client():
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
     for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "i18n_content", "phonetic_match"):
+                "enquiry_migrate", "i18n_content", "phonetic_match"):
         sys.modules.pop(mod, None)
 
     from fastapi.testclient import TestClient

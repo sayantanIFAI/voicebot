@@ -61,6 +61,7 @@ import time
 import uuid
 import wave
 
+import numpy as np
 import torchaudio
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -82,10 +83,20 @@ from agent.booking_flow import (
     missing_required,
     new_state,
 )
-from agent.confidence_gate import should_withhold_factual_answer
+from agent.call_state import CallState, apply_channel_quality, apply_confidence, apply_language, new_call_state
+from agent.channel_quality import CHANNEL_CLEAN_16K, classify_channel
+from agent.clause_split import split_into_clauses
+from agent.code_switch import mixture_bucket
+from agent.confidence_gate import is_low_confidence, should_withhold_factual_answer
+from agent.detector_budget import run_within_budget
+from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.enquiry_followup import entities_from_turn, resolve_followup_slot
 from agent.fast_path import Catalogue, FastPath
-from agent.outcome_metrics import insufficient_information
+from agent.filler import await_with_filler
+from agent.latency_metrics import turn_latency_by_language
+from agent.outcome_metrics import (
+    barge_in_interrupts, channel_quality_buckets, code_switch_buckets, insufficient_information,
+)
 from agent.lang_select import languages_to_verify, pick_candidate
 from agent.lang_select import speakable as _speakable
 from agent.language_switch import detect_language_switch_request
@@ -154,6 +165,23 @@ PLAYBACK_GUARD_S = 3.0
 # WebM decode is running a beat behind real time.
 RESYNC_REWIND_S = 0.25
 
+# KCD-461: "a natural filler is spoken when a stage exceeds its
+# threshold... silence never exceeds a stated maximum." REASONED, not
+# measured against real telephony (no pod to time it against) --
+# comfortably above a fast_path/cache hit's near-zero latency and a
+# warm LLM call's own "~9s across retries" evidence agent/llm.py's own
+# KCD-465 fix cites, short enough that a genuinely slow turn does not
+# leave the caller wondering whether the line is still open.
+FILLER_THRESHOLD_S = 2.5
+
+# KCD-076: agent/channel_quality.py's FFT-based classification is pure
+# CPU arithmetic over one short clip -- REASONED, not measured against
+# Appendix B's real per-call budget breakdown (no live pod to time it
+# against right now); generous enough that it should never fire in
+# practice on hardware this pipeline already assumes, tight enough that
+# a genuinely pathological clip cannot silently eat into the turn.
+CHANNEL_QUALITY_BUDGET_S = 0.08
+
 CLINIC_API_BASE = os.environ.get("CLINIC_API_BASE", "http://localhost:8080")
 
 # Languages the live path routes between. "bn" alone reproduces the original
@@ -176,6 +204,13 @@ ADMISSION_BYPASS_FILE = os.environ.get("ADMISSION_BYPASS_FILE", "/workspace/.ai_
 ADMISSION_ADMIN_TOKEN = os.environ.get("ADMISSION_ADMIN_TOKEN", "")
 
 app = FastAPI()
+
+# KCD-467: "time from process start to ready is measured and bounded."
+# Captured at import time -- as close to "process start" as this module
+# can observe -- so _startup()'s own duration can be reported once every
+# model has answered ready, rather than assumed. See /api/health.
+_PROCESS_STARTED_AT = time.monotonic()
+_READY_AT: float | None = None   # set once, at the end of _startup()
 
 # ---- process-wide singletons: loaded once, shared by every call ----
 _asr: TurnASR | None = None
@@ -364,7 +399,11 @@ async def _startup():
     lines = prewarm_lines()
     await _tts.prewarm({lang: lines[lang] for lang in _languages_active})
     await _warm_speech_models()
-    logger.info("startup complete -- ready for calls")
+
+    global _READY_AT
+    _READY_AT = time.monotonic()
+    logger.info("startup complete -- ready for calls (%.1fs from process start)",
+                _READY_AT - _PROCESS_STARTED_AT)
 
 
 @app.on_event("shutdown")
@@ -386,8 +425,21 @@ async def _shutdown():
 
 @app.get("/api/health")
 async def health():
+    # KCD-467: "instances receive traffic only once every model answers
+    # a probe" -- ASGI/uvicorn already refuses connections until
+    # _startup() (which awaits every model load) returns, so `ready`
+    # here is never False for a request that could reach this handler
+    # at all; it exists so an orchestrator polling this URL through a
+    # proxy that itself started early sees an honest, explicit signal
+    # rather than inferring readiness from a 200 alone. `startup_duration_s`
+    # is the "measured and bounded" half of the acceptance criterion --
+    # the actual bound (a deploy pipeline gating traffic on this field
+    # rather than on the process merely existing) is an infra concern
+    # outside this repository.
     return {
         "status": "ok",
+        "ready": _READY_AT is not None,
+        "startup_duration_s": round(_READY_AT - _PROCESS_STARTED_AT, 1) if _READY_AT else None,
         "asr_loaded": _asr is not None,
         "clinic_api_base": CLINIC_API_BASE,
         "languages_active": list(_languages_active),
@@ -430,6 +482,11 @@ async def stats():
         "tts_cache": _tts.snapshot() if _tts else None,
         "admission": _admission.snapshot() if _admission else None,
         "insufficient_information": insufficient_information.snapshot(),
+        "code_switch_buckets": code_switch_buckets.snapshot(),
+        "channel_quality_buckets": channel_quality_buckets.snapshot(),
+        "detector_budget": detector_budget_snapshot(),
+        "turn_latency_by_language": turn_latency_by_language.snapshot(),
+        "barge_in_interrupts": barge_in_interrupts.snapshot(),
     }
 
 
@@ -439,6 +496,24 @@ def _wav_duration_s(wav_bytes: bytes) -> float:
             return w.getnframes() / float(w.getframerate())
     except Exception:  # noqa: BLE001 - a fallback clip may not be canonical WAV
         return 5.0
+
+
+def _classify_channel_from_wav_path(path: str) -> str:
+    """KCD-075's sync (CPU-bound) half -- run through
+    agent.detector_budget.run_within_budget, never called directly, so a
+    pathological clip cannot delay the turn past its budget slice."""
+    with contextlib.closing(wave.open(path, "rb")) as w:
+        raw = w.readframes(w.getnframes())
+        sample_rate = w.getframerate()
+        sampwidth = w.getsampwidth()
+    if sampwidth != 2:
+        # This pipeline only ever produces 16-bit PCM clips (torchaudio.save's
+        # default); anything else is unexpected input this classifier was not
+        # built to read faithfully, so default to the least alarming label
+        # rather than mis-parse it into a bogus one.
+        return CHANNEL_CLEAN_16K
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float64) / 32768.0
+    return classify_channel(samples, sample_rate)
 
 
 async def _decode_to_wav(raw_path: str, wav_path: str) -> bool:
@@ -527,6 +602,14 @@ class CallSession:
         # the stateless enquiry intents only.
         self.last_enquiry_entities: list = []
 
+        # KCD-061: the single, versioned carrier of caller signals
+        # (Blueprint 4.5) -- language and confirmation_required are kept
+        # current every turn (see _dispatch_turn); every other field
+        # stays at its neutral default until a real caller-state
+        # detector exists to drive it (see agent/call_state.py's own
+        # docstring).
+        self.call_state: CallState = new_call_state()
+
     def hold_gate_for(self, audio_duration_s: float):
         """Called before each reply goes out. Extends rather than replaces
         the deadline: replies queue on the client, so a second clip starts
@@ -559,46 +642,79 @@ class CallSession:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
 
 
-async def _speak(session: CallSession, text: str, lang: str | None = None,
-                 fallback_reason: str | None = None) -> float:
-    """Speak `text` in `lang` (default: the call's current language).
-    Returns the audio duration in seconds.
-
-    KCD-456: automatically slower for a reply carrying a price, phone
-    number or reference ID (agent.speech_norm.contains_critical_figure)
-    -- decided here, once, rather than at every call site that happens to
-    produce such a reply, so no future reply_templates.py addition can
-    forget to ask for it."""
-    lang = lang or session.lang
-    await session.send_json("AI", text)
-    speed = FIGURE_SPEECH_SPEED if contains_critical_figure(text) else 1.0
+async def _synthesize_one_clause(session: CallSession, clause: str, lang: str,
+                                 fallback_reason: str | None) -> bytes:
+    speed = FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else 1.0
     try:
-        wav = await _tts_router.synthesize(lang, text, speed=speed)
+        return await _tts_router.synthesize(lang, clause, speed=speed)
     except UnspeakableTextError as e:
         # KCD-455: a production occurrence is an alert, not routine
         # noise -- distinct log level and reason from an ordinary TTS
         # infra failure below, even though both fall back to the same
         # pre-recorded apology.
         logger.error("[%s] reply blocked, unspeakable spans %s in %r",
-                     session.call_id, e.spans, text)
-        wav = _tts.fallback_audio(fallback_reason or "tts_failure", lang)
+                     session.call_id, e.spans, clause)
+        return _tts.fallback_audio(fallback_reason or "tts_failure", lang)
     except Exception as e:  # noqa: BLE001 - TTS is the last mile, must not raise past here
         logger.warning("[%s] TTS failed (%s) -- using fallback audio", session.call_id, e)
-        wav = _tts.fallback_audio(fallback_reason or "tts_failure", lang)
+        return _tts.fallback_audio(fallback_reason or "tts_failure", lang)
 
-    # Close the gate BEFORE the bytes leave, never after: the client can
-    # start playing the moment they land, and a poll tick that slips in
-    # between send and gate is exactly the echo this prevents.
-    duration = _wav_duration_s(wav)
-    session.hold_gate_for(duration)
-    await session.send_audio(wav)
 
-    # First audio of a turn is when the caller stops waiting: that interval
-    # is the latency admission control sheds load on.
-    if session.turn_started_at is not None and _admission is not None:
-        _admission.record_turn_latency(time.monotonic() - session.turn_started_at)
-        session.turn_started_at = None
-    return duration
+async def _speak(session: CallSession, text: str, lang: str | None = None,
+                 fallback_reason: str | None = None) -> float:
+    """Speak `text` in `lang` (default: the call's current language).
+    Returns the total audio duration in seconds.
+
+    KCD-456: automatically slower for a reply carrying a price, phone
+    number or reference ID (agent.speech_norm.contains_critical_figure)
+    -- decided here, once, rather than at every call site that happens to
+    produce such a reply, so no future reply_templates.py addition can
+    forget to ask for it.
+
+    KCD-462: a long reply (agent.clause_split.split_into_clauses) is
+    synthesized and sent ONE CLAUSE AT A TIME instead of as one TTS call
+    for the whole text -- the first clause reaches the caller as soon as
+    its own (much shorter) synthesis finishes, not after the entire
+    reply renders. A short reply (the common case) comes back as a
+    single-item list and behaves exactly as before -- one TTS call, one
+    clip. session.hold_gate_for already extends cumulatively for
+    multiple clips in a row (see its own docstring), which is what a
+    correction-acknowledgement-then-readback turn already relies on
+    elsewhere in this file, so streaming several clips here is the same,
+    already-proven pattern, not a new one."""
+    lang = lang or session.lang
+    await session.send_json("AI", text)
+    clauses = split_into_clauses(text) or [text]
+
+    total_duration = 0.0
+    for i, clause in enumerate(clauses):
+        wav = await _synthesize_one_clause(session, clause, lang, fallback_reason)
+
+        # Close the gate BEFORE the bytes leave, never after: the client
+        # can start playing the moment they land, and a poll tick that
+        # slips in between send and gate is exactly the echo this
+        # prevents.
+        duration = _wav_duration_s(wav)
+        session.hold_gate_for(duration)
+        await session.send_audio(wav)
+        total_duration += duration
+
+        # "Time to first audio" (admission.py's own docstring) means the
+        # FIRST clause, not the last -- recorded once, right after it is
+        # sent, so streaming a long reply is measured (and shows up as
+        # faster) rather than averaged against the clauses still to come.
+        if i == 0 and session.turn_started_at is not None and _admission is not None:
+            turn_latency_s = time.monotonic() - session.turn_started_at
+            _admission.record_turn_latency(turn_latency_s)
+            # KCD-469: the SAME measurement, also broken down per
+            # language -- admission's own p50/p95 stay a single
+            # aggregate signal by design (see its module docstring), so
+            # a language-specific regression could hide inside a
+            # healthy-looking aggregate without this.
+            turn_latency_by_language.record(lang, turn_latency_s)
+            session.turn_started_at = None
+
+    return total_duration
 
 
 async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[str, ...] | None = None):
@@ -622,6 +738,19 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
         await session.ws.close()
 
 
+async def _await_with_filler(session: CallSession, awaitable, lang: str,
+                             threshold_s: float = FILLER_THRESHOLD_S):
+    """KCD-461: thin wrapper over agent.filler.await_with_filler (the
+    tested race logic) supplying "speak the pre-warmed please_wait
+    phrase" as the timeout callback -- never synthesized fresh
+    (TTSClient's cache already holds it from startup prewarm), so it
+    costs no synthesis time at exactly the moment the system is already
+    running slow."""
+    async def _speak_filler():
+        await _speak(session, phrase("please_wait", lang), lang)
+    return await await_with_filler(awaitable, threshold_s, _speak_filler)
+
+
 async def _slice_utterance(session: CallSession, start_s: float, end_s: float, seq: int) -> str:
     """Cuts [start_s, end_s+pad] -- both ABSOLUTE call-time offsets -- out
     of the call's decoded WAV into its own small file for ASR."""
@@ -631,6 +760,22 @@ async def _slice_utterance(session: CallSession, start_s: float, end_s: float, s
     clip_path = f"{session.wav_path}.utt{seq}.wav"
     await asyncio.to_thread(torchaudio.save, clip_path, wav[:, a:b], sr)
     return clip_path
+
+
+async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, key: str) -> dict:
+    """Tier 2 (semantic cache) + tier 3 (LLM), run AFTER fast_path already
+    abstained. Split out from _resolve_intent so the filler race below can
+    wrap the WHOLE remaining sequence -- see KCD-459 note there."""
+    cached, how = await asyncio.to_thread(_intent_cache.get, key)
+    if cached is not None:
+        logger.info("[%s] intent cache %s hit", session.call_id, how)
+        return cached
+
+    data, diag = await asyncio.to_thread(extract_intent, text, 2, lang)
+    logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
+                session.call_id, diag["total_time_s"], diag["attempts"])
+    await asyncio.to_thread(_intent_cache.put, key, data)
+    return data
 
 
 async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> dict:
@@ -655,16 +800,18 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # The cache stores the whole intent object (smalltalk carries reply
     # text in the caller's language), so the language is part of the key.
     key = text if lang == "bn" else f"[{lang}] {text}"
-    cached, how = await asyncio.to_thread(_intent_cache.get, key)
-    if cached is not None:
-        logger.info("[%s] intent cache %s hit", session.call_id, how)
-        return cached
 
-    data, diag = await asyncio.to_thread(extract_intent, text, 2, lang)
-    logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
-                session.call_id, diag["total_time_s"], diag["attempts"])
-    await asyncio.to_thread(_intent_cache.put, key, data)
-    return data
+    # KCD-459: the filler race used to wrap ONLY the LLM call, so a slow
+    # embedding lookup (agent/semantic_cache.py's L2 tier, a live call to
+    # Ollama's embed endpoint) burned into FILLER_THRESHOLD_S's budget
+    # silently before the caller ever got the "please hold" filler -- a
+    # cold/loaded embed step and a cold LLM call could sum past the
+    # threshold with the caller hearing nothing for either half. Wrapping
+    # the whole cache-then-LLM sequence means "no more than
+    # FILLER_THRESHOLD_S of silence" is an end-to-end guarantee for this
+    # tier, not just a promise about the LLM's own share of it.
+    return await _await_with_filler(
+        session, _resolve_intent_uncached(session, text, lang, key), lang)
 
 
 # CodeRabbit-flagged, real bug: a failed hold used to ALWAYS clear
@@ -811,8 +958,16 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
     interleave, even if the caller starts talking again immediately."""
     async with session.dispatch_lock:
         session.turn_started_at = time.monotonic()
+        channel_quality = session.call_state.channel_quality
         try:
             lang, asr_result = await _route_and_transcribe(session, utterance_wav)
+            # KCD-075/KCD-076: measured inside its own budget slice, on
+            # the SAME clip ASR already read, before the finally below
+            # deletes it. A slow or failed classification just keeps
+            # last turn's label -- never blocks or fails the turn.
+            channel_quality = await run_within_budget(
+                "channel_quality", CHANNEL_QUALITY_BUDGET_S, _classify_channel_from_wav_path,
+                utterance_wav, previous_value=channel_quality)
         except Exception as e:
             logger.exception("[%s] ASR/LID stage failed: %s", session.call_id, e)
             await _speak(session, phrase("llm_failure", session.lang), session.lang,
@@ -827,6 +982,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         session.lang = lang
         session.lang_router.note_response_language(lang)
+        apply_language(session.call_state, lang)
+        apply_confidence(session.call_state, is_low_confidence(asr_result.decoder_agreement))
+        apply_channel_quality(session.call_state, channel_quality)
+        channel_quality_buckets.record(channel_quality, "seen", lang)
+        logger.debug("[%s] call_state %s", session.call_id, session.call_state.to_log_dict())
 
         text = asr_result.text.strip()
         if not text:
@@ -834,6 +994,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _speak(session, phrase("asr_empty", lang), lang, fallback_reason="asr_empty")
             return
         await session.send_json("User", text)
+        code_switch_buckets.record(mixture_bucket(text), "seen", lang)
 
         # KCD-438: an explicit "speak in Hindi/Bengali/English" request,
         # detected deterministically (no LLM call, same zero-extra-latency
@@ -1319,9 +1480,21 @@ async def _turn_poll_loop(session: CallSession):
 
 
 async def _handle_control(session: CallSession, raw: str):
-    """Client -> server control channel. Only one message today, but it is
-    the load-bearing half of the echo gate: the server cannot otherwise
-    know when the caller's speaker actually stopped."""
+    """Client -> server control channel.
+
+    "playback_done" is the load-bearing half of the echo gate: the server
+    cannot otherwise know when the caller's speaker actually stopped.
+
+    "interrupt" (KCD-464) is the manual stop affordance: static/index.html
+    shows a button while agent_speaking, and clicking it stops local
+    playback, unmutes the mic and sends this immediately, WITHOUT waiting
+    for the queued clips to finish. Deliberately NOT acoustic barge-in --
+    this file's own module docstring already explains why that needs an
+    echo canceller this system does not have (no reference signal for
+    audio synthesized locally and played through Web Audio). This is the
+    honest, buildable version of "stop the AI, let the caller talk": the
+    caller asks for the floor instead of the system trying to detect it
+    from the muted mic, which structurally cannot see it."""
     try:
         msg = json.loads(raw)
     except json.JSONDecodeError:
@@ -1329,6 +1502,12 @@ async def _handle_control(session: CallSession, raw: str):
         return
     if msg.get("type") == "playback_done":
         session.release_gate()
+    elif msg.get("type") == "interrupt":
+        was_speaking = session.agent_speaking
+        session.release_gate()
+        if was_speaking:
+            logger.info("[%s] caller interrupt -- gate released early", session.call_id)
+            barge_in_interrupts.record("manual", session.lang)
 
 
 @app.websocket("/ws/audio")

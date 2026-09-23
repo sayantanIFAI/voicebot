@@ -24,7 +24,7 @@ def clinic_client():
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
     for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "i18n_content", "phonetic_match"):
+                "enquiry_migrate", "i18n_content", "phonetic_match"):
         sys.modules.pop(mod, None)
 
     from fastapi.testclient import TestClient
@@ -50,13 +50,19 @@ def test_doctor_nobody_still_never_matches_a_real_doctor(clinic_client):
 
 
 def test_a_badly_garbled_surname_still_finds_the_right_doctor(clinic_client):
-    # Roy is seeded (Dr. N. Roy, Cardiology). A phonetically-consistent
-    # but character-heavy mishearing must still resolve, same principle
-    # as the existing "mukharji" vs "Mukherjee" case FUZZY_SURNAME_FLOOR
-    # was calibrated against.
+    # CodeRabbit-flagged: "Roy" queried exactly matches _find_doctor's
+    # FIRST branch (English-name substring), so the original version of
+    # this test never actually reached fuzzy/phonetic matching at all --
+    # it could not have caught a regression in either. "Nukharji" against
+    # seeded "Mukherjee" misses the exact/alias tiers, scores 0.588 by
+    # character ratio (below FUZZY_SURNAME_FLOOR=0.60, so the plain fuzzy
+    # tier alone would reject it), and clears PHONETIC_ASSISTED_FLOOR
+    # while sharing Mukherjee's phonetic key -- this genuinely exercises
+    # the phonetic-assisted branch, not just character similarity.
     cat = clinic_client.get("/api/v1/catalogue").json()
-    roy = next(d for d in cat["doctors"] if d["surname"] == "Roy")
-    assert roy is not None
+    mukherjee = next(d for d in cat["doctors"] if d["surname"] == "Mukherjee")
+    assert mukherjee is not None
 
-    result = clinic_client.get("/api/v1/doctors/availability", params={"name": "Roy"}).json()
-    assert result["found"] is True and result["doctor_name"] == roy["name"]
+    result = clinic_client.get("/api/v1/doctors/availability", params={"name": "Nukharji"}).json()
+    assert result["found"] is True
+    assert result["doctor_name"] == mukherjee["name"]

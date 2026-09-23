@@ -17,9 +17,13 @@ from sqlalchemy import inspect, text
 
 LAB_TEST_ENQUIRY_COLUMNS: dict[str, str] = {
     "fasting_hours": "INTEGER",
-    "water_allowed_while_fasting": "BOOLEAN NOT NULL DEFAULT 1",
-    "home_collection_eligible": "BOOLEAN NOT NULL DEFAULT 1",
-    "prescription_required": "BOOLEAN NOT NULL DEFAULT 0",
+    # CodeRabbit-flagged: TRUE/FALSE, not 1/0 -- PostgreSQL rejects an
+    # integer literal as a BOOLEAN column default (SQLite accepts both,
+    # so this only ever broke the DATABASE_URL=postgres path db.py's own
+    # docstring promises is a one-line change, not the pilot's SQLite one).
+    "water_allowed_while_fasting": "BOOLEAN NOT NULL DEFAULT TRUE",
+    "home_collection_eligible": "BOOLEAN NOT NULL DEFAULT TRUE",
+    "prescription_required": "BOOLEAN NOT NULL DEFAULT FALSE",
     "prescription_note_bn": "VARCHAR NOT NULL DEFAULT ''",
     "prescription_note_hi": "VARCHAR NOT NULL DEFAULT ''",
     "prescription_note_en": "VARCHAR NOT NULL DEFAULT ''",

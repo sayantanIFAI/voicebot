@@ -427,6 +427,54 @@ def _find_doctor(db: Session, name: str) -> Doctor | None:
     return None
 
 
+# Same ratio floor already used to ACCEPT a single fuzzy match above
+# (FUZZY_SURNAME_FLOOR) -- reused here as the bar for COLLECTING a name
+# into the ambiguity set, so "which doctors are even in the running" and
+# "would _find_doctor have accepted this one alone" stay the same
+# question asked twice, never two different bars that could disagree.
+def _find_doctor_candidates(db: Session, name: str) -> list[Doctor]:
+    """Every doctor whose surname or alias clears FUZZY_SURNAME_FLOOR
+    against `name`, not just the single best one -- so two similarly-
+    spelled doctors (e.g. two surnames both folding close to a garbled
+    query) surface as a genuine "which one" choice (KCD-446's doctor-side
+    counterpart) instead of _find_doctor silently picking whichever one
+    happened to score a hair higher. Exact/alias matches never reach this
+    function -- _find_doctor already returns on those, same as
+    _find_test_candidates never needing to consider _find_test's own
+    exact/alias tiers."""
+    all_doctors = db.query(Doctor).all()
+    scored = []
+    for d in all_doctors:
+        candidates = [d.name.split()[-1].lower()] + [
+            a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
+        best_ratio = max(
+            (difflib.SequenceMatcher(None, name.lower(), c.lower()).ratio() for c in candidates),
+            default=0.0,
+        )
+        if best_ratio >= FUZZY_SURNAME_FLOOR:
+            scored.append((best_ratio, d))
+    if not scored:
+        return []
+    top = max(r for r, _ in scored)
+    # Only doctors within a hair of the top score are genuinely "in the
+    # running" -- a query that clearly favours one doctor over another
+    # (both above the floor, but one far ahead) is not an ambiguous case,
+    # it is a confident match with a distant runner-up.
+    return [d for r, d in scored if top - r <= 0.05]
+
+
+def _doctor_suggestions(db: Session, name: str) -> list[str]:
+    all_doctors = db.query(Doctor).all()
+    candidates = []
+    for d in all_doctors:
+        candidates.append(d.name)
+        candidates.extend(a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a)
+    suggestions = difflib.get_close_matches(name, candidates, n=3, cutoff=0.5)
+    alias_to_name = {a: d.name for d in all_doctors
+                     for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a}
+    return list(dict.fromkeys(alias_to_name.get(s, s) for s in suggestions))
+
+
 def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSchedule | None:
     return db.query(DoctorSchedule).filter_by(doctor_id=doctor_id, weekday=weekday).first()
 
@@ -443,9 +491,19 @@ def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date,
 @app.get("/api/v1/doctors/availability")
 def doctor_availability(name: str = Query(...), date: str | None = Query(None),
                          db: Session = Depends(get_db)):
-    doctor = _find_doctor(db, name)
+    # Doctor-side counterpart of KCD-446: two similarly-spelled doctors
+    # tying on the fuzzy floor is a genuinely different outcome from
+    # "nothing matched" -- silently picking one (what _find_doctor does,
+    # correctly, when there is no tie) would risk reading out a DIFFERENT
+    # doctor's real schedule, the CLAUDE.md "Doctor Nobody" class of bug.
+    candidates = _find_doctor_candidates(db, name)
+    if len(candidates) > 1:
+        return {"found": False, "query": name, "ambiguous": True,
+                "did_you_mean": [d.name for d in candidates[:3]]}
+
+    doctor = candidates[0] if candidates else _find_doctor(db, name)
     if not doctor:
-        return {"found": False, "query": name}
+        return {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name)}
 
     today = datetime.date.today()
 

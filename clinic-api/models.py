@@ -164,8 +164,18 @@ class Appointment(Base):
     doctor = relationship("Doctor")
 
     __table_args__ = (
+        # CodeRabbit-flagged: sqlite_where alone only scopes the index on
+        # SQLite. create_all() on PostgreSQL would otherwise create this
+        # as a full (non-partial) unique index, silently letting a
+        # cancelled/rescheduled appointment keep blocking a new booking
+        # for the same doctor/date/time_slot. This is what a brand-new
+        # database gets; an EXISTING Postgres database still needs
+        # booking_migrate.py's own dialect branch to convert its already-
+        # created index (see rebuild_appointments_partial_unique_index).
         Index("ux_doctor_slot_confirmed", "doctor_id", "date", "time_slot",
-              unique=True, sqlite_where=text("status = 'confirmed'")),
+              unique=True,
+              sqlite_where=text("status = 'confirmed'"),
+              postgresql_where=text("status = 'confirmed'")),
     )
 
 

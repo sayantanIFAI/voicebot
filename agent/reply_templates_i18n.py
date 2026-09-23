@@ -166,15 +166,31 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
             else "Sorry, that test is not on our list.")
 
 
+def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    q = _query(slots, "doctor_name", lang)
+    sugg = _suggestions(result, lang)
+    if result.get("ambiguous") and sugg:
+        # Doctor-side counterpart of test_rate_reply's ambiguous framing.
+        return (f"एक से ज़्यादा डॉक्टर मिले -- किनकी बात कर रहे हैं, {' या '.join(sugg)}?" if hi
+                else f"I found more than one doctor -- did you mean {' or '.join(sugg)}?")
+    if hi:
+        if sugg:
+            return (f"'{q}' नाम के डॉक्टर नहीं मिले। क्या आप यह कहना चाह रहे हैं {', '.join(sugg)}?"
+                    if q else f"वह डॉक्टर नहीं मिले। क्या आप यह कहना चाह रहे हैं {', '.join(sugg)}?")
+        return (f"माफ़ कीजिए, '{q}' नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।" if q
+                else "माफ़ कीजिए, इस नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।")
+    if sugg:
+        return (f"I couldn't find a doctor named '{q}'. Did you mean {', '.join(sugg)}?" if q
+                else f"I couldn't find that doctor. Did you mean {', '.join(sugg)}?")
+    return (f"Sorry, we don't have a doctor named '{q}'." if q
+            else "Sorry, we don't have a doctor by that name.")
+
+
 def doctor_availability_reply(slots: dict, result: dict, lang: str) -> str:
     hi = lang == "hi"
     if not result.get("found"):
-        q = _query(slots, "doctor_name", lang)
-        if hi:
-            return (f"माफ़ कीजिए, '{q}' नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।" if q
-                    else "माफ़ कीजिए, इस नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।")
-        return (f"Sorry, we don't have a doctor named '{q}'." if q
-                else "Sorry, we don't have a doctor by that name.")
+        return _not_found_doctor(slots, result, lang)
 
     name = _doctor_name(slots, result, lang)
     if result.get("available"):

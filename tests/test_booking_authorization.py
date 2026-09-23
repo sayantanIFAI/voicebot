@@ -27,7 +27,8 @@ def clinic_modules():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate", "i18n_content"):
+    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
+                "enquiry_migrate", "i18n_content"):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod

@@ -30,7 +30,8 @@ def clinic_modules():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate", "i18n_content"):
+    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
+                "enquiry_migrate", "i18n_content"):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod
@@ -64,7 +65,10 @@ def test_thirty_simultaneous_holds_produce_exactly_one_success(clinic_modules):
     # A weekday this doctor actually sits -- seed.py's SHIFT_TEMPLATES only
     # cover Mon-Sat, so pick the next Monday to be schedule-agnostic.
     import datetime
-    d = datetime.date.today()
+    # CodeRabbit-flagged: start tomorrow, not today -- see
+    # test_booking_service.py's _next_weekday for why (same-day chamber
+    # hours already past would make available_slots() correctly empty).
+    d = datetime.date.today() + datetime.timedelta(days=1)
     while d.weekday() != 0:
         d += datetime.timedelta(days=1)
     date = d.isoformat()
@@ -99,7 +103,10 @@ def test_the_two_losers_get_useful_alternatives(clinic_modules):
     bs, db_mod, m = clinic_modules
     doctor_id = _first_doctor_id(db_mod, m)
     import datetime
-    d = datetime.date.today()
+    # CodeRabbit-flagged: start tomorrow, not today -- see
+    # test_booking_service.py's _next_weekday for why (same-day chamber
+    # hours already past would make available_slots() correctly empty).
+    d = datetime.date.today() + datetime.timedelta(days=1)
     while d.weekday() != 0:
         d += datetime.timedelta(days=1)
     date = d.isoformat()

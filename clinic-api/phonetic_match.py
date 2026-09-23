@@ -84,15 +84,27 @@ _BENGALI_CLASS = {
     "ড": "3", "ঢ": "3", "দ": "3", "ধ": "3", "ট": "3", "ঠ": "3", "ত": "3", "থ": "3",
     "ল": "4",
     "ম": "5", "ন": "5", "ণ": "5",
-    "র": "6", "ড়": "6", "ঢ়": "6",
+    "র": "6",
 }
 
 _BENGALI_VOWEL_SIGNS = re.compile(
     r"[া-ৌৗঁ-ঃ্]")  # matras, chandrabindu, anusvara, visarga, virama
 
 
+# CodeRabbit-flagged, real bug (same as agent/phonetic_match.py -- kept
+# in sync, see this file's own module docstring): the flap consonants
+# are in Unicode's NFC composition EXCLUSION list, so NFC always leaves
+# them as base consonant + nukta, never the precomposed codepoint the
+# old _BENGALI_CLASS entry was keyed on. See agent/phonetic_match.py's
+# _BENGALI_FLAPS comment for the full empirical confirmation.
+_BENGALI_FLAPS = {"ড়": "র", "ঢ়": "র"}  # (ড+nukta)->র, (ঢ+nukta)->র
+
+
 def _fold_bengali(name: str) -> str:
-    stripped = _BENGALI_VOWEL_SIGNS.sub("", unicodedata.normalize("NFC", name))
+    text = unicodedata.normalize("NFC", name)
+    for decomposed, base in _BENGALI_FLAPS.items():
+        text = text.replace(decomposed, base)
+    stripped = _BENGALI_VOWEL_SIGNS.sub("", text)
     classes = [_BENGALI_CLASS[c] for c in stripped if c in _BENGALI_CLASS]
     return _collapse(classes)
 
@@ -107,15 +119,22 @@ _DEVANAGARI_CLASS = {
     "ड": "3", "ढ": "3", "द": "3", "ध": "3", "ट": "3", "ठ": "3", "त": "3", "थ": "3",
     "ल": "4",
     "म": "5", "न": "5", "ण": "5",
-    "र": "6", "ड़": "6", "ढ़": "6",
+    "र": "6",
 }
 
 _DEVANAGARI_VOWEL_SIGNS = re.compile(
     r"[ा-ौ॑-ॗऀ-ः़्]")  # matras, accents, nasals, virama, nukta
 
 
+# Same NFC composition-exclusion issue as _BENGALI_FLAPS above, same fix.
+_DEVANAGARI_FLAPS = {"ड़": "र", "ढ़": "र"}  # (ड+nukta)->र, (ढ+nukta)->र
+
+
 def _fold_devanagari(name: str) -> str:
-    stripped = _DEVANAGARI_VOWEL_SIGNS.sub("", unicodedata.normalize("NFC", name))
+    text = unicodedata.normalize("NFC", name)
+    for decomposed, base in _DEVANAGARI_FLAPS.items():
+        text = text.replace(decomposed, base)
+    stripped = _DEVANAGARI_VOWEL_SIGNS.sub("", text)
     classes = [_DEVANAGARI_CLASS[c] for c in stripped if c in _DEVANAGARI_CLASS]
     return _collapse(classes)
 

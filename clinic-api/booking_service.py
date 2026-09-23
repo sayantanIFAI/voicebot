@@ -85,10 +85,26 @@ def _alias(aliases: str | None) -> str | None:
 # ============================================================= holds
 
 def _release_expired_hold(db: Session, doctor_id: int, date: str, time_slot: str) -> None:
-    row = db.get(SlotLock, (doctor_id, date, time_slot))
-    if row and row.status == "held" and row.hold_expires_at and row.hold_expires_at < _now():
-        db.delete(row)
-        db.flush()
+    # CodeRabbit-flagged, real race: sqlite3's legacy transaction mode
+    # (db.py does not override it) does not BEGIN on a plain SELECT, so
+    # two concurrent callers can both read the same expired row before
+    # either writes. A read-then-delete-by-primary-key would let caller B
+    # delete caller A's REPLACEMENT hold (inserted between B's read and
+    # B's delete) instead of the expired one B actually read -- both
+    # hold_slot calls report success, and A's later confirm_booking then
+    # fails with hold_expired on a hold that should still be live. The
+    # fix is a single DELETE whose WHERE clause re-checks status/expiry
+    # at delete time, so a hold someone else already replaced is simply
+    # not matched and stays in place; the duplicate insert that follows
+    # in hold_slot then correctly reports slot_taken.
+    db.query(SlotLock).filter(
+        SlotLock.doctor_id == doctor_id,
+        SlotLock.date == date,
+        SlotLock.time_slot == time_slot,
+        SlotLock.status == "held",
+        SlotLock.hold_expires_at < _now(),
+    ).delete()
+    db.flush()
 
 
 def hold_slot(db: Session, doctor_id: int, date: str, time_slot: str) -> dict:
