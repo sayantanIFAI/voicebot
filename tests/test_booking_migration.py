@@ -72,7 +72,11 @@ def test_old_appointments_table_gains_columns_without_losing_the_existing_row(ol
     # Matches clinic-api/main.py's real startup order: create_all() adds
     # any brand-new table (SlotLock, Patient, DepartmentRoute, ...) --
     # a no-op on tables that already exist -- BEFORE the column migration,
-    # which both ALTERs the old tables and queries DepartmentRoute.
+    # which both ALTERs the old tables and queries DepartmentRoute. Then
+    # finish_booking_schema_setup() only AFTER, once departments/doctors
+    # are known to have rows (this fixture's raw SQL already inserted one
+    # of each, but a fresh empty database would not have at this point --
+    # see finish_booking_schema_setup()'s docstring for the bug that caught).
     models.Base.metadata.create_all(db_mod.engine)
     result = booking_migrate.migrate_booking_schema()
     assert "appointments.status" in result["columns_added"]
@@ -95,6 +99,9 @@ def test_old_appointments_table_gains_columns_without_losing_the_existing_row(ol
     finally:
         db.close()
 
+    finish = booking_migrate.finish_booking_schema_setup()
+    assert finish["department_routes_added"] == 1   # the fixture's one department
+
 
 def test_migration_is_idempotent_and_never_overwrites_a_hand_edited_fee(old_db):
     booking_migrate = importlib.import_module("booking_migrate")
@@ -102,7 +109,8 @@ def test_migration_is_idempotent_and_never_overwrites_a_hand_edited_fee(old_db):
     db_mod = importlib.import_module("db")
 
     models.Base.metadata.create_all(db_mod.engine)
-    first = booking_migrate.migrate_booking_schema()
+    booking_migrate.migrate_booking_schema()
+    first = booking_migrate.finish_booking_schema_setup()
     # The fixture's one doctor is General Medicine, whose fee (500) equals
     # the raw ALTER default -- so the backfill correctly has nothing to do.
     assert first["doctor_fees_filled"] == 0
@@ -115,8 +123,9 @@ def test_migration_is_idempotent_and_never_overwrites_a_hand_edited_fee(old_db):
     finally:
         db.close()
 
-    second = booking_migrate.migrate_booking_schema()
-    assert second["columns_added"] == []          # already added
+    second_columns = booking_migrate.migrate_booking_schema()
+    second = booking_migrate.finish_booking_schema_setup()
+    assert second_columns["columns_added"] == []   # already added
     assert second["doctor_fees_filled"] == 0       # 999 != 500, so the backfill left it alone
 
     db = db_mod.SessionLocal()

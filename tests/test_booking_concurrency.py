@@ -37,6 +37,7 @@ def clinic_modules():
     seed_mod.seed()
     import booking_migrate
     booking_migrate.migrate_booking_schema()
+    booking_migrate.finish_booking_schema_setup()
     import booking_service as bs
     import db as db_mod
     import models as m

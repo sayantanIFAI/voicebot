@@ -19,7 +19,7 @@ def old_db(tmp_path, monkeypatch):
     path = tmp_path / "old.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
     monkeypatch.syspath_prepend(CLINIC_API)
-    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate"):
+    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate", "main"):
         sys.modules.pop(mod, None)
     import sqlite3
     con = sqlite3.connect(path)
@@ -42,7 +42,7 @@ def old_db(tmp_path, monkeypatch):
     con.commit()
     con.close()
     yield path
-    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate"):
+    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate", "main"):
         sys.modules.pop(mod, None)
 
 
@@ -82,6 +82,38 @@ def test_old_database_gains_columns_and_translations_without_losing_rows(old_db)
         assert faq.answer_bn == "বাংলা উত্তর"
     finally:
         db.close()
+
+
+def test_the_real_app_startup_boots_an_old_database_end_to_end(old_db):
+    """The regression the other two tests in this file did NOT catch: they
+    call add_i18n_columns()/migrate_booking_schema() by hand, in an order
+    the test chooses -- not the order clinic-api/main.py's own
+    `_ensure_seeded()` actually runs them in. That let a real ordering bug
+    ship (backfill_i18n() querying Doctor before migrate_booking_schema()
+    had added Doctor's new columns), caught only by booting the real app
+    on the live pod. This test boots the ACTUAL FastAPI app -- exercising
+    `_ensure_seeded()` exactly as a real process start does, via
+    TestClient's startup-event handling -- against the same old-schema
+    fixture, so a future reordering mistake fails here first."""
+    from fastapi.testclient import TestClient
+
+    sys.modules.pop("main", None)   # the repo-root voice orchestrator, not clinic-api's -- must not shadow it
+    clinic_main = importlib.import_module("main")
+
+    with TestClient(clinic_main.app) as c:
+        health = c.get("/api/health").json()
+        assert health["status"] == "ok" and health["lab_tests"] == 2
+
+        # Both migrations actually ran, on the SAME startup pass, in
+        # whatever order main.py's real code puts them in.
+        prep = c.get("/api/v1/tests/prep", params={"name": "Uric Acid", "lang": "hi"}).json()
+        assert prep["found"] and "यूरिक एसिड" in prep.get("test_name_hi", prep.get("prep_instructions", ""))
+
+        # And a booking-lifecycle table this old DB never had is usable.
+        avail = c.get("/api/v1/doctors/earliest", params={"name": "Sen"})
+        assert avail.status_code == 200
+
+    sys.modules.pop("main", None)
 
 
 def test_backfill_never_overwrites_a_hand_edited_value(old_db):

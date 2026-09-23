@@ -156,10 +156,26 @@ def seed_department_routes() -> int:
 
 
 def migrate_booking_schema() -> dict:
-    """One call, run at startup before any ORM query -- see main.py's
-    startup handler. Safe to call every boot."""
-    added_columns = add_appointment_booking_columns() + add_doctor_booking_columns()
+    """The column-ALTER half only. Run at startup BEFORE any ORM query --
+    see main.py's startup handler -- because SQLAlchemy selects every
+    mapped column, so a query against Doctor/Appointment needs these to
+    already exist. Safe to call every boot.
+
+    Deliberately does NOT call seed_department_routes()/
+    backfill_doctor_fees() here: both need `departments`/`doctors` rows to
+    already exist, which is not yet true on a brand-new database at this
+    point in startup -- seed() has not run yet. Call
+    finish_booking_schema_setup() below once seeding is done instead. A
+    version of this function that called them together shipped once and
+    silently seeded zero department routes on every fresh database,
+    caught by tests/test_booking_endpoints.py::test_department_route_endpoint
+    failing against a throwaway DB."""
+    return {"columns_added": add_appointment_booking_columns() + add_doctor_booking_columns()}
+
+
+def finish_booking_schema_setup() -> dict:
+    """The half that needs `departments`/`doctors` to already have rows --
+    call this AFTER seed() or backfill_i18n() has run, not before."""
     routes_added = seed_department_routes()
     fees_filled = backfill_doctor_fees()
-    return {"columns_added": added_columns, "department_routes_added": routes_added,
-            "doctor_fees_filled": fees_filled}
+    return {"department_routes_added": routes_added, "doctor_fees_filled": fees_filled}

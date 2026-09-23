@@ -33,6 +33,7 @@ def clinic_modules():
     seed_mod.seed()
     import booking_migrate
     booking_migrate.migrate_booking_schema()
+    booking_migrate.finish_booking_schema_setup()
     import booking_service as bs
     import db as db_mod
     import models as m
@@ -218,6 +219,70 @@ def test_reschedule_onto_a_taken_slot_leaves_the_original_intact(clinic_modules)
         still = db.query(m.Appointment).filter_by(confirmation_id=booked["confirmation_id"]).one()
         assert still.status == "confirmed" and still.time_slot == mine
         assert mine not in bs.available_slots(db, doc.id, date)  # original booking still holds it
+    finally:
+        db.close()
+
+
+def test_earliest_available_finds_the_soonest_free_slot(clinic_modules):
+    # KCD-360: caller asks for the earliest available appointment.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        result = bs.earliest_available(db, doc.id, datetime.date.today())
+        assert result is not None
+        assert result["date"] and result["time_slot"]
+        # what it found must actually be free right now
+        assert result["time_slot"] in bs.available_slots(db, doc.id, result["date"])
+
+        # once that exact slot is taken, the search must skip past it
+        hold = bs.hold_slot(db, doc.id, result["date"], result["time_slot"])
+        bs.confirm_booking(db, hold["hold_token"], doc.id, result["date"], result["time_slot"],
+                            "Earliest Taker", "666", "666")
+        second = bs.earliest_available(db, doc.id, datetime.date.today())
+        assert second is not None
+        assert not (second["date"] == result["date"] and second["time_slot"] == result["time_slot"])
+    finally:
+        db.close()
+
+
+def test_earliest_available_returns_none_when_nothing_is_free_in_the_horizon(clinic_modules):
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        # A doctor who never sits (no DoctorSchedule rows at all, simulated
+        # by asking about a horizon of zero days) has nothing to offer --
+        # must say so plainly, never guess a date.
+        doc = _doctor(db, m)
+        result = bs.earliest_available(db, doc.id, datetime.date.today(), horizon_days=0)
+        assert result is None
+    finally:
+        db.close()
+
+
+def test_lookup_bookings_finds_by_phone_and_by_confirmation_id(clinic_modules):
+    # KCD-373: caller asks what they have booked.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot,
+                                     "Lookup Patient", "777", "777")
+
+        by_phone = bs.lookup_bookings(db, phone="777")
+        assert len(by_phone) == 1 and by_phone[0]["confirmation_id"] == booked["confirmation_id"]
+
+        by_id = bs.lookup_bookings(db, confirmation_id=booked["confirmation_id"])
+        assert len(by_id) == 1 and by_id[0]["date"] == date
+
+        assert bs.lookup_bookings(db, phone="no-such-number") == []
+
+        # cancelled bookings must not be offered as "what you have booked"
+        bs.cancel_appointment(db, booked["confirmation_id"], confirm_charge=True)
+        assert bs.lookup_bookings(db, phone="777") == []
     finally:
         db.close()
 

@@ -107,6 +107,18 @@ def test_multi_test_booking_endpoint(clinic_client):
     assert added["success"]
 
 
+def test_earliest_available_endpoint(clinic_client):
+    c = clinic_client
+    cat = c.get("/api/v1/catalogue").json()
+    doctor_name = cat["doctors"][0]["name"]
+    result = c.get("/api/v1/doctors/earliest", params={"name": doctor_name}).json()
+    assert result["found"] and result["available"]
+    assert result["date"] and result["time_slot"]
+
+    missing = c.get("/api/v1/doctors/earliest", params={"name": "Doctor Nobody"}).json()
+    assert missing == {"found": False, "query": "Doctor Nobody"}
+
+
 def test_department_route_endpoint(clinic_client):
     c = clinic_client
     result = c.get("/api/v1/departments/route", params={"query": "chest pain", "lang": "en"}).json()

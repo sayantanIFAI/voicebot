@@ -126,6 +126,23 @@ def test_resend_reply_never_reads_the_full_number_aloud():
         assert "9123456780" not in r   # never the full number
 
 
+def test_booking_reply_states_a_past_date_plainly_and_never_rolls_it_forward():
+    # KCD-363: a date in the past is stated plainly, never silently advanced.
+    slots = {"doctor_name": "Sen", "date": "2020-01-01"}
+    result = {"success": False, "reason": "date_in_past"}
+    for lang in ("bn", "hi", "en"):
+        r = rt.booking_reply(slots, result, lang)
+        assert "2020-01-01" not in r          # never states a booked date that never happened
+        assert r
+
+
+def test_booking_reply_hold_expired_offers_a_retry_not_a_dead_end():
+    result = {"success": False, "reason": "hold_expired"}
+    for lang in ("bn", "hi", "en"):
+        r = rt.booking_reply({}, result, lang)
+        assert r
+
+
 def test_missing_slot_prompt_new_intents_all_languages():
     for intent, field in (
         ("book_test", "test_names"), ("reschedule_appointment", "new_date"),

@@ -48,6 +48,20 @@ def _ensure_seeded():
     Base.metadata.create_all(engine)
     from seed import add_i18n_columns
     add_i18n_columns()   # before ANY ORM query: an old database lacks the new columns
+
+    # Epic E26 (booking/reschedule/cancel): new columns on `appointments`
+    # and `doctors`, and the department-routing seed table. MUST also run
+    # before any ORM query that touches those tables -- same reason as
+    # add_i18n_columns above, and it caught a REAL bug here: backfill_i18n()
+    # below queries Doctor, which SQLAlchemy selects every mapped column
+    # of, so it crashed on a database migrated only as far as
+    # add_i18n_columns(). create_all() already created every brand-new
+    # table (SlotLock, Patient, PatientProxy, TestBooking, SmsOutbox,
+    # DraftBooking, DepartmentRoute) a moment ago; this only ALTERs what
+    # already existed.
+    from booking_migrate import migrate_booking_schema
+    logging.getLogger("clinic-api").info("booking schema migration: %s", migrate_booking_schema())
+
     db = SessionLocal()
     try:
         if db.query(LabTest).count() == 0:
@@ -58,18 +72,16 @@ def _ensure_seeded():
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
             from seed import backfill_i18n
             logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
+
+        # Only now do departments/doctors definitely have rows -- either
+        # seed() just created them, or they already existed. Calling this
+        # any earlier seeds zero department routes on a brand-new database,
+        # because `departments` is still empty at that point in startup.
+        from booking_migrate import finish_booking_schema_setup
+        logging.getLogger("clinic-api").info(
+            "booking schema setup (routes/fees): %s", finish_booking_schema_setup())
     finally:
         db.close()
-
-    # Epic E26 (booking/reschedule/cancel): new columns on `appointments`
-    # and `doctors`, and the department-routing seed table. Also before
-    # any ORM query that touches those tables -- same reason as
-    # add_i18n_columns above. create_all() already created every brand-new
-    # table (SlotLock, Patient, PatientProxy, TestBooking, SmsOutbox,
-    # DraftBooking, DepartmentRoute) a moment ago; this only ALTERs what
-    # already existed.
-    from booking_migrate import migrate_booking_schema
-    logging.getLogger("clinic-api").info("booking schema migration: %s", migrate_booking_schema())
 
 
 @app.get("/api/health")
@@ -430,7 +442,9 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
         free = [s for s in valid_slots if s not in taken][:3]
         return {"success": False, "reason": "slot_taken", "alternative_slots": free}
 
-    confirmation_id = f"KCD-{req.date.replace('-', '')}-{uuid.uuid4().hex[:4].upper()}"
+    # 8 hex chars, not 4 -- see booking_service._confirmation_id's comment:
+    # this ID is now also accepted by /api/v1/bookings/lookup, unauthenticated.
+    confirmation_id = f"KCD-{req.date.replace('-', '')}-{uuid.uuid4().hex[:8].upper()}"
     appt = Appointment(
         confirmation_id=confirmation_id, doctor_id=doctor.id, date=req.date,
         time_slot=req.time_slot, patient_name=req.patient_name, phone=req.phone,

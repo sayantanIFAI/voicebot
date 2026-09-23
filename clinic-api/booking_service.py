@@ -53,7 +53,14 @@ def _now() -> datetime.datetime:
 
 
 def _confirmation_id(date: str) -> str:
-    return f"KCD-{date.replace('-', '')}-{uuid.uuid4().hex[:4].upper()}"
+    # 8 hex chars (32 bits, ~4.3 billion per date) rather than 4 (16 bits,
+    # 65536): Epic E26 added /api/v1/bookings/lookup?confirmation_id=...,
+    # an unauthenticated endpoint (this service has no auth layer at all
+    # yet -- Epic E14) that returns patient name, doctor and time for a
+    # match. 4 hex chars made that a realistically enumerable guess
+    # against one date's bookings; 8 does not, without removing the
+    # underlying "add real authentication" gap this alone cannot close.
+    return f"KCD-{date.replace('-', '')}-{uuid.uuid4().hex[:8].upper()}"
 
 
 def _generate_slots(start: str, end: str, step_min: int = 15) -> list[str]:
