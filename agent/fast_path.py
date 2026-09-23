@@ -49,6 +49,8 @@ import logging
 import re
 import unicodedata
 
+from agent.outcome_metrics import abstentions, fast_path_served
+
 logger = logging.getLogger("fast_path")
 
 # Same floor as semantic_cache.ENTITY_MATCH_FLOOR, and for the same
@@ -233,6 +235,26 @@ class FastPath:
         self._today = today
         self.stats = {"served": 0, "abstained": 0}
 
+    def _abstain(self, reason: str, intent: str = "unknown") -> None:
+        """KCD-457: abstention is a first-class, EXPECTED result here (see
+        module docstring), but "why" still needs to be visible -- a shift
+        in the reason distribution usually means an upstream change
+        (catalogue growth, a new phrasing pattern), not that this module
+        got worse. Recorded even though the caller ends up going to the
+        LLM anyway, which is the whole point: this file's own decision is
+        the thing being measured, not just the turn's eventual outcome."""
+        self.stats["abstained"] += 1
+        abstentions.record(reason, intent)
+
+    def _serve(self, intent: str) -> None:
+        """KCD-460: serve rate published PER INTENT, not just the
+        aggregate -- fast_path.py's own module docstring already claims
+        "microseconds" per lookup; this is what actually proves it,
+        broken down by which kind of question is being served instantly
+        vs. falling through to the LLM."""
+        self.stats["served"] += 1
+        fast_path_served.record(intent, "served", "bn")   # this module is Bengali-only today
+
     def _resolve_date(self, text: str) -> tuple[str | None, bool]:
         """-> (iso_date_or_None, is_confident). Not confident means the
         utterance contains date-ish language this module will not try to
@@ -254,17 +276,17 @@ class FastPath:
         to the semantic cache and then the LLM."""
         text = _normalize(transcript)
         if not text:
-            self.stats["abstained"] += 1
+            self._abstain("empty_transcript")
             return None
 
         # Booking is never handled here: open-ended extraction with PII in
         # it. Check first, before any cue that might also appear in it.
         if _any_cue(text, _BOOK_CUES):
-            self.stats["abstained"] += 1
+            self._abstain("booking_excluded")
             return None
 
         if _any_cue_word(text, _COMPLEXITY_CUES):
-            self.stats["abstained"] += 1
+            self._abstain("complexity_cue")
             return None
 
         wants_rate = _any_cue(text, _RATE_CUES)
@@ -276,39 +298,39 @@ class FastPath:
         # হবে" alone can read as prep, but combined with a rate/avail cue
         # it is not this module's call to make). Let the model decide.
         if sum((wants_rate, wants_avail, wants_prep)) > 1:
-            self.stats["abstained"] += 1
+            self._abstain("ambiguous_multi_cue")
             return None
 
         if wants_rate:
             name, form, score = self.catalogue.match(text, "test")
             if name and score >= COMMIT_FLOOR:
-                self.stats["served"] += 1
+                self._serve("test_rate")
                 logger.info("fast path: test_rate %r (%.2f) from %r", name, score, transcript)
                 return FastPathResult("test_rate", _empty_slots(test_name=form or name),
                                       score, matched_form=form)
-            self.stats["abstained"] += 1
+            self._abstain("below_commit_floor", "test_rate")
             return None
 
         if wants_prep:
             name, form, score = self.catalogue.match(text, "test")
             if name and score >= COMMIT_FLOOR:
-                self.stats["served"] += 1
+                self._serve("test_prep")
                 logger.info("fast path: test_prep %r (%.2f) from %r", name, score, transcript)
                 return FastPathResult("test_prep", _empty_slots(test_name=form or name),
                                       score, matched_form=form)
-            self.stats["abstained"] += 1
+            self._abstain("below_commit_floor", "test_prep")
             return None
 
         if wants_avail:
             name, form, score = self.catalogue.match(text, "doctor")
             if not (name and score >= COMMIT_FLOOR):
-                self.stats["abstained"] += 1
+                self._abstain("below_commit_floor", "doctor_availability")
                 return None
             date_iso, confident = self._resolve_date(text)
             if not confident:
-                self.stats["abstained"] += 1
+                self._abstain("date_not_confident", "doctor_availability")
                 return None
-            self.stats["served"] += 1
+            self._serve("doctor_availability")
             logger.info("fast path: doctor_availability %r (%.2f) date=%s from %r",
                         name, score, date_iso, transcript)
             return FastPathResult("doctor_availability",
@@ -323,22 +345,22 @@ class FastPath:
         # rate/prep/availability question -- those already returned above.
         faq_topic, faq_form, faq_score = self.catalogue.match(text, "faq")
         if faq_topic and faq_score >= FAQ_COMMIT_FLOOR:
-            self.stats["served"] += 1
+            self._serve("clinic_faq")
             logger.info("fast path: clinic_faq %r (%.2f) from %r", faq_topic, faq_score, transcript)
             return FastPathResult("clinic_faq", _empty_slots(faq_topic=faq_topic),
                                   faq_score, matched_form=faq_form)
 
         # Pure greeting or thanks, with no entity and no question in it.
         if _any_cue(text, _GREETING_CUES) and len(text.split()) <= 4:
-            self.stats["served"] += 1
+            self._serve("smalltalk")
             return FastPathResult("smalltalk", _empty_slots(), 1.0,
                                   direct_reply_bn="নমস্কার, কী সাহায্য করতে পারি?")
         if _any_cue(text, _THANKS_CUES) and len(text.split()) <= 4:
-            self.stats["served"] += 1
+            self._serve("smalltalk")
             return FastPathResult("smalltalk", _empty_slots(), 1.0,
                                   direct_reply_bn="ধন্যবাদ। আর কিছু জানতে চান?")
 
-        self.stats["abstained"] += 1
+        self._abstain("no_cue_matched")
         return None
 
     def snapshot(self) -> dict:
@@ -347,4 +369,6 @@ class FastPath:
             **self.stats,
             "catalogue_rows": len(self.catalogue),
             "serve_rate": round(self.stats["served"] / total, 3) if total else 0.0,
+            "abstention_reasons": abstentions.snapshot(),
+            "served_by_intent": fast_path_served.snapshot(),
         }

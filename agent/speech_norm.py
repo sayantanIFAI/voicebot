@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import re
 
-from agent import bn_normalize
+from agent import bn_normalize, pronunciation
+from agent.figures import id_groups, phone_groups, speak_grouped
 
 # ----------------------------------------------------------------- shared
 
@@ -80,10 +81,6 @@ _HI_LETTER = {
 _HI_MONTHS = ["जनवरी", "फ़रवरी", "मार्च", "अप्रैल", "मई", "जून",
               "जुलाई", "अगस्त", "सितंबर", "अक्टूबर", "नवंबर", "दिसंबर"]
 
-_HI_LATIN_SPOKEN = {
-    "blood": "खून", "urine": "पेशाब", "stool": "मल", "serum": "सीरम",
-    "saliva": "लार", "swab": "स्वैब", "plasma": "प्लाज़्मा",
-}
 
 
 def _hi_day_part(hour24: int) -> str:
@@ -145,13 +142,15 @@ def verbalize_hi(text: str) -> str:
         lambda m: (f"{time_to_hi_words(int(m.group(1)), int(m.group(2)))} से "
                    f"{time_to_hi_words(int(m.group(3)), int(m.group(4)))} तक"), text)
     text = _RE_TIME.sub(lambda m: time_to_hi_words(int(m.group(1)), int(m.group(2))), text)
-    text = _RE_CONF_ID.sub(lambda m: _hi_spell(m.group(1)), text)
-    text = _RE_PHONE.sub(lambda m: _hi_digits(m.group(1)), text)
+    text = _RE_CONF_ID.sub(lambda m: speak_grouped(id_groups(m.group(1)), _hi_spell), text)
+    text = _RE_PHONE.sub(lambda m: speak_grouped(phone_groups(m.group(1)), _hi_digits), text)
     text = _RE_DECIMAL.sub(
         lambda m: f"{number_to_hi_words(int(m.group(1)))} दशमलव {_hi_digits(m.group(2))}", text)
     text = _RE_INT.sub(lambda m: number_to_hi_words(int(m.group(0))), text)
-    for latin, hi in _HI_LATIN_SPOKEN.items():
-        text = re.sub(rf"\b{latin}\b", hi, text, flags=re.IGNORECASE)
+    # KCD-159: the explicit pronunciation path (agent/pronunciation.py): a curated
+    # spoken form, an unlisted acronym spelled out, and anything else left Latin
+    # for unspeakable_spans() to report and block (KCD-455), never guessed at.
+    text = pronunciation.apply(text, "hi", _HI_LETTER)
     return _finish(text)
 
 
@@ -238,8 +237,8 @@ def verbalize_en(text: str) -> str:
         lambda m: (f"{time_to_en_words(int(m.group(1)), int(m.group(2)))} to "
                    f"{time_to_en_words(int(m.group(3)), int(m.group(4)))}"), text)
     text = _RE_TIME.sub(lambda m: time_to_en_words(int(m.group(1)), int(m.group(2))), text)
-    text = _RE_CONF_ID.sub(lambda m: _en_spell(m.group(1)), text)
-    text = _RE_PHONE.sub(lambda m: _en_digits(m.group(1)), text)
+    text = _RE_CONF_ID.sub(lambda m: speak_grouped(id_groups(m.group(1)), _en_spell), text)
+    text = _RE_PHONE.sub(lambda m: speak_grouped(phone_groups(m.group(1)), _en_digits), text)
     text = _RE_DECIMAL.sub(
         lambda m: f"{number_to_en_words(int(m.group(1)))} point {_en_digits(m.group(2))}", text)
     text = _RE_INT.sub(lambda m: number_to_en_words(int(m.group(0))), text)
@@ -260,6 +259,20 @@ def verbalize(text: str, lang: str = "bn") -> str:
     if lang == "en":
         return verbalize_en(text)
     return bn_normalize.verbalize(text)
+
+
+_RE_PRICE = re.compile(r"\d[\d,]*\s*(টাকা|rupees|रुपये|₹)")
+
+
+def contains_critical_figure(text: str) -> bool:
+    """KCD-456: does this reply carry a price, phone number or reference
+    ID -- something a caller needs to write down, not just hear. Checked
+    against the RAW template text (before verbalize() spells the digits
+    out), so the same phone/confirmation-ID/price patterns
+    speech_norm.py already recognises decide this too, rather than a
+    second, independent definition of "a figure" drifting from the one
+    that actually gets spelled out."""
+    return bool(_RE_PHONE.search(text) or _RE_CONF_ID.search(text) or _RE_PRICE.search(text))
 
 
 def unspeakable_spans(text: str, lang: str = "bn") -> list[str]:

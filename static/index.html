@@ -22,11 +22,13 @@
   <h2>কলকাতা কেয়ার ডায়াগনস্টিকস (Kolkata Care AI)</h2>
   <div id="warning"></div>
   <button id="micBtn">কল শুরু করুন (Start Call)</button>
+  <button id="interruptBtn" style="display:none;">থামুন, আমি বলব (Stop, let me talk)</button>
   <div id="status">সিস্টেম প্রস্তুত...</div>
   <div id="log"></div>
   <p id="note">
-    এই লাইনটি হাফ-ডুপ্লেক্স: AI যখন বলছে তখন আপনার মাইক বন্ধ থাকে, তাই মাঝপথে থামানো যাবে না।
-    AI-এর কথা শেষ হলে বলুন।
+    এই লাইনটি হাফ-ডুপ্লেক্স: AI যখন বলছে তখন আপনার মাইক বন্ধ থাকে। AI-এর কথা শেষ হলে এমনিই বলতে
+    পারেন, অথবা মাঝপথে থামাতে চাইলে "থামুন, আমি বলব" বোতামে চাপুন -- এটা মাইক শোনার (acoustic
+    barge-in) মতো স্বয়ংক্রিয় নয়, বোতাম চাপলেই AI থেমে যাবে।
   </p>
 
   <script>
@@ -44,10 +46,22 @@
     // solve, just smaller.
     const POST_PLAYBACK_GUARD_MS = 250;
 
+    const interruptBtn = document.getElementById('interruptBtn');
+
     let ws, mediaRecorder, audioContext, stream;
     let playQueue = Promise.resolve();
     let pendingClips = 0;
     let inCall = false;
+
+    // KCD-464: manual interrupt, NOT acoustic barge-in -- see the on-page
+    // note and main.py's _handle_control docstring for why. currentSource
+    // is the one clip actually playing right now (clips play strictly in
+    // sequence via playQueue, so there is never more than one); playToken
+    // is bumped on interrupt so any clip still queued or mid-decode when
+    // the button is pressed quietly no-ops instead of starting to play
+    // after the caller already asked to talk.
+    let currentSource = null;
+    let playToken = 0;
 
     if (!('MediaRecorder' in window) || !MediaRecorder.isTypeSupported(MIME_TYPE)) {
       // Known, real limitation: Safari/iOS does not support MediaRecorder
@@ -79,6 +93,7 @@
     function onPlaybackIdle() {
       if (pendingClips !== 0 || !inCall) return;
       setMicMuted(false);
+      interruptBtn.style.display = 'none';
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'playback_done' }));
       }
@@ -88,31 +103,62 @@
 
     function playAudio(arrayBuffer) {
       pendingClips += 1;
+      const myToken = playToken;
       setMicMuted(true);
+      interruptBtn.style.display = 'inline-block';
       statusEl.classList.add('speaking');
       statusEl.textContent = 'AI বলছে... (মাইক বন্ধ)';
 
       playQueue = playQueue.then(() => new Promise(async (resolve) => {
+        if (myToken !== playToken) { resolve(); return; }   // interrupted before this clip's turn
         try {
           if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
           if (audioContext.state === 'suspended') await audioContext.resume();
           const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          if (myToken !== playToken) { resolve(); return; }  // interrupted while decoding
           const source = audioContext.createBufferSource();
           source.buffer = audioBuffer;
           source.connect(audioContext.destination);
           source.onended = resolve;
+          currentSource = source;
           source.start();
         } catch (e) {
           console.error('audio decode failed', e);
           resolve();
         }
       })).then(() => {
-        pendingClips -= 1;
+        currentSource = null;
+        pendingClips = Math.max(0, pendingClips - 1);
         // Only the LAST clip in a burst reopens the mic -- otherwise the
-        // gap between two queued replies would unmute mid-sentence.
-        if (pendingClips === 0) setTimeout(onPlaybackIdle, POST_PLAYBACK_GUARD_MS);
+        // gap between two queued replies would unmute mid-sentence. A
+        // stale token means stopAllPlayback already handled unmuting.
+        if (pendingClips === 0 && myToken === playToken) setTimeout(onPlaybackIdle, POST_PLAYBACK_GUARD_MS);
       });
     }
+
+    // KCD-464: stop the currently playing clip, drop every clip still
+    // queued behind it, and hand the floor back to the caller. Does not
+    // touch mediaRecorder/track state beyond unmuting -- the WebM
+    // timeline keeps advancing exactly like the normal playback_done path.
+    function interruptAI() {
+      if (!inCall || pendingClips === 0) return;
+      playToken += 1;
+      if (currentSource) {
+        try { currentSource.stop(); } catch (e) { /* already stopped/ended */ }
+        currentSource = null;
+      }
+      playQueue = Promise.resolve();
+      pendingClips = 0;
+      setMicMuted(false);
+      interruptBtn.style.display = 'none';
+      statusEl.classList.remove('speaking');
+      statusEl.textContent = 'বলুন, শুনছি...';
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'interrupt' }));
+      }
+    }
+
+    interruptBtn.onclick = interruptAI;
 
     async function startCall() {
       try {
@@ -164,6 +210,9 @@
     function endCall() {
       inCall = false;
       pendingClips = 0;
+      currentSource = null;
+      playToken += 1;
+      interruptBtn.style.display = 'none';
       setMicMuted(false);
       if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
       if (stream) stream.getTracks().forEach((t) => t.stop());

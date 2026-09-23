@@ -22,6 +22,36 @@ PHRASES: dict[str, dict[str, str]] = {
         "idle_close": "লাইনে কোনো সাড়া পাচ্ছি না, কল শেষ করছি। ধন্যবাদ।",
         "smalltalk_default": "নমস্কার, কী সাহায্য করতে পারি?",
         "handoff": "আমি আপনাকে আমাদের স্টাফের সাথে যুক্ত করছি, দয়া করে লাইনে থাকুন।",
+        "cancel_aborted": "ঠিক আছে, আপনার অ্যাপয়েন্টমেন্টটা যেমন ছিল তেমনই আছে।",
+        "no_confirmation_number": "ঠিক আছে, তাহলে বুকিংটা হয়ে যাবে, কিন্তু কোনো লিখিত কনফার্মেশন পাঠাতে পারব না।",
+        "language_switched": "ঠিক আছে, এখন থেকে বাংলায় বলছি।",
+        # KCD-461: spoken only when a lookup exceeds FILLER_THRESHOLD_S
+        # (main.py's _await_with_filler) -- pre-warmed and cached like
+        # every other line here, so it costs no synthesis time at the
+        # exact moment the system is already running slow. Wording per
+        # explicit request: the short, informal "আচ্ছা ঠিক আছে" ("okay,
+        # alright") rather than a longer "please hold" phrase -- closer to
+        # what a person at the counter actually says while checking.
+        "please_wait": "আচ্ছা, ঠিক আছে।",
+        # KCD-486: spoken instead of a confirmation number when the write
+        # could not be verified in the system of record -- never a false
+        # confirmation, and never the generic tool_failure apology either,
+        # since the write likely DID happen and a retry could double-book.
+        "booking_hold_for_verification": "আপনার বুকিংটা প্রসেস হচ্ছে, একটু দেখে নিশ্চিত করছি।",
+        # Empathetic re-asks, spoken BEFORE any hand-off when the caller could
+        # not be heard or understood (agent/reask_policy.py). The wording
+        # takes the blame ("that's on me"), never the caller's -- a person who
+        # is faint, mumbling or in a noisy room is usually already
+        # embarrassed, and being told they are the problem makes it worse.
+        # One question each, short sentences: they must satisfy the senior
+        # policy (agent/speech_policy.py) too. Wording pending clinical-lead
+        # review, like every acknowledgement in this codebase.
+        "reask_low_volume": "দুঃখিত, আপনার গলাটা একটু আস্তে শোনাচ্ছে। একটু জোরে বলবেন, বা ফোনটা মুখের কাছে ধরবেন?",
+        "reask_noisy": "দুঃখিত, লাইনে একটু শব্দ হচ্ছে, তাই ঠিক শুনতে পাচ্ছি না। একটু শান্ত জায়গা থেকে আবার বলবেন?",
+        "reask_crosstalk": "দুঃখিত, পাশ থেকে আরও কারও গলা শোনা যাচ্ছে। তাই আপনার কথা আলাদা করতে পারছি না। একটু আবার বলবেন?",
+        "reask_mumbled": "দুঃখিত, আপনার কথাটা ঠিক বুঝতে পারিনি, দোষটা আমারই। তাড়া নেই, একটু ধীরে আবার বলবেন?",
+        "reask_generic": "দুঃখিত, আমি ঠিক শুনতে পাইনি। একটু আবার বলবেন?",
+        "reask_final": "আপনাকে ঠিকমতো বুঝতে না পেরে আমি সত্যিই দুঃখিত।",
     },
     "hi": {
         "greeting": "नमस्कार, कोलकाता केयर डायग्नोस्टिक्स में आपका स्वागत है। मैं आपकी क्या मदद कर सकती हूँ?",
@@ -32,6 +62,17 @@ PHRASES: dict[str, dict[str, str]] = {
         "idle_close": "लाइन पर कोई आवाज़ नहीं आ रही, कॉल समाप्त कर रही हूँ। धन्यवाद।",
         "smalltalk_default": "नमस्कार, मैं आपकी क्या मदद कर सकती हूँ?",
         "handoff": "मैं आपको हमारे स्टाफ़ से जोड़ रही हूँ, कृपया लाइन पर बने रहिए।",
+        "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
+        "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
+        "language_switched": "ठीक है, अब हिंदी में बात करती हूँ।",
+        "please_wait": "ठीक है।",
+        "booking_hold_for_verification": "आपकी बुकिंग प्रोसेस हो रही है, मैं अभी पुष्टि करके बताती हूँ।",
+        "reask_low_volume": "माफ़ कीजिए, आपकी आवाज़ धीमी आ रही है। फ़ोन मुँह के पास लाकर ज़ोर से बोलेंगे?",
+        "reask_noisy": "माफ़ कीजिए, लाइन पर शोर है। मैं ठीक से सुन नहीं पा रही। क्या आप शांत जगह से दोबारा बोलेंगे?",
+        "reask_crosstalk": "माफ़ कीजिए, पास से किसी और की आवाज़ आ रही है। इसलिए आपकी बात अलग नहीं कर पा रही। क्या आप फिर बोलेंगे?",
+        "reask_mumbled": "माफ़ कीजिए, मैं ठीक से समझ नहीं पाई, यह मेरी कमी है। कोई जल्दी नहीं, क्या आप धीरे से दोबारा बोलेंगे?",
+        "reask_generic": "माफ़ कीजिए, मैं ठीक से सुन नहीं पाई। क्या आप एक बार फिर बोलेंगे?",
+        "reask_final": "आपको ठीक से न समझ पाने के लिए मुझे सचमुच खेद है।",
     },
     "en": {
         "greeting": "Hello, welcome to Kolkata Care Diagnostics. How can I help you?",
@@ -42,6 +83,17 @@ PHRASES: dict[str, dict[str, str]] = {
         "idle_close": "I can't hear anything on the line, so I'm ending the call. Thank you.",
         "smalltalk_default": "Hello, how can I help you?",
         "handoff": "Let me connect you to our staff, please stay on the line.",
+        "cancel_aborted": "Okay, your appointment is unchanged.",
+        "no_confirmation_number": "Okay, I'll go ahead with the booking, but I won't be able to send you a written confirmation.",
+        "language_switched": "Okay, switching to English now.",
+        "please_wait": "Let me check, please.",
+        "booking_hold_for_verification": "Your booking is being processed, let me confirm it for you.",
+        "reask_low_volume": "Sorry, your voice is coming through quite faint. Could you speak up a little, or hold the phone closer?",
+        "reask_noisy": "Sorry, there's noise on the line and I can't hear you clearly. Could you try somewhere quieter?",
+        "reask_crosstalk": "Sorry, I can hear someone else near you. I can't pick out your words. Could you say that once more?",
+        "reask_mumbled": "Sorry, I couldn't quite make that out, and that's on me. There's no rush, could you say it again a little slower?",
+        "reask_generic": "Sorry, I didn't catch that. Could you say it once more?",
+        "reask_final": "I'm really sorry I haven't been able to understand you properly.",
     },
 }
 

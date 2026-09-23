@@ -34,18 +34,43 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import json
 import logging
 import os
 import threading
 
 import httpx
 
+from agent.clause_split import split_into_clauses
 from agent.speech_norm import unspeakable_spans, verbalize
 
 logger = logging.getLogger("tts")
 
+
+class UnspeakableTextError(Exception):
+    """KCD-455: raised instead of silently synthesizing a reply with a
+    hole in it. The measured incident this guards against: the English
+    word after a colon vanished from a Bengali reply because the Bengali
+    tokenizer drops Latin script outright -- logged at the time, sent to
+    the caller anyway. Callers (main.py's _speak) must treat this as its
+    own named failure path, the same as an ASR/LLM/tool failure, rather
+    than let it reach the vocoder."""
+
+    def __init__(self, spans: list[str]):
+        self.spans = spans
+        super().__init__(f"unspeakable spans: {spans}")
+
 TTS_URL = os.environ.get("TTS_URL", "http://localhost:8002/synthesize")
 TTS_TIMEOUT_S = float(os.environ.get("TTS_TIMEOUT_S", "20"))
+
+# KCD-456: the rate a price, phone number, or reference ID is spoken at --
+# slow enough that a caller writing it down does not have to ask twice.
+# REASONED, not measured: there is no real-call transcription-accuracy
+# corpus locally to calibrate against (the story's own "listening test
+# confirms callers transcribe correctly on first hearing" is exactly that
+# missing measurement). 0.8 is a conservative first cut, a fifth slower
+# than normal speech, pending that measurement.
+FIGURE_SPEECH_SPEED = 0.8
 
 FALLBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "fallback_audio")
 
@@ -86,7 +111,8 @@ class TTSClient:
         self.base_url = base_url
         self._audio_cache: collections.OrderedDict[str, bytes] = collections.OrderedDict()
         self._cache_lock = threading.Lock()
-        self.stats = {"hits": 0, "misses": 0}
+        self.stats = {"hits": 0, "misses": 0, "evictions": 0}
+        self.prewarmed_clips = 0
 
     async def aclose(self):
         await self._client.aclose()
@@ -109,29 +135,55 @@ class TTSClient:
             self._audio_cache.move_to_end(key)
             while len(self._audio_cache) > AUDIO_CACHE_MAX:
                 self._audio_cache.popitem(last=False)
+                self.stats["evictions"] += 1
 
-    async def synthesize(self, text: str, lang: str = "bn") -> bytes:
-        """Returns WAV bytes, or raises. Callers should catch and fall back
-        to `fallback_audio()` -- see main.py's _speak()."""
+    async def synthesize(self, text: str, lang: str = "bn", speed: float = 1.0,
+                         prosody: dict | None = None) -> bytes:
+        """Returns WAV bytes, or raises. Callers should catch ToolCallError-
+        shaped infra failures and UnspeakableTextError separately (see
+        main.py's _speak()) and fall back to `fallback_audio()`.
+
+        `speed` (KCD-456): 1.0 is the voice's normal rate; a caller passes
+        a lower value for a reply carrying a price, phone number or
+        reference the listener needs to write down (see
+        agent/tts_router.py's docstring -- delivery parameters are decided
+        by the caller of this client, never here).
+
+        `prosody` (KCD-162): optional per-request overrides of the TTS
+        server's pause/trim/peak/chunk parameters (agent/prosody.py's
+        ProsodyParams fields), forwarded as-is so delivery can be tuned
+        against a real handset without a redeploy. Part of the cache key --
+        the same text with different pauses is different audio."""
         spoken = verbalize(text, lang)
 
-        # Anything the voice cannot pronounce is dropped by its tokenizer
-        # exactly the way the digits were. Log it so the gap is visible
-        # here rather than only to whoever is on the phone.
+        # KCD-455: anything the voice cannot pronounce is dropped by its
+        # tokenizer entirely -- not mispronounced, ABSENT -- so this must
+        # block the reply rather than let it reach the vocoder with a
+        # silent hole in it. The measured incident this guards against is
+        # in this exception's own docstring.
         leftovers = unspeakable_spans(spoken, lang)
         if leftovers:
-            logger.warning("[%s] unpronounceable spans will be dropped by TTS: %s", lang, leftovers)
+            logger.error("[%s] unspeakable spans blocked this reply: %s", lang, leftovers)
+            raise UnspeakableTextError(leftovers)
 
-        # The language is part of the key: identical text can be a valid
-        # sentence in two languages (a bare number, an ID) and must not
-        # return the other voice's audio.
-        key = self._key(f"{lang}\x00{spoken}")
+        # The language and speed are both part of the key: identical text
+        # can be a valid sentence in two languages (a bare number, an ID)
+        # and must not return the other voice's audio, and a slow-rate
+        # clip must not be served for a normal-rate request or vice versa.
+        prosody = {k: v for k, v in (prosody or {}).items() if v is not None}
+        prosody_key = json.dumps(prosody, sort_keys=True) if prosody else ""
+        key = self._key(f"{lang}\x00{speed}\x00{prosody_key}\x00{spoken}")
         cached = self._cache_get(key)
         if cached is not None:
             return cached
 
-        self.stats["misses"] += 1
-        r = await self._client.post(self.base_url, json={"text": spoken, "lang": lang})
+        with self._cache_lock:
+            self.stats["misses"] += 1
+        payload = {"text": spoken, "lang": lang}
+        if speed != 1.0:
+            payload["speed"] = speed
+        payload.update(prosody)
+        r = await self._client.post(self.base_url, json=payload)
         r.raise_for_status()
         wav = r.content
         self._cache_put(key, wav)
@@ -139,16 +191,42 @@ class TTSClient:
 
     async def prewarm(self, lines_by_lang: dict[str, list[str]] | None = None):
         """Best-effort: a failure here must not stop the app from starting.
-        Worst case the first caller pays normal synthesis latency."""
+        Worst case the first caller pays normal synthesis latency.
+
+        KCD-164 -- three things this gets right that matter:
+
+        * Lines are expanded with the SAME split_into_clauses main.py's
+          _speak() uses. _speak synthesizes a long reply one clause at a
+          time (KCD-462), each under its own cache key, so warming the
+          whole sentence would cache audio that is never asked for -- the
+          greeting, the longest and most important line, would still cost
+          a full synthesis on the first call.
+        * Every language's first line (the greeting) is warmed before any
+          language's second, so a slow or failing start-up still leaves
+          the first thing every caller hears ready.
+        * Hit/miss counters are zeroed afterwards. Warm-up is all misses by
+          construction; leaving them in would make the exported hit rate
+          look worse than live traffic ever is.
+        """
         lines_by_lang = lines_by_lang or {"bn": PREWARM_LINES_BN}
-        for lang, lines in lines_by_lang.items():
-            for line in lines:
-                try:
-                    await self.synthesize(line, lang)
-                except Exception as e:  # noqa: BLE001 - prewarm is advisory only
-                    logger.warning("prewarm failed [%s] for %r: %s", lang, line[:32], e)
-                    break
-        logger.info("TTS prewarm complete (%d lines cached)", len(self._audio_cache))
+        queue: list[tuple[str, str]] = []
+        for rank in range(max((len(v) for v in lines_by_lang.values()), default=0)):
+            for lang, lines in lines_by_lang.items():
+                if rank < len(lines):
+                    queue.extend((lang, clause) for clause in split_into_clauses(lines[rank]))
+        failed: set[str] = set()
+        for lang, clause in queue:
+            if lang in failed:
+                continue
+            try:
+                await self.synthesize(clause, lang)
+            except Exception as e:  # noqa: BLE001 - prewarm is advisory only
+                logger.warning("prewarm failed [%s] for %r: %s", lang, clause[:32], e)
+                failed.add(lang)
+        with self._cache_lock:
+            self.stats["hits"] = self.stats["misses"] = self.stats["evictions"] = 0
+            self.prewarmed_clips = len(self._audio_cache)
+        logger.info("TTS prewarm complete (%d clips cached)", self.prewarmed_clips)
 
     def for_language(self, lang: str) -> "LanguageVoice":
         """The TTSEngine (agent/tts_router.py) for one language."""
@@ -159,6 +237,8 @@ class TTSClient:
         return {
             **self.stats,
             "cached_clips": len(self._audio_cache),
+            "max_clips": AUDIO_CACHE_MAX,
+            "prewarmed_clips": self.prewarmed_clips,
             "hit_rate": round(self.stats["hits"] / total, 3) if total else 0.0,
         }
 
@@ -203,5 +283,5 @@ class LanguageVoice:
         self._client = client
         self.lang = lang
 
-    async def synthesize(self, text: str, **_speech_params) -> bytes:
-        return await self._client.synthesize(text, self.lang)
+    async def synthesize(self, text: str, **speech_params) -> bytes:
+        return await self._client.synthesize(text, self.lang, **speech_params)
