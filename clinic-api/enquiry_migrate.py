@@ -12,9 +12,8 @@ booking_migrate.py's own columns exist.
 """
 from __future__ import annotations
 
+from db import SessionLocal, engine
 from sqlalchemy import inspect, text
-
-from db import engine, SessionLocal
 
 LAB_TEST_ENQUIRY_COLUMNS: dict[str, str] = {
     "fasting_hours": "INTEGER",
@@ -68,6 +67,103 @@ _PRESCRIPTION_NOTE = (
     "इस टेस्ट के लिए डॉक्टर का पर्चा चाहिए। पर्चे की फोटो व्हाट्सऐप पर भेज सकते हैं।",
     "A doctor's prescription is required for this test. You can send a photo of it over WhatsApp.",
 )
+
+
+def seed_enquiry_demo_data(db=None) -> dict:
+    """Representative rows for the NEW E27 tables that need departments/
+    doctors/tests to already exist -- same "fictional but clinically
+    plausible" convention as seed.py's own data, and same idempotence
+    rule: only inserts what is not already there, keyed on a natural
+    unique field per table, so a clinician's own added rows are never
+    touched or duplicated on a later boot."""
+    from models import (
+        Department,
+        DepartmentHours,
+        Doctor,
+        DoctorLeave,
+        HomeCollectionCoverage,
+        InsuranceCoverageRule,
+        InsurancePolicy,
+        LabTest,
+        Package,
+        PackageTest,
+        WalkInPolicy,
+    )
+
+    own = db is None
+    db = db or SessionLocal()
+    added = 0
+    try:
+        dept_by_name = {d.name: d for d in db.query(Department).all()}
+        test_by_name = {t.name: t for t in db.query(LabTest).all()}
+        doctor = db.query(Doctor).first()
+
+        if dept_by_name and not db.query(Package).filter_by(name="Full Body Checkup Basic").first():
+            pkg = Package(name="Full Body Checkup Basic", name_bn="ফুল বডি চেকআপ বেসিক",
+                          name_hi="फुल बॉडी चेकअप बेसिक", bundled_price_inr=1800)
+            db.add(pkg)
+            db.flush()
+            for test_name in ("Complete Blood Count (CBC)", "Blood Sugar Fasting", "Lipid Profile",
+                              "Liver Function Test (LFT)", "Kidney Function Test (KFT)"):
+                t = test_by_name.get(test_name)
+                if t:
+                    db.add(PackageTest(package_id=pkg.id, lab_test_id=t.id))
+            added += 1
+
+        if "General Medicine" in dept_by_name and not db.query(WalkInPolicy).filter_by(
+                department_id=dept_by_name["General Medicine"].id, lab_test_id=None).first():
+            db.add(WalkInPolicy(
+                department_id=dept_by_name["General Medicine"].id, lab_test_id=None, allowed=True,
+                queue_note_bn="সাধারণত ২০-৩০ মিনিট অপেক্ষা করতে হতে পারে।",
+                queue_note_hi="आमतौर पर 20-30 मिनट इंतज़ार करना पड़ सकता है।",
+                queue_note_en="A wait of around 20-30 minutes is typical.",
+            ))
+            added += 1
+        uric = test_by_name.get("Uric Acid")
+        if uric and not db.query(WalkInPolicy).filter_by(lab_test_id=uric.id).first():
+            db.add(WalkInPolicy(department_id=None, lab_test_id=uric.id, allowed=True,
+                                queue_note_bn="", queue_note_hi="", queue_note_en=""))
+            added += 1
+
+        if doctor and not db.query(HomeCollectionCoverage).filter_by(postal_code="700091").first():
+            db.add(HomeCollectionCoverage(postal_code="700091", serviceable=True, charge_inr=100,
+                                          slot_note_bn="সকাল ৭টা থেকে ১০টার মধ্যে",
+                                          slot_note_hi="सुबह 7 से 10 बजे के बीच",
+                                          slot_note_en="Between 7 and 10 in the morning"))
+            db.add(HomeCollectionCoverage(postal_code="700001", serviceable=False, charge_inr=0,
+                                          slot_note_bn="", slot_note_hi="", slot_note_en=""))
+            added += 1
+
+        if not db.query(InsurancePolicy).filter_by(policy_number="DEMO-POLICY-001").first():
+            db.add(InsurancePolicy(policy_number="DEMO-POLICY-001", insurer_name="Star Assure",
+                                   patient_phone="9000000001", active=True))
+            db.add(InsuranceCoverageRule(insurer_name="Star Assure", lab_test_id=None,
+                                         coverage_percent=80, co_payment_inr=100))
+            added += 1
+
+        if not db.query(DepartmentHours).first() and "Cardiology" in dept_by_name:
+            db.add(DepartmentHours(department_id=dept_by_name["Cardiology"].id,
+                                   hours_bn="কার্ডিওলজি বিভাগ সকাল ১০টা থেকে দুপুর ১২টা এবং সন্ধ্যা ৬টা থেকে ৮টা পর্যন্ত খোলা।",
+                                   hours_hi="कार्डियोलॉजी विभाग सुबह 10 से 12 बजे और शाम 6 से 8 बजे तक खुला रहता है।",
+                                   hours_en="The Cardiology department is open 10am-12pm and 6pm-8pm."))
+            added += 1
+
+        if doctor and not db.query(DoctorLeave).filter_by(doctor_id=doctor.id).first():
+            future = _now_date_plus(10)
+            db.add(DoctorLeave(doctor_id=doctor.id, start_date=future, end_date=future,
+                               return_date=_now_date_plus(11)))
+            added += 1
+
+        db.commit()
+    finally:
+        if own:
+            db.close()
+    return {"rows_added": added}
+
+
+def _now_date_plus(days: int) -> str:
+    import datetime
+    return (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
 
 
 def backfill_enquiry_facts(db=None) -> dict:

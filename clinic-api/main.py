@@ -89,9 +89,11 @@ def _ensure_seeded():
         from booking_migrate import finish_booking_schema_setup
         logging.getLogger("clinic-api").info(
             "booking schema setup (routes/fees): %s", finish_booking_schema_setup())
-        from enquiry_migrate import backfill_enquiry_facts
+        from enquiry_migrate import backfill_enquiry_facts, seed_enquiry_demo_data
         logging.getLogger("clinic-api").info(
             "enquiry facts backfill: %s", backfill_enquiry_facts(db))
+        logging.getLogger("clinic-api").info(
+            "enquiry demo data: %s", seed_enquiry_demo_data(db))
     finally:
         db.close()
 
