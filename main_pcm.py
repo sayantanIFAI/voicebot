@@ -100,6 +100,7 @@ from agent.booking_flow import (
 from agent.fast_path import Catalogue, FastPath
 from agent.lang_select import languages_to_verify, pick_candidate
 from agent.lang_select import speakable as _speakable
+from agent.language_switch import detect_language_switch_request
 from agent.lid import (
     SUPPORTED_LANGUAGES,
     ASRLanguageRouter,
@@ -715,6 +716,20 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _speak(session, phrase("asr_empty", lang), lang, fallback_reason="asr_empty")
             return
         await session.send_json("User", text)
+
+        # KCD-438: an explicit "speak in Hindi/Bengali/English" request,
+        # detected deterministically (no LLM call, same zero-extra-latency
+        # reasoning as the yes/no check below). Acknowledged immediately in
+        # the requested language, and biases the language-ID router's
+        # ambiguous-turn prior toward it (note_response_language) -- see
+        # agent/language_switch.py's docstring for the deliberate scope
+        # limit: this does not force every later reply into the requested
+        # language regardless of what the caller goes on to actually say.
+        switch_target = detect_language_switch_request(text, lang)
+        if switch_target:
+            session.lang_router.note_response_language(switch_target)
+            await _speak(session, phrase("language_switched", switch_target), switch_target)
+            return
 
         # Epic E26: a booking/reschedule/cancel/add-test confirmation
         # already in progress is a closed yes/no question -- answered

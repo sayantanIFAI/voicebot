@@ -21,6 +21,7 @@ import booking_service as bs
 from db import SessionLocal, get_db
 from fastapi import Depends, FastAPI, Query
 from models import FAQ, Appointment, Department, Doctor, DoctorSchedule, LabTest
+from phonetic_match import phonetic_key, phonetic_match
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -202,6 +203,21 @@ def _find_test(db: Session, name: str) -> LabTest | None:
                 n = _norm_name(form)
                 if n and (q in n or n in q):
                     return t
+
+    # KCD-434: a romanised spelling of a Bengali/Hindi term (or the
+    # reverse -- a Bengali/Hindi ASR engine transliterating an English
+    # loanword into its own script) folds to the same consonant skeleton
+    # as the canonical entry even though no character-level match exists.
+    # Gated on a minimum key length so a short, generic fold ("test" ->
+    # "3" after generic-word stripping leaves nothing, or a two-letter
+    # leftover) can never stand in for a real match.
+    qk = phonetic_key(name)
+    if len(qk) >= 3:
+        for t in all_tests:
+            forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+            for form in forms:
+                if phonetic_key(form) == qk:
+                    return t
     return None
 
 
@@ -293,6 +309,17 @@ def test_prep(name: str = Query(...), lang: str = Query("bn"), db: Session = Dep
 # exists, the same way gate.py's floors were tightened from real samples.
 FUZZY_SURNAME_FLOOR = 0.60
 
+# KCD-436: a mishearing severe enough to drop the character ratio below
+# FUZZY_SURNAME_FLOOR can still be the right doctor if the CONSONANT
+# SKELETON matches (agent/phonetic_match.py) -- e.g. an aspirated/
+# unaspirated swap or a cross-script transliteration variant. Used only
+# as a SECOND, independent gate on top of phonetic_match(), not instead
+# of the character floor: this floor sits just above the 0.44 the
+# documented "doctor nobody" vs "Roy" false positive scored, so that
+# regression stays blocked even with phonetic matching turned on (its own
+# phonetic keys don't match, either -- belt and suspenders).
+PHONETIC_ASSISTED_FLOOR = 0.45
+
 
 def _find_doctor(db: Session, name: str) -> Doctor | None:
     # English substring match (e.g. "Sen", "Dr Sen").
@@ -314,16 +341,20 @@ def _find_doctor(db: Session, name: str) -> Doctor | None:
     # Fuzzy fallback, against BOTH the English surname and the Bengali
     # alias(es) -- garbled ASR output can land on either script depending
     # on what the caller actually said and how the decoder heard it.
-    best_doctor, best_ratio = None, 0.0
+    best_doctor, best_ratio, best_phonetic = None, 0.0, False
     for d in all_doctors:
         candidates = [d.name.split()[-1].lower()] + [
             a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
         for c in candidates:
             ratio = difflib.SequenceMatcher(None, name.lower(), c.lower()).ratio()
             if ratio > best_ratio:
-                best_doctor, best_ratio = d, ratio
+                best_doctor, best_ratio, best_phonetic = d, ratio, phonetic_match(name, c)
 
-    return best_doctor if best_ratio >= FUZZY_SURNAME_FLOOR else None
+    if best_ratio >= FUZZY_SURNAME_FLOOR:
+        return best_doctor
+    if best_ratio >= PHONETIC_ASSISTED_FLOOR and best_phonetic:
+        return best_doctor
+    return None
 
 
 def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSchedule | None:

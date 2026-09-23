@@ -24,6 +24,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "handoff": "আমি আপনাকে আমাদের স্টাফের সাথে যুক্ত করছি, দয়া করে লাইনে থাকুন।",
         "cancel_aborted": "ঠিক আছে, আপনার অ্যাপয়েন্টমেন্টটা যেমন ছিল তেমনই আছে।",
         "no_confirmation_number": "ঠিক আছে, তাহলে বুকিংটা হয়ে যাবে, কিন্তু কোনো লিখিত কনফার্মেশন পাঠাতে পারব না।",
+        "language_switched": "ঠিক আছে, এখন থেকে বাংলায় বলছি।",
     },
     "hi": {
         "greeting": "नमस्कार, कोलकाता केयर डायग्नोस्टिक्स में आपका स्वागत है। मैं आपकी क्या मदद कर सकती हूँ?",
@@ -36,6 +37,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "handoff": "मैं आपको हमारे स्टाफ़ से जोड़ रही हूँ, कृपया लाइन पर बने रहिए।",
         "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
         "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
+        "language_switched": "ठीक है, अब हिंदी में बात करती हूँ।",
     },
     "en": {
         "greeting": "Hello, welcome to Kolkata Care Diagnostics. How can I help you?",
@@ -48,6 +50,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "handoff": "Let me connect you to our staff, please stay on the line.",
         "cancel_aborted": "Okay, your appointment is unchanged.",
         "no_confirmation_number": "Okay, I'll go ahead with the booking, but I won't be able to send you a written confirmation.",
+        "language_switched": "Okay, switching to English now.",
     },
 }
 
