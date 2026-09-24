@@ -10,9 +10,12 @@
 // Runs on the audio render thread, so it must stay allocation-light:
 // one reusable buffer, and a copy handed off only when a block is full.
 
-const BLOCK_SAMPLES = 2048; // 128ms at 16kHz -- small enough for responsive
-                            // turn detection, large enough that we are not
-                            // sending a WebSocket frame every 8ms.
+const BLOCK_SAMPLES = 512;  // 32ms at 16kHz. Was 2048 (128ms): the server can only
+                            // notice "the caller stopped" as often as audio arrives, so
+                            // 128ms blocks put a 128ms floor under turn-end detection and
+                            // barge-in (KCD-049/052). 512 is ~31 small frames a second --
+                            // trivial for a WebSocket, and echo cancellation works in
+                            // 16ms blocks anyway.
 
 class PcmCapture extends AudioWorkletProcessor {
   constructor() {

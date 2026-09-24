@@ -85,6 +85,10 @@ HELLO_NEW = '''    if msg.get("type") == "playback_done":
         rate = int(msg.get("sampleRate") or SAMPLE_RATE)
         session.declared_rate = rate
         session.audio.sample_rate = rate
+        if rate != SAMPLE_RATE and session.duplex is not None:
+            logger.warning("[%s] client at %dHz: echo cancellation needs 16kHz, disabled for this call",
+                           session.call_id, rate)
+            session.duplex = None
         if rate != SAMPLE_RATE:
             logger.warning("[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
                            session.call_id, rate, SAMPLE_RATE)
@@ -122,7 +126,10 @@ def main() -> None:
     rep('        self.raw_path = os.path.join(self.tmpdir, "call.webm")\n'
         '        self.wav_path = self.raw_path + ".wav"\n'
         '        open(self.raw_path, "wb").close()',
-        "        self.audio = PcmCallBuffer()\n        self.declared_rate: int | None = None",
+        "        self.audio = PcmCallBuffer()\n        self.declared_rate: int | None = None\n"
+        "        if AEC_BARGE_IN:\n"
+        "            # KCD-051/052: echo cancellation + acoustic barge-in. Raw PCM only.\n"
+        "            self.duplex = FullDuplexProcessor(sr=SAMPLE_RATE)",
         "buffer")
 
     rep("    async def append(self, chunk: bytes):\n"
@@ -131,7 +138,17 @@ def main() -> None:
         "            f.write(chunk)",
         "    async def append(self, chunk: bytes):\n"
         "        self.last_activity = time.time()\n"
-        "        self.audio.append(chunk)",
+        "        if self.duplex is None:\n"
+        "            self.audio.append(chunk)\n"
+        "            return\n"
+        "        # The buffer the turn detector reads holds the ECHO-CANCELLED signal,\n"
+        "        # so the agent's own voice is not what it hears (agent/full_duplex.py).\n"
+        "        x = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0\n"
+        "        result = self.duplex.process(x)\n"
+        "        if result.cleaned.size:\n"
+        "            self.audio.append((np.clip(result.cleaned, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())\n"
+        "        if result.barge_in is not None:\n"
+        "            await _handle_barge_in(self, result.barge_in)",
         "append")
 
     rep("    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
@@ -165,6 +182,9 @@ def main() -> None:
     rep('    if msg.get("type") == "playback_done":\n        session.release_gate()',
         HELLO_NEW, "hello")
 
+    rep('TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.3"))',
+        'TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.1"))',
+        "tail guard default")
     rep('app.mount("/", StaticFiles(directory="static", html=True), name="static")',
         'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
         "mount")

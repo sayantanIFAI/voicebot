@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime
 import io
 import json
 import logging
@@ -95,14 +96,32 @@ from agent.clause_split import split_into_clauses
 from agent.code_switch import mixture_bucket
 from agent.confidence_gate import is_low_confidence, should_withhold_factual_answer
 from agent.detector_budget import run_within_budget
+from agent.endpointing import classify_completeness, decide as decide_turn_end
 from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.enquiry_followup import entities_from_turn, resolve_followup_slot
 from agent.fast_path import Catalogue, FastPath
 from agent.filler import await_with_filler
+from agent.full_duplex import FullDuplexProcessor, wav_to_pcm16k
 from agent.latency_metrics import turn_latency_by_language
 from agent.language_policy import language_mismatch
+from agent import history_templates as history_text
+from agent import patient_context as patient_policy
+from agent.apology import enforce_single_apology
+from agent.call_record import FINISH_DEADLINE_S as CALL_RECORD_DEADLINE_S, CallRecorder
+from agent.history_intent import detect_history_question
+from agent.conditioning import condition as condition_audio
+from agent.disclosure import DISCLOSURE_VERSION, disclosure_for
+from agent.golden_buckets import channel_buckets
+from agent.human_request import asks_for_a_person
+from agent.identity import IdentityState
+from agent.near_end import NearEndProfile, level_and_pitch
+from agent.persona import is_clean as persona_clean
+from agent.playback_gate import PlaybackGate
+from agent.speaker_change import SpeakerChangeDetector, voice_embedding
+from agent.turn_ack import AckTracker
 from agent.outcome_metrics import (
-    audio_issue_buckets, barge_in_interrupts, channel_quality_buckets, code_switch_buckets,
+    apology_events, audio_issue_buckets, barge_in_interrupts, channel_quality_buckets, code_switch_buckets,
+    golden_buckets,
     insufficient_information, language_mismatches, reask_outcomes, senior_detections,
 )
 from agent.reask_policy import ReaskTracker
@@ -176,6 +195,52 @@ PLAYBACK_GUARD_S = 3.0
 # while NOT rewinding risks clipping the caller's first syllable if the
 # WebM decode is running a beat behind real time.
 RESYNC_REWIND_S = 0.25
+
+# KCD-049: poll granularity. The fixed 0.5 s poll costs half its period on
+# average (0.25 s) on EVERY turn. Instead: an ACTIVE cadence while the caller
+# has spoken this turn, and -- the part that removes the tax -- a wake-up at
+# exactly the moment the detector says its answer could change
+# (TurnDecision.commit_after_s). REASONED, not measured under load on the pod:
+# each active poll re-runs Silero over the unprocessed tail, so a shorter
+# cadence costs CPU. Set ACTIVE_POLL_INTERVAL_S=0.5 to get the old behaviour.
+ACTIVE_POLL_INTERVAL_S = float(os.environ.get("ACTIVE_POLL_INTERVAL_S", "0.2"))
+MIN_WAKE_S = 0.02
+WAKE_SLACK_S = 0.005
+
+# KCD-048: semantic endpointing (agent/endpointing.py). OFF by default: it
+# spends one extra speculative ASR call per candidate turn end, and shortens the
+# silence needed after a "finished" transcript, which changes how the agent
+# feels to talk to. That needs an A/B on the pod before it is anyone's default.
+SEMANTIC_ENDPOINTING = os.environ.get("SEMANTIC_ENDPOINTING", "0") == "1"
+SPECULATIVE_ASR_TIMEOUT_S = 1.5
+MAX_SPECULATIONS_PER_TURN = 3
+SPECULATION_MATCH_TOLERANCE_S = 0.25
+
+# Trailing audio never trusted as "confirmed silence". 0.3 s covers the decode
+# lag of a growing WebM; the PCM variant reads exact sample positions and
+# overrides this default (tools/make_pcm_variant.py).
+TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.3"))
+
+# KCD-051/052: acoustic echo cancellation + barge-in on the PCM transport. OFF by
+# default: the canceller and detector are validated on SYNTHETIC echo only and
+# need the pod's real handset audio (tools/echo_eval.py) before anyone relies on
+# them. Off, the half-duplex gate behaves exactly as before.
+AEC_BARGE_IN = os.environ.get("AEC_BARGE_IN", "0") == "1"
+# How far before the detected onset the caller's utterance is taken to start
+# (the detector needs ~0.1 s of evidence, so speech began before it fired).
+BARGE_IN_PREROLL_S = 0.35
+
+# A test the caller named must match the catalogue at least this well before it is used to look up
+# their history; below it the agent ASKS which test (KCD-500: never guess). REASONED.
+HISTORY_TEST_MATCH_MIN = 0.85
+
+# KCD-055/057: condition the audio the recogniser hears -- noise suppression (only when
+# the clip is noisy, and guarded so it cannot eat the speech) and level normalisation
+# with a limiter (agent/conditioning.py). "off" (the default), "level" or "full".
+# OFF by default: the proxies it is validated on are synthetic, and whether it helps
+# the real recognisers is exactly what tools/conditioning_eval.py measures on a pod.
+# The RETRY path (a poor first result on a noisy or faint line) always uses it.
+CONDITION_INPUT = os.environ.get("CONDITION_INPUT", "off")
 
 # KCD-461: "a natural filler is spoken when a stage exceeds its
 # threshold... silence never exceeds a stated maximum." REASONED, not
@@ -364,7 +429,7 @@ async def _startup():
     logger.info("active languages: %s", ",".join(_languages_active))
 
     logger.info("loading Silero VAD...")
-    _turn_detector = await asyncio.to_thread(TurnDetector)
+    _turn_detector = await asyncio.to_thread(TurnDetector, tail_guard_s=TURN_TAIL_GUARD_S)
     _tools = ClinicToolsClient(CLINIC_API_BASE)
     _tts = TTSClient()
     _tts_router = TTSRouter({lang: _tts.for_language(lang) for lang in SUPPORTED_LANGUAGES})
@@ -507,6 +572,8 @@ async def stats():
         "barge_in_interrupts": barge_in_interrupts.snapshot(),
         "reask_outcomes": reask_outcomes.snapshot(),
         "audio_issue_buckets": audio_issue_buckets.snapshot(),
+        "golden_buckets": golden_buckets.snapshot(),
+        "apology_events": apology_events.snapshot(),
         "language_mismatches": language_mismatches.snapshot(),
         "senior_detections": senior_detections.snapshot(),
     }
@@ -553,7 +620,9 @@ def _analyze_utterance_from_wav_path(path: str) -> dict:
     read of the clip. Sync and CPU-bound: only ever called through
     detector_budget.run_within_budget."""
     samples, sr = _read_wav_mono(path)
-    return {"audio": assess_audio(samples, sr), "senior": estimate_senior(samples, sr)}
+    level_dbfs, f0_hz = level_and_pitch(samples, sr)
+    return {"audio": assess_audio(samples, sr), "senior": estimate_senior(samples, sr),
+            "near_end": (level_dbfs, f0_hz), "voice": voice_embedding(samples, sr)}
 
 
 def _enhance_wav_to_path(path: str) -> str | None:
@@ -561,7 +630,7 @@ def _enhance_wav_to_path(path: str) -> str | None:
     None if it cannot be produced."""
     try:
         samples, sr = _read_wav_mono(path)
-        out = enhance_audio(samples, sr)
+        out, _report = condition_audio(samples, sr, suppress="always")
         enhanced = path + ".enh.wav"
         with contextlib.closing(wave.open(enhanced, "wb")) as w:
             w.setnchannels(1)
@@ -592,6 +661,25 @@ async def _decode_to_wav(raw_path: str, wav_path: str) -> bool:
     )
     await proc.wait()
     return proc.returncode == 0 and os.path.exists(wav_path) and os.path.getsize(wav_path) > 44
+
+
+def _condition_wav_to_path(path: str, mode: str) -> str | None:
+    """A conditioned COPY of the clip for the recogniser (KCD-055/057), or None. The
+    original is left alone: audio analysis, senior and near-end judgements are made on
+    what the caller actually sounded like, not on what was done to help the ASR."""
+    try:
+        samples, sr = _read_wav_mono(path)
+        out, _report = condition_audio(samples, sr, suppress="never" if mode == "level" else "auto")
+        conditioned = path + ".cond.wav"
+        with contextlib.closing(wave.open(conditioned, "wb")) as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes((np.clip(out, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())
+        return conditioned
+    except Exception as e:  # noqa: BLE001 - conditioning is an enhancement, never a failure
+        logger.warning("input conditioning failed: %s", e)
+        return None
 
 
 class CallSession:
@@ -628,9 +716,23 @@ class CallSession:
         # Starts True: the greeting goes out before the caller has said
         # anything, so the gate must already be closed when the first poll
         # tick runs, not opened a moment later by _speak().
-        self.agent_speaking = True
-        self.speak_deadline = time.time() + PLAYBACK_GUARD_S
-        self.resync_pending = False
+        self.gate = PlaybackGate(PLAYBACK_GUARD_S)
+
+        # KCD-049/048: when the poll loop next wakes, and the speculative
+        # transcript state for the candidate turn end currently in view.
+        self.next_wake_s = POLL_INTERVAL_S
+        self.spec_end_abs: float | None = None
+        self.spec_verdict: str | None = None
+        self.spec_count = 0
+
+        # KCD-052/163: an interrupt bumps speak_epoch; the turn in flight keeps
+        # the epoch it started under, so everything it has yet to say is
+        # discarded rather than played over the caller.
+        self.speak_epoch = 0
+        self.turn_epoch = 0
+        # KCD-051: set by the PCM variant when AEC_BARGE_IN is on.
+        # (the PCM variant assigns it earlier in __init__ when AEC_BARGE_IN is on)
+        self.duplex: FullDuplexProcessor | None = getattr(self, "duplex", None)
 
         # Language is per UTTERANCE (ASRLanguageRouter decides each turn);
         # `lang` is only the last committed one -- the reply language, and
@@ -676,6 +778,32 @@ class CallSession:
         self.acknowledged_state: str | None = None
         self.senior_lookup_done = False
 
+        # KCD-513/514: acknowledgements are suppressed on repeat turns; KCD-155's distress
+        # acknowledgement, if spoken this turn, already opened it.
+        self.acks = AckTracker()
+        self.turn_acknowledged = False
+        # KCD-353: the disclosure was spoken in the greeting (Bengali); once more, in the
+        # caller's own language, the first time it differs.
+        self.disclosed_langs: set[str] = {"bn"}
+        # KCD-053: who this call's near-end speaker is (level, pitch), to tell them from a
+        # bystander. KCD-054/495: what we actually know about who is on the call, and the
+        # voice reference that lets a change of speaker revoke a verification.
+        self.near_end = NearEndProfile()
+        self.identity = IdentityState()
+        self.speaker = SpeakerChangeDetector()
+
+        # KCD-501: the call's record, written as the call goes and closed at hang-up.
+        self.recorder: CallRecorder | None = None
+        self.outcome = "completed"
+        self.turn_count = 0
+        # KCD-494/495/498: a question about the caller's own history is a small state machine --
+        # find the record (an OPEN question when the number is shared), then, only if a
+        # verification has passed, answer from retrieved fields.
+        self.history_state: str | None = None          # None | need_phone | need_name | need_test
+        self.pending_history = None                     # the HistoryQuestion being answered
+        self.history_attempts = 0
+        self.awaiting_handoff_offer = False
+
     @property
     def policy(self):
         """Appendix C's delivery parameters for the caller's CURRENT state
@@ -683,19 +811,53 @@ class CallSession:
         disagree with call_state."""
         return derive_policy(self.call_state.caller_state, self.call_state.senior)
 
+    # The gate itself lives in agent/playback_gate.py (KCD-050) so its rules can be
+    # tested without a pod; these keep the names the rest of this file uses.
+    @property
+    def agent_speaking(self) -> bool:
+        return self.gate.speaking
+
+    @property
+    def speak_deadline(self) -> float:
+        return self.gate.deadline
+
+    @property
+    def resync_pending(self) -> bool:
+        return self.gate.resync_pending
+
+    @resync_pending.setter
+    def resync_pending(self, value: bool) -> None:
+        self.gate.resync_pending = value
+
     def hold_gate_for(self, audio_duration_s: float):
         """Called before each reply goes out. Extends rather than replaces
         the deadline: replies queue on the client, so a second clip starts
         playing only after the first finishes."""
-        base = max(self.speak_deadline, time.time()) if self.agent_speaking else time.time()
-        self.agent_speaking = True
-        self.speak_deadline = base + audio_duration_s + PLAYBACK_GUARD_S
+        self.gate.hold(audio_duration_s)
 
     def release_gate(self):
         """Playback is over. Don't touch processed_until_s here -- the poll
         loop owns the decoded buffer and does the resync on its next tick."""
-        self.agent_speaking = False
-        self.resync_pending = True
+        self.gate.release()
+
+    def register_agent_audio(self, wav_bytes: bytes, voice: str | None = None) -> None:
+        """KCD-051: hand the clip about to be sent to the echo canceller as its
+        far-end reference. A no-op unless the PCM variant enabled AEC."""
+        if self.duplex is None or not wav_bytes:
+            return
+        try:
+            self.duplex.place_reference(wav_to_pcm16k(wav_bytes), voice=voice)
+        except Exception as e:  # noqa: BLE001 - AEC is an enhancement, never a reason to drop a reply
+            logger.warning("[%s] could not register agent audio for echo cancellation: %s", self.call_id, e)
+
+    def take_wake_delay(self) -> float:
+        """Seconds to sleep before the next poll; the schedule resets to the
+        idle cadence unless the last decision said otherwise."""
+        delay, self.next_wake_s = self.next_wake_s, POLL_INTERVAL_S
+        return delay
+
+    def reset_speculation(self) -> None:
+        self.spec_end_abs, self.spec_verdict, self.spec_count = None, None, 0
 
     async def append(self, chunk: bytes):
         self.last_activity = time.time()
@@ -759,6 +921,11 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
     elsewhere in this file, so streaming several clips here is the same,
     already-proven pattern, not a new one."""
     lang = lang or session.lang
+    if session.speak_epoch != session.turn_epoch:
+        # The caller interrupted the turn this reply belongs to: it is stale, and
+        # playing it over them is exactly what barge-in exists to stop.
+        logger.info("[%s] reply discarded after interrupt", session.call_id)
+        return 0.0
     policy = session.policy
     if not policy.emergency and policy.questions_per_turn >= 1:
         # KCD-084/149: one question at a time. Only a SURPLUS question is
@@ -769,12 +936,21 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
         # defect, made visible rather than discovered on a live call.
         language_mismatches.record("reply", "mismatch", lang)
         logger.error("[%s] reply language mismatch (expected %s): %r", session.call_id, lang, text[:60])
+    # KCD-514: at most one apology per reply. Templates are written to that rule; this catches
+    # the ones assembled at run time (a secondary answer appended to a primary one).
+    text, stacked = enforce_single_apology(text, lang)
+    if stacked:
+        apology_events.record("stacked_removed", "reply", lang)
     await session.send_json("AI", text)
     clauses = split_into_clauses(text) or [text]
 
     total_duration = 0.0
     for i, clause in enumerate(clauses):
+        if session.speak_epoch != session.turn_epoch:
+            break                              # interrupted mid-reply: the rest is discarded, not sent
         wav = await _synthesize_one_clause(session, clause, lang, fallback_reason)
+        if session.speak_epoch != session.turn_epoch:
+            break                              # interrupted while this clause was being synthesised
 
         # Close the gate BEFORE the bytes leave, never after: the client
         # can start playing the moment they land, and a poll tick that
@@ -782,6 +958,7 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
         # prevents.
         duration = _wav_duration_s(wav)
         session.hold_gate_for(duration)
+        session.register_agent_audio(wav, voice=lang)
         await session.send_audio(wav)
         total_duration += duration
 
@@ -812,6 +989,8 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
     the caller's is not yet known.
     """
     logger.warning("[%s] handoff to human: %s", session.call_id, reason)
+    session.outcome = "handed_off"
+    _rec(session, "escalation", reason)
     with contextlib.suppress(Exception):
         await session.ws.send_text(json.dumps({"type": "handoff_human", "reason": reason}))
     total = 0.0
@@ -941,6 +1120,32 @@ async def _persist_senior(session: CallSession, phone: str | None) -> None:
         await _tools.set_patient_senior(phone, True)
     except ToolCallError as e:
         logger.warning("[%s] senior persist failed: %s", session.call_id, e)
+
+
+def _rec(session: CallSession, method: str, *args) -> None:
+    """Queue one call-record event and start delivering it. Never raises and never waits: a
+    record that cannot be written is retried and, at hang-up, reported (agent/call_record.py) --
+    it is never a reason to slow or fail a turn."""
+    rec = session.recorder
+    if rec is None:
+        return
+    try:
+        getattr(rec, method)(*args)
+        asyncio.ensure_future(rec.flush())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[%s] call record event %s failed: %s", session.call_id, method, e)
+
+
+def _record_action(session: CallSession, name: str, result: dict, slots: dict) -> None:
+    if result.get("success"):
+        _rec(session, "action", name, result.get("confirmation_id"))
+        _rec(session, "confirmed", slots)
+
+
+async def _write_call_event(call_id: str, seq: int, kind: str, payload: dict, caller_phone: str | None) -> dict:
+    if _tools is None:
+        raise ToolCallError("clinic tools not ready")
+    return await _tools.write_call_event(call_id, seq, kind, payload, caller_phone)
 
 
 async def _handle_unverified_write(session: CallSession, lang: str) -> None:
@@ -1124,6 +1329,9 @@ async def _finish_enquiry_turn(session: CallSession, text: str, lang: str,
             # requires it be explicitly addressed, never silently dropped.
             base_reply = f"{base_reply} {addendum or phrase('unclear', lang)}"
     session.last_enquiry_entities = entities_from_turn(*turn_entities)
+    # KCD-513: a brief templated acknowledgement first, suppressed on repeat turns.
+    base_reply, _acked = session.acks.decorate(
+        base_reply, lang, substantive=True, already_acknowledged=session.turn_acknowledged)
     await _speak(session, base_reply, lang)
 
 
@@ -1174,12 +1382,19 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
     Serialized per-call via session.dispatch_lock so replies never
     interleave, even if the caller starts talking again immediately."""
     async with session.dispatch_lock:
+        session.turn_epoch = session.speak_epoch      # this turn is current; an interrupt from now on makes it stale
+        session.acks.next_turn()
+        session.turn_acknowledged = False
         session.turn_started_at = time.monotonic()
         channel_quality = session.call_state.channel_quality
         analysis: dict | None = None
         audio_issues: list[str] = []
+        asr_wav = utterance_wav
         try:
-            lang, asr_result = await _route_and_transcribe(session, utterance_wav)
+            if CONDITION_INPUT != "off":
+                conditioned = await asyncio.to_thread(_condition_wav_to_path, utterance_wav, CONDITION_INPUT)
+                asr_wav = conditioned or utterance_wav
+            lang, asr_result = await _route_and_transcribe(session, asr_wav)
             # KCD-075/KCD-076: measured inside its own budget slice, on
             # the SAME clip ASR already read, before the finally below
             # deletes it. A slow or failed classification just keeps
@@ -1195,6 +1410,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             audio_issues = analysis["audio"].issues if analysis else []
             for issue in audio_issues:
                 audio_issue_buckets.record(issue, "seen", lang or session.lang)
+            # Appendix F channel buckets, on the same vocabulary as the offline evaluation:
+            # the live rate of cross_talk / noisy / narrowband turns (KCD-053/055).
+            golden_buckets.record("turn", "analysed", lang or session.lang)
+            for bucket in channel_buckets(audio_issues, channel_quality):
+                golden_buckets.record(bucket, "turn", lang or session.lang)
             asr_result = await _retry_on_enhanced_audio(
                 session, utterance_wav, lang, asr_result, audio_issues,
                 analysis["audio"].duration_s if analysis else None)
@@ -1206,6 +1426,22 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         finally:
             with contextlib.suppress(OSError):
                 os.remove(utterance_wav)
+            if asr_wav != utterance_wav:
+                with contextlib.suppress(OSError):
+                    os.remove(asr_wav)
+
+        # KCD-053: a much quieter utterance in a DIFFERENT voice is someone else in the room,
+        # not the caller. It never opens a turn; the call stays silent for it. The same voice,
+        # merely quieter, is still the caller and goes on to the empathetic re-ask.
+        if analysis and analysis.get("near_end"):
+            level_dbfs, f0_hz = analysis["near_end"]
+            verdict = session.near_end.judge(level_dbfs, f0_hz)
+            if verdict.background:
+                session.near_end.reject()
+                audio_issue_buckets.record("background_utterance", "dropped", lang or session.lang)
+                logger.info("[%s] background utterance dropped (%s)", session.call_id, verdict.reason)
+                return
+            session.near_end.accept(level_dbfs, f0_hz)
 
         if lang is None:
             # Ask again, kindly, before any hand-off -- an unidentifiable
@@ -1216,6 +1452,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 session.lang, languages=_languages_active)
             return
         session.lang = lang
+        _rec(session, "language", lang)
         session.lang_router.note_response_language(lang)
         apply_language(session.call_state, lang)
         apply_confidence(session.call_state, is_low_confidence(asr_result.decoder_agreement))
@@ -1248,7 +1485,37 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         session.reask.note_success()
         await session.send_json("User", text)
+        session.turn_count += 1
         code_switch_buckets.record(mixture_bucket(text), "seen", lang)
+
+        # KCD-353: a request for a person is honoured IMMEDIATELY -- deterministic, before any
+        # model call, before intent extraction, with no "did you really mean it".
+        if asks_for_a_person(text, lang):
+            logger.info("[%s] caller asked for a person", session.call_id)
+            await _handoff_to_human(session, "caller_requested", (lang,))
+            return
+
+        # KCD-353: the disclosure is in the greeting (Bengali); a caller who answers in another
+        # language hears it once, in theirs.
+        if lang not in session.disclosed_langs:
+            session.disclosed_langs.add(lang)
+            await _speak(session, disclosure_for(lang), lang)
+
+        # KCD-054: after verification, a different voice revokes it. The agent cannot know who
+        # is speaking -- only that the voice differs from the one that was verified -- so it
+        # says so plainly and stops disclosing personal details until verification is repeated.
+        await _check_speaker_change(session, analysis, lang)
+
+        # KCD-494/495/498/500: a question about the caller's OWN history, or an answer to a step of
+        # one already under way, is handled here, deterministically, before any model call.
+        if session.awaiting_handoff_offer or session.history_state:
+            if await _continue_history_flow(session, text, lang):
+                return
+        history_question = detect_history_question(text, lang)
+        if history_question is not None:
+            session.pending_history, session.history_attempts = history_question, 0
+            await _history_step(session, lang)
+            return
 
         # KCD-084/149/155: caller state -> delivery policy, and the
         # acknowledgement that comes before anything else when the policy
@@ -1257,6 +1524,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         ack = select_acknowledgement(session.policy, session.call_state.caller_state, lang)
         if ack and session.acknowledged_state != session.call_state.caller_state:
             session.acknowledged_state = session.call_state.caller_state
+            session.turn_acknowledged = True
             await _speak(session, ack, lang)
 
         # KCD-438: an explicit "speak in Hindi/Bengali/English" request,
@@ -1292,11 +1560,17 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
 
         intent = data["intent"]
         slots = data["slots"]
+        _rec(session, "intent", intent)
         _note_stated_age(session, slots, lang)
 
         if intent == "smalltalk":
             reply = data.get("direct_reply_bn")
-            await _speak(session, reply if _speakable(reply or "", lang)
+            # The ONLY model-composed text a caller ever hears, so it passes the persona
+            # (register, no hedging, no reassurance or advice, sentence length) or is replaced.
+            # KCD-500: and it may not claim anything about THIS caller's past -- history is rendered
+            # from retrieved fields by agent/history_templates.py, never composed.
+            await _speak(session, reply if (_speakable(reply or "", lang) and persona_clean(reply or "", lang)
+                                            and not history_text.mentions_personal_history(reply or "", lang))
                          else phrase("smalltalk_default", lang), lang)
             return
 
@@ -1635,6 +1909,7 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                 return
             await _speak(session, booking_reply(st.slots, result, lang), lang)
             if result.get("success"):
+                _record_action(session, "booking_confirmed", result, st.slots)
                 await _persist_senior(session, phone)
             if result.get("success") or result.get("reason") != "hold_expired":
                 session.booking = None
@@ -1649,6 +1924,7 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                 relationship=st.slots.get("relationship") or "self",
             )
             await _speak(session, multi_test_reply(result, lang), lang)
+            _record_action(session, "tests_booked", result, st.slots)
             session.booking = None
 
         elif st.action == "reschedule_appointment":
@@ -1659,6 +1935,7 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                 await _handle_unverified_write(session, lang)
                 return
             await _speak(session, reschedule_reply(result, lang), lang)
+            _record_action(session, "appointment_rescheduled", result, st.slots)
             if result.get("success") or result.get("reason") != "slot_taken":
                 session.booking = None
             else:
@@ -1673,11 +1950,13 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                 await _speak(session, cancel_reply(result, lang), lang)
                 return
             await _speak(session, cancel_reply(result, lang), lang)
+            _record_action(session, "appointment_cancelled", result, st.slots)
             session.booking = None
 
         elif st.action == "add_test_booking":
             result = await _tools.add_test_to_booking(st.slots["confirmation_id"], st.slots["test_name"])
             await _speak(session, add_test_reply(result, lang), lang)
+            _record_action(session, "test_added", result, st.slots)
             session.booking = None
 
     except ToolCallError as e:
@@ -1704,6 +1983,241 @@ async def _resync_after_playback(session: CallSession) -> bool:
     return True
 
 
+def _next_wake_delay(decision) -> float:
+    """KCD-049: sleep until the moment the answer could change, not until the
+    next tick of a fixed timer. While the caller has spoken this turn the cadence
+    is ACTIVE_POLL_INTERVAL_S; when the detector says "commit in x seconds if
+    silence continues", wake exactly then (plus a hair, so the audio that
+    settles it has landed)."""
+    base = ACTIVE_POLL_INTERVAL_S if decision.had_any_speech else POLL_INTERVAL_S
+    if decision.commit_after_s is None:
+        return base
+    return min(base, max(MIN_WAKE_S, decision.commit_after_s + WAKE_SLACK_S))
+
+
+async def _speculative_completeness(session: CallSession, speech_end_abs: float) -> str | None:
+    """KCD-048: transcribe what has been said so far, in the call's current
+    language only (no LID, no router state touched), and say whether it reads as
+    finished. Any failure is simply "no verdict" -- the baseline threshold then
+    applies, so this can only ever shorten a wait it is confident about."""
+    session.spec_count += 1
+    wav = None
+    try:
+        session.utt_seq += 1
+        wav = await _slice_utterance(session, session.processed_until_s, speech_end_abs, session.utt_seq)
+        asr = await asyncio.wait_for(_asr_router.transcribe(session.lang, wav), SPECULATIVE_ASR_TIMEOUT_S)
+        verdict = classify_completeness(asr.text, session.lang)
+    except Exception as e:  # noqa: BLE001 - speculation is advisory
+        logger.info("[%s] speculative transcription unavailable: %s", session.call_id, e)
+        return None
+    finally:
+        if wav:
+            with contextlib.suppress(OSError):
+                os.remove(wav)
+    session.spec_end_abs, session.spec_verdict = speech_end_abs, verdict
+    return verdict
+
+
+async def _decide_turn(session: CallSession, tail, sr: int):
+    """Where is the speech (Silero), then has the caller finished
+    (agent/endpointing.decide, pure and tested off-pod). With SEMANTIC_ENDPOINTING
+    a candidate turn end may trigger one speculative transcription, whose
+    completeness verdict is reused for as long as the speech end has not moved."""
+    spans, duration_s = await asyncio.to_thread(_turn_detector.spans, tail, sr)
+    cfg = _turn_detector.config
+    speech_end_abs = session.processed_until_s + float(spans[-1]["end"]) if spans else None
+    completeness = None
+    if (SEMANTIC_ENDPOINTING and speech_end_abs is not None and session.spec_end_abs is not None
+            and abs(session.spec_end_abs - speech_end_abs) < SPECULATION_MATCH_TOLERANCE_S):
+        completeness = session.spec_verdict
+    decision = decide_turn_end(spans, duration_s, cfg, completeness=completeness, semantic=SEMANTIC_ENDPOINTING)
+    if decision.speculate and speech_end_abs is not None and session.spec_count < MAX_SPECULATIONS_PER_TURN:
+        verdict = await _speculative_completeness(session, speech_end_abs)
+        if verdict is not None:
+            decision = decide_turn_end(spans, duration_s, cfg, completeness=verdict, semantic=True)
+    return decision
+
+
+async def _interrupt_playback(session: CallSession, reason: str, resume_from_s: float | None = None) -> None:
+    """The caller has taken the floor -- by clicking (manual) or by talking over
+    the agent (acoustic barge-in). Stop what is playing on the client, discard
+    what the interrupted turn has not yet said, open the gate.
+
+    `resume_from_s`, when given, is where the caller's utterance begins on the
+    call timeline: the marker is set there and the usual post-playback resync
+    (which would skip past their first words) is cancelled."""
+    was_speaking = session.agent_speaking
+    session.speak_epoch += 1
+    session.release_gate()
+    if session.duplex is not None:
+        session.duplex.cancel_pending()
+    if reason != "manual":
+        # A manual interrupt comes FROM the client, which has already stopped
+        # its own playback; only a server-detected one needs to tell it to.
+        with contextlib.suppress(Exception):
+            await session.ws.send_text(json.dumps({"type": "stop_playback"}))
+    if resume_from_s is not None:
+        session.processed_until_s = max(session.processed_until_s, resume_from_s)
+        session.resync_pending = False
+    if was_speaking:
+        logger.info("[%s] caller interrupt (%s) -- playback stopped, gate released", session.call_id, reason)
+        barge_in_interrupts.record(reason, session.lang)
+
+
+def _mark_verified(session: CallSession, method: str, patient_ref: str, analysis: dict | None) -> None:
+    """Record that a check passed (an OTP, a confirmed date of birth -- whatever the clinic
+    decides counts) and remember THIS voice as the verified one (KCD-054). The mechanism that
+    verifies lives outside this file (KCD-203); it calls this when it succeeds."""
+    session.identity.verify(method, patient_ref)
+    session.speaker.reset()
+    emb = (analysis or {}).get("voice")
+    if emb is not None:
+        session.speaker.enroll_embedding(emb)
+
+
+async def _check_speaker_change(session: CallSession, analysis: dict | None, lang: str) -> None:
+    if not session.identity.is_verified or not session.speaker.enrolled or not analysis:
+        return
+    emb = analysis.get("voice")
+    if emb is None:
+        return                                   # too little voiced speech: abstain, never guess
+    result = session.speaker.observe_embedding(emb)
+    if result.verdict == "changed" and session.identity.revoke("speaker_changed"):
+        logger.warning("[%s] voice changed after verification -- verification revoked", session.call_id)
+        audio_issue_buckets.record("speaker_change", "verification_revoked", lang)
+        await _speak(session, phrase("reverify_notice", lang), lang)
+
+
+async def _say_history(session: CallSession, statements: list[tuple[str, str]], lang: str) -> None:
+    """Speak history statements and record their provenance ids (KCD-500/501)."""
+    _rec(session, "history", [sid for sid, _ in statements])
+    await _speak(session, " ".join(t for _, t in statements), lang)
+
+
+def _digits(value) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+async def _history_step(session: CallSession, lang: str) -> None:
+    """Where the history question stands: find the record, gate on verification, answer."""
+    ident = session.identity
+    if ident.patient_ref is None:
+        session.history_state = "need_phone"
+        await _say_history(session, [history_text.ask_phone(lang)], lang)
+        return
+    decision = patient_policy.history_gate(ident, ident.patient_ref, lang)
+    if not decision.allowed:
+        # NOTHING beyond the existence of a record is spoken before verification. The refusal offers a
+        # person; the caller's yes/no is handled at the top of the next turn.
+        session.history_state, session.pending_history, session.awaiting_handoff_offer = None, None, True
+        await _say_history(session, [decision.statement], lang)
+        return
+    await _answer_history(session, lang)
+
+
+async def _answer_history(session: CallSession, lang: str) -> None:
+    hq, ident = session.pending_history, session.identity
+    now = datetime.datetime.now()
+    try:
+        timeline = await _tools.patient_timeline(int(ident.patient_ref), ident.phone or "", session.call_id)
+        if hq.kind == "last_test":
+            catalogue = _fast_path.catalogue if _fast_path is not None else None
+            name, _form, score = catalogue.match(hq.test_hint or "", "test") if catalogue else (None, None, 0.0)
+            if not name or score < HISTORY_TEST_MATCH_MIN:
+                session.history_state = "need_test"
+                await _say_history(session, [history_text.ask_which_test(lang)], lang)
+                return
+            status = await _tools.patient_test_status(int(ident.patient_ref), name, ident.phone or "", session.call_id)
+            answer = patient_policy.answer_last_test(timeline, name, status if status.get("success") else None, lang, now)
+        else:
+            answer = patient_policy.answer_recent_tests(timeline, lang, now)
+    except ToolCallError as e:
+        logger.error("[%s] history lookup failed: %s", session.call_id, e)
+        session.history_state, session.pending_history = None, None
+        await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
+        return
+    session.history_state, session.pending_history = None, None
+    await _say_history(session, answer.statements, lang)
+
+
+async def _continue_history_flow(session: CallSession, text: str, lang: str) -> bool:
+    """True if this turn belonged to the history flow (and has been handled)."""
+    if session.awaiting_handoff_offer:
+        session.awaiting_handoff_offer = False
+        answer = classify_yes_no(text, lang)
+        if answer == "yes":
+            await _handoff_to_human(session, "history_requested_staff", (lang,))
+            return True
+        if answer == "no":
+            await _say_history(session, [history_text.ok_anything_else(lang)], lang)
+            return True
+        return False                                    # neither: the offer lapses and the turn is handled normally
+    state = session.history_state
+    if state == "need_test":
+        session.pending_history.test_hint, session.history_state = text, None
+        await _history_step(session, lang)
+        return True
+    if state not in ("need_phone", "need_name"):
+        return False
+    try:
+        data = await _resolve_intent(session, text, lang)
+    except ExtractionError:
+        data = {"slots": {}}
+    slots = data.get("slots") or {}
+    session.history_attempts += 1
+    try:
+        if state == "need_phone":
+            phone = _digits(slots.get("phone") or slots.get("contact_phone"))
+            if len(phone) < 10:
+                if session.history_attempts >= 2:
+                    session.history_state = None
+                    await _handoff_to_human(session, "history_phone_unclear", (lang,))
+                else:
+                    await _say_history(session, [history_text.ask_phone(lang)], lang)
+                return True
+            result = await _tools.identify_patient(phone)
+            outcome = patient_policy.identify_outcome(result)
+            session.identity.phone = session.identity.phone or phone
+            if outcome == "new":
+                session.history_state, session.pending_history = None, None
+                await _say_history(session, [history_text.no_record(lang)], lang)
+            elif outcome == "single":
+                session.identity.claim(str(result["patient_ref"]), phone)
+                _rec(session, "patient", result["patient_ref"])
+                session.history_state = None
+                await _history_step(session, lang)
+            else:
+                session.history_state, session.history_attempts = "need_name", 0
+                await _speak(session, patient_policy.resolve_question(lang, 0), lang)
+            return True
+        # state == "need_name": an open question, answered with a NAME (never chosen from a list)
+        spoken = slots.get("patient_name") or text
+        result = await _tools.resolve_patient(session.identity.phone or "", spoken, slots.get("patient_age"))
+        if result.get("status") == "single" and result.get("basis") == "exact":
+            session.identity.claim(str(result["patient_ref"]), session.identity.phone)
+            _rec(session, "patient", result["patient_ref"])
+            session.history_state = None
+            await _history_step(session, lang)
+        elif session.history_attempts >= 2:
+            session.history_state, session.pending_history = None, None
+            await _handoff_to_human(session, "history_patient_unclear", (lang,))
+        else:
+            # none, ambiguous, or found only by SOUND: ask again, never assume
+            await _speak(session, patient_policy.resolve_question(lang, 1), lang)
+        return True
+    except ToolCallError as e:
+        logger.error("[%s] patient lookup failed: %s", session.call_id, e)
+        session.history_state, session.pending_history = None, None
+        await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
+        return True
+
+
+async def _handle_barge_in(session: CallSession, event) -> None:
+    sr = session.audio.sample_rate if hasattr(session, "audio") else 16000
+    await _interrupt_playback(session, "acoustic",
+                              resume_from_s=max(0.0, event.at_sample / sr - BARGE_IN_PREROLL_S))
+
+
 async def _turn_poll_loop(session: CallSession):
     """Runs for the lifetime of the call. Every POLL_INTERVAL_S, re-decodes
     the growing buffer -- ALWAYS from byte 0, since that's the only way
@@ -1715,10 +2229,11 @@ async def _turn_poll_loop(session: CallSession):
     blocked by this turn's ASR/LLM/TTS work), and advance the marker.
     """
     while True:
-        await asyncio.sleep(POLL_INTERVAL_S)
+        await asyncio.sleep(session.take_wake_delay())
 
         if time.time() - session.last_activity > IDLE_TIMEOUT_S:
             logger.info("[%s] idle timeout, closing", session.call_id)
+            session.turn_epoch = session.speak_epoch
             await _speak(session, phrase("idle_close", session.lang), session.lang)
             with contextlib.suppress(Exception):
                 await session.ws.close()
@@ -1730,12 +2245,12 @@ async def _turn_poll_loop(session: CallSession):
                 await session.ws.send_text('{"sender":"_ping","text":""}')
 
         # --- half-duplex gate: never run turn detection on our own voice ---
-        if session.agent_speaking:
-            if time.time() < session.speak_deadline:
-                continue
-            logger.warning("[%s] no playback-done from client, releasing gate on deadline",
+        backstops_before = session.gate.backstop_releases
+        if session.gate.blocked():
+            continue
+        if session.gate.backstop_releases != backstops_before:
+            logger.warning("[%s] no playback-done from client, released gate on deadline",
                            session.call_id)
-            session.release_gate()
 
         if session.resync_pending:
             await _resync_after_playback(session)
@@ -1750,9 +2265,11 @@ async def _turn_poll_loop(session: CallSession):
         tail_start_sample = min(int(session.processed_until_s * sr), wav.shape[-1])
         tail = wav[tail_start_sample:]
 
-        result = await asyncio.to_thread(_turn_detector.poll, tail, sr)
+        result = await _decide_turn(session, tail, sr)
+        session.next_wake_s = _next_wake_delay(result)
         if result.utterance_end_s is None:
             continue
+        session.reset_speculation()
 
         absolute_end_s = session.processed_until_s + result.utterance_end_s
         session.utt_seq += 1
@@ -1787,11 +2304,7 @@ async def _handle_control(session: CallSession, raw: str):
     if msg.get("type") == "playback_done":
         session.release_gate()
     elif msg.get("type") == "interrupt":
-        was_speaking = session.agent_speaking
-        session.release_gate()
-        if was_speaking:
-            logger.info("[%s] caller interrupt -- gate released early", session.call_id)
-            barge_in_interrupts.record("manual", session.lang)
+        await _interrupt_playback(session, "manual")
 
 
 @app.websocket("/ws/audio")
@@ -1811,9 +2324,16 @@ async def ws_audio(ws: WebSocket):
         return
     session.admission = admission
     logger.info("[%s] call started (%d active)", session.call_id, _admission.active_calls)
+    session.recorder = CallRecorder(session.call_id, _write_call_event)
+    _rec(session, "start", "voice", DISCLOSURE_VERSION)
     poll_task = asyncio.create_task(_turn_poll_loop(session))
 
     try:
+        if session.duplex is not None:
+            # Tell the client to keep the microphone LIVE during playback and to
+            # honour stop_playback: without this it mutes capture as before and
+            # the canceller simply sees silence (safe, just no barge-in).
+            await session.ws.send_text(json.dumps({"type": "config", "aec": True}))
         await _speak(session, phrase("greeting", "bn"), "bn")
         while True:
             message = await ws.receive()
@@ -1831,6 +2351,16 @@ async def ws_audio(ws: WebSocket):
         poll_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await poll_task
+        if session.recorder is not None:
+            # KCD-501: everything completed was already written as it happened; this adds the outcome
+            # and drains anything still queued, within the story's thirty seconds. A miss is logged.
+            outcome = session.outcome if session.turn_count else "abandoned"
+            try:
+                left = await asyncio.wait_for(session.recorder.finish(outcome), CALL_RECORD_DEADLINE_S + 3.0)
+                if left:
+                    logger.error("[%s] call record: %d events could not be written", session.call_id, left)
+            except Exception as e:  # noqa: BLE001
+                logger.error("[%s] call record could not be closed: %s", session.call_id, e)
         _admission.release(admission)
         session.cleanup()
         logger.info("[%s] call ended (%d active)", session.call_id, _admission.active_calls)

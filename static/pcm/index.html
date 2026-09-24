@@ -46,6 +46,14 @@
     let ws, stream, captureCtx, playbackCtx, workletNode, sourceNode, sinkNode;
     let playQueue = Promise.resolve();
     let pendingClips = 0;
+    // KCD-051/052. When the server enables echo cancellation it says so in a
+    // {"type":"config","aec":true} frame: the microphone then stays LIVE while
+    // the agent speaks (the server cancels the echo and can hear a caller talking
+    // over it), and {"type":"stop_playback"} means "the caller took the floor".
+    // Without that frame everything below behaves exactly as it always has.
+    let aecMode = false;
+    let playEpoch = 0;                    // bumped by stop_playback: queued clips from before it never play
+    const activeSources = new Set();
     let inCall = false;
     let bytesSent = 0;
 
@@ -70,6 +78,7 @@
     // offset on the server would drift.
     function setMicMuted(muted) {
       if (!stream) return;
+      if (aecMode) muted = false;      // the server cancels our own echo; keep listening
       stream.getAudioTracks().forEach((t) => { t.enabled = !muted; });
     }
 
@@ -83,13 +92,25 @@
       statusEl.textContent = 'শুনছি...';
     }
 
+    function stopPlayback() {
+      playEpoch += 1;                              // queued clips see a stale epoch and are skipped
+      activeSources.forEach((src) => { try { src.stop(); } catch (e) { /* already ended */ } });
+      activeSources.clear();
+      playQueue = Promise.resolve();
+      pendingClips = 0;
+      statusEl.classList.remove('speaking');
+      statusEl.textContent = 'শুনছি...';
+    }
+
     function playAudio(arrayBuffer) {
+      const myEpoch = playEpoch;
       pendingClips += 1;
       setMicMuted(true);
       statusEl.classList.add('speaking');
       statusEl.textContent = 'AI বলছে... (মাইক বন্ধ)';
 
       playQueue = playQueue.then(() => new Promise(async (resolve) => {
+        if (myEpoch !== playEpoch) { resolve(); return; }       // interrupted before its turn came
         try {
           // Playback deliberately uses its OWN context at the device's
           // native rate. Decoding the 22.05kHz TTS WAV through the 16kHz
@@ -98,16 +119,19 @@
           if (!playbackCtx) playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
           if (playbackCtx.state === 'suspended') await playbackCtx.resume();
           const audioBuffer = await playbackCtx.decodeAudioData(arrayBuffer);
+          if (myEpoch !== playEpoch) { resolve(); return; }     // interrupted while decoding
           const source = playbackCtx.createBufferSource();
           source.buffer = audioBuffer;
           source.connect(playbackCtx.destination);
-          source.onended = resolve;
+          activeSources.add(source);
+          source.onended = () => { activeSources.delete(source); resolve(); };
           source.start();
         } catch (e) {
           console.error('audio decode failed', e);
           resolve();
         }
       })).then(() => {
+        if (myEpoch !== playEpoch) return;         // stopPlayback() already reset the counters
         pendingClips -= 1;
         if (pendingClips === 0) setTimeout(onPlaybackIdle, POST_PLAYBACK_GUARD_MS);
       });
@@ -181,6 +205,8 @@
         if (typeof event.data === 'string') {
           const data = JSON.parse(event.data);
           if (data.sender === '_ping') return;
+          if (data.type === 'config') { aecMode = !!data.aec; if (aecMode) setMicMuted(false); return; }
+          if (data.type === 'stop_playback') { stopPlayback(); return; }
           appendLog(data.sender, data.text);
         } else {
           playAudio(event.data);
