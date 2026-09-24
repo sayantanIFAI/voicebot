@@ -34,6 +34,8 @@ non-native speaker: treat every one as a draft.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 
 LEXICON_TARGET = 200
@@ -85,6 +87,36 @@ _ENTRIES: dict[str, tuple[str, str]] = {
 
 REVIEWED: set[tuple[str, str]] = set()      # (term, lang) pairs a native listener has approved
 
+# The seven specimen words are TRANSLATIONS the lab already used before this
+# module existed (agent/bn_normalize.py's original table), not first-pass
+# transliterations, so they are spoken without waiting for sign-off.
+ESTABLISHED = frozenset({"blood", "urine", "stool", "serum", "saliva", "swab", "plasma"})
+
+# A draft (unreviewed) form is NOT spoken by default: a wrongly rendered
+# clinical term is a wrong fact in the caller's ear. Setting this to 1 lets
+# the drafts through so a native listener can HEAR them on a pod -- which is
+# how they get reviewed at all. It is a listening aid, never a release setting.
+ALLOW_DRAFT_ENV = "PRONUNCIATION_ALLOW_DRAFT"
+
+
+def _allow_draft() -> bool:
+    return os.environ.get(ALLOW_DRAFT_ENV, "0") == "1"
+
+
+def load_reviewed(path: str) -> int:
+    """Approve the (term, lang) pairs listed in a JSON file
+    [["ct scan", "bn"], ...] -- what a native reviewer hands back from
+    review_sheet(). Returns how many pairs are now approved."""
+    with open(path, encoding="utf-8") as f:
+        for term, lang in json.load(f):
+            REVIEWED.add((str(term).lower(), lang))
+    return len(REVIEWED)
+
+
+def speakable(term: str, lang: str) -> bool:
+    key = term.lower()
+    return key in ESTABLISHED or (key, lang) in REVIEWED or _allow_draft()
+
 _INDEX = {"bn": 0, "hi": 1}
 
 
@@ -112,7 +144,8 @@ def apply(text: str, lang: str, letters: dict[str, str] | None = None) -> str:
     alone for unspeakable_spans() to report."""
     if lang not in _INDEX or not text:
         return text
-    text = _RE_TERMS.sub(lambda m: lookup(m.group(1), lang) or m.group(1), text)
+    text = _RE_TERMS.sub(
+        lambda m: (lookup(m.group(1), lang) if speakable(m.group(1), lang) else None) or m.group(1), text)
     if letters:
         text = _RE_ACRONYM.sub(
             lambda m: " ".join(letters[c.lower()] for c in m.group(1) if c.lower() in letters), text)

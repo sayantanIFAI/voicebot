@@ -21,6 +21,44 @@ from agent.speech_norm import unspeakable_spans, verbalize
 
 # ============================================================ pronunciation
 
+@pytest.fixture(autouse=True)
+def _drafts_audible(monkeypatch):
+    """Most tests here exercise the LEXICON MECHANISM, which needs the
+    unreviewed drafts to be audible (the pod listening aid). The gate itself
+    -- drafts silent by default -- is tested explicitly below, which switches
+    this back off."""
+    monkeypatch.setenv(pronunciation.ALLOW_DRAFT_ENV, "1")
+
+
+def test_an_unreviewed_draft_is_not_spoken_by_default(monkeypatch):
+    monkeypatch.setenv(pronunciation.ALLOW_DRAFT_ENV, "0")
+    out = verbalize("Your CT scan and Creatinine", "bn")
+    assert "সিটি স্ক্যান" not in out and "ক্রিয়েটিনিন" not in out      # the drafts stay silent
+    assert any("Creatinine" in span for span in unspeakable_spans(out, "bn"))   # blocked (KCD-455), never guessed
+    assert pronunciation.speakable("blood", "bn")             # the established seven are exempt
+
+
+def test_a_reviewed_pair_is_spoken_and_only_in_its_own_language(monkeypatch):
+    monkeypatch.setenv(pronunciation.ALLOW_DRAFT_ENV, "0")
+    monkeypatch.setattr(pronunciation, "REVIEWED", {("creatinine", "bn")})
+    assert "ক্রিয়েটিনিন" in verbalize("Creatinine", "bn")
+    assert verbalize("Creatinine", "hi") == "Creatinine"      # not yet approved for Hindi
+
+
+def test_a_review_file_approves_pairs(monkeypatch, tmp_path):
+    monkeypatch.setenv(pronunciation.ALLOW_DRAFT_ENV, "0")
+    monkeypatch.setattr(pronunciation, "REVIEWED", set())
+    f = tmp_path / "reviewed.json"
+    f.write_text('[["ct scan", "bn"]]', encoding="utf-8")
+    assert pronunciation.load_reviewed(str(f)) == 1
+    assert "সিটি স্ক্যান" in verbalize("CT scan", "bn")
+
+
+def test_a_lexicon_term_is_matched_before_its_digit_is_spoken():
+    # HbA1c contains a "1": the bare-integer sweep must not turn it into a
+    # word before the lexicon can match the whole term.
+    assert verbalize("HbA1c", "bn") == "এইচবিএ ওয়ান সি"
+
 @pytest.mark.parametrize("lang,text,expected_fragment", [
     ("bn", "আপনার Sugar টেস্ট", "সুগার"),
     ("hi", "आपका Sugar टेस्ट", "शुगर"),
@@ -58,7 +96,7 @@ def test_matching_is_whole_word_and_case_insensitive():
 def test_an_unlisted_acronym_is_spelled_letter_by_letter():
     out = verbalize("Your PQRS value", "bn")
     assert "PQRS" not in out
-    assert unspeakable_spans(out, "bn") == ["Your", "value"] or "PQRS" not in out
+    assert unspeakable_spans(out, "bn") == ["Your", "value"]
 
 
 def test_an_unlisted_ordinary_word_is_still_blocked_never_guessed():

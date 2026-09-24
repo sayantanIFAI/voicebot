@@ -237,6 +237,21 @@ _NEGATORS_EN = frozenset({
 # it as a "no" that reopens slot collection.
 _HEDGE_WORDS_EN = frozenset({"sure"})
 _NEGATION_LOOKBACK = 2   # "not really sure", "don't think so" style gaps
+_UNCERTAIN_WORDS_EN = frozenset({"unsure", "uncertain", "maybe", "perhaps", "dunno"})
+
+
+def _expresses_uncertainty(tokens: list[str]) -> bool:
+    """A hedge word, or a negator followed within a few tokens by one
+    ("not sure", "not really sure", "don't feel certain"). Deliberately
+    generous: the cost of a false positive is one re-ask, the cost of a false
+    negative is a booking written on a maybe."""
+    if any(t in _UNCERTAIN_WORDS_EN for t in tokens):
+        return True
+    hedges = _HEDGE_WORDS_EN | {"certain", "convinced", "confident"}
+    for i, tok in enumerate(tokens):
+        if tok in _NEGATORS_EN and any(t in hedges for t in tokens[i + 1:i + 4]):
+            return True
+    return False
 
 
 def classify_yes_no(transcript: str, lang: str) -> str | None:
@@ -259,6 +274,13 @@ def classify_yes_no(transcript: str, lang: str) -> str | None:
     # "ঠিক", which are also yes-leaning words on their own.
     if any(_has_phrase(tokens, w) for w in no_words):
         return "no"
+
+    # Uncertainty ANYWHERE in the answer withholds a "yes": "not sure I should
+    # confirm" has its negated hedge more than _NEGATION_LOOKBACK tokens before
+    # the yes cue, so the per-cue window below would never see it and a later
+    # "confirm" would commit a write on an explicitly uncertain answer.
+    if lang == "en" and _expresses_uncertainty(tokens):
+        return None
 
     negated_other = False
     for w in yes_words:

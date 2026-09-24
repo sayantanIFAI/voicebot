@@ -173,17 +173,18 @@ class ClinicToolsClient:
             raise ToolCallError(f"lookup_bookings({params!r}): {e}") from e
 
     # KCD-084: senior mode persisted against the patient (a boolean only).
-    async def set_patient_senior(self, phone: str, senior: bool = True) -> dict:
+    async def set_patient_senior(self, phone: str, senior: bool = True,
+                                 caller_phone: str | None = None) -> dict:
         try:
-            r = await self._client.post("/api/v1/patients/senior", json={"phone": phone, "senior": senior})
+            r = await self._client.post("/api/v1/patients/senior", json={"phone": phone, "senior": senior, "caller_phone": caller_phone})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:
             raise ToolCallError(f"set_patient_senior: {e}") from e
 
-    async def get_patient_senior(self, phone: str) -> bool:
+    async def get_patient_senior(self, phone: str, caller_phone: str | None = None) -> bool:
         try:
-            r = await self._client.get("/api/v1/patients/senior", params={"phone": phone})
+            r = await self._client.get("/api/v1/patients/senior", params={"phone": phone, **({"caller_phone": caller_phone} if caller_phone else {})})
             r.raise_for_status()
             return bool(r.json().get("senior"))
         except httpx.HTTPError as e:

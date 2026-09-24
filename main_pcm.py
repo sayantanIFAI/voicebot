@@ -823,7 +823,8 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
 
 
 async def _reask_or_handoff(session: CallSession, decision, lang: str,
-                            fallback_reason: str | None = None) -> None:
+                            fallback_reason: str | None = None,
+                            languages: tuple[str, ...] | None = None) -> None:
     """Ask again, kindly, before routing to a person (agent/reask_policy.py).
     A second consecutive failure also marks the caller "confused", which
     slows the agent and lowers its escalation threshold for the rest of the
@@ -831,11 +832,17 @@ async def _reask_or_handoff(session: CallSession, decision, lang: str,
     reask_outcomes.record(decision.reason or "unclear", decision.action, lang)
     if decision.mark_confused:
         apply_caller_state(session.call_state, caller_state="confused")
+    # `languages` is passed when the caller's language could not be identified:
+    # the re-ask and the hand-off notice are then said in EVERY active language,
+    # not in whichever one the call happened to default to.
+    langs = languages or (lang,)
     if decision.action == "handoff":
-        await _speak(session, phrase("reask_final", lang), lang)
-        await _handoff_to_human(session, f"unintelligible:{decision.reason}", (lang,))
+        for lg in langs:
+            await _speak(session, phrase("reask_final", lg), lg)
+        await _handoff_to_human(session, f"unintelligible:{decision.reason}", langs)
         return
-    await _speak(session, phrase(decision.phrase_key, lang), lang, fallback_reason=fallback_reason)
+    for lg in langs:
+        await _speak(session, phrase(decision.phrase_key, lg), lg, fallback_reason=fallback_reason)
 
 
 async def _retry_on_enhanced_audio(session: CallSession, wav_path: str, lang: str | None, result,
@@ -1215,7 +1222,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # request for a person (agent/reask_policy.py).
             await _reask_or_handoff(
                 session, session.reask.decide(language_ambiguous=True, audio_issues=audio_issues),
-                session.lang)
+                session.lang, languages=_languages_active)
             return
         session.lang = lang
         session.lang_router.note_response_language(lang)
@@ -1234,10 +1241,15 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         # A yes/no to a confirmation is legitimately one short word; the
         # jumbled-transcript checks would misread it as a fragment.
-        awaiting_yes_no = (session.booking is not None
-                           and session.booking.stage in ("confirming", "awaiting_charge_confirm"))
-        problem = None if awaiting_yes_no else transcript_problem(
-            text, lang, analysis["audio"].duration_s if analysis else None, asr_result.decoder_agreement)
+        # The same holds for a dictated phone number, a spelled name or a bare
+        # "না" while a booking is collecting slots: all legitimately short or
+        # tokenised, so only decoder disagreement is meaningful then.
+        in_booking_flow = session.booking is not None and (
+            session.booking.stage in ("confirming", "awaiting_charge_confirm")
+            or not session.booking.is_stale())
+        problem = transcript_problem(
+            text, lang, analysis["audio"].duration_s if analysis else None, asr_result.decoder_agreement,
+            slot_answer=in_booking_flow)
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
             await _reask_or_handoff(

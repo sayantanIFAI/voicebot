@@ -795,17 +795,21 @@ def lookup_booking(phone: str | None = Query(None), confirmation_id: str | None 
 class SeniorModeRequest(BaseModel):
     phone: str
     senior: bool = True
+    # The number the call actually came from, when the bridge knows it.
+    # Defaults to `phone` (as lookup_booking does) until real CallerID exists.
+    caller_phone: str | None = None
 
 
 @app.post("/api/v1/patients/senior")
 def set_patient_senior(req: SeniorModeRequest, db: Session = Depends(get_db)):
     """KCD-084: persist the delivery mode against the patient. Boolean only."""
-    return {"updated": bs.set_patient_senior(db, req.phone, req.senior)}
+    return {"updated": bs.set_patient_senior(db, req.phone, req.senior, req.caller_phone)}
 
 
 @app.get("/api/v1/patients/senior")
-def get_patient_senior(phone: str = Query(...), db: Session = Depends(get_db)):
-    return {"senior": bs.get_patient_senior(db, phone)}
+def get_patient_senior(phone: str = Query(...), caller_phone: str | None = Query(None),
+                       db: Session = Depends(get_db)):
+    return {"senior": bs.get_patient_senior(db, phone, caller_phone)}
 
 
 @app.get("/api/v1/bookings/conflict")

@@ -149,8 +149,31 @@ def test_an_explicit_request_decides_immediately_and_reports_the_change():
     assert ev.note_explicit("self_described") is False
 
 
+_SINGLE_TRAITS = (dict(syll_hz=2.3), dict(tremor_hz=6.0, tremor_st=0.5),
+                  dict(breath=0.10, jitter_st=0.30))
+
+
 def test_the_decision_threshold_is_above_every_single_trait_score():
-    assert SENIOR_SCORE > 0.30
+    # Measured, not restated: vary ONE trait at a time on an otherwise young
+    # voice, and the decision threshold must clear the highest score any of
+    # them earns -- a single trait alone must never make a caller "senior".
+    base = dict(syll_hz=4.8, jitter_st=0.05, breath=0.02)
+    scores = [estimate(speech(seed=sd, f0=f0, **{**base, **kw}), SR).score
+              for kw in _SINGLE_TRAITS for sd in (0, 1, 3) for f0 in (130, 190, 230)]
+    assert SENIOR_SCORE > max(scores), max(scores)
+
+
+def test_a_third_party_description_is_not_a_self_description():
+    assert explicit_senior_cue("my father is a senior citizen", "en") is None
+    assert explicit_senior_cue("my mother is hard of hearing", "en") is None
+    assert explicit_senior_cue("मेरे पिता वरिष्ठ नागरिक हैं", "hi") is None
+    assert explicit_senior_cue("I am a senior citizen", "en") == "self_described"
+    assert explicit_senior_cue("मुझे कम सुनाई देता है", "hi") == "self_described"
+
+
+def test_a_non_numeric_stated_age_is_ignored_not_a_crash():
+    assert stated_age_is_senior("seventy") is False
+    assert stated_age_is_senior("72") is True
 
 
 # ------------------------------------------------------ explicit cues

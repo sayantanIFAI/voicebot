@@ -176,7 +176,10 @@ def limit_questions(text: str, max_questions: int) -> str:
     surplus question is -- so no fact is lost."""
     if max_questions <= 0 or count_questions(text) <= max_questions:
         return text
-    parts = re.split(r"(?<=[?؟])\s*", text)
+    # Sentence-level split, so a statement is never carried away with the
+    # surplus question that follows it. Whitespace is required after the
+    # terminator, so "2.5" or "KCD-1.2" is not cut.
+    parts = re.split(r"(?<=[।.!?؟])\s+", text)
     kept, asked = [], 0
     for part in parts:
         if not part.strip():

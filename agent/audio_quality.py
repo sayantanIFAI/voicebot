@@ -215,11 +215,11 @@ def assess(samples: np.ndarray, sr: int = 16000) -> AudioAssessment:
     two_pitch_hits = 0
     if active.any():
         act = frames[active]
-        lags, harm = _pitch_lag(_autocorr(act), sr)
+        acf = _autocorr(act)
+        lags, harm = _pitch_lag(acf, sr)
         voiced = harm >= VOICED_HARMONICITY
         voiced_ratio = float(np.mean(voiced))
         if voiced.any():
-            acf = _autocorr(act)
             hits = sum(_second_pitch(act[i], _refine_lag(acf[i], int(lags[i])), sr)
                        for i in np.where(voiced)[0])
             two_pitch, two_pitch_hits = hits / float(voiced.sum()), hits
@@ -335,13 +335,24 @@ _SCRIPT = {
 
 
 def transcript_problem(text: str, lang: str, audio_duration_s: float | None = None,
-                       decoder_agreement: float | None = None) -> str | None:
+                       decoder_agreement: float | None = None, slot_answer: bool = False) -> str | None:
     """Why this transcript looks jumbled, or None if it looks like speech.
 
     Order matters: the cheap, unambiguous signals first. A problem here
     does NOT mean the caller did anything wrong -- it means the turn is not
-    safe to act on, so the right response is to ask again, kindly."""
+    safe to act on, so the right response is to ask again, kindly.
+
+    `slot_answer` is True while a booking is collecting a slot or awaiting a
+    confirmation. There a digit-by-digit phone number ("9 8 7 6 ..."), a name
+    spelled letter by letter, a repeated digit run ("5 5 5 5") and a bare "না"
+    over a long, slow clip are all LEGITIMATE, and the token-shape checks
+    would call each of them jumbled. Only the decoder-disagreement signal --
+    which does not depend on token shape -- still applies."""
     tokens = _RE_TOKEN.findall((text or "").strip())
+    if slot_answer:
+        if tokens and decoder_agreement is not None and 0.0 < decoder_agreement < 0.25:
+            return "decoders_disagree"
+        return "empty" if not tokens else None
     if not tokens:
         return "empty"
     if audio_duration_s and audio_duration_s >= 2.5 and len(tokens) == 1 and len(tokens[0]) <= 3:

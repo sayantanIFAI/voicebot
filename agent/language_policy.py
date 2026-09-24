@@ -26,6 +26,9 @@ SCRIPT_FOR_LANGUAGE = {"bn": "bengali", "hi": "devanagari", "en": "latin"}
 # A reply in language L may carry this fraction of words written ONLY in
 # another script -- a borrowed English word spoken through the pronunciation
 # path, a Latin unit. Above it the reply is in the wrong language.
+# REASONED, not measured: chosen so one borrowed word in a short sentence
+# ("Your report is ready" style, 1 of 3 words) is tolerated and two of three is
+# not. Not calibrated against real replies.
 _FOREIGN_TOLERANCE = 0.34
 
 
@@ -44,7 +47,10 @@ def resolve_reply_language(identified: str | None, explicit_request: str | None 
 
 def script_counts(text: str) -> dict[str, int]:
     text = unicodedata.normalize("NFC", text or "")
-    return {"bengali": len(_BENGALI.findall(text)), "devanagari": len(_DEVANAGARI.findall(text)),
+    # LETTERS only: the Bengali and Devanagari blocks also hold their own
+    # digits, and a numeral carries no language.
+    return {"bengali": sum(1 for c in _BENGALI.findall(text) if c.isalpha()),
+            "devanagari": sum(1 for c in _DEVANAGARI.findall(text) if c.isalpha()),
             "latin": len(_LATIN.findall(text))}
 
 
@@ -88,8 +94,18 @@ def choose_spoken_form(caller_term: str | None, known_forms: list[str], default:
     language is the part this codebase cannot do."""
     if caller_term:
         heard = unicodedata.normalize("NFC", caller_term).strip().lower()
-        for form in known_forms:
-            f = unicodedata.normalize("NFC", form).strip().lower()
-            if f and (f == heard or f in heard or heard in f):
+        norm = [(form, unicodedata.normalize("NFC", form).strip().lower()) for form in known_forms]
+        norm = [(form, f) for form, f in norm if f]
+        # An exact match wins outright; otherwise the LONGEST form the
+        # caller's words contain, so "সিটি স্ক্যান" is not answered with the
+        # shorter "স্ক্যান" and the caller's qualifier is not lost.
+        for form, f in norm:
+            if f == heard:
+                return form
+        contained = [(form, f) for form, f in norm if f in heard]
+        if contained:
+            return max(contained, key=lambda ff: len(ff[1]))[0]
+        for form, f in norm:
+            if heard in f:
                 return form
     return default

@@ -219,15 +219,24 @@ def find_or_create_patient(db: Session, name: str, phone: str, age: int | None =
     return p
 
 
-def set_patient_senior(db: Session, phone: str, senior: bool) -> int:
+def set_patient_senior(db: Session, phone: str, senior: bool, caller_phone: str | None = None) -> int:
     """KCD-084: remember (or clear) that callers using this phone number are
     served in senior mode. Applies to every Patient row with that phone --
     the number is what a returning caller can be recognised by. Returns how
     many rows changed. A declined number is never a key (it would flag
-    every stranger who withheld one)."""
+    every stranger who withheld one).
+
+    Each row is changed only if `caller_phone` (defaulting to `phone`, as in
+    lookup_bookings) is authorised for that patient by authorize_disclosure:
+    self, or a verified proxy. Until real CallerID reaches this API the
+    default means the number the caller SAID, so this is exactly as strong
+    as the booking lookups -- it closes the door for a bridge that supplies a
+    real caller_phone, and it is stated here so it is not mistaken for more."""
     if not phone or phone == NOT_PROVIDED_PHONE:
         return 0
-    rows = db.query(Patient).filter(Patient.phone == phone).all()
+    asking_as = caller_phone or phone
+    rows = [p for p in db.query(Patient).filter(Patient.phone == phone).all()
+            if authorize_disclosure(db, p, asking_as)]
     changed = 0
     for p in rows:
         if bool(p.senior_mode) != bool(senior):
@@ -238,10 +247,12 @@ def set_patient_senior(db: Session, phone: str, senior: bool) -> int:
     return changed
 
 
-def get_patient_senior(db: Session, phone: str) -> bool:
+def get_patient_senior(db: Session, phone: str, caller_phone: str | None = None) -> bool:
     if not phone or phone == NOT_PROVIDED_PHONE:
         return False
-    return db.query(Patient).filter(Patient.phone == phone, Patient.senior_mode.is_(True)).first() is not None
+    asking_as = caller_phone or phone
+    return any(authorize_disclosure(db, p, asking_as)
+               for p in db.query(Patient).filter(Patient.phone == phone, Patient.senior_mode.is_(True)).all())
 
 
 def record_proxy(db: Session, patient: Patient, caller_phone: str,
@@ -386,7 +397,11 @@ def cancellation_charge(db: Session, appt: Appointment) -> tuple[int, Cancellati
     charge" rather than raising, so a missing policy row fails open on
     price (never silently overcharges) but is loud in the return shape
     for whoever calls this to notice."""
-    policy = active_cancellation_policy(db, datetime.date.fromisoformat(appt.date))
+    # The rule in force when the caller CANCELS (today), not on the day of the
+    # appointment: a rule change scheduled for a date before the appointment
+    # must not be applied to a cancellation made before it takes effect, and
+    # cancellation_policy_version must record the rule that actually applied.
+    policy = active_cancellation_policy(db)
     if not policy:
         return 0, None
     doctor = db.get(Doctor, appt.doctor_id)

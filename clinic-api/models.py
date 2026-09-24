@@ -17,7 +17,9 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    false,
     text,
+    true,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -226,7 +228,9 @@ class Patient(Base):
     # (slower, one question at a time, echo each value), set when the caller
     # asked for it or an older-caller cue was recognised. Never an age
     # inference, a score or any audio: see agent/senior_voice.py.
-    senior_mode = Column(Boolean, nullable=False, default=False)
+    # server_default so a database built by create_all() matches one migrated by
+    # booking_migrate (ALTER ... DEFAULT FALSE) for an INSERT that omits the column.
+    senior_mode = Column(Boolean, nullable=False, default=False, server_default=false())
 
 
 class PatientProxy(Base):
@@ -423,7 +427,7 @@ class CancellationPolicy(Base):
     # clinic-set percentage in practice, and keeps DB values human-
     # readable for whoever edits this table directly.
     charge_percent = Column(Integer, nullable=False)
-    refund_eligible = Column(Boolean, nullable=False, default=True)
+    refund_eligible = Column(Boolean, nullable=False, default=True, server_default=true())
 
 
 class WalkInPolicy(Base):

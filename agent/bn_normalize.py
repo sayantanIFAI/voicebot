@@ -196,18 +196,16 @@ def verbalize(text: str) -> str:
     # KCD-157: grouped, with a beat between groups, so it can be written down.
     text = _RE_CONF_ID.sub(lambda m: speak_grouped(id_groups(m.group(1)), spell_out), text)
     text = _RE_PHONE.sub(lambda m: speak_grouped(phone_groups(m.group(1)), digits_one_by_one), text)
+    # KCD-159: the explicit pronunciation path (agent/pronunciation.py): a
+    # curated spoken form, an unlisted acronym spelled out, and anything else
+    # left Latin for unspeakable_spans() to report and block (KCD-455), never
+    # guessed at. BEFORE the bare-integer sweep, or "HbA1c" has its "1" turned
+    # into a word first and the lexicon entry can no longer match it.
+    text = pronunciation.apply(text, "bn", _LETTER_BN)
     text = _RE_DECIMAL.sub(
         lambda m: f"{number_to_bn_words(int(m.group(1)))} দশমিক {digits_one_by_one(m.group(2))}", text,
     )
     text = _RE_INT.sub(_sub_int, text)
-
-    # Whole-word, case-insensitive: only rewrites a Latin word we have a
-    # spoken Bengali form for. Anything else Latin is left alone and
-    # reported by `unspeakable_spans()` rather than silently mangled.
-    # KCD-159: the explicit pronunciation path (agent/pronunciation.py): a curated
-    # spoken form, an unlisted acronym spelled out, and anything else left Latin
-    # for unspeakable_spans() to report and block (KCD-455), never guessed at.
-    text = pronunciation.apply(text, "bn", _LETTER_BN)
 
     return re.sub(r"\s{2,}", " ", text).strip()
 

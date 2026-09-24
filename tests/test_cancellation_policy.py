@@ -16,16 +16,24 @@ import tempfile
 
 import pytest
 
+# One pinned clock for every test here: a Monday, so the results do not depend
+# on the host's date or timezone. booking_service._now is patched to it, and
+# every date below is derived from it.
+PINNED_NOW = datetime.datetime(2030, 1, 7, 10, 0)
+PINNED_TODAY = PINNED_NOW.date()
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLINIC_API_DIR = os.path.join(REPO_ROOT, "clinic-api")
 
 
 @pytest.fixture()
-def clinic_modules():
+def clinic_modules(monkeypatch):
     fd, db_path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    os.environ["CLINIC_DB_PATH"] = db_path
-    os.environ.pop("DATABASE_URL", None)
+    # monkeypatch restores both variables afterwards, so a later test that
+    # imports db does not inherit this fixture's deleted temporary database.
+    monkeypatch.setenv("CLINIC_DB_PATH", db_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
     for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
@@ -41,6 +49,8 @@ def clinic_modules():
     import db as db_mod
     import models as m
 
+    monkeypatch.setattr(bs, "_now", lambda: PINNED_NOW)
+
     yield bs, db_mod, m
 
     try:
@@ -50,7 +60,7 @@ def clinic_modules():
 
 
 def _next_weekday(target_weekday: int) -> str:
-    d = datetime.date.today() + datetime.timedelta(days=1)
+    d = PINNED_TODAY + datetime.timedelta(days=1)
     while d.weekday() != target_weekday:
         d += datetime.timedelta(days=1)
     return d.isoformat()
@@ -107,7 +117,7 @@ def test_cancellation_records_which_policy_version_applied(clinic_modules):
     db = db_mod.SessionLocal()
     try:
         doc = _doctor(db, m)
-        far = datetime.date.today() + datetime.timedelta(days=10)
+        far = PINNED_TODAY + datetime.timedelta(days=10)
         while far.weekday() != (doc.schedule[0].weekday if doc.schedule else 0):
             far += datetime.timedelta(days=1)
         date = far.isoformat()
@@ -131,7 +141,7 @@ def test_a_future_dated_policy_version_does_not_apply_before_its_effective_date(
     bs, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
     try:
-        future_effective = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
+        future_effective = (PINNED_TODAY + datetime.timedelta(days=30)).isoformat()
         db.add(m.CancellationPolicy(
             version=2, effective_from=future_effective,
             free_window_hours=72, charge_percent=25, refund_eligible=True,
@@ -154,19 +164,21 @@ def test_a_non_refund_eligible_policy_charges_the_full_consultation_fee(clinic_m
     bs, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
     try:
-        # Replace version 1 with a non-refundable policy. The appointment
-        # below is 10 days out -- far beyond any free window -- so a
-        # non-zero charge proves refund_eligible=False overrides the
-        # window rather than merely applying inside it.
-        db.query(m.CancellationPolicy).delete()
+        # Version 1 stays; version 3 is added with the SAME effective date, so
+        # picking version 3 exercises the version tie-break rather than being
+        # the only possible answer. The appointment below is 10 days out --
+        # far beyond any free window -- so a non-zero charge proves
+        # refund_eligible=False overrides the window rather than merely
+        # applying inside it.
+        v1 = db.query(m.CancellationPolicy).filter_by(version=1).one()
         db.add(m.CancellationPolicy(
-            version=3, effective_from="2020-01-01",
+            version=3, effective_from=v1.effective_from,
             free_window_hours=24, charge_percent=50, refund_eligible=False,
         ))
         db.commit()
 
         doc = _doctor(db, m)
-        far = datetime.date.today() + datetime.timedelta(days=10)
+        far = PINNED_TODAY + datetime.timedelta(days=10)
         while far.weekday() != (doc.schedule[0].weekday if doc.schedule else 0):
             far += datetime.timedelta(days=1)
         date = far.isoformat()
@@ -179,5 +191,37 @@ def test_a_non_refund_eligible_policy_charges_the_full_consultation_fee(clinic_m
         doctor = db.get(m.Doctor, doc.id)
         assert policy.version == 3
         assert charge == (doctor.consultation_fee_inr or 0)
+    finally:
+        db.close()
+
+
+def test_the_policy_in_force_at_cancellation_applies_not_one_effective_by_the_appointment_day(clinic_modules):
+    # A stricter version 2 takes effect in 5 days; the appointment is in 10.
+    # Cancelling TODAY is governed by version 1, and version 1 is what gets
+    # recorded on the row -- not the rule that will be in force on the day of
+    # the appointment.
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        db.add(m.CancellationPolicy(
+            version=2, effective_from=(PINNED_TODAY + datetime.timedelta(days=5)).isoformat(),
+            free_window_hours=200, charge_percent=100, refund_eligible=False,
+        ))
+        db.commit()
+
+        doc = _doctor(db, m)
+        far = PINNED_TODAY + datetime.timedelta(days=10)
+        while far.weekday() != (doc.schedule[0].weekday if doc.schedule else 0):
+            far += datetime.timedelta(days=1)
+        date = far.isoformat()
+        assert date > (PINNED_TODAY + datetime.timedelta(days=5)).isoformat()
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "X", "111", "111")
+
+        result = bs.cancel_appointment(db, booked["confirmation_id"])
+        assert result["success"] is True and result["charge_inr"] == 0     # version 1's free window
+        appt = db.query(m.Appointment).filter_by(confirmation_id=booked["confirmation_id"]).one()
+        assert appt.cancellation_policy_version == 1
     finally:
         db.close()

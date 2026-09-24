@@ -280,11 +280,16 @@ SENIOR_AGE = 60
 
 _CUES = {
     "en": [r"\bspeak (more )?slowly\b", r"\bslowly please\b", r"\bplease (go|speak) slow",
-           r"\bi(?:'m| am) (?:an? )?(?:old|elderly|senior)", r"\bsenior citizen\b",
-           r"\bmy hearing is (?:not|bad|weak)", r"\bhard of hearing\b"],
-    "hi": [r"धीरे (?:से )?बोल", r"धीमे बोल", r"मैं (?:बूढ़ा|बूढ़ी|बुज़ुर्ग|बुजुर्ग)", r"वरिष्ठ नागरिक", r"कम सुनाई"],
+           r"\bi(?:'m| am) (?:an? )?(?:old|elderly|senior)",
+           r"\bmy hearing is (?:not|bad|weak)", r"\bi(?:'m| am) hard of hearing\b"],
+    "hi": [r"धीरे (?:से )?बोल", r"धीमे बोल", r"मैं (?:बूढ़ा|बूढ़ी|बुज़ुर्ग|बुजुर्ग|वरिष्ठ नागरिक)",
+           r"मुझे कम सुनाई", r"मैं कम सुन(?:ता|ती)"],
     "bn": [r"ধীরে (?:ধীরে )?বল", r"আস্তে (?:আস্তে )?বল", r"আমি (?:বৃদ্ধ|বুড়ো|বুড়ি|বয়স্ক)",
-           r"প্রবীণ নাগরিক", r"কম শুনতে"],
+           r"আমি প্রবীণ নাগরিক", r"আমি কম শুনি", r"আমার কম শুনতে"],
+    # Every cue that describes the SPEAKER is first-person on purpose: "my
+    # father is a senior citizen" is a caller booking for someone else, and
+    # slowing that caller down would be the wrong adaptation (the same rule
+    # stated_age_is_senior applies to a stated age).
 }
 _REQUEST_MARKERS = ("slow", "धीरे", "धीमे", "ধীরে", "আস্তে")
 
@@ -319,6 +324,9 @@ def stated_age_is_senior(age: int | None, relationship: str | None = None) -> bo
     IS the patient (relationship self/None): a daughter booking for her
     father is not herself an older caller, and slowing her down would be
     the wrong adaptation."""
-    if age is None or age < SENIOR_AGE:
-        return False
+    try:
+        if age is None or isinstance(age, bool) or int(age) < SENIOR_AGE:
+            return False
+    except (TypeError, ValueError):
+        return False            # a non-numeric "age" is no evidence of anything
     return relationship in (None, "", "self")

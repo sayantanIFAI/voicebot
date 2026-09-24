@@ -263,7 +263,7 @@ built AFTER it. Same rule as before: proven by local unit tests, not on a pod.
 - **KCD-150** External-gated (native-reviewer sign-off); KCD-159's 200-term sign-off also pending. ~70 lexicon entries exist, all unreviewed.
 
 ### Things a reviewer must know
-- Every audio threshold (`audio_quality.py`, `senior_voice.py`) is REASONED and validated on SYNTHETIC signals only. The cross-talk threshold is *measured* on synthetic data (single voices <= 0.012, mixes >= 0.13); real handset audio will be messier. Recalibrate on real calls before trusting.
+- Every audio threshold (`audio_quality.py`, `senior_voice.py`) is REASONED and validated on SYNTHETIC signals only. The cross-talk THRESHOLD (0.05) is REASONED: it was placed inside the gap between two scores measured on SYNTHETIC signals only (single voices <= 0.012, two-talker mixes >= 0.13). The scores are synthetic-measured; the threshold is not calibrated on real audio, and real handset audio has not been validated. Recalibrate on real calls before trusting.
 - `senior_voice.py` is a heuristic prior, not an age classifier. It needs evidence over >= 2 clips, or an explicit request/stated age.
 - One existing test assertion was changed on purpose: `tests/test_speech_norm.py` pinned the *ungrouped* phone reading, which KCD-157 deliberately changes.
 - `/api/v1/patients/senior` is unauthenticated like every other clinic-api endpoint (Epic E14 gap); it exposes only a delivery-mode boolean per phone number.

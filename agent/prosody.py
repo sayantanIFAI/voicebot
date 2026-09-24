@@ -42,8 +42,11 @@ class ProsodyParams:
     pause_sentence_s: float = 0.28
     pause_clause_s: float = 0.14
     pause_none_s: float = 0.06
-    trim_threshold: float = 0.012     # below this is padding, not speech
-    target_peak: float = 0.89         # ~-1 dBFS: loud without clipping on phone speakers
+    # REASONED, not measured: both were chosen from how synthetic and studio
+    # speech behaves, not from handset playback. Treat as starting points until
+    # measured on real phone speakers.
+    trim_threshold: float = 0.012     # amplitude below which a sample is treated as padding
+    target_peak: float = 0.89         # ~-1 dBFS peak target
     max_chunk_chars: int = 90         # a long single clause still gets a breath
     lead_in_s: float = 0.04           # stops the first phoneme clipping on stream start
 
@@ -96,15 +99,37 @@ def _is_sentence_boundary(text: str, i: int) -> bool:
     return text[j + 1:i].lower() not in _ABBREVIATIONS
 
 
-def _split_sentences(text: str) -> list[str]:
+def _split_sentences_marked(text: str) -> list[tuple[str, bool]]:
+    """[(sentence, ended_at_a_newline)]. A newline is a sentence boundary but
+    is stripped from the chunk, so without the flag the chunk would look
+    unterminated and earn no pause at all."""
     sentences, start = [], 0
     for i in range(len(text)):
         if _is_sentence_boundary(text, i):
-            sentences.append(text[start:i + 1])
+            sentences.append((text[start:i + 1], text[i] == chr(10)))
             start = i + 1
     if start < len(text):
-        sentences.append(text[start:])
-    return [s.strip() for s in sentences if s.strip()]
+        sentences.append((text[start:], False))
+    return [(s.strip(), nl_end) for s, nl_end in sentences if s.strip()]
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [s for s, _ in _split_sentences_marked(text)]
+
+
+def _wrap_words(clause: str, limit: int) -> list[str]:
+    """Split `clause` at word boundaries into pieces of at most `limit`
+    characters (a single word longer than the limit is kept whole)."""
+    pieces, cur = [], ""
+    for word in clause.split():
+        if cur and len(cur) + 1 + len(word) > limit:
+            pieces.append(cur)
+            cur = word
+        else:
+            cur = f"{cur} {word}" if cur else word
+    if cur:
+        pieces.append(cur)
+    return pieces
 
 
 def _split_clauses(sentence: str) -> list[str]:
@@ -136,12 +161,29 @@ def split_for_prosody(text: str, max_chunk_chars: int = ProsodyParams.max_chunk_
     any sentence longer than `max_chunk_chars`, so a listener gets a
     breath where a person would take one."""
     out: list[tuple[str, str]] = []
-    for sentence in _split_sentences(text):
+    for sentence, at_newline in _split_sentences_marked(text):
+        def kind(chunk: str, last_of_sentence: bool) -> str:
+            k = pause_kind_for(chunk)
+            return "sentence" if (at_newline and last_of_sentence and k == "none") else k
+
         if len(sentence) <= max_chunk_chars:
-            out.append((sentence, pause_kind_for(sentence)))
+            out.append((sentence, kind(sentence, True)))
             continue
-        for clause in _split_clauses(sentence):
-            out.append((clause, pause_kind_for(clause)))
+        clauses = _split_clauses(sentence)
+        for ci, clause in enumerate(clauses):
+            last_clause = ci == len(clauses) - 1
+            if len(clause) <= max_chunk_chars:
+                out.append((clause, kind(clause, last_clause)))
+                continue
+            # A long clause with no comma still has to breathe: cut it at word
+            # boundaries; intermediate pieces get the shortest pause, the
+            # final piece keeps the clause's own.
+            pieces = _wrap_words(clause, max_chunk_chars)
+            for pi, piece in enumerate(pieces):
+                if pi < len(pieces) - 1:
+                    out.append((piece, "none"))
+                else:
+                    out.append((piece, kind(piece, last_clause)))
     if not out and text.strip():
         out = [(text.strip(), pause_kind_for(text))]
     return out

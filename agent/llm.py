@@ -193,6 +193,24 @@ def _normalize_list_slot(slots: dict, key: str) -> None:
     slots[key] = None
 
 
+def _normalize_age(value) -> int | None:
+    """The schema says "number or null", and a model may return "72" or
+    "seventy" or 7.2e1. Only a whole number in a human range survives; anything
+    else is None -- a wrong-typed age must not reach code that compares it."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, str):
+        try:
+            value = int(value.strip())
+        except ValueError:
+            return None
+    if isinstance(value, int) and 0 < value < 130:
+        return value
+    return None
+
+
 def _validate(data: dict) -> tuple[bool, list[str]]:
     errors = []
     if data.get("intent") not in VALID_INTENTS:
@@ -223,6 +241,7 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
     if isinstance(slots, dict):
         _normalize_list_slot(slots, "test_names")
         _normalize_list_slot(slots, "spelled_letters")
+        slots["patient_age"] = _normalize_age(slots.get("patient_age"))
 
     # KCD-395: a second question in the same turn. Optional and defended
     # the same way as direct_reply_bn/faq_topic above -- an older cached
