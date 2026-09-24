@@ -23,6 +23,7 @@ from __future__ import annotations
 import datetime
 import uuid
 
+from disclosure import with_notice as _with_disclosure_notice
 from models import (
     Appointment,
     CancellationPolicy,
@@ -628,6 +629,8 @@ def queue_sms(db: Session, to_phone: str, template_key: str, message: str,
     addressable. Skipped, with a distinct, honest outcome."""
     if to_phone == NOT_PROVIDED_PHONE:
         return {"queued": False, "reason": "no_phone_on_file"}
+    # KCD-353: a text channel states it is automated, every time (idempotent).
+    message = _with_disclosure_notice(message)
     row = SmsOutbox(to_phone=to_phone, template_key=template_key, message=message,
                      status="queued", related_confirmation_id=related_confirmation_id, created_at=_now())
     db.add(row)

@@ -16,6 +16,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     false,
     text,
@@ -540,3 +541,90 @@ class CallbackRequest(Base):
     reason = Column(String, nullable=False, default="")
     status = Column(String, nullable=False, default="scheduled")   # scheduled | fulfilled | cancelled
     created_at = Column(DateTime, nullable=False)
+
+
+# =============================================================================
+# Epic E33: Patient Context and History
+# =============================================================================
+# The voicebot must not become a competing source of truth for a patient's health
+# record. What lives here is what THIS SERVICE itself created (its own calls, its own
+# bookings, the patient's stated preferences) plus mirrors that a hospital connector
+# (KCD-131) will keep filled; nothing here is a clinical fact the agent authored, and
+# nothing here holds a result value.
+
+class CallRecord(Base):
+    """KCD-501: one row per call, written as the call goes (each completed action is
+    recorded when it completes, so a call that drops still shows what was done) and
+    closed at hang-up. Keyed by `call_id`; every write is an idempotent merge, so a
+    retried request cannot double a record or a booking summary."""
+    __tablename__ = "call_records"
+    id = Column(Integer, primary_key=True)
+    call_id = Column(String, nullable=False, unique=True, index=True)
+    channel = Column(String, nullable=False, default="voice")          # voice | sms | whatsapp
+    caller_phone = Column(String, nullable=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+    started_at = Column(DateTime, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    languages = Column(String, nullable=False, default="")             # comma-separated, first use first
+    intents_json = Column(Text, nullable=False, default="[]")
+    actions_json = Column(Text, nullable=False, default="[]")          # what was DONE (booked, cancelled, ...)
+    confirmed_json = Column(Text, nullable=False, default="{}")        # values the caller confirmed (redacted)
+    history_statements_json = Column(Text, nullable=False, default="[]")   # KCD-500: ids of history statements rendered
+    escalation_reason = Column(String, nullable=True)
+    outcome = Column(String, nullable=False, default="in_progress")    # in_progress | completed | handed_off | abandoned | failed
+    disclosure_version = Column(String, nullable=False, default="")
+    last_seq = Column(Integer, nullable=False, default=0)              # events applied so far (idempotency)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class HistoryAudit(Base):
+    """KCD-495: every read of a patient's history, attributed to the call that made it
+    -- and every REFUSED read, because an attempt is as auditable as a success."""
+    __tablename__ = "history_audit"
+    id = Column(Integer, primary_key=True)
+    call_id = Column(String, nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+    kind = Column(String, nullable=False)                              # timeline_read | timeline_denied | ...
+    fields_json = Column(Text, nullable=False, default="[]")
+    at = Column(DateTime, nullable=False)
+
+
+class PatientPreference(Base):
+    """KCD-499: stored against the PATIENT, not the handset. Offered for confirmation,
+    never applied silently; a stored language bias never overrides what the caller
+    actually says (agent/patient_context.effective_language)."""
+    __tablename__ = "patient_preferences"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, unique=True)
+    branch = Column(String, nullable=True)
+    collection_address = Column(String, nullable=True)
+    delivery_channel = Column(String, nullable=True)                   # sms | whatsapp | voice
+    accessibility_mode = Column(String, nullable=True)                 # slower | shorter | none
+    language_bias = Column(String, nullable=True)                      # bn | hi | en
+    updated_at = Column(DateTime, nullable=False)
+
+
+class TestPerformance(Base):
+    """KCD-498: THAT a test was performed and when -- never what it showed. In
+    production a hospital connector (KCD-131) keeps this filled from the LIS; the
+    table deliberately has no column for a result, a value or an interpretation."""
+    __tablename__ = "test_performances"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=False)
+    performed_on = Column(String, nullable=False)                      # ISO date
+    source = Column(String, nullable=False, default="local")
+    created_at = Column(DateTime, nullable=False)
+
+
+class RetestInterval(Base):
+    """KCD-498: a CLINICIAN-APPROVED interval after which a test is due again. There
+    is no default and no guess: a test with no row here has no "due" statement at
+    all, because inventing a retest interval is giving medical advice."""
+    __tablename__ = "retest_intervals"
+    id = Column(Integer, primary_key=True)
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=False, unique=True)
+    interval_days = Column(Integer, nullable=False)
+    approved_by = Column(String, nullable=False)
+    approved_at = Column(String, nullable=False)                       # ISO date
+

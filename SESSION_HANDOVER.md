@@ -268,3 +268,43 @@ built AFTER it. Same rule as before: proven by local unit tests, not on a pod.
 - One existing test assertion was changed on purpose: `tests/test_speech_norm.py` pinned the *ungrouped* phone reading, which KCD-157 deliberately changes.
 - `/api/v1/patients/senior` is unauthenticated like every other clinic-api endpoint (Epic E14 gap); it exposes only a delivery-mode boolean per phone number.
 - `main.py` changes are compiled + PCM-regenerated + checked for undefined names; they are not exercised end-to-end.
+
+
+---
+
+## Update: audio, persona, identity and patient-history stories
+
+Built after `1ae1db4`. Same rule as above: proven by off-pod unit tests (1122 pass), not on a
+pod. **Every threshold below is REASONED or measured on SYNTHETIC audio; none is calibrated on
+real telephone speech.** Each module's docstring says which.
+
+### Done, tested, wired into `main.py` (and regenerated `main_pcm.py`)
+| Stories | What | Where |
+|---|---|---|
+| KCD-046/048/050 | Pure-Python turn-end logic (guards, semantic endpointing, audio-driven wake-ups instead of 0.5 s polling); half-duplex `PlaybackGate` | `agent/endpointing.py`, `playback_gate.py`, `vad_stream.py` |
+| KCD-051/052 | Echo cancellation (partitioned adaptive filter, GCC-PHAT delay, double-talk protection, residual suppression) and barge-in detection; client sends `aec` config | `agent/echo_cancel.py`, `barge_in.py`, `full_duplex.py`, `static/pcm/` |
+| KCD-047 | Endpoint calibration tool (needs >= 200 real annotated recordings; result stays REASONED until then) | `agent/endpoint_calibration.py`, `tools/calibrate_endpointing.py` |
+| KCD-053/054 | Cross-talk marking + near-end profile; speaker-change detection that revokes verification | `agent/near_end.py`, `speaker_change.py`, `identity.py`, `golden_buckets.py` |
+| KCD-055/057 | Noise suppression (guarded) and level normalisation. **OFF by default.** | `agent/conditioning.py`, `level.py`, `tools/conditioning_eval.py` |
+| KCD-353/511-514 | Persona-as-code, apology enforcement, templated acknowledgements, AI disclosure, deterministic human-request detection. Wording is DRAFT pending native/clinical/legal review | `agent/persona.py`, `apology.py`, `turn_ack.py`, `disclosure.py`, `human_request.py`, `docs/persona.md` |
+| KCD-493-501 (E33) | Read-model timeline with provenance, identify/resolve (exact first, sound-alike only as a flagged suggestion), history gated on verification, preferences, continuity, test history without results, call record, hallucination suite | `clinic-api/patient_context.py`, `agent/patient_context.py`, `history_*.py`, `call_record.py`, `tools/history_audit.py`, `tests/test_history_hallucination.py` |
+| KCD-019 | Capacity model. **States UNDETERMINED until the bake-off throughputs are supplied.** | `tools/capacity_model.py`, `docs/capacity-measurements.template.json` |
+
+### New environment flags (all default to the safe/old behaviour)
+`AEC_BARGE_IN` (off), `SEMANTIC_ENDPOINTING` (off), `CONDITION_INPUT` (off), `ACTIVE_POLL_INTERVAL_S`,
+`TURN_TAIL_GUARD_S` (0.3 s; PCM variant 0.1 s), `PRONUNCIATION_ALLOW_DRAFT` (off).
+
+### External dependencies -- why these stories are not "done"
+- **Real recordings:** KCD-047 (200 narrowband, labelled turn ends), KCD-053/054 (real rooms, real single-speaker calls), KCD-055/057 (pod ASR WER before/after), AEC (real handset ERLE via `tools/echo_eval.py --pairs`).
+- **Native / clinical / legal review:** KCD-511/512 (persona, register), KCD-353 (disclosure wording, `DISCLOSURE_VERSION = 1.0-draft`).
+- **Other systems:** KCD-203 verifier (KCD-495 speaks no history without it), KCD-131 hospital connector (KCD-493), real caller ID (KCD-494), branch data (KCD-497), clinician-approved retest intervals (KCD-498; without them "due" is never said), SIP/SBC transfer (KCD-353).
+- **Bake-off throughput:** KCD-019.
+
+### Findings a reviewer must know
+- **Capacity:** with the ADR's own workload and a REASONED 1.5x peak factor, the default `ADMISSION_MAX_CALLS=28` sends about 16% of calls to a person in an average hour and about 39% in the busiest (`python tools/capacity_model.py`).
+- The existing `lookup_booking` path still authorises by the phone number the caller states. The verification gate applies to the NEW history path only.
+- Two readback templates exceed the persona sentence cap (bn 17 words, hi 23); recorded as a ratchet (`KNOWN_LONG_SENTENCE_TEMPLATES = 2`), not reworded.
+- The older two-pitch cross-talk test flags one of 24 synthetic single-voice clips (0.16 s); the new pitch-alternation evidence does not fire on any. Bounded in `tests/test_near_end.py`.
+- Barge-in: a car horn over rumble can still cause a false event; a street-noise test bounds it at 9 per minute or fewer.
+- Not addressed (raised in an external review, agreed): a three-state ASR confidence (`decoder_agreement == 0.0` is still treated as trusted), an `emergency` caller state and pre-LLM emergency path, suggestion-only fuzzy doctor/test matching in the existing booking path, a lock around the TTS `length_scale`, real SIP transfer, authenticated PHI endpoints, a single global admission counter.
+- Test infrastructure: `tests/_pod_stubs.py` now puts the repo root first while it imports the orchestrator, because `main` also names `clinic-api/main.py`.

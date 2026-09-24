@@ -19,6 +19,7 @@ import uuid
 
 import booking_service as bs
 import enquiry_service as eq
+import patient_context as pc
 from db import SessionLocal, get_db
 from fastapi import Depends, FastAPI, Query
 from models import FAQ, Appointment, Department, Doctor, DoctorSchedule, LabTest
@@ -1049,3 +1050,111 @@ def department_hours_endpoint(department_name: str, lang: str = Query("bn"), db:
         return {"found": False, "query": department_name}
     hours = eq.department_hours(db, dept.id, lang)
     return hours or {"found": False}
+
+
+# =============================================================================
+# Epic E33: patient context and history (clinic-api/patient_context.py)
+# =============================================================================
+
+class CallEventRequest(BaseModel):
+    seq: int
+    kind: str
+    payload: dict = {}
+    caller_phone: str | None = None
+
+
+@app.post("/api/v1/calls/{call_id}/events")
+def call_event(call_id: str, req: CallEventRequest, db: Session = Depends(get_db)):
+    """KCD-501: idempotent by (call_id, seq)."""
+    return pc.record_call_event(db, call_id, req.seq, req.kind, req.payload, req.caller_phone)
+
+
+@app.get("/api/v1/calls/{call_id}")
+def call_record(call_id: str, db: Session = Depends(get_db)):
+    rec = pc.get_call_record(db, call_id)
+    return {"found": rec is not None, "record": rec}
+
+
+@app.get("/api/v1/patients/identify")
+def patient_identify(phone: str = Query(...), db: Session = Depends(get_db)):
+    """KCD-494: existence and count only -- never a name."""
+    return pc.identify(db, phone)
+
+
+class ResolveRequest(BaseModel):
+    phone: str
+    name: str
+    age: int | None = None
+
+
+@app.post("/api/v1/patients/resolve")
+def patient_resolve(req: ResolveRequest, db: Session = Depends(get_db)):
+    return pc.resolve_named(db, req.phone, req.name, req.age)
+
+
+@app.get("/api/v1/patients/{patient_ref}/timeline")
+def patient_timeline(patient_ref: int, caller_phone: str = Query(...), call_id: str = Query("unknown"),
+                     db: Session = Depends(get_db)):
+    """KCD-493/495: authorised, audited, and free of result values."""
+    return pc.timeline(db, patient_ref, caller_phone, call_id)
+
+
+@app.get("/api/v1/patients/{patient_ref}/preferences")
+def patient_preferences(patient_ref: int, caller_phone: str = Query(...), db: Session = Depends(get_db)):
+    return pc.get_preferences(db, patient_ref, caller_phone)
+
+
+class PreferencesRequest(BaseModel):
+    caller_phone: str
+    branch: str | None = None
+    collection_address: str | None = None
+    delivery_channel: str | None = None
+    accessibility_mode: str | None = None
+    language_bias: str | None = None
+
+
+@app.post("/api/v1/patients/{patient_ref}/preferences")
+def set_patient_preferences(patient_ref: int, req: PreferencesRequest, db: Session = Depends(get_db)):
+    fields = req.model_dump(exclude={"caller_phone"})
+    return pc.set_preferences(db, patient_ref, req.caller_phone, **fields)
+
+
+@app.get("/api/v1/patients/{patient_ref}/test-status")
+def patient_test_status(patient_ref: int, test_name: str = Query(...), caller_phone: str = Query(...),
+                        call_id: str = Query("unknown"), db: Session = Depends(get_db)):
+    """KCD-498: when a test was last performed and whether it is due -- authorised and audited
+    like the timeline, and carrying no result."""
+    patient = db.get(pc.Patient, patient_ref)
+    if patient is None or not bs.authorize_disclosure(db, patient, caller_phone):
+        pc._audit(db, call_id, patient_ref, "test_status_denied", [])
+        return {"success": False, "reason": "not_authorized"}
+    test = db.query(LabTest).filter(LabTest.name.ilike(test_name)).first()
+    if test is None:
+        return {"success": False, "reason": "unknown_test"}
+    pc._audit(db, call_id, patient_ref, "test_status_read", [test.name])
+    return {"success": True, "test_name": test.name, **pc.test_status(db, patient_ref, test.id)}
+
+
+@app.get("/api/v1/continuity")
+def continuity_endpoint(caller_phone: str = Query(...), call_id: str | None = Query(None), db: Session = Depends(get_db)):
+    """KCD-496: what was left unfinished and the last three interactions on this number. The
+    draft's details are for the agent to speak only after verification."""
+    return pc.continuity(db, caller_phone, call_id)
+
+
+class BookingSearchRequest(BaseModel):
+    caller_phone: str
+    phone: str | None = None
+    name: str | None = None
+    approx_date: str | None = None
+    date_window_days: int = 3
+    test_name: str | None = None
+    branch: str | None = None
+
+
+@app.post("/api/v1/bookings/search")
+def bookings_search(req: BookingSearchRequest, db: Session = Depends(get_db)):
+    """KCD-497: several matches are returned as several, never collapsed to the likeliest."""
+    return pc.search_bookings(db, req.caller_phone, phone=req.phone, name=req.name, approx_date=req.approx_date,
+                              date_window_days=req.date_window_days, test_name=req.test_name, branch=req.branch)
+

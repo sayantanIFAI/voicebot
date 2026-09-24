@@ -264,3 +264,59 @@ class ClinicToolsClient:
             return r.json()
         except httpx.HTTPError as e:
             raise ToolCallError(f"get_draft_booking({caller_phone!r}): {e}") from e
+
+    # ---- Epic E33: patient context and history (clinic-api/patient_context.py) ----
+    async def _get(self, path: str, params: dict, what: str) -> dict:
+        try:
+            r = await self._client.get(path, params={k: v for k, v in params.items() if v is not None})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"{what}: {e}") from e
+
+    async def _post(self, path: str, body: dict, what: str) -> dict:
+        try:
+            r = await self._client.post(path, json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as e:
+            raise ToolCallError(f"{what}: {e}") from e
+
+    async def identify_patient(self, phone: str) -> dict:
+        """KCD-494: {"status": new|single|ambiguous, "record_exists", "count"} -- never a name."""
+        return await self._get("/api/v1/patients/identify", {"phone": phone}, "identify_patient")
+
+    async def resolve_patient(self, phone: str, name: str, age: int | None = None) -> dict:
+        return await self._post("/api/v1/patients/resolve", {"phone": phone, "name": name, "age": age}, "resolve_patient")
+
+    async def patient_timeline(self, patient_ref: int, caller_phone: str, call_id: str) -> dict:
+        return await self._get(f"/api/v1/patients/{patient_ref}/timeline",
+                               {"caller_phone": caller_phone, "call_id": call_id}, "patient_timeline")
+
+    async def patient_test_status(self, patient_ref: int, test_name: str, caller_phone: str, call_id: str) -> dict:
+        return await self._get(f"/api/v1/patients/{patient_ref}/test-status",
+                               {"test_name": test_name, "caller_phone": caller_phone, "call_id": call_id},
+                               "patient_test_status")
+
+    async def get_preferences(self, patient_ref: int, caller_phone: str) -> dict:
+        return await self._get(f"/api/v1/patients/{patient_ref}/preferences", {"caller_phone": caller_phone},
+                               "get_preferences")
+
+    async def set_preferences(self, patient_ref: int, caller_phone: str, **fields) -> dict:
+        return await self._post(f"/api/v1/patients/{patient_ref}/preferences",
+                                {"caller_phone": caller_phone, **fields}, "set_preferences")
+
+    async def continuity(self, caller_phone: str, call_id: str | None = None) -> dict:
+        return await self._get("/api/v1/continuity", {"caller_phone": caller_phone, "call_id": call_id}, "continuity")
+
+    async def search_bookings(self, caller_phone: str, **criteria) -> dict:
+        """KCD-497: any combination of phone, name, approx_date, test_name, branch."""
+        return await self._post("/api/v1/bookings/search", {"caller_phone": caller_phone, **criteria}, "search_bookings")
+
+    async def write_call_event(self, call_id: str, seq: int, kind: str, payload: dict | None = None,
+                               caller_phone: str | None = None) -> dict:
+        """KCD-501: idempotent by (call_id, seq)."""
+        return await self._post(f"/api/v1/calls/{call_id}/events",
+                                {"seq": seq, "kind": kind, "payload": payload or {}, "caller_phone": caller_phone},
+                                "write_call_event")
+

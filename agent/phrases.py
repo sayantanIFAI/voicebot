@@ -99,6 +99,23 @@ PHRASES: dict[str, dict[str, str]] = {
 
 DEFAULT_LANGUAGE = "bn"
 
+# KCD-353: the greeting says, before anything else, that the caller is talking to
+# an automated assistant and that a person is available. Composed here from
+# agent/disclosure.py (versioned, pending clinical and legal review) so the
+# wording lives in one place and every greeting -- spoken, pre-synthesised and
+# cached -- carries it.
+from agent.disclosure import insert_into_greeting as _with_disclosure
+
+for _lang, _table in PHRASES.items():
+    _table["greeting"] = _with_disclosure(_table["greeting"], _lang)
+
+# KCD-054: said when the voice on the line changes after the caller was verified.
+# Deliberately says nothing about WHY (the agent cannot know who is speaking, only
+# that the voice differs) and does not accuse anyone.
+PHRASES["bn"]["reverify_notice"] = "নিরাপত্তার জন্য ব্যক্তিগত তথ্য বলার আগে আমাকে আবার পরিচয় যাচাই করতে হবে।"
+PHRASES["hi"]["reverify_notice"] = "सुरक्षा के लिए, निजी जानकारी बताने से पहले मुझे दोबारा पहचान की पुष्टि करनी होगी।"
+PHRASES["en"]["reverify_notice"] = "For your security, I need to verify who I am speaking with again before I share any personal details."
+
 # Spoken when a call is turned away before the caller has said a word, so
 # there is no language to choose: all three, shortest first is not worth the
 # complexity -- they are pre-synthesized and cached, so this costs no GPU

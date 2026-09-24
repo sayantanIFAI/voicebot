@@ -86,3 +86,12 @@ language_mismatches = OutcomeCounter()
 # senior_detections: how the senior mode was triggered (acoustic /
 # requested_slower / self_described / stated_age / remembered).
 senior_detections = OutcomeCounter()
+
+# Appendix F channel buckets seen on live turns (KCD-053/055/057): "turn:analysed" is the
+# denominator, "cross_talk" / "noisy" / "narrowband_8k" / "clean_16k" the numerators
+# (agent/golden_buckets.py). A rate is bucket / turns analysed; a turn can be in several.
+golden_buckets = OutcomeCounter()
+# KCD-514: how often a stacked apology had to be removed from an assembled reply. Should be
+# near zero -- templates are written to at most one apology; a rising count means a
+# reply-assembly path is composing two.
+apology_events = OutcomeCounter()
