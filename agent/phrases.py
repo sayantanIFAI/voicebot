@@ -114,6 +114,12 @@ for _lang, _table in PHRASES.items():
 # that the voice differs) and does not accuse anyone.
 PHRASES["bn"]["reverify_notice"] = "নিরাপত্তার জন্য ব্যক্তিগত তথ্য বলার আগে আমাকে আবার পরিচয় যাচাই করতে হবে।"
 PHRASES["hi"]["reverify_notice"] = "सुरक्षा के लिए, निजी जानकारी बताने से पहले मुझे दोबारा पहचान की पुष्टि करनी होगी।"
+# A possible emergency (agent/emergency.py). DRAFT: the wording, and the number it names, need
+# clinical sign-off before this is relied on. It states no condition and gives no advice beyond
+# where to call; a person joins the call straight after.
+PHRASES["bn"]["emergency_notice"] = "এটা জরুরি অবস্থা হতে পারে। এখনই ১১২ নম্বরে ফোন করুন, অথবা কাছের হাসপাতালে যান।"
+PHRASES["hi"]["emergency_notice"] = "यह आपात स्थिति हो सकती है। कृपया अभी 112 पर कॉल करें, या नज़दीकी अस्पताल जाएँ।"
+PHRASES["en"]["emergency_notice"] = "This may be an emergency. Please call 112 now, or go to the nearest hospital."
 PHRASES["en"]["reverify_notice"] = "For your security, I need to verify who I am speaking with again before I share any personal details."
 
 # Spoken when a call is turned away before the caller has said a word, so

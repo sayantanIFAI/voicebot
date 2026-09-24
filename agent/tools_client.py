@@ -13,6 +13,8 @@ distinct "I couldn't check that right now" reply instead of a false
 """
 from __future__ import annotations
 
+import os
+
 import httpx
 
 DEFAULT_TIMEOUT_S = 4.0  # a phone caller will not wait much longer than this per lookup
@@ -26,7 +28,10 @@ class ToolCallError(Exception):
 class ClinicToolsClient:
     def __init__(self, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S):
         self.base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s)
+        # The clinic API's service token (clinic-api/main.py), read from the environment, never logged.
+        token = os.environ.get("CLINIC_API_TOKEN", "")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s, headers=headers)
 
     async def aclose(self):
         await self._client.aclose()

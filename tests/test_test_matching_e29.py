@@ -37,13 +37,16 @@ def clinic_client():
         pass
 
 
-def test_romanised_spelling_of_a_bengali_alias_resolves(clinic_client):
+def test_romanised_spelling_of_a_bengali_alias_is_suggested_never_resolved(clinic_client):
+    # SPEC CHANGE (OpenAI review): a sound-alike used to resolve straight to a test and its price.
+    # "CBC" and "CRP" are one phoneme apart, so it is now a suggestion the caller must confirm.
     # Seeded: Complete Blood Count (CBC), Bengali alias "সিবিসি" (sibisi).
     # A caller who types/says the Latin transliteration ("sibisi") rather
     # than the native script must still reach the same row.
     result = clinic_client.get("/api/v1/tests/search", params={"name": "sibisi"}).json()
-    assert result["found"] is True
-    assert result["test_name"] == "Complete Blood Count (CBC)"
+    assert result["found"] is False
+    assert "Complete Blood Count (CBC)" in result["did_you_mean"]
+    assert "price" not in result and "test_name" not in result
 
 
 def test_short_romanised_query_does_not_produce_a_false_match(clinic_client):

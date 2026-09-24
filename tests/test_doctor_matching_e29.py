@@ -49,7 +49,10 @@ def test_doctor_nobody_still_never_matches_a_real_doctor(clinic_client):
     assert result["found"] is False
 
 
-def test_a_badly_garbled_surname_still_finds_the_right_doctor(clinic_client):
+def test_a_badly_garbled_surname_is_suggested_never_resolved(clinic_client):
+    # SPEC CHANGE (OpenAI review, "the bot must not guess"): a sound-alike near-match used to RESOLVE
+    # to the doctor and the schedule was read out. It now only SUGGESTS: the caller confirms, and the
+    # agent looks the doctor up only once the name matches in its written form.
     # CodeRabbit-flagged: "Roy" queried exactly matches _find_doctor's
     # FIRST branch (English-name substring), so the original version of
     # this test never actually reached fuzzy/phonetic matching at all --
@@ -64,5 +67,6 @@ def test_a_badly_garbled_surname_still_finds_the_right_doctor(clinic_client):
     assert mukherjee is not None
 
     result = clinic_client.get("/api/v1/doctors/availability", params={"name": "Nukharji"}).json()
-    assert result["found"] is True
-    assert result["doctor_name"] == mukherjee["name"]
+    assert result["found"] is False and result["needs_confirmation"] is True
+    assert result["did_you_mean"] == [mukherjee["name"]]
+    assert "doctor_name" not in result and "schedule" not in result

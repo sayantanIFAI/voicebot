@@ -57,6 +57,19 @@ export TTS_CHECKPOINTS_ROOT=/workspace/tts_checkpoints
 # physically cannot run on this volume -- see that file's docstring. Set
 # this only when pointing at a real external Postgres.
 export CLINIC_API_BASE=http://localhost:8080
+
+# The internal services (TTS, clinic API, English ASR) are reached only by the orchestrator on this
+# machine, so they bind to loopback unless told otherwise. Only the orchestrator ports are public.
+export INTERNAL_BIND_HOST=${INTERNAL_BIND_HOST:-127.0.0.1}
+
+# Service token for the clinic API -- read from a file, never committed or printed, like the HF token
+# above. When set, every /api/v1/* request must carry it (clinic-api/main.py) and the orchestrator
+# sends it (agent/tools_client.py). Set CLINIC_API_REQUIRE_TOKEN=1 to make the API refuse everything
+# if no token is configured, instead of running open.
+if [ -f /workspace/.clinic_api_token ]; then
+    export CLINIC_API_TOKEN
+    CLINIC_API_TOKEN=$(cat /workspace/.clinic_api_token)
+fi
 export TTS_URL=http://localhost:8002/synthesize
 export SILERO_VAD_REPO=/workspace/silero-vad
 

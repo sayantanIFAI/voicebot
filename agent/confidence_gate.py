@@ -48,7 +48,34 @@ LOW_CONFIDENCE_FLOOR = 0.5
 # wrong answer about something else entirely. Booking actions are
 # deliberately excluded: they already require a separate confirm turn
 # regardless of confidence (see module docstring).
-GATED_FACTUAL_INTENTS = frozenset({"test_rate", "doctor_availability", "test_prep", "clinic_faq"})
+GATED_FACTUAL_INTENTS = frozenset({
+    "test_rate", "doctor_availability", "test_prep", "clinic_faq",
+    # an external "no guessing" review: every fact retrieval, and every lookup that discloses a
+    # booking, is gated -- not just four intents.
+    "department_query", "lookup_booking", "resend_confirmation",
+})
+
+# --- three states, not a float convention -----------------------------------------------------
+# `decoder_agreement == 0.0` is ambiguous: agent/asr.py uses it for "only the CTC decoder produced
+# text" (nothing to compare with), and a genuine total disagreement also rounds to 0.0. A float
+# convention that reads the first as "trust it" gives one decoder the authority of two agreeing
+# ones. The decoder that actually produced the text is recorded (`decoder_used`); this uses it.
+VERIFIED = "verified"          # both decoders ran and agree
+LOW = "low"                    # both decoders ran and disagree
+UNAVAILABLE = "unavailable"    # only one decoder produced the text: nothing to check it against
+
+
+def confidence_state(decoder_used: str | None, decoder_agreement: float) -> str:
+    """VERIFIED / LOW / UNAVAILABLE for one recognised turn.
+
+    Only an "rnnt" result carries an agreement measurement (the CTC decoder ran too). "ctc_fallback",
+    a single-decoder model ("fastconformer") and an unknown decoder are UNAVAILABLE. With no decoder
+    recorded at all (a caller that predates `decoder_used`) the old float rule applies unchanged."""
+    if decoder_used is None:
+        return LOW if is_low_confidence(decoder_agreement) else VERIFIED
+    if decoder_used == "rnnt":
+        return LOW if decoder_agreement < LOW_CONFIDENCE_FLOOR else VERIFIED
+    return UNAVAILABLE
 
 
 def is_low_confidence(decoder_agreement: float) -> bool:
@@ -59,5 +86,14 @@ def is_low_confidence(decoder_agreement: float) -> bool:
     return 0.0 < decoder_agreement < LOW_CONFIDENCE_FLOOR
 
 
-def should_withhold_factual_answer(intent: str, decoder_agreement: float) -> bool:
-    return intent in GATED_FACTUAL_INTENTS and is_low_confidence(decoder_agreement)
+def should_withhold_factual_answer(intent: str, decoder_agreement: float, decoder_used: str | None = None) -> bool:
+    """LOW confidence on a gated intent: the lookup does not run. (UNAVAILABLE is handled by reading
+    the entity back -- agent/entity_confirmation.py -- not by refusing.)"""
+    if intent not in GATED_FACTUAL_INTENTS:
+        return False
+    return confidence_state(decoder_used, decoder_agreement) == LOW
+
+
+def needs_entity_readback(intent: str, decoder_used: str | None, decoder_agreement: float) -> bool:
+    """UNAVAILABLE confidence on a gated intent: ask "do you mean X?" before the lookup runs."""
+    return intent in GATED_FACTUAL_INTENTS and confidence_state(decoder_used, decoder_agreement) == UNAVAILABLE

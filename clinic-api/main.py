@@ -14,6 +14,8 @@ from __future__ import annotations
 import datetime
 import difflib
 import logging
+import os
+import secrets
 import unicodedata
 import uuid
 
@@ -21,7 +23,8 @@ import booking_service as bs
 import enquiry_service as eq
 import patient_context as pc
 from db import SessionLocal, get_db
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.responses import JSONResponse
 from models import FAQ, Appointment, Department, Doctor, DoctorSchedule, LabTest
 from phonetic_match import phonetic_key, phonetic_match
 from pydantic import BaseModel
@@ -30,7 +33,34 @@ from sqlalchemy.orm import Session
 
 app = FastAPI(title="Kolkata Care Diagnostics -- Clinic Data API (dummy)")
 
+
+@app.middleware("http")
+async def require_service_token(request: Request, call_next):
+    """Service-to-service authentication for everything under /api/v1/ (an external review: patient
+    data was served to anyone who could reach the port).
+
+    Enforced when CLINIC_API_TOKEN is set, or when CLINIC_API_REQUIRE_TOKEN=1 (then a missing token
+    refuses every request -- fail closed). With neither, the API runs open as before and logs that
+    at startup; that is only acceptable on a closed dev network. This is a shared secret between
+    the orchestrator and this API: it authenticates the CALLER OF THE API, not the phone caller,
+    and is not a substitute for verifying a patient's identity (agent/identity.py). Read per
+    request so it can be rotated without a code change; compared in constant time."""
+    token = os.environ.get("CLINIC_API_TOKEN", "")
+    if request.url.path.startswith("/api/v1/") and (token or os.environ.get("CLINIC_API_REQUIRE_TOKEN") == "1"):
+        supplied = request.headers.get("authorization", "")
+        if not token or not secrets.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
 SLOT_STEP_MIN = 15
+
+
+@app.on_event("startup")
+def _warn_if_open():
+    if not os.environ.get("CLINIC_API_TOKEN") and os.environ.get("CLINIC_API_REQUIRE_TOKEN") != "1":
+        logging.getLogger("clinic-api").warning(
+            "CLINIC_API_TOKEN is not set: /api/v1/* is served WITHOUT authentication. "
+            "Acceptable only on a closed development network.")
 
 
 @app.on_event("startup")
@@ -194,9 +224,13 @@ def _norm_name(s: str) -> str:
 
 
 def _find_test(db: Session, name: str) -> LabTest | None:
-    """The exact/Bengali-alias/fuzzy cascade search_test() and the prep
-    endpoint both need -- factored out so "which test did they mean" has
-    exactly one implementation, not two that can drift apart."""
+    """The exact / alias / containment cascade search_test() and the prep endpoint both need --
+    factored out so "which test did they mean" has exactly one implementation.
+
+    RESOLVES ONLY ON A WRITTEN-FORM MATCH. A sound-alike is never a resolution: "CBC" and "CRP"
+    are one phoneme apart, and a price or a preparation instruction for the wrong one is a
+    confident wrong answer that the database will happily supply. Phonetic matches come back
+    only as suggestions (`_phonetic_test_matches`, `_test_suggestions`) for the caller to confirm."""
     exact = db.query(LabTest).filter(func.lower(LabTest.name).contains(name.lower())).first()
     if exact:
         return exact
@@ -219,21 +253,23 @@ def _find_test(db: Session, name: str) -> LabTest | None:
                 if n and (q in n or n in q):
                     return t
 
-    # KCD-434: a romanised spelling of a Bengali/Hindi term (or the
-    # reverse -- a Bengali/Hindi ASR engine transliterating an English
-    # loanword into its own script) folds to the same consonant skeleton
-    # as the canonical entry even though no character-level match exists.
-    # Gated on a minimum key length so a short, generic fold ("test" ->
-    # "3" after generic-word stripping leaves nothing, or a two-letter
-    # leftover) can never stand in for a real match.
-    qk = phonetic_key(name)
-    if len(qk) >= 3:
-        for t in all_tests:
-            forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
-            for form in forms:
-                if phonetic_key(form) == qk:
-                    return t
     return None
+
+
+def _phonetic_test_matches(db: Session, name: str) -> list[LabTest]:
+    """KCD-434, now suggestion-only: tests whose name or alias folds to the same consonant skeleton
+    as `name` (a romanised Bengali/Hindi spelling, or a loanword transliterated into another script).
+    Gated on a minimum key length so a short generic fold can never stand in for a real match. These
+    are what the caller MIGHT have meant; the agent asks, it does not act on them."""
+    qk = phonetic_key(name)
+    if len(qk) < 3:
+        return []
+    out = []
+    for t in db.query(LabTest).all():
+        forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+        if any(phonetic_key(f) == qk for f in forms):
+            out.append(t)
+    return out
 
 
 def _find_test_candidates(db: Session, name: str) -> list[LabTest]:
@@ -279,6 +315,11 @@ def _find_test_candidates(db: Session, name: str) -> list[LabTest]:
 
 
 def _test_suggestions(db: Session, name: str) -> list[str]:
+    phonetic = [t.name for t in _phonetic_test_matches(db, name)]
+    return list(dict.fromkeys(phonetic + _test_suggestions_by_spelling(db, name)))[:3]
+
+
+def _test_suggestions_by_spelling(db: Session, name: str) -> list[str]:
     all_tests = db.query(LabTest).all()
     candidates = []
     for t in all_tests:
@@ -392,40 +433,50 @@ FUZZY_SURNAME_FLOOR = 0.60
 PHONETIC_ASSISTED_FLOOR = 0.45
 
 
-def _find_doctor(db: Session, name: str) -> Doctor | None:
-    # English substring match (e.g. "Sen", "Dr Sen").
-    exact = db.query(Doctor).filter(func.lower(Doctor.name).contains(name.lower())).first()
-    if exact:
-        return exact
+# Honorifics stripped from what the caller said before it is compared with a doctor's name.
+_TITLE_WORDS = frozenset({"dr", "doctor", "doc", "ডাক্তার", "ডক্টর", "ডাঃ", "डॉक्टर", "डॉ", "डाक्टर"})
 
-    all_doctors = db.query(Doctor).all()
+# A name fragment shorter than this is not matched as a substring of a doctor's name (REASONED).
+MIN_SUBSTRING_CHARS = 3
 
-    # Bengali-script exact match -- a real caller says "ডক্টর সেন", which
-    # shares no characters with the Latin "Dr. A. Sen" stored as the
-    # canonical name. Same root cause and same fix as search_test()'s
-    # aliases_bn check.
-    for d in all_doctors:
+
+def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
+    """Doctors whose WRITTEN name or alias contains what the caller said ("Sen", "Dr Sen", a Bengali
+    or Hindi alias). Several matches are returned as several: choosing among them is the caller's job."""
+    needle_tokens = [w for w in (x.strip(".,") for x in (name or "").lower().split()) if w and w not in _TITLE_WORDS]
+    needle = " ".join(needle_tokens)
+    if not needle:
+        return []
+    doctors = db.query(Doctor).all()
+
+    def tokens(d):
+        return [t.strip(".,").lower() for t in d.name.split()]
+
+    # A whole name token that IS what was said ("Sen" is Dr. Sen's surname) outranks a mere substring
+    # of another name ("Sen" inside "Sengupta"): it is the written form, not a coincidence of letters.
+    whole = [d for d in doctors if all(w in tokens(d) for w in needle_tokens)]
+    if whole:
+        return whole
+    out = []
+    for d in doctors:
         aliases = [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
-        if any(name in alias or alias in name for alias in aliases):
-            return d
+        # a one- or two-letter fragment ("ry") sits inside far too many names to identify any of them
+        if (len(needle) >= MIN_SUBSTRING_CHARS and needle in d.name.lower()) or any(name in a or a in name for a in aliases):
+            out.append(d)
+    return out
 
-    # Fuzzy fallback, against BOTH the English surname and the Bengali
-    # alias(es) -- garbled ASR output can land on either script depending
-    # on what the caller actually said and how the decoder heard it.
-    best_doctor, best_ratio, best_phonetic = None, 0.0, False
-    for d in all_doctors:
-        candidates = [d.name.split()[-1].lower()] + [
-            a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
-        for c in candidates:
-            ratio = difflib.SequenceMatcher(None, name.lower(), c.lower()).ratio()
-            if ratio > best_ratio:
-                best_doctor, best_ratio, best_phonetic = d, ratio, phonetic_match(name, c)
 
-    if best_ratio >= FUZZY_SURNAME_FLOOR:
-        return best_doctor
-    if best_ratio >= PHONETIC_ASSISTED_FLOOR and best_phonetic:
-        return best_doctor
-    return None
+def _find_doctor(db: Session, name: str) -> Doctor | None:
+    """The ONE doctor the caller unambiguously named, or None.
+
+    Resolves only on a unique written-form match. A fuzzy or phonetic near-match is NEVER a
+    resolution (OpenAI review; CLAUDE.md "Doctor Nobody"): it answers "who might they have meant",
+    not "who is it", and reading a different doctor's real schedule is worse than asking again.
+    Those come back through `_doctor_suggestions` and the caller confirms. Two doctors matching
+    the same words (e.g. "Sen" for Dr. Sen and Dr. Sengupta) is also None here -- the availability
+    endpoint reports it as ambiguous instead of picking whichever the database returned first."""
+    matches = _doctor_exact_matches(db, name)
+    return matches[0] if len(matches) == 1 else None
 
 
 # Same ratio floor already used to ACCEPT a single fuzzy match above
@@ -465,6 +516,17 @@ def _find_doctor_candidates(db: Session, name: str) -> list[Doctor]:
 
 
 def _doctor_suggestions(db: Session, name: str) -> list[str]:
+    """Who the caller MIGHT have meant: near-spellings and sound-alikes. Never acted on -- see
+    _find_doctor. Sound-alikes (agent/phonetic_match.py, KCD-436) rank first."""
+    phonetic = []
+    for d in db.query(Doctor).all():
+        cands = [d.name.split()[-1]] + [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
+        if any(len(phonetic_key(c)) >= 3 and phonetic_match(name, c) for c in cands):
+            phonetic.append(d.name)
+    return list(dict.fromkeys(phonetic + _doctor_suggestions_by_spelling(db, name)))[:3]
+
+
+def _doctor_suggestions_by_spelling(db: Session, name: str) -> list[str]:
     all_doctors = db.query(Doctor).all()
     candidates = []
     for d in all_doctors:
@@ -497,14 +559,17 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
     # "nothing matched" -- silently picking one (what _find_doctor does,
     # correctly, when there is no tie) would risk reading out a DIFFERENT
     # doctor's real schedule, the CLAUDE.md "Doctor Nobody" class of bug.
-    candidates = _find_doctor_candidates(db, name)
-    if len(candidates) > 1:
-        return {"found": False, "query": name, "ambiguous": True,
-                "did_you_mean": [d.name for d in candidates[:3]]}
-
-    doctor = candidates[0] if candidates else _find_doctor(db, name)
+    exact = _doctor_exact_matches(db, name)
+    if len(exact) > 1:
+        return {"found": False, "query": name, "ambiguous": True, "did_you_mean": [d.name for d in exact[:3]]}
+    doctor = exact[0] if exact else None
     if not doctor:
-        return {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name)}
+        near = _find_doctor_candidates(db, name)
+        if len(near) > 1:
+            return {"found": False, "query": name, "ambiguous": True, "did_you_mean": [d.name for d in near[:3]],
+                    "needs_confirmation": True}
+        return {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name),
+                "needs_confirmation": True}
 
     today = datetime.date.today()
 
@@ -588,7 +653,8 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
     guarantee, not two that can silently disagree."""
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
-        return {"success": False, "reason": "doctor_not_found"}
+        return {"success": False, "reason": "doctor_not_found",
+                "did_you_mean": _doctor_suggestions(db, req.doctor_name)}
 
     try:
         target = datetime.date.fromisoformat(req.date)
@@ -722,7 +788,8 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
 def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
-        return {"success": False, "reason": "doctor_not_found"}
+        return {"success": False, "reason": "doctor_not_found",
+                "did_you_mean": _doctor_suggestions(db, req.doctor_name)}
     err = _validate_doctor_slot(db, doctor, req.date, req.time_slot)
     if err:
         return err

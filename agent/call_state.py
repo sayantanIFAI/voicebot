@@ -35,7 +35,7 @@ SCHEMA_VERSION = 1
 # never has to special-case a missing field), honestly inert (so
 # nothing here claims an adaptation that is not actually happening).
 CALLER_STATE_NEUTRAL = "neutral"
-VALID_CALLER_STATES = (CALLER_STATE_NEUTRAL, "distressed", "angry", "confused", "senior")
+VALID_CALLER_STATES = (CALLER_STATE_NEUTRAL, "distressed", "angry", "confused", "senior", "emergency")
 
 
 @dataclass

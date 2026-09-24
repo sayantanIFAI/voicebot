@@ -52,6 +52,7 @@ settings can be A/B'd against a real handset without a redeploy.
 import dataclasses
 import io
 import os
+import threading
 
 # Pure prosody logic (splitting, pauses, trim, normalise) lives in
 # agent/prosody.py so it can be unit tested without a GPU; the repo root is
@@ -116,20 +117,30 @@ DEFAULT_LENGTH_SCALE = float(os.environ.get("TTS_LENGTH_SCALE", "1.08"))
 DEFAULT_PROSODY = ProsodyParams()
 
 
+# One lock per language's synthesizer. `synthesize` is a plain `def`, so FastAPI runs each request on
+# a thread-pool thread, and the per-request speed is written onto the SHARED model object
+# (`tts_model.length_scale`) before synthesis: two overlapping requests would otherwise render each
+# other's speed (an external review flagged this). The lock covers set-and-synthesize together.
+# Cost, stated: requests for the SAME language are rendered one at a time -- a throughput ceiling
+# per language that a load test (KCD-236) must measure; the remedy is one worker process per
+# synthesizer, not removing the lock.
+_SYNTH_LOCKS: dict[str, threading.Lock] = {lang: threading.Lock() for lang in SUPPORTED_LANGUAGES}
+
+
 def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool,
             params: ProsodyParams) -> tuple[np.ndarray, int]:
     synth = SYNTHESIZERS[lang]
     sample_rate = SAMPLE_RATES[lang]
-    if hasattr(synth.tts_model, "length_scale"):
-        synth.tts_model.length_scale = speed
-
     chunks = split_for_prosody(text, params.max_chunk_chars) if pauses else [(text, "sentence")]
     rendered = []
-    for chunk_text, pause_kind in chunks:
-        # split_sentences=False: agent/prosody.py already decided the
-        # chunking, and letting Coqui re-split would reintroduce the
-        # ragged joins.
-        rendered.append((synth.tts(chunk_text, speaker_name=speaker, split_sentences=False), pause_kind))
+    with _SYNTH_LOCKS[lang]:
+        if hasattr(synth.tts_model, "length_scale"):
+            synth.tts_model.length_scale = speed
+        for chunk_text, pause_kind in chunks:
+            # split_sentences=False: agent/prosody.py already decided the
+            # chunking, and letting Coqui re-split would reintroduce the
+            # ragged joins.
+            rendered.append((synth.tts(chunk_text, speaker_name=speaker, split_sentences=False), pause_kind))
     return assemble(rendered, sample_rate, params, pauses), sample_rate
 
 

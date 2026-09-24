@@ -94,7 +94,11 @@ from agent.call_state import (
 from agent.channel_quality import CHANNEL_CLEAN_16K, classify_channel
 from agent.clause_split import split_into_clauses
 from agent.code_switch import mixture_bucket
-from agent.confidence_gate import is_low_confidence, should_withhold_factual_answer
+from agent.confidence_gate import (
+    VERIFIED, confidence_state, is_low_confidence, needs_entity_readback, should_withhold_factual_answer,
+)
+from agent import entity_confirmation as entity_text
+from agent.emergency import detect_emergency
 from agent.detector_budget import run_within_budget
 from agent.endpointing import classify_completeness, decide as decide_turn_end
 from agent.detector_budget import snapshot as detector_budget_snapshot
@@ -803,6 +807,9 @@ class CallSession:
         self.pending_history = None                     # the HistoryQuestion being answered
         self.history_attempts = 0
         self.awaiting_handoff_offer = False
+        # A factual lookup held back until the caller confirms what the recogniser (with nothing to
+        # check it against) heard: agent/entity_confirmation.py.
+        self.pending_entity: entity_text.PendingEntity | None = None
 
     @property
     def policy(self):
@@ -1455,7 +1462,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         _rec(session, "language", lang)
         session.lang_router.note_response_language(lang)
         apply_language(session.call_state, lang)
-        apply_confidence(session.call_state, is_low_confidence(asr_result.decoder_agreement))
+        confidence = confidence_state(getattr(asr_result, "decoder_used", None), asr_result.decoder_agreement)
+        apply_confidence(session.call_state, confidence != VERIFIED)
         apply_channel_quality(session.call_state, channel_quality)
         channel_quality_buckets.record(channel_quality, "seen", lang)
         logger.debug("[%s] call_state %s", session.call_id, session.call_state.to_log_dict())
@@ -1467,6 +1475,19 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 session, session.reask.decide(asr_empty=True, audio_issues=audio_issues), lang,
                 fallback_reason="asr_empty")
             return
+        # A possible medical emergency outranks everything: it is checked on EVERY turn, in every
+        # language, at any ASR confidence, before any re-ask, model call or booking step, and it
+        # abandons whatever was in progress (agent/emergency.py).
+        if detect_emergency(text):
+            logger.warning("[%s] possible emergency in the transcript", session.call_id)
+            await session.send_json("User", text)
+            session.turn_count += 1
+            session.booking, session.pending_entity, session.history_state = None, None, None
+            apply_caller_state(session.call_state, "emergency")
+            await _speak(session, phrase("emergency_notice", lang), lang)
+            await _handoff_to_human(session, "emergency", (lang,))
+            session.outcome = "emergency"
+            return
         # A yes/no to a confirmation is legitimately one short word; the
         # jumbled-transcript checks would misread it as a fragment.
         # The same holds for a dictated phone number, a spelled name or a bare
@@ -1477,7 +1498,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             or not session.booking.is_stale())
         problem = transcript_problem(
             text, lang, analysis["audio"].duration_s if analysis else None, asr_result.decoder_agreement,
-            slot_answer=in_booking_flow)
+            slot_answer=in_booking_flow or session.pending_entity is not None or session.awaiting_handoff_offer
+            or session.history_state is not None)
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
             await _reask_or_handoff(
@@ -1551,12 +1573,24 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _handle_booking_confirmation_turn(session, text, lang)
             return
 
-        try:
-            data = await _resolve_intent(session, text, lang)
-        except ExtractionError as e:
-            logger.error("[%s] intent extraction failed: %s", session.call_id, e)
-            await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
-            return
+        confirmed_entity = False
+        pending, session.pending_entity = session.pending_entity, None
+        if pending is not None:
+            answer = classify_yes_no(text, lang)
+            if answer == "yes":
+                data, confirmed_entity = pending.data, True
+            elif answer == "no":
+                await _speak(session, entity_text.reask(lang), lang)
+                return
+            # anything else: the question lapses and this turn is handled as a fresh one
+
+        if not confirmed_entity:
+            try:
+                data = await _resolve_intent(session, text, lang)
+            except ExtractionError as e:
+                logger.error("[%s] intent extraction failed: %s", session.call_id, e)
+                await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
+                return
 
         intent = data["intent"]
         slots = data["slots"]
@@ -1603,12 +1637,23 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # themselves. Checked before the tool call, not after: the point
         # is to never RUN the lookup on an unreliable entity, not merely
         # to hedge the reply once it comes back.
-        if should_withhold_factual_answer(intent, asr_result.decoder_agreement):
+        decoder_used = getattr(asr_result, "decoder_used", None)
+        if not confirmed_entity and should_withhold_factual_answer(intent, asr_result.decoder_agreement, decoder_used):
             logger.info("[%s] withholding %s answer: decoder_agreement=%.2f below floor",
                         session.call_id, intent, asr_result.decoder_agreement)
             insufficient_information.record("low_decoder_agreement", intent, lang)
             await _speak(session, insufficient_information_reply(lang), lang)
             return
+        # Only one decoder produced this text, so nothing vouches for it: read the entity back and
+        # run the lookup only after a yes. Never let "no confidence figure" mean "trusted".
+        if not confirmed_entity and needs_entity_readback(intent, decoder_used, asr_result.decoder_agreement):
+            entity = entity_text.entity_to_confirm(intent, slots)
+            if entity is not None:
+                slot, value = entity
+                session.pending_entity = entity_text.PendingEntity(intent, slot, value, data)
+                insufficient_information.record("single_decoder_readback", intent, lang)
+                await _speak(session, entity_text.confirm_question(slot, value, lang), lang)
+                return
 
         try:
             if intent == "test_rate":

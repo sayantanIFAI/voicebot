@@ -315,6 +315,18 @@ def confirm_booking(db: Session, hold_token: str, doctor_id: int, date: str, tim
                      patient_name: str, phone: str, caller_phone: str,
                      patient_age: int | None = None, relationship_label: str = "self") -> dict:
     lock = db.get(SlotLock, (doctor_id, date, time_slot))
+    # IDEMPOTENT on the hold token: a retried request (a dropped connection, a repeated "yes") for a
+    # slot this SAME hold already confirmed returns the booking that exists -- the same confirmation
+    # number, no second appointment and no false "hold expired" for a booking that did succeed.
+    if lock and lock.status == "confirmed" and lock.hold_token == hold_token and lock.appointment_id:
+        appt = db.get(Appointment, lock.appointment_id)
+        if appt is not None and appt.status == "confirmed" and appt.phone == phone:
+            doctor = db.get(Doctor, doctor_id)
+            return {
+                "success": True, "confirmation_id": appt.confirmation_id, "doctor_name": doctor.name,
+                "doctor_name_bn": _alias(doctor.aliases_bn), "doctor_name_hi": _alias(doctor.aliases_hi),
+                "date": date, "time_slot": time_slot, "replayed": True,
+            }
     if not lock or lock.status != "held" or lock.hold_token != hold_token:
         return {"success": False, "reason": "hold_expired"}
     if lock.hold_expires_at and lock.hold_expires_at < _now():
