@@ -309,7 +309,7 @@ real telephone speech.** Each module's docstring says which.
 - **External "no guessing" review -- what was fixed** (`tests/test_no_guess.py`, `tests/test_tts_concurrency.py`):
   - ASR confidence is three-state (`agent/confidence_gate.py`): a single decoder's text (`ctc_fallback`, or a single-decoder model) is UNAVAILABLE, never trusted like two agreeing decoders. All fact retrievals are gated, not four intents. On UNAVAILABLE the agent reads the entity back (`agent/entity_confirmation.py`) and runs the lookup only after a yes; on LOW it refuses. **Consequence: if the pod's English model has no CTC decoder, every English factual question costs one extra confirmation turn.**
   - Fuzzy and phonetic matches SUGGEST, never resolve, for doctors and tests (`clinic-api/main.py`). Whole-name-token match wins ("Sen" vs "Sengupta"); several substring matches are ambiguous, not `.first()`; fragments under 3 letters identify nobody. Two existing tests that pinned auto-resolution of a sound-alike were changed on purpose (spec change), marked as such.
-  - Emergency: `agent/emergency.py` runs on every transcript, all three languages, any confidence, before any model call; it clears the booking, speaks a fixed notice, hands over (`emergency` caller state now valid). **Runs on a finished transcript, not streaming audio; phrase lists and the notice wording (names 112) are DRAFT pending clinical and native review.**
+  - Emergency: `agent/emergency.py` runs on every transcript, all three languages, any confidence, before any model call; it clears the booking, speaks a fixed notice, hands over (`emergency` caller state now valid). **Runs on a finished transcript, not streaming audio; phrase lists and the notice wording (names 112) were APPROVED by the project owner on 2026-09-24 (`docs/emergency-for-approval.md`); no named clinician or native reviewer is recorded.**
   - TTS: a per-language lock around set-`length_scale`-and-synthesize (the race was real: the test fails without it). Stated cost: same-language requests render one at a time -- measure in the load test.
   - Clinic API: service-token auth on `/api/v1/*` (`CLINIC_API_TOKEN` / `CLINIC_API_REQUIRE_TOKEN=1`; health stays open; open with a warning when unset). Internal services bind loopback (`INTERNAL_BIND_HOST`); `ONLY_PCM=1` starts one media entrypoint. **The token authenticates the orchestrator to the API, not the phone caller.**
   - `confirm_booking` is idempotent on the hold token (a retry returns the same confirmation, not "hold expired" and not a second booking).
@@ -354,7 +354,7 @@ against a real clinic API with the sample patients (speech, language model and T
   later change to a built-in default does not reach a running deployment until the row is edited.
 - The sample patients are invented; `CLINIC_SEED_SAMPLE_PATIENTS=0` for a real database. The one sample retest
   interval says `approved_by = "SAMPLE DATA"`: it is not a clinician's decision.
-- Still needs the pod or people: `docs/pod-verification-checklist.md`; emergency wording approval:
+- Still needs the pod or people: `docs/pod-verification-checklist.md`; emergency wording (approved by the project owner; a clinician sign-off is separate):
   `docs/emergency-for-approval.md`; native review of all new wording; real recordings for every audio threshold.
 - Not done: preferences are offered and recorded but branch, channel and address are not yet applied to a
   booking; the "continue it" offer restores the saved slots but does not re-hold a slot.

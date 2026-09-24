@@ -1,6 +1,7 @@
 # Emergency handling: samples for clinical and native-speaker approval
 
-**Status: DRAFT. Nothing here may be relied on until the sign-off table at the bottom is filled in.**
+**Status: APPROVED by the project owner (in chat, 2026-09-24): the notice as wording A, the greeting pointer, and the phrase samples exactly as listed.** No named clinician or native reviewer is recorded in the table below; if the clinic requires one, that is a separate sign-off and the wording can still be changed from the database.
+
 The code is `agent/emergency.py` (what is detected) and `agent/phrases.py` (`emergency_notice`, and the
 greeting pointer `EMERGENCY_HINT`). Approved wording is changed in one place each; a notice change needs
 no code change, only a database row (`emergency_notice`, `emergency_hint` in `agent_messages`).
@@ -110,4 +111,4 @@ recogniser actually writes them.
 | Hindi native reviewer (phrases and wording) | | | |
 | English reviewer (phrases and wording) | | | |
 
-When this is signed, `agent/emergency.py`'s `REVIEW_STATUS` is changed from `draft_pending_clinical_and_native_review`.
+`agent/emergency.py`'s `REVIEW_STATUS` is now `approved_by_project_owner`. It changes again only if a clinician or reviewer asks for different wording.

@@ -20,16 +20,18 @@ WHAT THIS CANNOT DO, and it is a real limit: it runs on a finished transcript, o
 after the caller has stopped speaking. A caller who is mid-sentence, or whose audio never yields
 these words in the transcript, is not caught. A true safety path needs a streaming recogniser on
 the audio itself (an external review's recommendation; not built here). The phrase lists were
-written by a non-native speaker and are provisional: a clinician and a native speaker per language
-must review both the list and the notice wording before this is relied on. Phrase lists here are
-DRAFT for that reason (`REVIEW_STATUS`).
+written by a non-native speaker; the project owner has approved the lists and the notice wording
+(`REVIEW_STATUS` below), and a clinician or native reviewer may still ask for changes.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
 
-REVIEW_STATUS = "draft_pending_clinical_and_native_review"
+# Approved by the project owner in chat on 2026-09-24: the phrase samples, the notice (wording A) and the
+# greeting pointer in docs/emergency-for-approval.md. The document's sign-off table still has no named
+# clinician or native reviewer; if the clinic requires one, that is a separate sign-off.
+REVIEW_STATUS = "approved_by_project_owner"
 
 # The number the notice tells the caller to dial. 112 is India's national emergency number; it is a
 # setting, not a constant, because the clinic decides what its notice says.
