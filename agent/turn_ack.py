@@ -57,10 +57,38 @@ def validate_table() -> list[str]:
     return problems
 
 
-class AckTracker:
-    """One per call."""
+# KCD-513, as the operator asked: every substantive reply opens with the same thanks, "Thank you for
+# telling me" (wording from agent/messages.py so it can be changed from the database). The varied,
+# suppressed-on-repeat behaviour above stays available as mode "varied".
+THANKS = {
+    "bn": "বলার জন্য ধন্যবাদ।",
+    "hi": "बताने के लिए धन्यवाद।",
+    "en": "Thank you for telling me.",
+}
+MAX_THANKS_WORDS = 8
 
-    def __init__(self):
+
+def thanks_for(lang: str) -> str:
+    from agent import messages
+    return messages.text("thanks_ack", lang, THANKS.get(lang) or THANKS["bn"])
+
+
+def validate_thanks() -> list[str]:
+    problems = []
+    for lang, t in THANKS.items():
+        if re.search(r"\d|[{}\[\]:]", t) or "?" in t or count_apologies(t, lang):
+            problems.append(f"{lang}: {t!r} carries a digit, placeholder, question or apology")
+        if len(t.split()) > MAX_THANKS_WORDS:
+            problems.append(f"{lang}: {t!r} is longer than {MAX_THANKS_WORDS} words")
+    return problems
+
+
+class AckTracker:
+    """One per call. mode "always": every substantive reply opens with the thanks (KCD-513 as
+    operated); mode "varied": short rotating acknowledgements, suppressed on repeat turns."""
+
+    def __init__(self, mode: str = "varied"):
+        self.mode = mode
         self.turn = 0
         self._last_ack_turn = -MIN_TURNS_BETWEEN
         self._variant = 0
@@ -73,6 +101,14 @@ class AckTracker:
     def decorate(self, reply: str, lang: str, substantive: bool = True,
                  already_acknowledged: bool = False) -> tuple[str, bool]:
         """(reply, whether an acknowledgement was prefixed)."""
+        if self.mode == "always":
+            skip = (not substantive or already_acknowledged or len((reply or "").split()) < MIN_REPLY_WORDS
+                    or count_apologies((reply or "")[:60], lang) > 0)
+            if skip:
+                self.suppressed += 1
+                return reply, False
+            self.spoken += 1
+            return f"{thanks_for(lang)} {reply}", True
         table = _ACK.get(lang) or _ACK["bn"]
         skip = (
             not substantive

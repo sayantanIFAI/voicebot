@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime
 import difflib
+import json
 import logging
 import os
 import secrets
@@ -21,11 +22,13 @@ import uuid
 
 import booking_service as bs
 import enquiry_service as eq
+import agent_messages as am
 import patient_context as pc
+import registry as reg
 from db import SessionLocal, get_db
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
-from models import FAQ, Appointment, Department, Doctor, DoctorSchedule, LabTest
+from models import FAQ, Appointment, AuditLog, Department, Doctor, DoctorSchedule, LabTest
 from phonetic_match import phonetic_key, phonetic_match
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -121,6 +124,10 @@ def _ensure_seeded():
         from booking_migrate import finish_booking_schema_setup
         logging.getLogger("clinic-api").info(
             "booking schema setup (routes/fees): %s", finish_booking_schema_setup())
+        from patient_seed import seed_patient_context
+        logging.getLogger("clinic-api").info("agent messages: %s inserted", am.seed_defaults(db))
+        if os.environ.get("CLINIC_SEED_SAMPLE_PATIENTS", "1") == "1":
+            logging.getLogger("clinic-api").info("sample patient data: %s", seed_patient_context(db))
         from enquiry_migrate import backfill_enquiry_facts, seed_enquiry_demo_data
         logging.getLogger("clinic-api").info(
             "enquiry facts backfill: %s", backfill_enquiry_facts(db))
@@ -314,6 +321,26 @@ def _find_test_candidates(db: Session, name: str) -> list[LabTest]:
     return []
 
 
+def _first_alias(csv: str | None) -> str | None:
+    return next((a for a in (csv or "").split("|") if a.strip()), None)
+
+
+def _scripted(db: Session, body: dict, model) -> dict:
+    """Add the same suggestions in Bengali and Hindi script (`did_you_mean_bn`, `did_you_mean_hi`).
+    A Bengali or Hindi voice cannot say a Latin name, so the reply for that language uses these; the
+    English canonical names stay in `did_you_mean`. A single suggestion that is not an exact match is
+    marked `needs_confirmation` so the agent asks and follows through on a yes."""
+    names = body.get("did_you_mean") or []
+    if not names:
+        return body
+    rows = {r.name: r for r in db.query(model).filter(model.name.in_(names)).all()}
+    body["did_you_mean_bn"] = [_first_alias(rows[n].aliases_bn) or n for n in names if n in rows]
+    body["did_you_mean_hi"] = [_first_alias(rows[n].aliases_hi) or n for n in names if n in rows]
+    if len(names) == 1 and not body.get("ambiguous"):
+        body["needs_confirmation"] = True
+    return body
+
+
 def _test_suggestions(db: Session, name: str) -> list[str]:
     phonetic = [t.name for t in _phonetic_test_matches(db, name)]
     return list(dict.fromkeys(phonetic + _test_suggestions_by_spelling(db, name)))[:3]
@@ -347,8 +374,8 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
     # risk quoting the price of a DIFFERENT test than the one meant.
     candidates = _find_test_candidates(db, name)
     if len(candidates) > 1:
-        return {"found": False, "query": name, "ambiguous": True,
-                "did_you_mean": [t.name for t in candidates[:3]]}
+        return _scripted(db, {"found": False, "query": name, "ambiguous": True,
+                              "did_you_mean": [t.name for t in candidates[:3]]}, LabTest)
 
     found = candidates[0] if candidates else _find_test(db, name)
     if found:
@@ -356,7 +383,7 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
 
     # Fuzzy fallback -- try both the English name and every Bengali alias,
     # so suggestions are useful regardless of which script the caller used.
-    return {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}
+    return _scripted(db, {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}, LabTest)
 
 
 # =============================================================================
@@ -389,13 +416,13 @@ def test_prep(name: str = Query(...), lang: str = Query("bn"), db: Session = Dep
     systems of record later."""
     candidates = _find_test_candidates(db, name)   # KCD-446: see search_test's own comment
     if len(candidates) > 1:
-        return {"found": False, "query": name, "ambiguous": True,
-                "did_you_mean": [t.name for t in candidates[:3]]}
+        return _scripted(db, {"found": False, "query": name, "ambiguous": True,
+                              "did_you_mean": [t.name for t in candidates[:3]]}, LabTest)
 
     found = candidates[0] if candidates else _find_test(db, name)
     if found:
         return _test_prep_reply_dict(found, lang)
-    return {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}
+    return _scripted(db, {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}, LabTest)
 
 
 # =============================================================================
@@ -561,15 +588,16 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
     # doctor's real schedule, the CLAUDE.md "Doctor Nobody" class of bug.
     exact = _doctor_exact_matches(db, name)
     if len(exact) > 1:
-        return {"found": False, "query": name, "ambiguous": True, "did_you_mean": [d.name for d in exact[:3]]}
+        return _scripted(db, {"found": False, "query": name, "ambiguous": True,
+                              "did_you_mean": [d.name for d in exact[:3]]}, Doctor)
     doctor = exact[0] if exact else None
     if not doctor:
         near = _find_doctor_candidates(db, name)
         if len(near) > 1:
-            return {"found": False, "query": name, "ambiguous": True, "did_you_mean": [d.name for d in near[:3]],
-                    "needs_confirmation": True}
-        return {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name),
-                "needs_confirmation": True}
+            return _scripted(db, {"found": False, "query": name, "ambiguous": True,
+                                  "did_you_mean": [d.name for d in near[:3]], "needs_confirmation": True}, Doctor)
+        return _scripted(db, {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name),
+                              "needs_confirmation": True}, Doctor)
 
     today = datetime.date.today()
 
@@ -1162,8 +1190,10 @@ def patient_resolve(req: ResolveRequest, db: Session = Depends(get_db)):
 @app.get("/api/v1/patients/{patient_ref}/timeline")
 def patient_timeline(patient_ref: int, caller_phone: str = Query(...), call_id: str = Query("unknown"),
                      db: Session = Depends(get_db)):
-    """KCD-493/495: authorised, audited, and free of result values."""
-    return pc.timeline(db, patient_ref, caller_phone, call_id)
+    """KCD-493/495: authorised, audited, and free of result values. Refused unless THIS CALL has
+    passed the security questions for THIS patient (POST /api/v1/patients/verify): the server decides,
+    not the caller."""
+    return pc.timeline(db, patient_ref, caller_phone, call_id, verified=reg.is_verified(db, call_id, patient_ref))
 
 
 @app.get("/api/v1/patients/{patient_ref}/preferences")
@@ -1192,9 +1222,9 @@ def patient_test_status(patient_ref: int, test_name: str = Query(...), caller_ph
     """KCD-498: when a test was last performed and whether it is due -- authorised and audited
     like the timeline, and carrying no result."""
     patient = db.get(pc.Patient, patient_ref)
-    if patient is None or not bs.authorize_disclosure(db, patient, caller_phone):
+    if patient is None or not reg.is_verified(db, call_id, patient_ref):
         pc._audit(db, call_id, patient_ref, "test_status_denied", [])
-        return {"success": False, "reason": "not_authorized"}
+        return {"success": False, "reason": "not_verified"}
     test = db.query(LabTest).filter(LabTest.name.ilike(test_name)).first()
     if test is None:
         return {"success": False, "reason": "unknown_test"}
@@ -1203,10 +1233,86 @@ def patient_test_status(patient_ref: int, test_name: str = Query(...), caller_ph
 
 
 @app.get("/api/v1/continuity")
-def continuity_endpoint(caller_phone: str = Query(...), call_id: str | None = Query(None), db: Session = Depends(get_db)):
-    """KCD-496: what was left unfinished and the last three interactions on this number. The
-    draft's details are for the agent to speak only after verification."""
-    return pc.continuity(db, caller_phone, call_id)
+def continuity_endpoint(caller_phone: str = Query(...), call_id: str | None = Query(None),
+                        patient_ref: int | None = Query(None), db: Session = Depends(get_db)):
+    """KCD-496: what was left unfinished, the last three interactions on this number, and the last
+    calls cached for ONE DAY. The draft's details are for the agent to speak only after verification."""
+    return pc.continuity(db, caller_phone, call_id, patient_id=patient_ref)
+
+
+# ------------------------------------------------ security questions, find, messages, audit
+
+class VerifyRequest(BaseModel):
+    call_id: str
+    patient_ref: int
+    patient_id: str | None = None        # the id on the patient's card
+    dob: str | None = None               # ISO date, parsed by the agent
+    name: str | None = None
+    address: str | None = None
+    caller_phone: str | None = None
+
+
+@app.post("/api/v1/patients/verify")
+def patient_verify(req: VerifyRequest, db: Session = Depends(get_db)):
+    """KCD-495: check the caller's answers against the registry. Two matching facts, one of them
+    strong (patient id or date of birth). The reply never says which answer was wrong."""
+    return reg.verify(db, req.call_id, req.patient_ref,
+                      {"patient_id": req.patient_id, "dob": req.dob, "name": req.name, "address": req.address},
+                      req.caller_phone)
+
+
+class FindRequest(BaseModel):
+    call_id: str
+    patient_id: str | None = None
+    dob: str | None = None
+    name: str | None = None
+    address: str | None = None
+
+
+@app.post("/api/v1/patients/find")
+def patient_find(req: FindRequest, db: Session = Depends(get_db)):
+    """KCD-497: find a patient by a patient id, or a date of birth with a name, when the phone number
+    found nobody. Returns an opaque reference only; finding is not verifying."""
+    return reg.find_by_details(db, req.call_id, {"patient_id": req.patient_id, "dob": req.dob,
+                                                 "name": req.name, "address": req.address})
+
+
+@app.get("/api/v1/agent/messages")
+def agent_messages(lang: str | None = Query(None), db: Session = Depends(get_db)):
+    """KCD-353/500/513: the operator-editable wording, read by the agent at the start of a call."""
+    return am.get_messages(db, lang)
+
+
+class MessageRequest(BaseModel):
+    key: str
+    lang: str
+    text: str
+    updated_by: str = "operator"
+    active: bool = True
+
+
+@app.put("/api/v1/agent/messages")
+def agent_message_set(req: MessageRequest, db: Session = Depends(get_db)):
+    """Change what callers hear, without a deploy. Behind the service token like every /api/v1 route;
+    check the wording first with tools/check_messages.py."""
+    return am.set_message(db, req.key, req.lang, req.text, req.updated_by, req.active)
+
+
+@app.get("/api/v1/audit")
+def audit_log_read(call_id: str | None = Query(None), patient_ref: int | None = Query(None),
+                   action: str | None = Query(None), limit: int = Query(100, le=500), db: Session = Depends(get_db)):
+    """The audit trail, newest first, filtered. Read-only."""
+    q = db.query(AuditLog)
+    if call_id:
+        q = q.filter(AuditLog.call_id == call_id)
+    if patient_ref is not None:
+        q = q.filter(AuditLog.patient_id == patient_ref)
+    if action:
+        q = q.filter(AuditLog.action == action)
+    rows = q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).limit(limit).all()
+    return {"entries": [{"at": r.at.isoformat(), "call_id": r.call_id, "patient_ref": r.patient_id,
+                         "actor": r.actor, "action": r.action, "outcome": r.outcome,
+                         "detail": json.loads(r.detail_json)} for r in rows]}
 
 
 class BookingSearchRequest(BaseModel):

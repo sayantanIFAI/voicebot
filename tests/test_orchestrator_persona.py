@@ -142,17 +142,31 @@ def env(m, monkeypatch, tmp_path):
 # ================================================================== KCD-513 acknowledgement
 
 @pytest.mark.asyncio
-async def test_an_answer_opens_with_an_acknowledgement_that_adds_nothing(m, env):
+async def test_an_answer_opens_with_the_thanks_and_the_thanks_adds_nothing(m, env):
+    # SPEC CHANGE (KCD-513, as the operator asked): every substantive reply opens with "Thank you for
+    # telling me" (ACK_MODE=always), not a short rotating acknowledgement. It still adds no fact.
+    from agent.turn_ack import thanks_for
     await env.turn()
     said = env.session.ws.spoken()
-    assert len(said) == 1 and said[0].endswith(env.state["reply"])
-    assert said[0] != env.state["reply"]                                  # something was prefixed
+    assert len(said) == 1 and said[0] == f"{thanks_for('en')} {env.state['reply']}"
     prefix = said[0][: -len(env.state["reply"])].strip()
-    assert len(prefix.split()) <= 3 and not any(ch.isdigit() for ch in prefix)
+    assert not any(ch.isdigit() for ch in prefix)
 
 
 @pytest.mark.asyncio
-async def test_the_acknowledgement_is_not_repeated_on_the_next_reply(m, env):
+async def test_the_thanks_is_spoken_on_every_substantive_reply(m, env):
+    # SPEC CHANGE (KCD-513): "always" -- it is not suppressed on the next reply.
+    from agent.turn_ack import thanks_for
+    await env.turn()
+    await env.turn()
+    first, second = env.session.ws.spoken()
+    assert first.startswith(thanks_for("en")) and second.startswith(thanks_for("en"))
+
+
+@pytest.mark.asyncio
+async def test_the_varied_mode_still_suppresses_repeats(m, env, monkeypatch):
+    from agent.turn_ack import AckTracker
+    env.session.acks = AckTracker(mode="varied")
     await env.turn()
     await env.turn()
     first, second = env.session.ws.spoken()

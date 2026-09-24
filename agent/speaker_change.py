@@ -55,6 +55,18 @@ PITCH_OCTAVE_SCALE = 0.06
 CHANGE_HIGH = 5.0                  # one turn this far from the verified voice is a change
 CHANGE_LOW = 3.8                   # two consecutive turns this far are a change
 
+# The same cues agent/near_end.py uses to tell the caller from the room -- pitch and level -- as a
+# corroborating signal (KCD-054). A turn that is at least CHANGE_LOW from the verified voice AND ALSO
+# sits at a clearly different pitch (PITCH_JUMP_OCTAVES, 0.32 = a 1.25x ratio: a different speaker, not
+# a caller's own intonation) is a change at once, without waiting for a second turn; so is one that is
+# at least CHANGE_LOW away, at a somewhat different pitch (0.15 octave), AND at a very different level
+# (LEVEL_JUMP_DB: the handset went to someone at a different distance). A level shift ALONE is never a
+# change -- a caller moves the phone -- and neither is a pitch shift alone: both need the spectral
+# distance to agree. REASONED; measured on synthetic voices in tests/test_speaker_change.py.
+PITCH_JUMP_OCTAVES = 0.32
+PITCH_SOME_OCTAVES = 0.15
+LEVEL_JUMP_DB = 8.0
+
 
 @dataclasses.dataclass
 class VoiceEmbedding:
@@ -117,6 +129,7 @@ class SpeakerChangeDetector:
     def __init__(self):
         self._ref: VoiceEmbedding | None = None
         self._enrol: list[VoiceEmbedding] = []
+        self._levels: list[float] = []
         self._streak = 0
         self.turns_observed = 0
         self.changes = 0
@@ -127,20 +140,31 @@ class SpeakerChangeDetector:
 
     def reset(self) -> None:
         """Forget the reference (called when verification is revoked or renewed)."""
-        self._ref, self._enrol, self._streak = None, [], 0
+        self._ref, self._enrol, self._levels, self._streak = None, [], [], 0
 
     def enroll(self, samples: np.ndarray, sr: int = 16000) -> bool:
         emb = voice_embedding(samples, sr)
         return False if emb is None else self.enroll_embedding(emb)
 
-    def enroll_embedding(self, emb: VoiceEmbedding) -> bool:
+    def enroll_embedding(self, emb: VoiceEmbedding, level_dbfs: float | None = None) -> bool:
         """As enroll(), for an embedding already computed (the per-turn analysis
-        computes it once and shares it)."""
+        computes it once and shares it). `level_dbfs` is the turn's active-speech level."""
+        if level_dbfs is not None:
+            self._levels = (self._levels + [level_dbfs])[-self.ENROL_TURNS:]
         self._enrol = (self._enrol + [emb])[-self.ENROL_TURNS:]
         self._ref = VoiceEmbedding(np.mean([e.ltas_db for e in self._enrol], axis=0),
                                    float(np.mean([e.log2_f0 for e in self._enrol])),
                                    sum(e.voiced_s for e in self._enrol))
         return True
+
+    def _corroborated(self, emb: VoiceEmbedding, level_dbfs: float | None) -> bool:
+        """Pitch, and pitch with level, agree with the spectral distance that this is another voice."""
+        octaves = abs(emb.log2_f0 - self._ref.log2_f0)
+        if octaves >= PITCH_JUMP_OCTAVES:
+            return True
+        if level_dbfs is not None and self._levels and octaves >= PITCH_SOME_OCTAVES:
+            return abs(level_dbfs - float(np.mean(self._levels))) >= LEVEL_JUMP_DB
+        return False
 
     def observe(self, samples: np.ndarray, sr: int = 16000) -> ChangeResult:
         if self._ref is None:
@@ -150,12 +174,16 @@ class SpeakerChangeDetector:
             return ChangeResult("insufficient")          # abstain: never guess a change from a cough
         return self.observe_embedding(emb)
 
-    def observe_embedding(self, emb: VoiceEmbedding) -> ChangeResult:
+    def observe_embedding(self, emb: VoiceEmbedding, level_dbfs: float | None = None) -> ChangeResult:
         if self._ref is None:
             return ChangeResult("not_enrolled")
         self.turns_observed += 1
         d = distance(emb, self._ref)
         if d >= CHANGE_HIGH:
+            self._streak = 0
+            self.changes += 1
+            return ChangeResult("changed", d)
+        if d >= CHANGE_LOW and self._corroborated(emb, level_dbfs):
             self._streak = 0
             self.changes += 1
             return ChangeResult("changed", d)

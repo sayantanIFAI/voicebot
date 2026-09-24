@@ -315,3 +315,46 @@ real telephone speech.** Each module's docstring says which.
   - `confirm_booking` is idempotent on the hold token (a retry returns the same confirmation, not "hold expired" and not a second booking).
 - **NOT fixed from that review -- these need decisions, systems or data this repository does not have:** replacing per-utterance language ID with streaming multilingual code-switch ASR; streaming TTS and streaming end-of-turn from the first packet; SIP/RTP media, DTMF, real call transfer; a streaming safety channel on the audio; one global admission counter across processes (needs a shared store); a production database and the real HIS/LIS integration; OTP or other patient identity verification (KCD-203) -- so `lookup_booking` still authorises by the number the caller states; canonical entity IDs end to end; a real West Bengal telephone evaluation corpus; the release gates with critical-entity metrics.
 - Test infrastructure: `tests/_pod_stubs.py` now puts the repo root first while it imports the orchestrator, because `main` also names `clinic-api/main.py`.
+
+
+---
+
+## Update: security questions, patient registry, senior care, operator wording, audio algorithms
+
+Built after the "no guessing" fixes. Off-pod tests only; **every audio threshold below is REASONED and was
+checked on SYNTHETIC audio.** End to end: `tests/test_orchestrator_security.py` runs the real orchestrator
+against a real clinic API with the sample patients (speech, language model and TTS are faked).
+`python tools/demo_patient_history.py` prints the sample data working.
+
+| Story | What | Where |
+|---|---|---|
+| 495 / 497 | Security questions: the SERVER accepts two matching facts (patient id, date of birth, full name, address), one strong; never says which was wrong; 3 evaluations per call, 6 failures per patient per 24 h lock it. A number that finds nobody: the caller's details locate the record, then verify it. History is refused by the server until the call has verified that patient. | `clinic-api/registry.py`, `agent/security_check.py`, `agent/security_input.py` (spoken dates in bn/hi/en) |
+| 493 / 498 / 499 | Tables: registry, medicines, patient medicines, test performances, history, one-day cache, verification sessions, messages, audit. Sample patients seeded on an EMPTY registry only. Medicines and tests are stated as facts with dates, never a dose or a result. Preferences are offered after the answer, applied only on yes. | `clinic-api/models.py`, `patient_seed.py`, `patient_context.py` |
+| 496 / 501 | When a call closes: history rows, a cache entry kept ONE day, an audit row. A booking still being collected at hang-up is saved; after verification the next call OFFERS to continue it. | `registry.finalize_call`, `main.py: _save_unfinished_draft`, `_offer_unfinished` |
+| 500 | "Sorry. I am unable to find the details. Could you please guide me, so that I can help you?" wherever nothing is found. | `agent/history_templates.py` |
+| 512 | Age from the registered date of birth (server-computed, 60 and over) turns on senior care: slower policy, warm opening once, kind closing on every second answer, patience on a re-ask. | `agent/senior_care.py` |
+| 513 / 514 / 057 | "Thank you for telling me" opens every substantive reply (`ACK_MODE=always`; `varied` restores the old behaviour). Every apology is "Sorry." plus one short sentence. "Speak a little louder" in three languages. | `agent/turn_ack.py`, `apology.py`, `phrases.py` |
+| 353 | Greeting: Sonoscan Vaani, automated, staff available, 112 pointer. Any phrase (disclosure, cannot-find, thanks, ...) can be changed from the database with no deploy; the call record stores which wording was heard. `tools/check_messages.py` runs the persona checks on a change. | `agent/messages.py`, `clinic-api/agent_messages.py` |
+| 047 | Adaptive pause: learns each caller's own pauses (p90 of the gaps inside their utterances, plus evidence of cuts made too early) and waits accordingly. Does NOT replace the measured calibration. | `agent/pause_profile.py` |
+| 053 / 055 | Near-end attention: frames far below the caller's own level that are another voice or unvoiced hiss in a pause are attenuated 18 dB; the caller's own speech is left bit-for-bit and consonants are protected. | `agent/attention.py` |
+| 054 | Speaker change also uses pitch and level as a corroborating cue. | `agent/speaker_change.py` |
+| 511 | `/speakers` endpoint and `tools/audition_voices.py`; the voice is chosen by ear. | `tts_server.py` |
+| review | A single sound-alike suggestion ("did you mean Dr. Mukherjee?") is remembered so a "yes" runs the lookup. Suggestions carry Bengali and Hindi script. | `main.py: _note_suggestion` |
+
+### Things a reviewer must know
+- Real bugs these tests found and fixed: a date read out ("12 May 1980") was also read as a patient id; Indic
+  words were cut into pieces by `\w` when matching names and addresses (Hindi verification failed); a bare "yes"
+  answering the unfinished-booking offer was re-asked as a jumbled transcript; **the PCM generator silently
+  dropped `_condition_wav_to_path` (and would have dropped `_attend_wav_to_path`)** -- a NameError the moment
+  either was switched on; `messages.load` crashed on a malformed body.
+- Spec changes made on purpose to existing tests, each marked in the test: the acknowledgement (always the
+  thanks), the "cannot see" wording, and the history tests that assumed an unverified caller is offered a
+  person now run with `SECURITY_QUESTIONS=off` (they still cover that mode).
+- The DB message rows are seeded from the code defaults at first start; after that the database wins, so a
+  later change to a built-in default does not reach a running deployment until the row is edited.
+- The sample patients are invented; `CLINIC_SEED_SAMPLE_PATIENTS=0` for a real database. The one sample retest
+  interval says `approved_by = "SAMPLE DATA"`: it is not a clinician's decision.
+- Still needs the pod or people: `docs/pod-verification-checklist.md`; emergency wording approval:
+  `docs/emergency-for-approval.md`; native review of all new wording; real recordings for every audio threshold.
+- Not done: preferences are offered and recorded but branch, channel and address are not yet applied to a
+  booking; the "continue it" offer restores the saved slots but does not re-hold a slot.

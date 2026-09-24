@@ -311,8 +311,24 @@ class ClinicToolsClient:
         return await self._post(f"/api/v1/patients/{patient_ref}/preferences",
                                 {"caller_phone": caller_phone, **fields}, "set_preferences")
 
-    async def continuity(self, caller_phone: str, call_id: str | None = None) -> dict:
-        return await self._get("/api/v1/continuity", {"caller_phone": caller_phone, "call_id": call_id}, "continuity")
+    async def continuity(self, caller_phone: str, call_id: str | None = None, patient_ref: int | None = None) -> dict:
+        """KCD-496: unfinished work, the last interactions, and the last calls cached for one day."""
+        return await self._get("/api/v1/continuity", {"caller_phone": caller_phone, "call_id": call_id,
+                                                      "patient_ref": patient_ref}, "continuity")
+
+    async def verify_patient(self, call_id: str, patient_ref: int, answers: dict, caller_phone: str | None = None) -> dict:
+        """KCD-495: the SERVER checks the security answers. {"verified", "attempts_left", "locked",
+        and after a pass "age_years", "is_senior"} -- never which answer was wrong."""
+        return await self._post("/api/v1/patients/verify", {"call_id": call_id, "patient_ref": patient_ref,
+                                                            "caller_phone": caller_phone, **answers}, "verify_patient")
+
+    async def find_patient(self, call_id: str, answers: dict) -> dict:
+        """KCD-497: find a patient from a patient id, or a date of birth with a name. Opaque reference only."""
+        return await self._post("/api/v1/patients/find", {"call_id": call_id, **answers}, "find_patient")
+
+    async def agent_messages(self, lang: str | None = None) -> dict:
+        """KCD-353/500/513: the operator-editable wording (agent/messages.py)."""
+        return await self._get("/api/v1/agent/messages", {"lang": lang}, "agent_messages")
 
     async def search_bookings(self, caller_phone: str, **criteria) -> dict:
         """KCD-497: any combination of phone, name, approx_date, test_name, branch."""

@@ -56,3 +56,28 @@ def test_overlapping_requests_each_render_at_their_own_speed(tmp_path, monkeypat
         assert len(synth.seen) == 16
         for text, scale in synth.seen:
             assert scale == (0.8 if int(text[1:]) % 2 else 1.3), (text, scale)
+
+
+def test_the_speakers_endpoint_lists_each_languages_voices_for_choosing_one_by_ear(tmp_path, monkeypatch):
+    """KCD-511: which voices exist, and which is in use, so the agent's voice can be chosen without a code change."""
+    monkeypatch.setenv("TTS_CHECKPOINTS_ROOT", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    with pod_stubs(REPO_ROOT) as imp:
+        ts = imp("tts_server")
+
+        class _Manager:
+            name_to_id = {"female": 0, "male": 1, "elder_female": 2}
+
+        class _Model:
+            speaker_manager = _Manager()
+
+        class _Multi:
+            tts_model = _Model()
+
+        class _Single:
+            tts_model = object()                                   # a single-speaker model has no speaker manager
+
+        ts.SYNTHESIZERS["bn"], ts.SYNTHESIZERS["hi"], ts.SYNTHESIZERS["en"] = _Multi(), _Multi(), _Single()
+        out = ts.speakers()
+        assert out["default"] == ts.DEFAULT_SPEAKER
+        assert out["speakers"]["bn"] == ["elder_female", "female", "male"] and out["speakers"]["en"] == []

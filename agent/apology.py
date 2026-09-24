@@ -39,24 +39,24 @@ CAUSES = (NOT_HEARD, CANNOT_CHECK, INSUFFICIENT_INFO, NOT_EXIST)
 # cause -> lang -> the apology sentence (exactly one apology marker each)
 _APOLOGY = {
     NOT_HEARD: {
-        "bn": "দুঃখিত, ঠিক শুনতে পাইনি।",
-        "hi": "माफ़ कीजिए, ठीक से सुन नहीं पाई।",
-        "en": "Sorry, I could not hear that clearly.",
+        "bn": "দুঃখিত। আমি ঠিক শুনতে পাইনি।",
+        "hi": "माफ़ कीजिए। मैं ठीक से सुन नहीं पाई।",
+        "en": "Sorry. I could not hear that.",
     },
     CANNOT_CHECK: {
-        "bn": "দুঃখিত, এই মুহূর্তে আমি এটা দেখতে পারছি না।",
-        "hi": "माफ़ कीजिए, अभी मैं यह देख नहीं पा रही हूँ।",
-        "en": "Sorry, I cannot check that right now.",
+        "bn": "দুঃখিত। এখন আমি এটা দেখতে পারছি না।",
+        "hi": "माफ़ कीजिए। अभी मैं यह देख नहीं पा रही।",
+        "en": "Sorry. I cannot check that now.",
     },
     INSUFFICIENT_INFO: {
-        "bn": "দুঃখিত, এ বিষয়ে যাচাই করা তথ্য আমার কাছে নেই।",
-        "hi": "माफ़ कीजिए, इस बारे में जाँची हुई जानकारी मेरे पास नहीं है।",
-        "en": "Sorry, I do not have verified information on that.",
+        "bn": "দুঃখিত। এ বিষয়ে আমার কাছে তথ্য নেই।",
+        "hi": "माफ़ कीजिए। इस बारे में मेरे पास जानकारी नहीं है।",
+        "en": "Sorry. I do not have that information.",
     },
     NOT_EXIST: {
-        "bn": "দুঃখিত, এটা আমাদের এখানে নেই।",
-        "hi": "माफ़ कीजिए, यह हमारे यहाँ नहीं है।",
-        "en": "Sorry, that is not something we have.",
+        "bn": "দুঃখিত। এটা আমাদের এখানে নেই।",
+        "hi": "माफ़ कीजिए। यह हमारे यहाँ नहीं है।",
+        "en": "Sorry. We do not have that.",
     },
 }
 
@@ -75,8 +75,8 @@ _MARKERS = {
 }
 # an apology clause at the START of a sentence: the marker plus its comma
 _LEADING = {
-    "bn": re.compile(r"^\s*(দুঃখিত|ক্ষমা করবেন|সরি)\s*[,،]?\s*"),
-    "hi": re.compile(r"^\s*(माफ़ कीजिए|माफ कीजिए|माफ़ करें|माफ करें|क्षमा कीजिए|खेद है)\s*[,،]?\s*"),
+    "bn": re.compile(r"^\s*(দুঃখিত|ক্ষমা করবেন|সরি)\s*[,،।.]?\s*"),
+    "hi": re.compile(r"^\s*(माफ़ कीजिए|माफ कीजिए|माफ़ करें|माफ करें|क्षमा कीजिए|खेद है)\s*[,،।.]?\s*"),
     "en": re.compile(r"^\s*(sorry|my apologies|apologies|i apologi[sz]e)\s*[,.]?\s*", re.I),
 }
 

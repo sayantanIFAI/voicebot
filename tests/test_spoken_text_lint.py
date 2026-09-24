@@ -36,8 +36,8 @@ from agent.spoken_text_lint import find_artifacts, has_spoken_artifact, scan_sou
 # this (never raise it) as reply_templates.py/reply_templates_i18n.py
 # get reworded to natural clauses.
 _KNOWN_BACKLOG = {
-    "agent/reply_templates.py": 16,
-    "agent/reply_templates_i18n.py": 30,
+    "agent/reply_templates.py": 14,
+    "agent/reply_templates_i18n.py": 28,
 }
 
 

@@ -22,11 +22,15 @@ from __future__ import annotations
 import re
 
 # ---- "I cannot see it" statements: the only honest answer to a missing/stale/ambiguous field
-CANNOT_SEE = {
-    "bn": "আমার কাছে থাকা তথ্যে এটা আমি দেখতে পাচ্ছি না।",
-    "hi": "मेरे पास मौजूद जानकारी में यह मुझे दिखाई नहीं दे रहा।",
-    "en": "I cannot see that in the records I have access to.",
+# KCD-500, as the operator worded it: nothing found in the cache or the tables is said plainly, with one
+# simple apology, and the caller is asked to guide the agent. The operator can change it from the
+# database (agent/messages.py, key "cannot_find"); clinic-api/agent_messages.py holds the same default.
+CANNOT_FIND = {
+    "bn": "দুঃখিত। আমি তথ্যটা খুঁজে পাচ্ছি না। আপনি কি আমাকে একটু বলবেন, যাতে আমি সাহায্য করতে পারি?",
+    "hi": "माफ़ कीजिए। मुझे जानकारी नहीं मिल रही। क्या आप मुझे थोड़ा बताएँगे, ताकि मैं मदद कर सकूँ?",
+    "en": "Sorry. I am unable to find the details. Could you please guide me, so that I can help you?",
 }
+CANNOT_SEE = CANNOT_FIND
 CANNOT_CONFIRM = {
     "bn": "আমার কাছে থাকা তথ্যটা এখনকার নয়, তাই আমি এটা নিশ্চিত করতে পারছি না।",
     "hi": "मेरे पास मौजूद जानकारी अभी की नहीं है, इसलिए मैं इसकी पुष्टि नहीं कर सकती।",
@@ -42,11 +46,7 @@ NEEDS_VERIFICATION = {
     "hi": "निजी जानकारी बताने से पहले मुझे पहचान की पुष्टि करनी होगी। इस कॉल पर अभी मैं यह नहीं कर सकती। क्या स्टाफ़ से जोड़ दूँ?",
     "en": "I need to verify who I am speaking with before I share anything personal. I cannot do that on this call yet. Shall I connect you with our staff?",
 }
-NO_RECORD = {
-    "bn": "এই নম্বরে আমি কোনো রেকর্ড দেখতে পাচ্ছি না।",
-    "hi": "इस नंबर पर मुझे कोई रिकॉर्ड दिखाई नहीं दे रहा।",
-    "en": "I cannot see any record on this number.",
-}
+NO_RECORD = CANNOT_FIND
 
 
 ASK_PHONE = {
@@ -82,8 +82,13 @@ def ok_anything_else(lang: str) -> tuple[str, str]:
     return "ok_anything_else", _pick(OK_ANYTHING_ELSE, lang)
 
 
+def _msg(key: str, table: dict, lang: str) -> str:
+    from agent import messages
+    return messages.text(key, lang if lang in table else "bn", _pick(table, lang))
+
+
 def cannot_see(lang: str) -> tuple[str, str]:
-    return "cannot_see", _pick(CANNOT_SEE, lang)
+    return "cannot_see", _msg("cannot_find", CANNOT_FIND, lang)
 
 
 def cannot_confirm(lang: str) -> tuple[str, str]:
@@ -99,16 +104,22 @@ def needs_verification(lang: str) -> tuple[str, str]:
 
 
 def no_record(lang: str) -> tuple[str, str]:
-    return "no_record", _pick(NO_RECORD, lang)
+    return "no_record", _msg("cannot_find", CANNOT_FIND, lang)
 
 
 # ---- statements rendered from retrieved fields ---------------------------------------
+
+def _name(f: dict, field: str, lang: str) -> str:
+    """A name in the language's own script when the record carries one (a Latin name inside Bengali
+    text is dropped by the Bengali voice), else the canonical name."""
+    return (f.get(f"{field}_{lang}") if lang in ("bn", "hi") else None) or f.get(field) or ""
+
 
 def appointment_statement(event: dict, lang: str, today_iso: str) -> tuple[str, str]:
     f = event["fields"]
     upcoming = f["date"] >= today_iso and f.get("status") == "confirmed"
     sid = f"appointment:{event['id'].split(':')[1]}"
-    doc, date, time = f.get("doctor_name") or "", f["date"], f.get("time_slot") or ""
+    doc, date, time = _name(f, "doctor_name", lang), f["date"], f.get("time_slot") or ""
     if lang == "hi":
         return sid, (f"आपकी {doc} डॉक्टर के साथ {date} को {time} बजे अपॉइंटमेंट है।" if upcoming
                      else f"आपकी {doc} डॉक्टर के साथ {date} को अपॉइंटमेंट थी।")
@@ -122,12 +133,24 @@ def appointment_statement(event: dict, lang: str, today_iso: str) -> tuple[str, 
 def test_performed_statement(event: dict, lang: str) -> tuple[str, str]:
     f = event["fields"]
     sid = f"test_performed:{event['id'].split(':')[1]}"
-    test, date = f.get("test_name") or "", f["performed_on"]
+    test, date = _name(f, "test_name", lang), f["performed_on"]
     if lang == "hi":
         return sid, f"आपका {test} आख़िरी बार {date} को किया गया था।"
     if lang == "en":
         return sid, f"Your {test} was last done on {date}."
     return sid, f"আপনার {test} শেষবার {date} তারিখে করা হয়েছিল।"
+
+
+def medicine_statement(event: dict, lang: str) -> tuple[str, str]:
+    """THAT a medicine was prescribed and when -- never a dose, a reason or what to do."""
+    f = event["fields"]
+    sid = f"medicine_prescribed:{event['id'].split(':')[1]}"
+    med, date = _name(f, "medicine_name", lang), f["prescribed_on"]
+    if lang == "hi":
+        return sid, f"{date} को आपको {med} लिखी गई थी।"
+    if lang == "en":
+        return sid, f"{med} was prescribed to you on {date}."
+    return sid, f"{date} তারিখে আপনাকে {med} লেখা হয়েছিল।"
 
 
 def due_statement(status: dict, lang: str) -> tuple[str, str] | None:

@@ -6,9 +6,9 @@ tests/test_disclosure_and_human_request.py, so the two cannot drift silently.
 
 The wording is DRAFT and pending clinical and legal review (see agent/disclosure.py).
 """
-DISCLOSURE_VERSION = "1.0-draft"
+DISCLOSURE_VERSION = "2.0-draft"
 
-TEXT_NOTICE = "Sent by Kolkata Care's automated assistant. To speak to a person, call the counter."
+TEXT_NOTICE = "Sent by Sonoscan Vaani, an automated assistant. To speak to a person, call the counter."
 
 
 def with_notice(message: str) -> str:

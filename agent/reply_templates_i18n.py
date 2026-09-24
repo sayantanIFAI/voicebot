@@ -93,6 +93,9 @@ def _suggestions(result: dict, lang: str) -> list[str]:
     """did_you_mean mixes English names and aliases in every script. Keep
     only the ones this language's voice can say, or the caller hears a
     list with the names missing."""
+    scripted = result.get(f"did_you_mean_{lang}") or []
+    if scripted:
+        return list(scripted)
     return [s for s in (result.get("did_you_mean") or []) if _script_ok(s, lang)]
 
 
@@ -155,8 +158,8 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
                 else f"I found more than one test -- which one did you mean: {' or '.join(sugg)}?")
     if lang == "hi":
         if sugg:
-            return (f"'{q}' नाम का टेस्ट नहीं मिला। क्या आप यह कहना चाह रहे हैं: {', '.join(sugg)}?"
-                    if q else f"वह टेस्ट नहीं मिला। क्या आप यह कहना चाह रहे हैं: {', '.join(sugg)}?")
+            return (f"'{q}' नाम का टेस्ट नहीं मिला। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
+                    if q else f"वह टेस्ट नहीं मिला। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?")
         return (f"माफ़ कीजिए, '{q}' नाम का कोई टेस्ट हमारी सूची में नहीं है।" if q
                 else "माफ़ कीजिए, वह टेस्ट हमारी सूची में नहीं है।")
     if sugg:
@@ -176,8 +179,8 @@ def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
                 else f"I found more than one doctor -- did you mean {' or '.join(sugg)}?")
     if hi:
         if sugg:
-            return (f"'{q}' नाम के डॉक्टर नहीं मिले। क्या आप यह कहना चाह रहे हैं {', '.join(sugg)}?"
-                    if q else f"वह डॉक्टर नहीं मिले। क्या आप यह कहना चाह रहे हैं {', '.join(sugg)}?")
+            return (f"'{q}' नाम के डॉक्टर नहीं मिले। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
+                    if q else f"वह डॉक्टर नहीं मिले। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?")
         return (f"माफ़ कीजिए, '{q}' नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।" if q
                 else "माफ़ कीजिए, इस नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।")
     if sugg:

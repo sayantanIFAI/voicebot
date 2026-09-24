@@ -150,6 +150,10 @@ def env(m, monkeypatch, tmp_path):
     monkeypatch.setattr(m, "_admission", None)
     monkeypatch.setattr(m, "_tts_router", FakeTTS())
     monkeypatch.setattr(m, "CONDITION_INPUT", "off")
+    # These tests are about the fallback for a deployment that verifies some other way: with the security
+    # questions OFF an unverified caller is offered a person. The questions themselves (the default) are
+    # covered by tests/test_orchestrator_security.py.
+    monkeypatch.setattr(m, "SECURITY_QUESTIONS", "off")
     tools = FakeTools()
     monkeypatch.setattr(m, "_tools", tools)
     monkeypatch.setattr(m, "_fast_path", FakeFastPath())

@@ -39,10 +39,11 @@ from sqlalchemy.orm import Session
 
 from booking_service import NOT_PROVIDED_PHONE, _now, authorize_disclosure, find_draft
 from models import (
-    Appointment, CallRecord, Doctor, HistoryAudit, LabReport, LabTest, Patient, PatientPreference,
-    RetestInterval, SmsOutbox, TestBooking, TestPerformance,
+    Appointment, AuditLog, CallRecord, Doctor, HistoryAudit, LabReport, LabTest, Patient, PatientMedicine,
+    PatientPreference, RetestInterval, SmsOutbox, TestBooking, TestPerformance,
 )
 from phonetic_match import phonetic_key, phonetic_match
+import registry as reg
 
 # Keys that would make an event a clinical fact. None may pass through this layer.
 FORBIDDEN_KEYS = frozenset({"result", "results", "value", "values", "reading", "readings",
@@ -58,6 +59,11 @@ CONFIRMED_ALLOWLIST = {"doctor_name", "date", "time_slot", "test_name", "test_na
 DELIVERY_CHANNELS = {"sms", "whatsapp", "voice"}
 ACCESSIBILITY_MODES = {"slower", "shorter", "none"}
 LANGUAGES = {"bn", "hi", "en"}
+
+
+def _a1(csv: str | None) -> str | None:
+    """The first alias in a '|'-separated list (the caller's own script), or None."""
+    return next((a for a in (csv or "").split("|") if a.strip()), None)
 
 
 def _iso(x) -> str | None:
@@ -136,6 +142,8 @@ def record_call_event(db: Session, call_id: str, seq: int, kind: str, payload: d
         actions = json.loads(row.actions_json)
         actions.append({"name": payload.get("name"), "ref": payload.get("ref"), "at": _iso(_now())})
         row.actions_json = json.dumps(actions)
+        reg.audit(db, "action:" + str(payload.get("name")), "ok", call_id=call_id, patient_id=row.patient_id,
+                  ref=payload.get("ref"))
     elif kind == "confirmed":
         merged = json.loads(row.confirmed_json)
         merged.update(redact_confirmed(payload.get("slots") or {}))
@@ -150,6 +158,7 @@ def record_call_event(db: Session, call_id: str, seq: int, kind: str, payload: d
         row.patient_id = payload.get("patient_ref")
     elif kind == "escalation":
         row.escalation_reason = payload.get("reason")
+        reg.audit(db, "escalation", "ok", call_id=call_id, patient_id=row.patient_id, reason=payload.get("reason"))
     elif kind == "end":
         row.ended_at = _now()
         row.outcome = payload.get("outcome", "completed")
@@ -158,6 +167,10 @@ def record_call_event(db: Session, call_id: str, seq: int, kind: str, payload: d
     row.last_seq = seq
     row.updated_at = _now()
     db.commit()
+    if kind == "end":
+        # KCD-501: what the call did becomes durable history, its summary is cached for a day
+        # (KCD-496) and the close is audited. Idempotent, so a retried `end` changes nothing.
+        reg.finalize_call(db, row)
     return {"applied": True, "duplicate": False, "last_seq": row.last_seq}
 
 
@@ -170,9 +183,12 @@ def identify(db: Session, phone: str) -> dict:
         return {"status": "new", "record_exists": False, "count": 0}
     rows = db.query(Patient).filter(Patient.phone == phone).all()
     if not rows:
+        reg.audit(db, "identify", "ok", result="new", phone_last4=phone[-4:])
         return {"status": "new", "record_exists": False, "count": 0}
     if len(rows) == 1:
+        reg.audit(db, "identify", "ok", patient_id=rows[0].id, result="single", phone_last4=phone[-4:])
         return {"status": "single", "record_exists": True, "count": 1, "patient_ref": rows[0].id}
+    reg.audit(db, "identify", "ok", result="ambiguous", count=len(rows), phone_last4=phone[-4:])
     return {"status": "ambiguous", "record_exists": True, "count": len(rows)}
 
 
@@ -238,6 +254,8 @@ def _local_events(db: Session, patient: Patient, now: datetime.datetime) -> list
         doctor = db.get(Doctor, a.doctor_id)
         ev.append({"id": f"appointment:{a.id}", "kind": "appointment", "at": a.date, "source": "local", "as_of": as_of,
                    "fields": {"confirmation_id": a.confirmation_id, "doctor_name": doctor.name if doctor else None,
+                              "doctor_name_bn": _a1(doctor.aliases_bn) if doctor else None,
+                              "doctor_name_hi": _a1(doctor.aliases_hi) if doctor else None,
                               "date": a.date, "time_slot": a.time_slot, "status": a.status}})
     tb = db.query(TestBooking).filter(TestBooking.patient_id == patient.id).all()
     for t in tb:
@@ -247,7 +265,17 @@ def _local_events(db: Session, patient: Patient, now: datetime.datetime) -> list
     for p in db.query(TestPerformance).filter(TestPerformance.patient_id == patient.id).all():
         test = db.get(LabTest, p.lab_test_id)
         ev.append({"id": f"test_performed:{p.id}", "kind": "test_performed", "at": p.performed_on, "source": p.source,
-                   "as_of": as_of, "fields": {"test_name": test.name if test else None, "performed_on": p.performed_on}})
+                   "as_of": as_of, "fields": {"test_name": test.name if test else None,
+                                              "test_name_bn": _a1(test.aliases_bn) if test else None,
+                                              "test_name_hi": _a1(test.aliases_hi) if test else None,
+                                              "performed_on": p.performed_on}})
+    for m in db.query(PatientMedicine).filter(PatientMedicine.patient_id == patient.id).all():
+        ev.append({"id": f"medicine_prescribed:{m.id}", "kind": "medicine_prescribed", "at": m.prescribed_on,
+                   "source": m.source, "as_of": as_of,
+                   "fields": {"medicine_name": m.medicine.name if m.medicine else None,
+                              "medicine_name_bn": _a1(m.medicine.aliases_bn) if m.medicine else None,
+                              "medicine_name_hi": _a1(m.medicine.aliases_hi) if m.medicine else None,
+                              "prescribed_on": m.prescribed_on}})
     for cid in {t.confirmation_id for t in tb}:
         for r in db.query(LabReport).filter(LabReport.confirmation_id == cid, LabReport.status == "ready").all():
             ev.append({"id": f"report_ready:{r.id}", "kind": "report_ready", "at": _iso(r.ready_at), "source": "local",
@@ -263,16 +291,26 @@ def _audit(db: Session, call_id: str, patient_id: int | None, kind: str, fields:
     db.add(HistoryAudit(call_id=call_id or "unknown", patient_id=patient_id, kind=kind,
                         fields_json=json.dumps(fields), at=_now()))
     db.commit()
+    reg.audit(db, "history:" + kind, "denied" if kind.endswith("denied") or "unverified" in kind else "ok",
+              call_id=call_id or "unknown", patient_id=patient_id, fields=fields)
 
 
-def timeline(db: Session, patient_id: int, caller_phone: str, call_id: str) -> dict:
+def timeline(db: Session, patient_id: int, caller_phone: str, call_id: str,
+             verified: bool | None = None) -> dict:
     """The patient's timeline, assembled on request from the local records (never kept
     as a second copy), with every event carrying its source and as-of time and the
-    sources that could NOT be read named as such."""
+    sources that could NOT be read named as such.
+
+    `verified` is the server's own answer to "has this call passed the security questions for
+    this patient" (registry.is_verified). The HTTP endpoint always passes it; None means the caller
+    is an in-process user of the older phone-based rule, which is kept for them unchanged."""
     patient = db.get(Patient, patient_id)
     if patient is None:
         return {"success": False, "reason": "not_found"}
-    if not caller_phone or not authorize_disclosure(db, patient, caller_phone):
+    if verified is False:
+        _audit(db, call_id, patient_id, "timeline_denied_unverified", [])
+        return {"success": False, "reason": "not_verified"}
+    if verified is None and (not caller_phone or not authorize_disclosure(db, patient, caller_phone)):
         _audit(db, call_id, patient_id, "timeline_denied", [])
         return {"success": False, "reason": "not_authorized"}
     now = _now()
@@ -371,14 +409,19 @@ def recent_interactions(db: Session, caller_phone: str, limit: int = 3, exclude_
     return items[:limit]
 
 
-def continuity(db: Session, caller_phone: str, exclude_call_id: str | None = None) -> dict:
+def continuity(db: Session, caller_phone: str, exclude_call_id: str | None = None,
+               patient_id: int | None = None) -> dict:
     """Is there something unfinished, and what were the last interactions? The unfinished
     booking's DETAILS are returned separately (`draft`) and are for the agent to speak
     only after verification; before it the agent may say only that something was left
     unfinished."""
     draft = find_draft(db, caller_phone)
     interactions = recent_interactions(db, caller_phone, 3, exclude_call_id)
-    return {"unfinished": draft is not None, "draft": draft, "interactions": interactions}
+    # KCD-496: the last calls kept for ONE DAY -- what the next call is greeted with. Older calls are
+    # in patient_history and are not used as context.
+    cached = reg.cached_context(db, patient_id, caller_phone, exclude_call_id)
+    unfinished = draft is not None or any(c.get("unfinished") for c in cached[:1])
+    return {"unfinished": unfinished, "draft": draft, "interactions": interactions, "cached": cached}
 
 
 # ====================================================== KCD-497: find a booking without a number

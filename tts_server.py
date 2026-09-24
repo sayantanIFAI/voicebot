@@ -179,6 +179,20 @@ def health():
     }
 
 
+@app.get("/speakers")
+def speakers():
+    """KCD-511: the voices each language's synthesizer offers, and the one in use. To choose a
+    different voice for the agent (for example a mature female voice), audition them with
+    tools/audition_voices.py, then set TTS_SPEAKER; no code change."""
+    out: dict[str, list[str]] = {}
+    for lang, synth in SYNTHESIZERS.items():
+        try:
+            out[lang] = sorted(synth.tts_model.speaker_manager.name_to_id.keys())
+        except Exception:  # noqa: BLE001 - a single-speaker model simply has none to list
+            out[lang] = []
+    return {"default": DEFAULT_SPEAKER, "speakers": out}
+
+
 @app.post("/synthesize")
 def synthesize(req: SynthesizeRequest):
     if req.lang not in SYNTHESIZERS:

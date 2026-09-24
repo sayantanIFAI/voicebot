@@ -28,6 +28,9 @@ import sys
 FIXED_LABELS = frozenset({
     "cannot_see", "cannot_confirm", "ambiguous", "needs_verification", "no_record",
     "ask_phone", "ask_which_test", "ok_anything_else",
+    # the security-question conversation (agent/security_check.py): fixed sentences, no patient data
+    "security_question", "security_verified", "security_failed", "security_not_understood",
+    "security_not_matched", "senior_opening", "continuity_offer",
 })
 
 

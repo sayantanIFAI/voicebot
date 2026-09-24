@@ -66,6 +66,30 @@ That threshold is reasoned from a handful of test pairs, not measured
 against real call audio -- treat it with the same "LOW confidence, needs
 real samples" caution `gate.py`'s own floors are labelled with.
 
+**Update: a near-match is now only a suggestion.** After an external review, a fuzzy or sound-alike match
+never resolves a doctor or a test: `_find_doctor` / `_find_test` resolve only on a written-form match
+(a whole name token beats a substring; several matches are "ambiguous", not the first row). The near-match
+comes back as `did_you_mean` (in Bengali and Hindi script too) with `needs_confirmation`, the agent asks
+"did you mean ...?", and a "yes" runs the lookup with that name.
+
+### Patients, security questions and history (`clinic-api/registry.py`, `patient_context.py`)
+
+Tables: `patient_registry` (id on the card, date of birth, address, name aliases), `medicines` and
+`patient_medicines`, `test_performances` (with `retest_intervals`), `patient_history` (what each call did,
+written when the call closes), `patient_call_cache` (the last call, kept ONE day, used as context by the
+next), `verification_sessions`, `agent_messages` (operator-editable wording) and `audit_log`.
+
+A caller is verified when the SERVER matches two of the facts they give (patient id, date of birth, full
+name, address), one of them strong (id or date of birth); history is refused until then. Three failed
+evaluations lock the check for the call, six failures in 24 hours lock the patient. Sample patients
+(invented) are seeded on an empty registry; set `CLINIC_SEED_SAMPLE_PATIENTS=0` for a real database.
+`python tools/demo_patient_history.py` shows it all working.
+
+New settings (all with safe defaults): `ACK_MODE` (always), `SECURITY_QUESTIONS` (on), `ADAPTIVE_PAUSE` (on),
+`NEAR_END_ATTENTION` (on), `CLINIC_API_TOKEN`, `CLINIC_API_REQUIRE_TOKEN`, `INTERNAL_BIND_HOST`,
+`ONLY_PCM`, `CLINIC_SEED_SAMPLE_PATIENTS`, `TTS_SPEAKER`; and the earlier `AEC_BARGE_IN`,
+`SEMANTIC_ENDPOINTING`, `CONDITION_INPUT` (all off).
+
 ## What's genuinely new here (no precedent to lean on)
 
 - **Real-time turn detection** (`agent/vad_stream.py`). voicerx's VAD is

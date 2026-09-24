@@ -20,21 +20,31 @@ audit can say which wording a given call heard (the version is logged per call).
 """
 from __future__ import annotations
 
-DISCLOSURE_VERSION = "1.0-draft"
+DISCLOSURE_VERSION = "2.0-draft"
 REVIEW_STATUS = "pending_clinical_and_legal_review"
 
-# What is spoken. One sentence to say it is automated, one to say a person is
-# available -- so the caller knows both what they are talking to and that they
-# are not stuck with it.
+# What is spoken, and the built-in default: the operator can change it from the database without a
+# deploy (agent/messages.py, key "disclosure"), and the call record stores which wording was heard.
+# Who the caller is speaking with, that it is automated, and that a person is available -- one short
+# sentence each, so the caller knows what they are talking to and that they are not stuck with it.
+# Native script for the brand name in Bengali and Hindi: a Latin word inside Bengali text is dropped
+# by the Bengali voice (agent/bn_normalize.py).
 DISCLOSURE = {
-    "bn": "আমি কলকাতা কেয়ারের স্বয়ংক্রিয় সহকারী, মানুষ নই। চাইলে যেকোনো সময় স্টাফের সাথে কথা বলতে পারবেন।",
-    "hi": "मैं कोलकाता केयर की स्वचालित सहायक हूँ, कोई इंसान नहीं। आप चाहें तो कभी भी स्टाफ़ से बात कर सकते हैं।",
-    "en": "I am the automated assistant of Kolkata Care, not a person. You can ask for our staff at any time.",
+    "bn": "আপনি সোনোস্ক্যান বাণীর সঙ্গে কথা বলছেন। আমি একটি স্বয়ংক্রিয় সহকারী, মানুষ নই। চাইলে যেকোনো সময় স্টাফের সঙ্গে কথা বলতে পারবেন।",
+    "hi": "आप सोनोस्कैन वाणी से बात कर रहे हैं। मैं एक स्वचालित सहायक हूँ, इंसान नहीं। आप चाहें तो कभी भी स्टाफ़ से बात कर सकते हैं।",
+    "en": "You are speaking with Sonoscan Vaani. I am an automated assistant, not a person. You can ask for our staff at any time.",
 }
 
 
 def disclosure_for(lang: str) -> str:
-    return DISCLOSURE.get(lang) or DISCLOSURE["bn"]
+    from agent import messages
+    return messages.text("disclosure", lang if lang in DISCLOSURE else "bn", DISCLOSURE.get(lang) or DISCLOSURE["bn"])
+
+
+def version_label() -> str:
+    """The wording version to record for a call: the database's when it supplied the text."""
+    from agent import messages
+    return f"{DISCLOSURE_VERSION}+{messages.label()}"
 
 
 def insert_into_greeting(greeting: str, lang: str) -> str:

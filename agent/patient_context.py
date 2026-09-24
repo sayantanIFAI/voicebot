@@ -220,6 +220,25 @@ def answer_last_test(timeline: dict | None, test_name: str, status: dict | None,
     return HistoryAnswer(out)
 
 
+def answer_medicines(timeline: dict | None, lang: str, now: datetime.datetime) -> HistoryAnswer:
+    """The most recent prescription of up to three different medicines. Names and dates only."""
+    if not timeline or not timeline.get("success"):
+        return HistoryAnswer([ht.cannot_see(lang)])
+    if _is_stale(timeline.get("as_of"), now):
+        return HistoryAnswer([ht.cannot_confirm(lang)])
+    latest: dict[str, dict] = {}
+    for e in timeline["events"]:
+        if e["kind"] != "medicine_prescribed":
+            continue
+        name = (e["fields"].get("medicine_name") or "").lower()
+        if name and (name not in latest or e["fields"]["prescribed_on"] > latest[name]["fields"]["prescribed_on"]):
+            latest[name] = e
+    if not latest:
+        return HistoryAnswer([ht.cannot_see(lang)])
+    ordered = sorted(latest.values(), key=lambda e: e["fields"]["prescribed_on"], reverse=True)
+    return HistoryAnswer([ht.medicine_statement(e, lang) for e in ordered[:MAX_APPOINTMENTS_SPOKEN]])
+
+
 def answer_recent_tests(timeline: dict | None, lang: str, now: datetime.datetime) -> HistoryAnswer:
     """The last date of up to three DIFFERENT tests, most recent first. Dates only -- never
     what any of them showed."""

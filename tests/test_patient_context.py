@@ -189,7 +189,11 @@ def test_a_cancelled_appointment_is_not_stated_as_upcoming():
 def test_no_timeline_at_all_says_it_cannot_see_never_that_there_is_nothing():
     for tl in (None, {"success": False, "reason": "not_authorized"}):
         a = pcx.answer_appointments(tl, "en", NOW)
-        assert a.ids == ["cannot_see"] and "cannot see" in a.text
+        # SPEC CHANGE (KCD-500, operator wording): the "cannot see" statement is now "Sorry. I am unable to
+        # find the details. Could you please guide me...". The rule is unchanged: it says it cannot find
+        # it and asks for help; it never says there is nothing.
+        assert a.ids == ["cannot_see"] and "unable to find" in a.text and "guide me" in a.text
+        assert "no appointment" not in a.text.lower() and "nothing" not in a.text.lower()
 
 
 def test_a_stale_timeline_is_not_confirmed():

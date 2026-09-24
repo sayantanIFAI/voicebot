@@ -14,6 +14,7 @@ and this script refuses to write if that stops being true.
 from __future__ import annotations
 
 import io
+import re
 import sys
 
 HEADER = '''"""Kolkata Care Diagnostics -- voice agent on the RAW PCM transport.
@@ -119,7 +120,14 @@ def main() -> None:
         "import torchaudio\nfrom agent.pcm_buffer import PcmCallBuffer, SAMPLE_RATE\nfrom fastapi",
         "imports")
 
-    rep(s[s.index("async def _decode_to_wav("):s.index("class CallSession:")], "", "drop decoder")
+    # Drop ONLY _decode_to_wav (the WebM decoder). It used to drop everything up to `class CallSession`,
+    # which silently took the helpers defined after it (_condition_wav_to_path, _attend_wav_to_path) too
+    # -- a NameError in the PCM entrypoint the moment either was switched on.
+    start = s.index("async def _decode_to_wav(")
+    nl3 = chr(10) * 3                                  # a top-level definition starts after two blank lines
+    ends = [i for i in (s.find(nl3 + "def ", start + 1), s.find(nl3 + "async def ", start + 1),
+                        s.find(nl3 + "class ", start + 1)) if i != -1]
+    rep(s[start:min(ends) + 3], "", "drop decoder")
     rep(s[s.index("class CallSession:"):s.index("    def __init__(self, ws: WebSocket):")],
         CALLSESSION_DOC, "CallSession docstring")
 

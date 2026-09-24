@@ -628,3 +628,132 @@ class RetestInterval(Base):
     approved_by = Column(String, nullable=False)
     approved_at = Column(String, nullable=False)                       # ISO date
 
+
+# ================================================================================================
+# Patient registry, verification, medicines, call-outcome history, one-day cache, editable
+# agent messages and the audit log. Sample rows are seeded by patient_seed.py; in production the
+# registry, medicines and test history are filled by the hospital connector (KCD-131).
+# ================================================================================================
+
+class PatientRegistry(Base):
+    """The registry row for a patient: the facts the SECURITY QUESTIONS check against (date of birth,
+    address, registered patient id) and nothing clinical. One row per `patients` row. Names and
+    addresses may carry aliases in Bengali and Hindi script because that is how a caller's speech
+    is transcribed; they are compared exactly (token for token), never by sound."""
+    __tablename__ = "patient_registry"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, unique=True)
+    patient_uid = Column(String, nullable=False, unique=True, index=True)      # the id printed on the card, e.g. KCP-100234
+    dob = Column(String, nullable=False)                                        # ISO date
+    gender = Column(String, nullable=True)
+    address_text = Column(String, nullable=False, default="")
+    locality = Column(String, nullable=True)
+    pincode = Column(String, nullable=True)
+    name_aliases = Column(String, nullable=False, default="")                   # "|"-separated, other scripts
+    address_aliases = Column(String, nullable=False, default="")                # "|"-separated, other scripts
+    registered_on = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="active")                   # active | inactive | merged
+    source = Column(String, nullable=False, default="local")                   # local | his
+
+
+class Medicine(Base):
+    """A medicine in the catalogue. Names only: there is deliberately no dosage guidance, no
+    indication and no interaction data here, because the agent gives no clinical advice."""
+    __tablename__ = "medicines"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
+    generic_name = Column(String, nullable=True)
+    aliases_bn = Column(String, nullable=False, default="")
+    aliases_hi = Column(String, nullable=False, default="")
+
+
+class PatientMedicine(Base):
+    """THAT a medicine was prescribed to a patient and when -- a record of a fact, mirrored from
+    the hospital. No dose interpretation, no advice, no "should take"; like TestPerformance it has
+    no column for one."""
+    __tablename__ = "patient_medicines"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=False)
+    prescribed_on = Column(String, nullable=False)                              # ISO date
+    prescribed_by = Column(String, nullable=True)
+    source = Column(String, nullable=False, default="local")
+    created_at = Column(DateTime, nullable=False)
+    medicine = relationship("Medicine")
+
+
+class PatientHistory(Base):
+    """One row per thing a CALL did for a patient, inserted when the call closes: a booking, a
+    cancellation, a question answered, an escalation. It is the durable history that call outcomes
+    feed; the one-day cache below is what the NEXT call is greeted with."""
+    __tablename__ = "patient_history"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    call_id = Column(String, nullable=False, index=True)
+    kind = Column(String, nullable=False)          # booking_confirmed | tests_booked | appointment_cancelled | ... | call_outcome
+    ref = Column(String, nullable=False, default="")   # confirmation id where there is one
+    detail_json = Column(Text, nullable=False, default="{}")
+    at = Column(DateTime, nullable=False)
+    __table_args__ = (UniqueConstraint("call_id", "kind", "ref", name="uq_patient_history_once"),)
+
+
+class PatientCallCache(Base):
+    """KCD-496: the patient's last call, kept for ONE DAY (`expires_at`) and used as context by the
+    next call. Expired rows are ignored and purged; the permanent record is PatientHistory."""
+    __tablename__ = "patient_call_cache"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
+    caller_phone = Column(String, nullable=True, index=True)
+    call_id = Column(String, nullable=False, unique=True)
+    summary_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
+class VerificationSession(Base):
+    """A passed security check, held server-side for the call: the ONLY thing that authorises a
+    history read. `attempts` counts evaluations, `locked` stops a brute-force of the questions."""
+    __tablename__ = "verification_sessions"
+    id = Column(Integer, primary_key=True)
+    call_id = Column(String, nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    method = Column(String, nullable=False, default="security_questions")
+    factors_json = Column(Text, nullable=False, default="[]")                   # which factors matched (names only)
+    attempts = Column(Integer, nullable=False, default=0)
+    verified_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    locked = Column(Boolean, nullable=False, default=False, server_default=false())
+    __table_args__ = (UniqueConstraint("call_id", "patient_id", name="uq_verification_call_patient"),)
+
+
+class AgentMessage(Base):
+    """Wording the operator can change WITHOUT a deploy: the disclosure, the "I cannot find that"
+    message, the thank-you acknowledgement, and any phrase in agent/phrases.py by its key. The
+    agent reads these at call start and falls back to its built-in text if the API is down, so an
+    outage can never leave it silent. `version` increases on every change and is written into the
+    call record, so an audit knows which wording a caller heard."""
+    __tablename__ = "agent_messages"
+    id = Column(Integer, primary_key=True)
+    key = Column(String, nullable=False)
+    lang = Column(String, nullable=False)
+    text = Column(Text, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    active = Column(Boolean, nullable=False, default=True, server_default=true())
+    updated_at = Column(DateTime, nullable=False)
+    updated_by = Column(String, nullable=True)
+    __table_args__ = (UniqueConstraint("key", "lang", name="uq_agent_message_key_lang"),)
+
+
+class AuditLog(Base):
+    """Everything the agent did that touches a patient or a rule, one row each: identification
+    attempts, security-question attempts (pass, fail, lock), history reads and refusals, booking
+    actions, escalations, message edits, call closes. Attempts are as auditable as successes."""
+    __tablename__ = "audit_log"
+    id = Column(Integer, primary_key=True)
+    at = Column(DateTime, nullable=False, index=True)
+    call_id = Column(String, nullable=True, index=True)
+    patient_id = Column(Integer, nullable=True, index=True)
+    actor = Column(String, nullable=False, default="agent")                     # agent | operator | system
+    action = Column(String, nullable=False, index=True)
+    outcome = Column(String, nullable=False, default="ok")                      # ok | denied | failed | locked
+    detail_json = Column(Text, nullable=False, default="{}")

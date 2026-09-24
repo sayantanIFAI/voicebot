@@ -86,7 +86,7 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.test_rate_reply(slots, result, lang)
     if not result.get("found"):
-        suggestions = result.get("did_you_mean") or []
+        suggestions = result.get("did_you_mean_bn") or result.get("did_you_mean") or []
         if result.get("ambiguous") and suggestions:
             # KCD-446: this test EXISTS -- several rows matched equally
             # well -- distinct from the not-found framing below, which
@@ -94,7 +94,7 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
             return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
-                     f"আপনি কি বলতে চাইছেন: {', '.join(suggestions)}?")
+                     f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?")
         return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
 
     rate = result["rate_inr"]
@@ -113,13 +113,13 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
     if lang != "bn":
         return _i18n.doctor_availability_reply(slots, result, lang)
     if not result.get("found"):
-        suggestions = result.get("did_you_mean") or []
+        suggestions = result.get("did_you_mean_bn") or result.get("did_you_mean") or []
         if result.get("ambiguous") and suggestions:
             # Doctor-side counterpart of KCD-446's test-ambiguity framing.
             return f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(suggestions)}?"
         if suggestions:
             return (f"'{slots.get('doctor_name')}' নামে ডাক্তার খুঁজে পাইনি। "
-                     f"আপনি কি বলতে চাইছেন {', '.join(suggestions)}?")
+                     f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?")
         return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার আমাদের এখানে নেই।"
 
     name = _spoken_doctor_name(slots, result)
@@ -138,12 +138,12 @@ def test_prep_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.test_prep_reply(slots, result, lang)
     if not result.get("found"):
-        suggestions = result.get("did_you_mean") or []
+        suggestions = result.get("did_you_mean_bn") or result.get("did_you_mean") or []
         if result.get("ambiguous") and suggestions:
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
             return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
-                     f"আপনি কি বলতে চাইছেন: {', '.join(suggestions)}?")
+                     f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?")
         return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
 
     name = _spoken_test_name(slots, result)
