@@ -315,7 +315,7 @@ async def test_a_different_task_sets_the_booking_aside_and_offers_it_back_when_d
     assert env.session.booking.action == "cancel_appointment"
     said = await env.say("yes", "unclear", {})
     assert env.tools.cancels == ["KCD-9"]
-    assert "Earlier you were doing an appointment. Shall I go back to it?" in text_of(said)
+    assert "Earlier we were talking about booking an appointment. Shall I go back to it?" in text_of(said)
     said = await env.say("yes", "unclear", {})
     st = env.session.booking
     assert st.action == "book_appointment" and st.slots == {"doctor_name": "Sen", "date": "2026-10-01"}

@@ -111,7 +111,8 @@ def test_the_english_wording_is_natural():
     assert tf.resume_line("Which day would you like the appointment for?", "en") == \
         "Coming back to your booking. Which day would you like the appointment for?"
     assert tf.confirm_resume_line("en") == "Coming back to your booking. Shall I confirm it?"
-    assert tf.offer_resume("book_appointment", "en") == "Earlier you were doing an appointment. Shall I go back to it?"
+    assert tf.offer_resume("book_appointment", "en") == "Earlier we were talking about booking an appointment. Shall I go back to it?"
+    assert tf.offer_resume("reschedule_appointment", "en") == "Earlier we were talking about changing an appointment. Shall I go back to it?"
 
 
 @pytest.mark.parametrize("action", tf.BOOKING_ACTIONS)

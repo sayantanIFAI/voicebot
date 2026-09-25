@@ -71,18 +71,20 @@ def resume_allowed(questions_per_turn: int, reply_so_far: str) -> bool:
 _BACK = {"en": "Coming back to your booking.", "hi": "अब आपकी बुकिंग पर आते हैं।", "bn": "এবার আপনার বুকিংয়ের কথায় আসি।"}
 _CONFIRM_Q = {"en": "Shall I confirm it?", "hi": "क्या मैं इसे कन्फ़र्म कर दूँ?", "bn": "কনফার্ম করে দেব?"}
 _WHAT = {
-    "book_appointment": {"en": "an appointment", "hi": "एक अपॉइंटमेंट", "bn": "একটা অ্যাপয়েন্টমেন্ট"},
-    "book_test": {"en": "a test", "hi": "एक टेस्ट", "bn": "একটা টেস্ট"},
-    "reschedule_appointment": {"en": "changing an appointment", "hi": "अपॉइंटमेंट का समय बदलना",
-                               "bn": "অ্যাপয়েন্টমেন্টের সময় বদল"},
-    "cancel_appointment": {"en": "cancelling an appointment", "hi": "अपॉइंटमेंट रद्द करना",
-                           "bn": "অ্যাপয়েন্টমেন্ট বাতিল"},
-    "add_test_booking": {"en": "adding a test", "hi": "एक टेस्ट जोड़ना", "bn": "একটা টেস্ট যোগ করা"},
+    "book_appointment": {"en": "booking an appointment", "hi": "अपॉइंटमेंट बुक करने के बारे में",
+                         "bn": "অ্যাপয়েন্টমেন্ট বুক করা নিয়ে"},
+    "book_test": {"en": "booking a test", "hi": "टेस्ट बुक करने के बारे में", "bn": "টেস্ট বুক করা নিয়ে"},
+    "reschedule_appointment": {"en": "changing an appointment", "hi": "अपॉइंटमेंट का समय बदलने के बारे में",
+                               "bn": "অ্যাপয়েন্টমেন্টের সময় বদল নিয়ে"},
+    "cancel_appointment": {"en": "cancelling an appointment", "hi": "अपॉइंटमेंट रद्द करने के बारे में",
+                           "bn": "অ্যাপয়েন্টমেন্ট বাতিল করা নিয়ে"},
+    "add_test_booking": {"en": "adding a test", "hi": "टेस्ट जोड़ने के बारे में", "bn": "টেস্ট যোগ করা নিয়ে"},
 }
-# The same shape as the unfinished-draft offer in main.py ("Last time you were doing ..."), so the two read alike.
-_OFFER = {"en": "Earlier you were doing {what}. Shall I go back to it?",
-          "hi": "पहले आप {what} कर रहे थे। क्या मैं उसी पर वापस चलूँ?",
-          "bn": "আগে আপনি {what} করছিলেন। সেটায় ফিরে যাব?"}
+# Each phrase is a noun phrase that reads correctly after "talking about" in its language (an earlier draft used
+# "you were doing <gerund>", which came out as "doing changing an appointment").
+_OFFER = {"en": "Earlier we were talking about {what}. Shall I go back to it?",
+          "hi": "पहले हम {what} बात कर रहे थे। क्या मैं उसी पर वापस चलूँ?",
+          "bn": "আগে আমরা {what} কথা বলছিলাম। সেটায় ফিরে যাব?"}
 
 
 def resume_line(next_question: str, lang: str) -> str:
