@@ -41,21 +41,34 @@ DEFAULTS: dict[str, dict[str, str]] = {
         "en": "Sorry. I am unable to find the details. Could you please guide me, so that I can help you?",
     },
     "thanks_ack": {
-        "bn": "বলার জন্য ধন্যবাদ।",
-        "hi": "बताने के लिए धन्यवाद।",
-        "en": "Thank you for telling me.",
+        "bn": "ধন্যবাদ।",
+        "hi": "धन्यवाद।",
+        "en": "Thank you.",
     },
+}
+
+# Earlier built-in wording, per (key, lang). seed_defaults() moves a row still holding one of these AND still owned by
+# the seed to the current default; a row an operator has edited is never touched.
+SUPERSEDED: dict[tuple[str, str], tuple[str, ...]] = {
+    ("thanks_ack", "bn"): ("বলার জন্য ধন্যবাদ।",),
+    ("thanks_ack", "hi"): ("बताने के लिए धन्यवाद।",),
+    ("thanks_ack", "en"): ("Thank you for telling me.",),
 }
 
 
 def seed_defaults(db: Session) -> int:
-    """Insert the default rows that are missing. Never overwrites a row an operator has changed."""
+    """Insert the default rows that are missing, and move a seeded row that still holds a superseded default to the
+    current one. Never overwrites a row an operator has changed."""
     n = 0
     for key, by_lang in DEFAULTS.items():
         for lang, text in by_lang.items():
-            if not db.query(AgentMessage).filter_by(key=key, lang=lang).first():
+            row = db.query(AgentMessage).filter_by(key=key, lang=lang).first()
+            if row is None:
                 db.add(AgentMessage(key=key, lang=lang, text=text, version=1, active=True,
                                     updated_at=_now(), updated_by="seed"))
+                n += 1
+            elif row.updated_by == "seed" and row.text in SUPERSEDED.get((key, lang), ()):
+                row.text, row.version, row.updated_at = text, row.version + 1, _now()
                 n += 1
     db.commit()
     return n

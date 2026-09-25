@@ -89,11 +89,18 @@ it says what happens next.
 
 ## Acknowledging
 
-Every substantive reply opens with the same thanks, as the operator asked: "Thank you for telling me."
-(বলার জন্য ধন্যবাদ। / बताने के लिए धन्यवाद।), from `agent/turn_ack.py`, wording editable from the database
-(`thanks_ack`). It carries no fact and is not put in front of an apology, a one-word reply, or a reply the
-distress acknowledgement (KCD-155) already opened. `ACK_MODE=varied` restores the older short rotating
-acknowledgements ("Sure." / "ঠিক আছে।" / "ठीक है।") that are suppressed on repeat turns.
+Changed by the operator on 2026-09-25 (third live conversation): an answer to the caller's own question -- a price, a
+preparation rule -- starts with the answer; "Thank you for telling me" in front of it was heard as nonsense. The only
+thanks is a bare "Thank you." (ধন্যবাদ। / धन्यवाद।), spoken when the caller has just answered a question the agent
+asked (a doctor, a day, a name, a phone number, a security answer), once per turn, and not for the first request of a
+booking (that answers "how can I help"). Wording from `agent/turn_ack.py`, editable from the database (`thanks_ack`;
+a row still holding the old seeded wording is moved to the new one at start-up, an edited row is left alone).
+
+The holding phrase is "achha bolchi" in three languages (আচ্ছা, বলছি। / अच्छा, बताती हूँ। / Alright, let me tell
+you.), spoken only when the turn is still unanswered 0.7 s after the caller stopped speaking; an answer that comes
+sooner has no filler. Five seconds of silence after the agent finished speaking: one question, "anything else? if
+not I will end the call"; a "no" says goodbye and ends it, and a further five seconds of silence ends it too.
+`FILLER_THRESHOLD_S`, `SILENCE_PROMPT_S` and `SILENCE_CLOSE_S` set the numbers; all three are REASONED, not measured.
 
 ## Holding across a change of language
 

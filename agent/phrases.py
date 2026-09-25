@@ -25,14 +25,16 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "ঠিক আছে, আপনার অ্যাপয়েন্টমেন্টটা যেমন ছিল তেমনই আছে।",
         "no_confirmation_number": "ঠিক আছে, তাহলে বুকিংটা হয়ে যাবে, কিন্তু কোনো লিখিত কনফার্মেশন পাঠাতে পারব না।",
         "language_switched": "ঠিক আছে, এখন থেকে বাংলায় বলছি।",
-        # KCD-461: spoken only when a lookup exceeds FILLER_THRESHOLD_S
-        # (main.py's _await_with_filler) -- pre-warmed and cached like
-        # every other line here, so it costs no synthesis time at the
-        # exact moment the system is already running slow. Wording per
-        # explicit request: the short, informal "আচ্ছা ঠিক আছে" ("okay,
-        # alright") rather than a longer "please hold" phrase -- closer to
-        # what a person at the counter actually says while checking.
-        "please_wait": "একটু দেখছি।",
+        # KCD-461: spoken only when the turn is STILL unanswered FILLER_THRESHOLD_S (0.7 s) after the caller stopped
+        # (main.py's _await_with_filler); an answer that arrives sooner is given with no filler at all.
+        # OWNER'S WORDING, 2026-09-25: "আচ্ছা বলছি" ("okay, I'm telling you"), in all three languages -- pre-warmed
+        # and cached like every other line here, so it costs no synthesis time when the system is already slow.
+        "please_wait": "আচ্ছা, বলছি।",
+        # The caller has said nothing for SILENCE_PROMPT_S after the agent finished speaking: ask once whether there is
+        # more (one question), and say that the call ends if not. If still silent, idle_close ends the call.
+        "silence_prompt": "আর কিছু জানতে চান? না চাইলে আমি কল শেষ করে দেব।",
+        "silence_go_on": "জি, বলুন।",
+        "silence_goodbye": "ঠিক আছে, ধন্যবাদ। ভালো থাকবেন।",
         # KCD-486: spoken instead of a confirmation number when the write
         # could not be verified in the system of record -- never a false
         # confirmation, and never the generic tool_failure apology either,
@@ -65,7 +67,10 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
         "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
         "language_switched": "ठीक है, अब हिंदी में बात करती हूँ।",
-        "please_wait": "एक पल, देख रही हूँ।",
+        "please_wait": "अच्छा, बताती हूँ।",
+        "silence_prompt": "क्या आप कुछ और जानना चाहते हैं? नहीं तो मैं कॉल समाप्त कर दूँगी।",
+        "silence_go_on": "जी, बताइए।",
+        "silence_goodbye": "ठीक है, धन्यवाद। अपना ख़याल रखिए।",
         "booking_hold_for_verification": "आपकी बुकिंग प्रोसेस हो रही है, मैं अभी पुष्टि करके बताती हूँ।",
         "reask_low_volume": "माफ़ कीजिए। आपकी आवाज़ थोड़ी धीमी है। क्या आप थोड़ा ज़ोर से बोलेंगे?",
         "reask_noisy": "माफ़ कीजिए। लाइन पर थोड़ा शोर है। क्या आप शांत जगह से फिर बोलेंगे?",
@@ -86,7 +91,10 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "Okay, your appointment is unchanged.",
         "no_confirmation_number": "Okay, I'll go ahead with the booking, but I won't be able to send you a written confirmation.",
         "language_switched": "Okay, switching to English now.",
-        "please_wait": "Let me check, please.",
+        "please_wait": "Alright, let me tell you.",
+        "silence_prompt": "Is there anything else you would like to know? If not, I will end the call.",
+        "silence_go_on": "Yes, please go ahead.",
+        "silence_goodbye": "Alright, thank you. Take care.",
         "booking_hold_for_verification": "Your booking is being processed, let me confirm it for you.",
         "reask_low_volume": "Sorry. Your voice is a little soft. Could you please speak a little louder?",
         "reask_noisy": "Sorry. There is some noise on the line. Could you try somewhere quieter?",

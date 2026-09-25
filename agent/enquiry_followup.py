@@ -73,6 +73,15 @@ _NOUN_WORDS = frozenset({
 })
 
 
+def recent_unique(last_entities: list, kind: str, turns_since_last: int | None) -> str | None:
+    """The one entity of `kind` that the last few turns were about, or None (nothing recent, or two candidates --
+    an ambiguous reference asks, it never guesses). resolve_followup_slot applies the same two rules."""
+    if turns_since_last is None or turns_since_last > FOLLOWUP_MAX_GAP:
+        return None
+    matches = [e for e in last_entities if e.kind == kind]
+    return matches[0].value if len(matches) == 1 else None
+
+
 def is_reference_only(value: str | None, lang: str = "bn") -> bool:
     """True when `value` is made only of pointing words and the word for "test"/"doctor" -- i.e. the caller pointed
     at something and named nothing. An empty value is not a reference (nothing was said)."""

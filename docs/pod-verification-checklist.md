@@ -152,3 +152,24 @@ Should catalogue answers always be kept in cache? The rendered AUDIO: yes, pinne
 data, bounded (3,000 clips), cleared of clips for answers that no longer exist. The FACT (a price, a fasting rule): no
 -- it is read from the clinic API on every turn, so a price change is spoken at once; only a clip whose exact text is
 still current is ever reused. Not pre-recorded by a person: prices change and a recording cannot.
+
+
+---
+
+## Third live conversation (2026-09-25): filler, thanks, silence, follow-up
+
+Owner's instructions: a holding phrase ("আচ্ছা, বলছি।" in three languages) only after 0.7 s and never otherwise; no "thank you
+for telling me" on an answer to the caller's own question, only a bare "ধন্যবাদ।" after they answer a question we asked;
+five seconds of silence -> ask whether there is anything else. Also: "do I need to fast?" straight after a price no longer
+waits for the model (the fast path takes the recent test as the topic when the question names none).
+
+Pod-only, to check on a call:
+* the filler is heard only on a model turn (about 1.5 s) and not on a price/preparation/FAQ or follow-up turn;
+* "ধন্যবাদ।" after a name / number / day is given, and nowhere else; the seeded `thanks_ack` rows were moved to the new
+  wording at start-up (`GET /api/v1/agent/messages`);
+* silence: whether 5 s after the reply is right on a real line (the client's `playback_done` starts the count), whether a
+  caller thinking of a phone number is cut in on too early, and that the call really closes after the second silence;
+* "না" / "no" to "anything else?" ends the call after the goodbye has played (a 0.3 s margin after the clip's length).
+Not fixed, found while testing: "blood sugar preparation" (no "fasting"/"PP" said) is matched to the PP test at 0.88,
+because a partial name reaches the commit floor against the longer form; the reply names the test, but it is a wrong-entity
+risk for a preparation answer and wants an ambiguity margin between the two best tests.

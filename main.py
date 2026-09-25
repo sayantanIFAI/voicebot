@@ -103,7 +103,7 @@ from agent.emergency import detect_emergency
 from agent.detector_budget import run_within_budget
 from agent.endpointing import classify_completeness, decide as decide_turn_end
 from agent.detector_budget import snapshot as detector_budget_snapshot
-from agent.enquiry_followup import entities_from_turn, resolve_followup_slot
+from agent.enquiry_followup import entities_from_turn, recent_unique, resolve_followup_slot
 from agent.fast_path import Catalogue, FastPath
 from agent import slot_grouping, topic_flow
 from agent.filler import await_with_filler
@@ -130,7 +130,7 @@ from agent.near_end import NearEndProfile, level_and_pitch
 from agent.persona import is_clean as persona_clean
 from agent.playback_gate import PlaybackGate
 from agent.speaker_change import SpeakerChangeDetector, voice_embedding
-from agent.turn_ack import AckTracker
+from agent.turn_ack import AckTracker, thanks_for
 from agent.outcome_metrics import (
     apology_events, audio_issue_buckets, barge_in_interrupts, channel_quality_buckets, code_switch_buckets,
     golden_buckets,
@@ -272,7 +272,17 @@ CONDITION_INPUT = os.environ.get("CONDITION_INPUT", "off")
 # warm LLM call's own "~9s across retries" evidence agent/llm.py's own
 # KCD-465 fix cites, short enough that a genuinely slow turn does not
 # leave the caller wondering whether the line is still open.
-FILLER_THRESHOLD_S = float(os.environ.get("FILLER_THRESHOLD_S", "0.9"))   # was 2.5 s of silence
+# OWNER'S INSTRUCTION, 2026-09-25: a holding phrase only when the answer is taking MORE THAN 0.7 s, counted from the
+# moment the caller stopped speaking (so recognition time counts); an answer that comes sooner has no filler at all.
+FILLER_THRESHOLD_S = float(os.environ.get("FILLER_THRESHOLD_S", "0.7"))   # was 2.5 s of silence, then 0.9 s
+# ...but the semantic cache is given this long to answer before the model is waited on at all, so a hit is never
+# announced by a filler that the answer was about to make pointless.
+FILLER_MIN_WAIT_S = float(os.environ.get("FILLER_MIN_WAIT_S", "0.25"))
+
+# OWNER'S INSTRUCTION, 2026-09-25: when the caller says nothing for this long after the agent finished speaking, ask
+# once whether there is anything else (the call ends if not); if there is still nothing after SILENCE_CLOSE_S, end it.
+SILENCE_PROMPT_S = float(os.environ.get("SILENCE_PROMPT_S", "5"))
+SILENCE_CLOSE_S = float(os.environ.get("SILENCE_CLOSE_S", "5"))
 
 # KCD-076: agent/channel_quality.py's FFT-based classification is pure
 # CPU arithmetic over one short clip -- REASONED, not measured against
@@ -438,8 +448,7 @@ async def _warm_answers_once() -> int:
             except ToolCallError as e:
                 logger.warning("answer warm-up: FAQ %r failed (%s)", f["topic"], e)
         for reply in replies:
-            spoken, _ = AckTracker(mode=ACK_MODE).decorate(reply, lang, substantive=True)     # as _finish_enquiry_turn does
-            for clause in split_into_clauses(spoken) or [spoken]:
+            for clause in split_into_clauses(reply) or [reply]:                  # as _finish_enquiry_turn does
                 speed = effective_rate(rate, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None)
                 try:
                     await _tts.synthesize(clause, lang, speed=speed, pin=keep)
@@ -592,7 +601,7 @@ async def _startup():
 
     logger.info("prewarming TTS...")
     lines = prewarm_lines()
-    await _tts.prewarm({lang: lines[lang] for lang in _languages_active})
+    await _tts.prewarm({lang: lines[lang] + [thanks_for(lang)] for lang in _languages_active})
     await _warm_speech_models()
 
     global _READY_AT, _answer_warm_task
@@ -919,6 +928,15 @@ class CallSession:
         # acknowledgement, if spoken this turn, already opened it.
         self.acks = AckTracker(mode=ACK_MODE)
         self.turn_acknowledged = False
+        # The agent's last utterance asked something (it contained a question mark), and whether THIS turn is the
+        # caller's answer to it: only an answer to our question is thanked ("Thank you."), never a question of theirs.
+        self.awaiting_answer = False
+        self.answering = False
+        # Silence handling (SILENCE_PROMPT_S): when the quiet started, how many times we have asked, and whether the
+        # caller's next words answer "anything else?".
+        self.silence_since: float | None = None
+        self.silence_prompts = 0
+        self.awaiting_close_answer = False
         # KCD-353: the disclosure was spoken in the greeting (Bengali); once more, in the
         # caller's own language, the first time it differs.
         self.disclosed_langs: set[str] = {"bn"}
@@ -1090,6 +1108,8 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
         # playing it over them is exactly what barge-in exists to stop.
         logger.info("[%s] reply discarded after interrupt", session.call_id)
         return 0.0
+    if "?" in text or "\uff1f" in text:
+        session.awaiting_answer = True
     policy = session.policy
     if not policy.emergency and policy.questions_per_turn >= 1:
         # KCD-084/149: one question at a time. Only a SURPLUS question is
@@ -1252,6 +1272,21 @@ _ECHOED_FIELDS = ("doctor_name", "date", "time_slot", "patient_name", "phone", "
                   "new_date", "new_time_slot")
 
 
+async def _thank(session: CallSession, lang: str) -> None:
+    """A bare "Thank you." -- once per turn, and only when this turn is the caller's answer to a question we asked."""
+    if not session.answering or getattr(session, "thanked_turn", None) == session.turn_count:
+        return
+    session.thanked_turn = session.turn_count
+    await _speak(session, thanks_for(lang), lang)
+
+
+async def _thank_for_answer(session: CallSession, st, changed: list[str], prior_slots: dict, lang: str) -> None:
+    """Booking flows: thank the caller when they have just given a detail we asked for. Not on the first request
+    ("I want an appointment with Dr Sen" answers the greeting, and is not a reply to a question about a detail)."""
+    if (prior_slots or st.asked_fields) and any(f not in prior_slots for f in changed):
+        await _thank(session, lang)
+
+
 async def _echo_new_slots(session: CallSession, changed: list[str], prior_slots: dict,
                           slots: dict, lang: str) -> None:
     """Senior mode's "one question, listen, confirm, next question": say
@@ -1360,6 +1395,11 @@ async def _await_with_filler(session: CallSession, awaitable, lang: str,
     running slow."""
     async def _speak_filler():
         await _speak(session, phrase("please_wait", lang), lang)
+    # The threshold is counted from when the caller stopped speaking, not from when this stage began: recognition
+    # already used some of it. It never drops below FILLER_MIN_WAIT_S, so a semantic-cache hit is not announced.
+    started = session.turn_started_at
+    if started is not None:
+        threshold_s = max(threshold_s - (time.monotonic() - started), FILLER_MIN_WAIT_S)
     return await await_with_filler(awaitable, threshold_s, _speak_filler)
 
 
@@ -1455,7 +1495,9 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # construction, just not free.
     await _maybe_reload_fast_path()
     if _fast_path is not None:
-        hit = await asyncio.to_thread(_fast_path.resolve, text, lang)
+        gap = session.turn_count - session.last_enquiry_turn if session.last_enquiry_entities else None
+        topic = recent_unique(session.last_enquiry_entities, "test_name", gap)
+        hit = await asyncio.to_thread(_fast_path.resolve, text, lang, topic)
         if hit is not None:
             logger.info("[%s] fast path resolved %s (%.2f) -- no LLM call",
                         session.call_id, hit.intent, hit.confidence)
@@ -1594,9 +1636,8 @@ async def _finish_enquiry_turn(session: CallSession, text: str, lang: str,
         session.pending_entity = entity_text.PendingEntity(suggestion["intent"], suggestion["slot"],
                                                            suggestion["name"], replay)
     base_reply = _with_resume(session, base_reply, lang)            # KCD-104: back to the booking, if one is open
-    # KCD-513: the thanks (or a brief acknowledgement) first; KCD-512: a senior's warm closing after.
-    base_reply, _acked = session.acks.decorate(
-        base_reply, lang, substantive=True, already_acknowledged=session.turn_acknowledged)
+    # An answer to the caller's own question starts with the answer (no "thank you for telling me"); KCD-512: a
+    # senior's warm closing after.
     base_reply = session.kindness.decorate(base_reply, lang)
     await _speak(session, base_reply, lang)
 
@@ -1714,6 +1755,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.turn_epoch = session.speak_epoch      # this turn is current; an interrupt from now on makes it stale
         session.acks.next_turn()
         session.turn_acknowledged = False
+        session.answering, session.awaiting_answer = session.awaiting_answer, False
+        session.silence_since = None
         session.turn_started_at = time.monotonic()
         session.marks = [("start", session.turn_started_at)]
         channel_quality = session.call_state.channel_quality
@@ -1834,15 +1877,25 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             text, lang, analysis["audio"].duration_s if analysis else None, asr_result.decoder_agreement,
             slot_answer=in_booking_flow or session.pending_entity is not None or session.awaiting_handoff_offer
             or session.history_state is not None or session.awaiting_draft_answer or session.awaiting_pref_answer
-            or session.awaiting_resume)          # KCD-104: a bare yes or no to "shall I go back to it" is an answer
+            or session.awaiting_resume or session.awaiting_close_answer)          # KCD-104; "anything else?" -> a bare no: a bare yes or no to "shall I go back to it" is an answer
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
             await _reask_or_handoff(
                 session, session.reask.decide(transcript_issue=problem, audio_issues=audio_issues), lang)
             return
         session.reask.note_success()
+        session.silence_prompts = 0
         await session.send_json("User", text)
         session.turn_count += 1
+        if session.awaiting_close_answer:
+            session.awaiting_close_answer = False
+            answer = classify_yes_no(text, lang)
+            if answer == "no":                                  # "nothing else": say goodbye and end the call
+                await _end_call(session, lang, "silence_goodbye")
+                return
+            if answer == "yes":
+                await _speak(session, phrase("silence_go_on", lang), lang)
+                return
         code_switch_buckets.record(mixture_bucket(text), "seen", lang)
 
         # KCD-353: a request for a person is honoured IMMEDIATELY -- deterministic, before any
@@ -2073,6 +2126,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if ack:
                     await _speak(session, ack, lang)
                 else:
+                    await _thank_for_answer(session, st, changed, prior_slots, lang)
                     await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
 
                 # Secure the hold as soon as doctor+date+time are known, even
@@ -2147,6 +2201,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if ack:
                     await _speak(session, ack, lang)
                 else:
+                    await _thank_for_answer(session, st, changed, prior_slots, lang)
                     await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 st.slots["_test_names_display"] = st.test_names
                 missing = missing_required(st)
@@ -2175,6 +2230,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if ack:
                     await _speak(session, ack, lang)
                 else:
+                    await _thank_for_answer(session, st, changed, prior_slots, lang)
                     await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 if not st.slots.get("confirmation_id") and slots.get("phone"):
                     found = await _tools.lookup_bookings(phone=slots["phone"])
@@ -2203,6 +2259,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if ack:
                     await _speak(session, ack, lang)
                 else:
+                    await _thank_for_answer(session, st, changed, prior_slots, lang)
                     await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 if not st.slots.get("confirmation_id") and slots.get("phone"):
                     found = await _tools.lookup_bookings(phone=slots["phone"])
@@ -2228,6 +2285,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if ack:
                     await _speak(session, ack, lang)
                 else:
+                    await _thank_for_answer(session, st, changed, prior_slots, lang)
                     await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
                 missing = missing_required(st)
                 if missing:
@@ -2622,7 +2680,6 @@ async def _say_history(session: CallSession, statements: list[tuple[str, str]], 
     _rec(session, "history", [sid for sid, _ in statements])
     text = " ".join(t for _, t in statements)
     if warm:
-        text, _ = session.acks.decorate(text, lang, substantive=True, already_acknowledged=session.turn_acknowledged)
         text = session.kindness.decorate(text, lang)
     await _speak(session, text, lang)
 
@@ -2679,6 +2736,7 @@ async def _continue_security_flow(session: CallSession, text: str, lang: str, an
         await _say_history(session, [("security_not_understood",
                                       f"{sec_text.did_not_understand(lang)} {chk.next_question(lang)}")], lang)
         return True
+    await _thank(session, lang)
     if not chk.ready_to_submit():
         await _say_history(session, [("security_question", chk.next_question(lang))], lang)
         return True
@@ -2905,6 +2963,7 @@ async def _continue_history_flow(session: CallSession, text: str, lang: str) -> 
                 else:
                     await _say_history(session, [history_text.ask_phone(lang)], lang)
                 return True
+            await _thank(session, lang)
             result = await _tools.identify_patient(phone)
             outcome = patient_policy.identify_outcome(result)
             session.identity.phone = session.identity.phone or phone
@@ -2962,6 +3021,43 @@ async def _save_unfinished_draft(session: CallSession) -> None:
         logger.warning("[%s] could not save the unfinished booking: %s", session.call_id, e)
 
 
+async def _end_call(session: CallSession, lang: str, key: str) -> None:
+    """Say the closing line, let it play, then close the connection."""
+    session.turn_epoch = session.speak_epoch
+    duration = await _speak(session, phrase(key, lang), lang)
+    await asyncio.sleep(min(duration, 8.0) + 0.3)
+    with contextlib.suppress(Exception):
+        await session.ws.close()
+
+
+async def _handle_silence(session: CallSession, quiet: bool) -> bool:
+    """The caller has said nothing since the agent stopped speaking. After SILENCE_PROMPT_S ask once whether there is
+    anything else (one question; the call ends if not); if still nothing SILENCE_CLOSE_S later, end the call.
+    True when the call was ended. `quiet` is False whenever there is speech, or the agent is mid-turn."""
+    if not quiet or session.dispatch_lock.locked():
+        session.silence_since = None
+        return False
+    now = time.monotonic()
+    if session.silence_since is None:
+        session.silence_since = now
+        return False
+    waited = now - session.silence_since
+    if session.silence_prompts == 0 and waited >= SILENCE_PROMPT_S:
+        session.silence_prompts = 1
+        session.silence_since = None
+        session.awaiting_close_answer = True
+        session.turn_epoch = session.speak_epoch
+        logger.info("[%s] %.1fs of silence -- asking whether there is anything else", session.call_id, waited)
+        await _speak(session, phrase("silence_prompt", session.lang), session.lang)
+        return False
+    if session.silence_prompts >= 1 and waited >= SILENCE_CLOSE_S:
+        logger.info("[%s] still silent after the prompt -- ending the call", session.call_id)
+        session.outcome = "silence_timeout"
+        await _end_call(session, session.lang, "idle_close")
+        return True
+    return False
+
+
 async def _handle_barge_in(session: CallSession, event) -> None:
     sr = session.audio.sample_rate if hasattr(session, "audio") else 16000
     await _interrupt_playback(session, "acoustic",
@@ -2997,6 +3093,7 @@ async def _turn_poll_loop(session: CallSession):
         # --- half-duplex gate: never run turn detection on our own voice ---
         backstops_before = session.gate.backstop_releases
         if session.gate.blocked():
+            session.silence_since = None                    # the agent is talking: the quiet starts when it stops
             continue
         if session.gate.backstop_releases != backstops_before:
             logger.warning("[%s] no playback-done from client, released gate on deadline",
@@ -3018,6 +3115,8 @@ async def _turn_poll_loop(session: CallSession):
         result = await _decide_turn(session, tail, sr)
         session.next_wake_s = _next_wake_delay(result)
         if result.utterance_end_s is None:
+            if await _handle_silence(session, result.reason in ("no_speech", "too_little_audio")):
+                return
             continue
         session.reset_speculation()
 

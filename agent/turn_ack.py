@@ -57,13 +57,14 @@ def validate_table() -> list[str]:
     return problems
 
 
-# KCD-513, as the operator asked: every substantive reply opens with the same thanks, "Thank you for
-# telling me" (wording from agent/messages.py so it can be changed from the database). The varied,
-# suppressed-on-repeat behaviour above stays available as mode "varied".
+# KCD-513, as the operator now asks (2026-09-25): a bare "Thank you" -- and ONLY when the caller has just answered a
+# question the agent asked (a name, a number, a date). An answer to the caller's own question (a price, a preparation
+# rule) opens with the answer, not with thanks: "thank you for telling me" after "how much is the test" was heard as
+# nonsense. The wording still comes from agent/messages.py so it can be changed from the database.
 THANKS = {
-    "bn": "বলার জন্য ধন্যবাদ।",
-    "hi": "बताने के लिए धन्यवाद।",
-    "en": "Thank you for telling me.",
+    "bn": "ধন্যবাদ।",
+    "hi": "धन्यवाद।",
+    "en": "Thank you.",
 }
 MAX_THANKS_WORDS = 8
 
@@ -84,8 +85,9 @@ def validate_thanks() -> list[str]:
 
 
 class AckTracker:
-    """One per call. mode "always": every substantive reply opens with the thanks (KCD-513 as
-    operated); mode "varied": short rotating acknowledgements, suppressed on repeat turns."""
+    """One per call. mode "always": every reply passed to decorate() opens with the thanks; mode "varied": short
+    rotating acknowledgements, suppressed on repeat turns. main.py no longer decorates enquiry answers with it
+    (see THANKS above); the thanks is spoken on its own, after a caller's answer to a question."""
 
     def __init__(self, mode: str = "varied"):
         self.mode = mode

@@ -67,6 +67,7 @@ import unicodedata
 from collections import defaultdict
 
 from agent import fast_path_cues as cues
+from agent.enquiry_followup import is_reference_only
 from agent.form_index import INDEX_MIN_FORMS, FormTable
 from agent.outcome_metrics import abstentions, fast_path_served
 
@@ -327,11 +328,33 @@ class FastPath:
             return None, False
         return None, True
 
-    def resolve(self, transcript: str, lang: str = "bn") -> FastPathResult | None:
+    @staticmethod
+    def _names_nothing(text: str, table: cues.CueTable) -> bool:
+        """True when, once the rate/preparation cue phrases are taken out, everything left is a little function word or
+        a pointing word ("the same", "that", "test"): the caller asked about the topic, they did not name a test. One
+        word this does not recognise -- possibly a test name -- makes it False, and the turn goes to the model."""
+        remaining = f" {text} "
+        phrases = sorted(table.rate + table.prep, key=len, reverse=True)
+        for cue in phrases:
+            if table.match == "substring":
+                remaining = remaining.replace(cue, " ")
+            else:
+                while f" {cue} " in remaining:
+                    remaining = remaining.replace(f" {cue} ", " ")
+        known = set(table.function_words)
+        return all(t in known or is_reference_only(t) for t in remaining.split())
+
+    def resolve(self, transcript: str, lang: str = "bn", topic_test: str | None = None) -> FastPathResult | None:
         """Returns None whenever it is not confident. None is the normal,
         expected outcome for anything non-routine -- the caller falls back
         to the semantic cache and then the LLM. A language with no cue table (including "unknown") always
-        returns None: a table for one language never fires on another."""
+        returns None: a table for one language never fires on another.
+
+        `topic_test`: the test the last few turns were about (agent/enquiry_followup.recent_unique). A price or
+        preparation question that names NO test -- nothing left in it but cue and function words, e.g. "do I need
+        to fast?" straight after a price -- is answered about that test, with no model call. The reply always names the
+        test, so a wrong assumption is heard and corrected. Without a topic, or with any word that could be a name,
+        this abstains exactly as before."""
         table = cues.table_for(lang)
         if table is None:
             self._abstain("unknown_language", lang=str(lang))
@@ -362,6 +385,20 @@ class FastPath:
         if sum((wants_rate, wants_avail, wants_prep)) > 1:
             self._abstain("ambiguous_multi_cue", lang=lang)
             return None
+
+        if wants_rate or wants_prep:
+            # A question with no test named in it -- only the cue and function words -- has no entity to look for. Matching
+            # it anyway let the cue word itself ("fasting", "फास्टिंग") pick the test called "... Fasting" (measured on
+            # the Hindi table: "do I need to fast" was answered for a blood-sugar test). It is about the recent topic if
+            # there is one, and otherwise it is left to the model, which asks which test.
+            intent = "test_rate" if wants_rate else "test_prep"
+            if self._names_nothing(text, table):
+                if topic_test:
+                    self._serve(intent, lang)
+                    logger.info("fast path: %s %r from the topic [%s] for %r", intent, topic_test, lang, transcript)
+                    return FastPathResult(intent, _empty_slots(test_name=topic_test), COMMIT_FLOOR, matched_form="topic")
+                self._abstain("names_no_entity", intent, lang)
+                return None
 
         if wants_rate:
             name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)

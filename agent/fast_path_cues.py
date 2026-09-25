@@ -52,6 +52,13 @@ _BN_RELATIVE_DAYS = {"আজ": 0, "আজকে": 0, "কাল": 1, "আগা�
 _BN_COMPLEXITY = ("সব", "সবগুলো", "তালিকা", "কোন কোন", "আর", "এবং", "না",
                     "নাকি", "বদলে", "চেয়ে", "ছাড়া", "কিন্তু", "অন্য")
 
+# Little words that carry no test or doctor name ("do I have to ...", "is it needed"). A follow-up question with a cue
+# and nothing but these (and pointing words) names nothing -- it is about the topic we were just on (KCD-396). A word
+# NOT in this list is treated as a possible name, and the fast path abstains: the failure direction is the model.
+_BN_FUNCTION_WORDS = ("কত", "কতটা", "করতে", "করা", "করব", "হবে", "হয়", "হলে", "লাগবে", "লাগে", "লাগছে", "কি", "কী", "কিনা", "কি না", "আমার",
+                      "আমাকে", "আমি", "বলুন", "বলবেন", "বলেন", "তো", "এখন", "জানতে", "চাই", "চাইছি", "আছে", "দরকার", "প্রয়োজন",
+                      "যাবে", "পারব", "পারি", "একটু", "জন্য", "এর", "হ্যাঁ", "আচ্ছা", "তাহলে", "তবে", "থাকতে", "খেয়ে", "আসতে")
+
 _BN_DATE_WORDS = ("সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি", "রবি", "তারিখ")
 
 # Hindi. Whitespace-delimited and, for these cues, not inflected, so whole-word matching is right (a substring
@@ -67,6 +74,9 @@ _HI_GREETING = ("नमस्ते", "नमस्कार", "हैलो", "
 _HI_THANKS = ("धन्यवाद", "शुक्रिया", "थैंक यू", "थैंक्स")
 _HI_COMPLEXITY = ("सब", "सभी", "सारे", "सूची", "लिस्ट", "और", "तथा", "नहीं", "या", "बजाय", "लेकिन", "मगर",
                   "दूसरा", "दूसरे", "अलग", "बनाम")
+_HI_FUNCTION_WORDS = ("कितना", "कितने", "कितनी", "करना", "करने", "करनी", "होगा", "होगी", "होता", "पड़ेगा", "पड़ता", "पड़ेगी", "क्या", "मुझे", "मेरा", "मेरे",
+                      "मैं", "है", "हैं", "के", "का", "की", "लिए", "भी", "तो", "बताइए", "बताओ", "चाहिए", "जरूरी", "ज़रूरी",
+                      "आना", "आना", "थोड़ा", "अच्छा", "तब")
 _HI_DATE_WORDS = ("सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार", "तारीख", "कल", "परसों",
                   "सुबह", "शाम", "दोपहर", "रात", "हफ्ते", "सप्ताह", "अगले", "पिछले")
 
@@ -85,6 +95,10 @@ _EN_THANKS = ("thank you", "thanks", "thank you very much")
 _EN_COMPLEXITY = ("all", "list", "every", "and", "or", "not", "no", "instead", "other", "another", "but",
                   "compare", "both", "also", "than", "versus", "vs", "cheaper", "cheapest", "best", "different",
                   "else")
+_EN_FUNCTION_WORDS = ("do", "does", "did", "i", "me", "my", "need", "needs", "have", "has", "to", "should", "must", "a", "an",
+                      "is", "it", "its", "for", "what", "about", "how", "much", "is", "there", "any", "please", "tell", "so",
+                      "then", "the", "of", "be", "required", "necessary", "needed", "before", "that", "this", "one", "same",
+                      "test", "can", "will", "would", "you", "ok", "okay")
 _EN_DATE_WORDS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january",
                   "february", "march", "april", "june", "july", "august", "september", "october", "november",
                   "december", "yesterday", "tonight", "morning", "afternoon", "evening", "night", "week",
@@ -103,6 +117,7 @@ class CueTable:
     complexity: tuple[str, ...]
     relative_days: dict = field(default_factory=dict)      # word -> days from today; checked in this order
     date_words: tuple[str, ...] = ()                       # a date-ish word the fast path will not parse
+    function_words: tuple[str, ...] = ()                   # words that name nothing (see _BN_FUNCTION_WORDS)
     greeting_reply: str = ""                               # spoken for a bare greeting; empty = do not serve one
     thanks_reply: str = ""
     # "substring": a cue may sit inside an inflected word (Bengali "রেট" inside "রেটটা"); "word": whole words only.
@@ -138,7 +153,7 @@ def _norm_all(cues) -> tuple[str, ...]:
 
 
 def _table(**kw) -> CueTable:
-    for key in ("rate", "avail", "book", "prep", "greeting", "thanks", "complexity", "date_words"):
+    for key in ("rate", "avail", "book", "prep", "greeting", "thanks", "complexity", "date_words", "function_words"):
         if key in kw:
             kw[key] = _norm_all(kw[key])
     if "relative_days" in kw:
@@ -165,17 +180,20 @@ def languages() -> tuple[str, ...]:
 register(_table(
     lang="bn", rate=_BN_RATE, avail=_BN_AVAIL, book=_BN_BOOK, prep=_BN_PREP, greeting=_BN_GREETING,
     thanks=_BN_THANKS, complexity=_BN_COMPLEXITY, relative_days=_BN_RELATIVE_DAYS, date_words=_BN_DATE_WORDS,
+    function_words=_BN_FUNCTION_WORDS,
     greeting_reply="নমস্কার, কী সাহায্য করতে পারি?", thanks_reply="ধন্যবাদ। আর কিছু জানতে চান?",
     match="substring", exact_below_chars=0, strict_dates=False, faq_after_failed_avail=False,   # exactly the behaviour this had before it was data
 ))
 register(_table(
     lang="hi", rate=_HI_RATE, avail=_HI_AVAIL, book=_HI_BOOK, prep=_HI_PREP, greeting=_HI_GREETING,
     thanks=_HI_THANKS, complexity=_HI_COMPLEXITY, relative_days={"आज": 0}, date_words=_HI_DATE_WORDS,
+    function_words=_HI_FUNCTION_WORDS,
     greeting_reply="नमस्ते, मैं आपकी क्या मदद कर सकती हूँ?", thanks_reply="धन्यवाद। क्या आप कुछ और जानना चाहेंगे?",
 ))
 register(_table(
     lang="en", rate=_EN_RATE, avail=_EN_AVAIL, book=_EN_BOOK, prep=_EN_PREP, greeting=_EN_GREETING,
     thanks=_EN_THANKS, complexity=_EN_COMPLEXITY,
     relative_days={"day after tomorrow": 2, "tomorrow": 1, "today": 0}, date_words=_EN_DATE_WORDS,
+    function_words=_EN_FUNCTION_WORDS,
     greeting_reply="Hello, how can I help you?", thanks_reply="You are welcome. Is there anything else you would like to know?",
 ))

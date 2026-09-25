@@ -127,15 +127,17 @@ async def test_the_model_answer_is_still_cached_for_next_time(m, resolve, monkey
 
 # ========================================================================================== the holding phrase
 
-def test_the_holding_phrase_says_it_is_checking_in_every_language_not_just_okay():
-    """It was "আচ্ছা, ঠিক আছে।" ("okay, fine") in Bengali and "ठीक है।" in Hindi: an acknowledgement, not a hold."""
-    assert phrase("please_wait", "bn") == "একটু দেখছি।"
-    assert phrase("please_wait", "hi") == "एक पल, देख रही हूँ।"
-    assert phrase("please_wait", "en") == "Let me check, please."
+def test_the_holding_phrase_is_the_owners_wording_in_every_language():
+    """DELIBERATE SPEC CHANGE (owner, 2026-09-25): the holding phrase is "achha bolchi" ("okay, telling you") in the
+    three languages. It replaces "একটু দেখছি।" / "एक पल, देख रही हूँ।" / "Let me check, please." """
+    assert phrase("please_wait", "bn") == "আচ্ছা, বলছি।"
+    assert phrase("please_wait", "hi") == "अच्छा, बताती हूँ।"
+    assert phrase("please_wait", "en") == "Alright, let me tell you."
 
 
-def test_the_holding_phrase_now_comes_after_under_a_second_of_silence_not_two_and_a_half(m):
-    assert m.FILLER_THRESHOLD_S < 1.0
+def test_the_holding_phrase_comes_only_after_700_ms(m):
+    """DELIBERATE SPEC CHANGE (owner, 2026-09-25): 0.7 s (was 0.9 s), counted from when the caller stopped speaking."""
+    assert m.FILLER_THRESHOLD_S == 0.7
 
 
 # =============================================================================================== pinned audio clips
