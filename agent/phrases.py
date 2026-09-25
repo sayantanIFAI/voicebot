@@ -114,13 +114,29 @@ EMERGENCY_HINT = {
 }
 
 
+# OWNER'S INSTRUCTION, 2026-09-25 (after the first live call): the first thing a caller hears is only
+#   "Namaskar. You are speaking with Sonoscan Vaani. Tell me, how can I help you?"
+# so the spoken greeting is the welcome, this one identity sentence, and the question. It replaces the longer
+# KCD-353 opening (that it is an automated assistant, that staff are available at any time, and the pointer to 112).
+# The full disclosure text still exists (the text-message notice, and the once-only re-statement when a caller
+# switches language) and both removed parts can be brought back with no deploy: change the `greeting_identity`
+# row to the longer text, or add an `emergency_hint` row (the pointer is spoken only when such a row exists).
+GREETING_IDENTITY = {
+    "bn": "আপনি সোনোস্ক্যান বাণীর সঙ্গে কথা বলছেন।",
+    "hi": "आप सोनोस्कैन वाणी से बात कर रहे हैं।",
+    "en": "You are speaking with Sonoscan Vaani.",
+}
+
+
 def greeting_text(lang: str) -> str:
-    """welcome. disclosure. emergency pointer. question -- the welcome and the question are the two
-    sentences of the `greeting` phrase; the disclosure and the pointer go between them."""
+    """welcome. who you are speaking with. question -- the welcome and the question are the two sentences of the
+    `greeting` phrase; the identity sentence (and, only if the operator has set one, the 112 pointer) go between."""
     import re
     base = _messages.text("greeting", lang, _BASE_GREETING.get(lang) or _BASE_GREETING["bn"])
     parts = [x for x in re.split(r"(?<=[।.!?])\s+", base.strip()) if x]
-    middle = [_disclosure_for(lang), _messages.text("emergency_hint", lang, EMERGENCY_HINT.get(lang) or EMERGENCY_HINT["bn"])]
+    middle = [_messages.text("greeting_identity", lang, GREETING_IDENTITY.get(lang) or GREETING_IDENTITY["bn"])]
+    if _messages.has("emergency_hint", lang):
+        middle.append(_messages.text("emergency_hint", lang, EMERGENCY_HINT.get(lang) or EMERGENCY_HINT["bn"]))
     if len(parts) < 2:
         return " ".join(parts + middle)
     return " ".join([parts[0]] + middle + parts[1:])
@@ -141,6 +157,10 @@ PHRASES["hi"]["reverify_notice"] = "सुरक्षा के लिए, न�
 PHRASES["bn"]["emergency_notice"] = "এটা জরুরি অবস্থা হতে পারে। এখনই ১১২ নম্বরে ফোন করুন, অথবা কাছের হাসপাতালে যান।"
 PHRASES["hi"]["emergency_notice"] = "यह आपात स्थिति हो सकती है। कृपया अभी 112 पर कॉल करें, या नज़दीकी अस्पताल जाएँ।"
 PHRASES["en"]["emergency_notice"] = "This may be an emergency. Please call 112 now, or go to the nearest hospital."
+# The turn was heard but the NAME in it was not trusted (the recognisers disagreed): say so and ask for just the name.
+PHRASES["bn"]["name_not_caught"] = "দুঃখিত, নামটা ঠিক শুনতে পাইনি।"
+PHRASES["hi"]["name_not_caught"] = "माफ़ कीजिए, नाम ठीक से सुन नहीं पाई।"
+PHRASES["en"]["name_not_caught"] = "Sorry, I did not catch the name."
 PHRASES["en"]["reverify_notice"] = "For your security, I need to verify who I am speaking with again before I share any personal details."
 
 # Spoken when a call is turned away before the caller has said a word, so

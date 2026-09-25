@@ -1525,7 +1525,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
     verify = languages_to_verify(lid.language, lid.scores, _languages_active) if lid.scores else None
     if verify:
         outcomes = await _asr_router.transcribe_many(verify, utterance_wav)
-        lang, result = pick_candidate(outcomes)
+        lang, result = pick_candidate(outcomes, lid.scores, session.lang_router.previous_language)
         logger.info("[%s] LID %s %s not decisive -> ran %s, chose %s (%s)",
                     session.call_id, lid.language, {k: round(v, 2) for k, v in lid.scores.items()},
                     "+".join(l for l, _ in outcomes), lang,
@@ -1543,7 +1543,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
     if decision.action == "dual_asr" and decision.secondary_language:
         primary, secondary = decision.language, decision.secondary_language
         r1, r2 = await _asr_router.transcribe_dual(primary, secondary, utterance_wav)
-        return pick_candidate([(primary, r1), (secondary, r2)])
+        return pick_candidate([(primary, r1), (secondary, r2)], lid.scores, session.lang_router.previous_language)
 
     return decision.language, await _asr_router.transcribe(decision.language, utterance_wav)
 
@@ -1839,7 +1839,13 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             logger.info("[%s] withholding %s answer: decoder_agreement=%.2f below floor",
                         session.call_id, intent, asr_result.decoder_agreement)
             insufficient_information.record("low_decoder_agreement", intent, lang)
-            await _speak(session, insufficient_information_reply(lang), lang)
+            # The caller already said WHAT they want ("the price of ..."); what was not trusted is the name.
+            # Ask for the name only, instead of "say that again" for the whole sentence.
+            name_slot = {"test_rate": "test_name", "test_prep": "test_name", "doctor_availability": "doctor_name"}.get(intent)
+            if name_slot:
+                await _speak(session, f"{phrase('name_not_caught', lang)} {missing_slot_prompt(intent, name_slot, lang)}", lang)
+            else:
+                await _speak(session, insufficient_information_reply(lang), lang)
             return
         # Only one decoder produced this text, so nothing vouches for it: read the entity back and
         # run the lookup only after a yes. Never let "no confidence figure" mean "trusted".

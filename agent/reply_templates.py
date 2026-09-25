@@ -14,6 +14,8 @@ direct_reply_bn -- there is no fact to get wrong in "নমস্কার" or "
 """
 from __future__ import annotations
 
+from agent.sample_wording import sample_sentence
+
 from agent import reply_templates_i18n as _i18n
 
 
@@ -102,8 +104,9 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     sample = result.get("sample_type")
     hours = result.get("report_time_hours")
     reply = f"{name} টেস্টের রেট {rate} টাকা।"
-    if sample:
-        reply += f" স্যাম্পল: {sample}।"
+    sentence = sample_sentence(sample, "bn")
+    if sentence:
+        reply += f" {sentence}"
     if hours:
         reply += f" রিপোর্ট {hours} ঘণ্টার মধ্যে পাবেন।"
     return reply

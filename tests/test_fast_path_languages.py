@@ -66,17 +66,79 @@ def _bengali_corpus(cat):
     return out
 
 
-def test_bengali_decisions_are_identical_to_the_frozen_pre_change_module(catalogue_payload):
+def test_bengali_decisions_match_the_frozen_pre_change_module_except_where_a_generic_word_gave_a_wrong_answer(catalogue_payload):
+    """DELIBERATE SPEC CHANGE, marked: the frozen module answered a garbled turn with a WRONG test whenever the
+    generic word "test" plus a shared syllable scored above the commit floor (found on the live pod: "hon ak ei test
+    dam koto" matched the HIV test at 0.89; "sin test rate" matched the kidney test). A match on a test form must
+    now also hold on the words that name the test. So on this corpus the two modules must agree on everything EXCEPT:
+      * the same answer at a lower confidence (the generic word no longer counts toward it), and
+      * an old answer that is now an abstain (the turn goes to the model), where the old matched form contained the
+        generic word.
+    A DIFFERENT answer is never allowed: the change may only take answers away, never swap one for another."""
     old = legacy.FastPath(legacy.Catalogue(catalogue_payload), today=TODAY)
     new = FastPath(Catalogue(catalogue_payload), today=TODAY)
     corpus = _bengali_corpus(catalogue_payload)
     assert len(corpus) > 1000
+    identical = lower = abstained = 0
+    generic = {"টেস্ট", "টেস্টের"}
     for u in corpus:
         a, b = old.resolve(u), new.resolve(u, "bn")
-        ka = (a.intent, a.slots, round(a.confidence, 6), a.matched_form, a.direct_reply_bn) if a else None
-        kb = (b.intent, b.slots, round(b.confidence, 6), b.matched_form, b.direct_reply_bn) if b else None
-        assert ka == kb, (u, ka, kb)
-    assert old.stats == new.stats and new.stats["served"] > 300     # the corpus does exercise the served path
+        if a is None and b is None:
+            identical += 1
+        elif a is None or b is None:
+            assert b is None, (u, "the new module must never ANSWER where the old one abstained")
+            assert any(g in (a.matched_form or "").split() for g in generic), (u, a.matched_form)
+            abstained += 1
+        else:
+            same_answer = (a.intent, a.slots["test_name"], a.slots["doctor_name"], a.slots["faq_topic"],
+                           a.direct_reply_bn) == (b.intent, b.slots["test_name"], b.slots["doctor_name"],
+                                                  b.slots["faq_topic"], b.direct_reply_bn)
+            assert same_answer, (u, a.slots, b.slots)                 # never a different answer
+            if round(a.confidence, 6) == round(b.confidence, 6):
+                identical += 1
+            else:
+                assert b.confidence < a.confidence and any(g in (a.matched_form or "").split() for g in generic)
+                lower += 1
+    assert identical > 1500 and (lower + abstained) < 0.05 * len(corpus), (identical, lower, abstained)
+    assert new.stats["served"] > 300
+
+
+# ---- found on the live pod: the generic word "test" is not evidence of WHICH test ------------------------------------
+
+@pytest.mark.parametrize("garbled", ["হন আক এই টেস্ট দাম কত", "আক এই টেস্ট দাম কত"])
+def test_a_garbled_turn_is_not_matched_to_a_test_on_the_word_test_alone(fp, garbled):
+    """Logged on the pod: this matched the HIV test's alias "AIDS test" at 0.89 and only the recogniser's
+    low-agreement gate stopped the price being quoted."""
+    assert fp.resolve(garbled, "bn") is None
+
+
+@pytest.mark.parametrize("text", ["সিন টেস্টের রেট কত", "রয় টেস্টের রেট কত", "ডাস টেস্টের রেট কত", "পাল টেস্টের রেট কত"])
+def test_a_doctors_surname_followed_by_the_word_test_is_not_a_test(fp, catalogue_payload, text):
+    """The frozen module answered these with the kidney, thyroid, AIDS and Widal tests."""
+    old = legacy.FastPath(legacy.Catalogue(catalogue_payload), today=TODAY).resolve(text)
+    assert old is not None and old.intent == "test_rate"          # the wrong answer the old code gave
+    assert fp.resolve(text, "bn") is None
+
+
+def test_a_specific_alias_is_not_confused_with_a_shorter_one_that_is_its_prefix(fp):
+    r = fp.resolve("ডেঙ্গু আইজিজি টেস্টের রেট কত", "bn")
+    assert r is not None and r.slots["test_name"] == "ডেঙ্গু আইজিজি"
+
+
+def test_a_misspelt_generic_word_is_still_read_as_the_generic_word(fp):
+    for text in ("লিভার টেশ্ট এর দাম কত", "লিভার টেস্ত এর দাম কত", "লিভার তেস্ট এর দাম কত"):
+        r = fp.resolve(text, "bn")
+        assert r is not None and r.slots["test_name"] == "লিভার টেস্ট", text
+
+
+@pytest.mark.parametrize("text", ["ইউরিন টেস্টের দাম কত", "ওয়াইডাল টেস্টের রেট", "এইডস টেস্টের দাম কত"])
+def test_naming_the_test_properly_is_still_served(fp, text):
+    assert fp.resolve(text, "bn") is not None
+
+
+def test_the_same_holds_in_english(fp):
+    assert fp.resolve("what is the price of the test", "en") is None          # "test" alone names nothing
+    assert fp.resolve("price of a widal test", "en") is not None
 
 
 def test_the_default_language_is_bengali_so_existing_callers_are_unchanged(fp):

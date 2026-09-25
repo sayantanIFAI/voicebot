@@ -116,6 +116,17 @@ def _normalize(text: str) -> str:
     return _RE_WS.sub(" ", _RE_PUNCT.sub(" ", text)).strip().lower()
 
 
+# Words that say "a test" and nothing about WHICH test. Found on the live pod: the garbled Bengali turn "hon ak ei
+# test dam koto" matched the HIV test's alias "AIDS test" at 0.89 -- on the generic word and one shared syllable --
+# and only the recogniser's low-agreement gate stopped a wrong price being quoted. A match on a test form must now
+# ALSO hold on the words that name the test (FormTable's `generic_words`): the forms themselves stay whole, so a
+# specific alias is never confused with a shorter one that is merely its prefix. The same list, for the same
+# reason, is in clinic-api/main.py (_GENERIC_WORDS).
+_GENERIC_TEST_WORDS = frozenset({
+    "test", "tests", "টেস্ট", "টেস্টের", "টেস্টটা", "টেস্টটি", "টেস্টগুলো", "टेस्ट", "जांच", "जाँच",
+})
+
+
 def _name_forms(name: str) -> list[str]:
     """A test called "Complete Blood Count (CBC)" is said as the whole name, without the bracket, or as the code."""
     forms = [name]
@@ -160,8 +171,9 @@ class Catalogue:
             for kind, rows in (("test", self._test_rows(payload, lang)),
                                ("doctor", self._doctor_rows(payload, lang)),
                                ("faq", self._faq_rows(payload, lang))):
-                self._tables[(kind, lang)] = FormTable(rows, exact_below_chars=exact_below,
-                                                       index_min_forms=index_min_forms)
+                self._tables[(kind, lang)] = FormTable(
+                    rows, exact_below_chars=exact_below, index_min_forms=index_min_forms,
+                    generic_words=_GENERIC_TEST_WORDS if kind == "test" else frozenset())
         # the Bengali rows, under the names other code and tests have always read
         self.tests = self._tables[("test", "bn")].rows
         self.doctors = self._tables[("doctor", "bn")].rows

@@ -62,21 +62,30 @@ def test_the_cache_goes_stale_and_asks_for_a_refresh():
 
 # ================================================================ the wording it changes
 
-def test_the_disclosure_and_the_greeting_follow_the_database():
+def test_the_disclosure_follows_the_database():
     messages.load(payload(disclosure={"en": "You are speaking with Sonoscan Vaani, an automated helper."}))
     assert disclosure.disclosure_for("en") == "You are speaking with Sonoscan Vaani, an automated helper."
-    assert "an automated helper" in greeting_text("en") and "an automated helper" in phrase("greeting", "en")
     assert disclosure.version_label().endswith("db:3")
 
 
-def test_the_greeting_names_sonoscan_vaani_says_it_is_automated_offers_a_person_and_points_to_112():
-    for lang in ("bn", "hi", "en"):
-        g = phrase("greeting", lang)
-        assert ("112" in g or "১১২" in g)
+def test_the_greeting_identity_line_follows_the_database_and_the_112_pointer_appears_only_when_set():
+    messages.load(payload(greeting_identity={"en": "You are speaking with Sonoscan Vaani, our automated helper."}))
+    assert "our automated helper" in greeting_text("en") and "our automated helper" in phrase("greeting", "en")
+    assert "112" not in greeting_text("en")
+    messages.load(payload(emergency_hint={"en": "In an emergency, please call 112 directly."}))
+    assert "112" in greeting_text("en")
+
+
+def test_the_greeting_is_only_the_welcome_who_you_are_speaking_with_and_the_question():
+    """DELIBERATE SPEC CHANGE (owner's instruction after the first live call, 2026-09-25): the KCD-353 opening that
+    also said "I am an automated assistant", "staff at any time" and pointed to 112 is no longer spoken in the
+    greeting. The full disclosure text is unchanged and still used elsewhere; see agent/phrases.py."""
+    assert phrase("greeting", "bn") == "নমস্কার। আপনি সোনোস্ক্যান বাণীর সঙ্গে কথা বলছেন। বলুন, কীভাবে সাহায্য করতে পারি?"
     en = phrase("greeting", "en")
-    assert en.startswith("Hello.") and "Sonoscan Vaani" in en and "automated assistant" in en
-    assert "staff" in en and en.rstrip().endswith("How can I help you?")
-    assert "সোনোস্ক্যান বাণী" in phrase("greeting", "bn") and "सोनोस्कैन वाणी" in phrase("greeting", "hi")
+    assert en.startswith("Hello.") and "Sonoscan Vaani" in en and en.rstrip().endswith("How can I help you?")
+    assert "automated" not in en and "112" not in en and "staff" not in en
+    hi = phrase("greeting", "hi")
+    assert "सोनोस्कैन वाणी" in hi and hi.rstrip().endswith("?") and "112" not in hi
 
 
 def test_any_phrase_can_be_overridden_by_its_key():

@@ -397,9 +397,10 @@ async def test_a_message_changed_in_the_database_is_what_the_next_call_says(m, e
 
 
 @pytest.mark.asyncio
-async def test_the_greeting_carries_the_database_disclosure_and_the_call_records_which_wording(m, env):
+async def test_the_greeting_carries_the_database_identity_line_and_the_call_records_which_wording(m, env):
+    # DELIBERATE SPEC CHANGE (2026-09-25): the greeting's middle sentence is the `greeting_identity` row.
     await env.tools._client.put("/api/v1/agent/messages", json={
-        "key": "disclosure", "lang": "en", "text": "You are speaking with Sonoscan Vaani, our automated helper.", "updated_by": "clinic-lead"})
+        "key": "greeting_identity", "lang": "en", "text": "You are speaking with Sonoscan Vaani, our automated helper.", "updated_by": "clinic-lead"})
     try:
         await m._refresh_messages()
         from agent.phrases import phrase
@@ -408,8 +409,8 @@ async def test_the_greeting_carries_the_database_disclosure_and_the_call_records
         assert version_label().endswith(f"db:{messages.version()}")
     finally:
         await env.tools._client.put("/api/v1/agent/messages", json={
-            "key": "disclosure", "lang": "en", "updated_by": "test-cleanup",
-            "text": "You are speaking with Sonoscan Vaani. I am an automated assistant, not a person. You can ask for our staff at any time."})
+            "key": "greeting_identity", "lang": "en", "updated_by": "test-cleanup",
+            "text": "You are speaking with Sonoscan Vaani."})
 
 
 @pytest.mark.asyncio

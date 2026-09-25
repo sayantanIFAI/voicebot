@@ -117,3 +117,43 @@ def test_a_bengali_reply_ending_in_a_danda_is_speakable_and_devanagari_letters_s
     assert speakable("ধন্যবাদ" + chr(0x0965), "bn")
     assert not speakable("नमस्कार, मैं क्या मदद कर सकती हूँ?", "bn")       # real Devanagari letters: still rejected
     assert speakable("नमस्कार" + chr(0x0964), "hi")
+
+
+# ---- found on the live pod (call c7eb4b15): Bengali answered in Hindi -------------------------------------------
+
+def test_the_live_pod_case_language_id_said_bengali_95_and_the_hindi_engine_must_not_win_on_its_own_confidence():
+    """Logged: LID bn 0.95 / en 0.00 / hi 0.05; recogniser agreement bn 0.20, hi 0.50, en 0.33. The Hindi engine
+    wrote the Bengali speech out in Devanagari and, being the more 'confident', won; the caller was answered in Hindi."""
+    bn = R("এইচবিএ ওয়ান সি টেস্টের দাম কত", 0.20)
+    hi = R("एइबी वन एसी ए टेस्टर्ड दाम को तो", 0.50)
+    en = R("hb a one c test her dam co", 0.33)
+    scores = {"bn": 0.95, "en": 0.0, "hi": 0.05}
+    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)])[0] == "hi"                   # what it did before
+    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)], scores, "bn")[0] == "bn"      # what it does now
+    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)], scores, None)[0] == "bn"
+
+
+def test_a_call_that_has_been_in_bengali_does_not_switch_to_hindi_unless_language_id_believes_it():
+    bn = R("বাংলা কথা", 0.30)
+    hi = R("हिंदी बात", 0.80)
+    assert pick_candidate([("bn", bn), ("hi", hi)], {"bn": 0.60, "hi": 0.40}, "bn")[0] == "bn"     # 0.40 < 0.50
+    assert pick_candidate([("bn", bn), ("hi", hi)], {"bn": 0.20, "hi": 0.80}, "bn")[0] == "hi"     # LID believes Hindi
+
+
+def test_a_genuine_hindi_caller_on_the_first_turn_is_still_recognised():
+    bn = R("हिंदी", 0.10)
+    hi = R("मुझे सीबीसी का रेट बताइए", 0.90)
+    assert pick_candidate([("bn", bn), ("hi", hi)], {"bn": 0.02, "hi": 0.98}, None)[0] == "hi"
+
+
+def test_english_still_wins_through_its_own_gate_whatever_language_id_said():
+    """LID mislabels accented English (bn 0.83 / hi 0.16 / en 0.01 was measured), so it cannot veto the English gate."""
+    bn = R("হোয়াট ইজ দ্য প্রাইজ", 1.00)
+    en = R("what is the price of the uric acid test", 0.78)
+    assert pick_candidate([("bn", bn), ("en", en)], {"bn": 0.83, "hi": 0.16, "en": 0.01}, "bn")[0] == "en"
+
+
+def test_without_language_id_scores_the_old_behaviour_is_unchanged():
+    bn = R("বাংলা কথা", 0.30)
+    hi = R("हिंदी बात", 0.80)
+    assert pick_candidate([("bn", bn), ("hi", hi)])[0] in ("bn", "hi")

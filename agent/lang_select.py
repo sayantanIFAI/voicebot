@@ -87,7 +87,19 @@ def languages_to_verify(language: str, scores: dict[str, float],
 ENGLISH_MIN_AGREEMENT = 0.6
 
 
-def pick_candidate(candidates: list[tuple[str, object]]):
+# An Indic (Bengali/Hindi) recogniser may only WIN on its own confidence if language ID gave that language at
+# least this much probability. Found on the live pod: LID said Bengali 0.95 / Hindi 0.05, all three recognisers ran,
+# and the Hindi one (which writes Bengali speech out in Devanagari, with a confident-looking 0.50) beat the Bengali
+# one (0.20), so the caller was answered in Hindi. Recogniser confidences of different models are not comparable;
+# language ID is the one signal that is. English is exempt: LID mislabels accented English, which is exactly why
+# the English engine has its own decoder-agreement gate.
+INDIC_MIN_LID = 0.10
+# Leaving the language the call has been in needs language ID to believe the new one, not merely allow it.
+SWITCH_MIN_LID = 0.50
+
+
+def pick_candidate(candidates: list[tuple[str, object]], lid_scores: dict[str, float] | None = None,
+                   prior: str | None = None):
     """Several ASR engines ran on the same audio. Return (language, result)
     for the one that most plausibly heard its own language.
 
@@ -106,4 +118,15 @@ def pick_candidate(candidates: list[tuple[str, object]]):
                 and script_share(r.text, "en") >= 0.9):
             return lang, r
     rest = [(lang, r) for lang, r in usable if lang != "en"] or usable
-    return max(rest, key=lambda t: (round(script_share(t[1].text, t[0]), 1), t[1].decoder_agreement))
+    if lid_scores:
+        believed = [(lang, r) for lang, r in rest if lid_scores.get(lang, 0.0) >= INDIC_MIN_LID]
+        rest = believed or rest
+    best = max(rest, key=lambda t: (round(script_share(t[1].text, t[0]), 1), t[1].decoder_agreement))
+    if lid_scores and not prior:
+        # First turn: no call language yet, so language ID's own favourite among these is the one to stay with.
+        prior = max((lang for lang, _ in rest), key=lambda lang: lid_scores.get(lang, 0.0))
+    if lid_scores and prior and best[0] != prior and lid_scores.get(best[0], 0.0) < SWITCH_MIN_LID:
+        stay = [(lang, r) for lang, r in rest if lang == prior]
+        if stay:
+            return stay[0]                                  # no switch on a recogniser's say-so alone
+    return best

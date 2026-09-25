@@ -13,6 +13,8 @@ never a name in a script the TTS would silently drop.
 """
 from __future__ import annotations
 
+from agent.sample_wording import sample_sentence
+
 import re
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
@@ -135,14 +137,16 @@ def test_rate_reply(slots: dict, result: dict, lang: str) -> str:
     sample = (result.get("sample_type") or "").strip()
     if hi:
         reply = f"{name} टेस्ट की कीमत {rate} रुपये है।"
-        if sample.lower() in _SPECIMENS:
-            reply += f" सैंपल: {sample}।"
+        sentence = sample_sentence(sample, "hi")
+        if sentence:
+            reply += f" {sentence}"
         if hours:
             reply += f" रिपोर्ट {hours} घंटे में मिल जाएगी।"
         return reply
     reply = f"The price of the {name} test is {rate} rupees."
-    if sample.lower() in _SPECIMENS:
-        reply += f" Sample: {sample}."
+    sentence = sample_sentence(sample, "en")
+    if sentence:
+        reply += f" {sentence}"
     if hours:
         reply += f" You will get the report within {hours} hours."
     return reply

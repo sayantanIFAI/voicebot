@@ -20,7 +20,7 @@ audit can say which wording a given call heard (the version is logged per call).
 """
 from __future__ import annotations
 
-DISCLOSURE_VERSION = "2.0-draft"
+DISCLOSURE_VERSION = "2.1-draft"      # 2.1: the spoken greeting now carries only the identity sentence
 REVIEW_STATUS = "pending_clinical_and_legal_review"
 
 # What is spoken, and the built-in default: the operator can change it from the database without a

@@ -265,6 +265,11 @@ class ASRLanguageRouter:
             reason="no usable prior and low confidence; running top-two ASR for this turn only",
         )
 
+    @property
+    def previous_language(self) -> str | None:
+        """The language this call has been in (the last committed or answered one), or None on the first turn."""
+        return self._previous_language
+
     def note_response_language(self, language: str) -> None:
         """Call after the response layer picks a language for the reply
         (e.g. from a clarification), so the next turn's prior is correct

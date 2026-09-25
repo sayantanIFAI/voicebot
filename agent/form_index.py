@@ -55,9 +55,12 @@ class FormTable:
     """One (kind, language) table: canonical name -> spoken forms, already normalised by the caller."""
 
     def __init__(self, rows: list[tuple[str, list[str]]], *, exact_below_chars: int = 0,
-                 index_min_forms: int = INDEX_MIN_FORMS):
+                 index_min_forms: int = INDEX_MIN_FORMS, generic_words: frozenset[str] = frozenset()):
         self.rows = rows
         self._exact_below = exact_below_chars
+        self._generic = generic_words
+        self._fuzzy_generic: dict[str, bool] = {}
+        self._cores: list[str | None] = []
         self._names: list[str] = []
         self._forms: list[str] = []
         self._spans: list[int] = []
@@ -72,6 +75,7 @@ class FormTable:
                 self._forms.append(form)
                 self._spans.append(len(form.split()))
                 self._bags.append(Counter(form))
+                self._cores.append(self._core(form))
         self.indexed = len(self._forms) >= index_min_forms
         if self.indexed:
             for i, form in enumerate(self._forms):
@@ -86,6 +90,27 @@ class FormTable:
 
     def __len__(self) -> int:
         return len(self._forms)
+
+    def _is_generic(self, token: str, fuzzy: bool) -> bool:
+        """A generic word, or -- for what the caller SAID -- a misspelling of one ("test" heard as a near-copy): 0.8
+        similar or better, at least three characters, so an ordinary name is never taken for one."""
+        if token in self._generic:
+            return True
+        if not fuzzy or len(token) < 3:
+            return False
+        hit = self._fuzzy_generic.get(token)
+        if hit is None:
+            hit = any(difflib.SequenceMatcher(None, token, g).ratio() >= 0.8 for g in self._generic)
+            self._fuzzy_generic[token] = hit
+        return hit
+
+    def _core(self, text: str, fuzzy: bool = False) -> str | None:
+        """`text` without the generic words, or None when there are none to remove (or nothing else would remain)."""
+        if not self._generic:
+            return None
+        words = text.split()
+        kept = [w for w in words if not self._is_generic(w, fuzzy)]
+        return " ".join(kept) if kept and len(kept) < len(words) else None
 
     def _candidates(self, text: str) -> list[int]:
         grams = {text[k:k + 2] for k in range(len(text) - 1)}
@@ -137,6 +162,17 @@ class FormTable:
                     else:
                         score = difflib.SequenceMatcher(None, form, w).ratio()
                         compared += 1
+                    core = self._cores[i]
+                    if core is not None and score > form_best and score >= floor:
+                        # the form contains a generic word ("test"): the match must hold on the naming words alone
+                        wcore = self._core(w, fuzzy=True) or " ".join(
+                            t for t in w.split() if not self._is_generic(t, True))
+                        if not wcore:
+                            score = 0.0
+                        else:
+                            core_score = (1.0 if wcore == core else 0.0) if len(core) < self._exact_below \
+                                else difflib.SequenceMatcher(None, core, wcore).ratio()
+                            score = min(score, core_score)
                     if score > form_best:
                         form_best = score
             if form_best > best_score:

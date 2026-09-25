@@ -33,16 +33,19 @@ def _clinic_disclosure():
 # ------------------------------------------------------------------ spoken disclosure
 
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
-def test_every_greeting_says_it_is_automated_and_that_a_person_is_available(lang):
-    greeting = phrase("greeting", lang)
-    assert disclosure.disclosure_for(lang) in greeting
+def test_every_greeting_says_who_the_caller_is_speaking_with(lang):
+    # DELIBERATE SPEC CHANGE (owner's instruction, 2026-09-25): the greeting carries the identity sentence only; the
+    # automated-assistant disclosure stays available (below, and on the text channel) but is not in the greeting.
+    from agent.phrases import GREETING_IDENTITY
+    assert GREETING_IDENTITY[lang] in phrase("greeting", lang)
 
 
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
 def test_the_greeting_still_ends_on_the_question_that_hands_over_the_floor(lang):
+    from agent.phrases import GREETING_IDENTITY
     greeting = phrase("greeting", lang)
     assert greeting.rstrip().endswith("?")
-    assert greeting.index(disclosure.disclosure_for(lang)) < len(greeting) - 5      # disclosure precedes the question
+    assert greeting.index(GREETING_IDENTITY[lang]) < len(greeting) - 5              # the identity precedes the question
 
 
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
