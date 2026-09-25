@@ -66,6 +66,23 @@ SHIFT_TEMPLATES = [
     {"days": [1, 3, 5], "start": "17:30", "end": "19:30"},   # Tue/Thu/Sat evening
 ]
 
+# The whole name of each seeded doctor, keyed by the short name the rest of the system uses. FICTIONAL placeholders
+# (the seed only ever held initials): the given name starts with the initial the short name carries. The clinic replaces
+# them with real names by editing doctors.full_name; the backfill never overwrites a value that is already there.
+DOCTOR_FULL_NAMES = {
+    "Dr. S. Mukherjee": "Dr. Sourav Mukherjee", "Dr. A. Sen": "Dr. Arindam Sen", "Dr. P. Ghosh": "Dr. Prabir Ghosh",
+    "Dr. R. Chowdhury": "Dr. Rajib Chowdhury", "Dr. K. Bhattacharya": "Dr. Kaushik Bhattacharya",
+    "Dr. N. Roy": "Dr. Nirmal Roy", "Dr. S. Banerjee": "Dr. Subrata Banerjee", "Dr. M. Dutta": "Dr. Manas Dutta",
+    "Dr. S. Chatterjee": "Dr. Sutapa Chatterjee", "Dr. A. Basu": "Dr. Aparna Basu", "Dr. R. Mitra": "Dr. Rina Mitra",
+    "Dr. P. Sengupta": "Dr. Paromita Sengupta", "Dr. D. Das": "Dr. Debasish Das", "Dr. T. Bose": "Dr. Tapan Bose",
+    "Dr. A. Kar": "Dr. Amit Kar", "Dr. S. Nandi": "Dr. Subhankar Nandi", "Dr. R. Pal": "Dr. Ranjan Pal",
+    "Dr. K. Halder": "Dr. Kalyan Halder", "Dr. S. Guha": "Dr. Sanjay Guha", "Dr. B. Chanda": "Dr. Biswajit Chanda",
+    "Dr. M. Saha": "Dr. Mitali Saha", "Dr. A. Dey": "Dr. Ashok Dey", "Dr. P. Adhikari": "Dr. Pritha Adhikari",
+    "Dr. S. Bagchi": "Dr. Samir Bagchi", "Dr. N. Biswas": "Dr. Nandini Biswas", "Dr. R. Majumder": "Dr. Rupa Majumder",
+    "Dr. A. Mondal": "Dr. Anirban Mondal", "Dr. S. Ganguly": "Dr. Shreya Ganguly", "Dr. K. Sinha": "Dr. Kunal Sinha",
+    "Dr. P. Ray": "Dr. Partha Ray", "Dr. A. Sarkar": "Dr. Abhijit Sarkar", "Dr. S. Chakraborty": "Dr. Snehasish Chakraborty",
+}
+
 DEPARTMENTS = {
     "General Medicine": [
         ("Dr. S. Mukherjee", "MBBS, MD (Gen. Med.)"),
@@ -298,7 +315,8 @@ def seed():
             for doc_name, quals in doctors:
                 surname = doc_name.split()[-1]
                 aliases = "|".join(SURNAME_BN.get(surname, []))
-                doc = Doctor(name=doc_name, qualifications=quals, aliases_bn=aliases,
+                doc = Doctor(name=doc_name, full_name=DOCTOR_FULL_NAMES.get(doc_name, ""), qualifications=quals,
+                             aliases_bn=aliases,
                              aliases_hi="|".join(SURNAME_HI.get(surname, [])),
                              department_id=dept.id)
                 db.add(doc)

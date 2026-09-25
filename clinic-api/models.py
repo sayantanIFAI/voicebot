@@ -38,7 +38,11 @@ class Department(Base):
 class Doctor(Base):
     __tablename__ = "doctors"
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)              # "Dr. S. Mukherjee"
+    name = Column(String, nullable=False)              # "Dr. S. Mukherjee" -- the short form every lookup keys on
+    # The whole name ("Dr. Sourav Mukherjee"). Added by booking_migrate.add_doctor_booking_columns() on an existing DB
+    # and filled by booking_migrate.backfill_doctor_full_names(); empty means "not recorded", and callers fall back to
+    # `name`. The seeded given names are FICTIONAL placeholders, like every other seeded row.
+    full_name = Column(String, nullable=False, default="", server_default="")
     qualifications = Column(String, nullable=False)     # "MBBS, MD (Gen. Med.)"
     # Bengali-script spellings of the surname, "|"-joined. Real callers say
     # "ডক্টর সেন", not "Dr. Sen" -- matching only the Latin name against
@@ -276,6 +280,17 @@ class TestBooking(Base):
     created_at = Column(DateTime, nullable=False)
 
     lab_test = relationship("LabTest")
+
+
+class IdempotencyRecord(Base):
+    """The stored answer to a write that carried an Idempotency-Key (clinic-api/idempotency.py)."""
+    __tablename__ = "idempotency_records"
+    id = Column(Integer, primary_key=True)
+    key = Column(String, nullable=False)
+    scope = Column(String, nullable=False)                 # which endpoint: the same key on two endpoints is two keys
+    request_hash = Column(String, nullable=False)          # of the body, to refuse a key reused for a different request
+    response_json = Column(Text, nullable=False)
+    __table_args__ = (UniqueConstraint("key", "scope", name="uq_idempotency_key_scope"),)
 
 
 class SmsOutbox(Base):

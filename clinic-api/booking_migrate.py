@@ -44,6 +44,7 @@ DOCTOR_BOOKING_COLUMNS: dict[str, str] = {
     # booking_service.CANCELLATION_CHARGE_FRACTION. Fictional, same
     # convention as every other price in seed.py.
     "consultation_fee_inr": "INTEGER NOT NULL DEFAULT 500",
+    "full_name": "VARCHAR NOT NULL DEFAULT ''",
 }
 
 
@@ -352,6 +353,26 @@ def seed_default_cancellation_policy() -> bool:
         db.close()
 
 
+def backfill_doctor_full_names() -> int:
+    """Fills `doctors.full_name` where it is still empty, from seed.DOCTOR_FULL_NAMES (keyed by the short name).
+    Idempotent, and never overwrites a name a clinician has since entered."""
+    from models import Doctor
+    from seed import DOCTOR_FULL_NAMES
+
+    db = SessionLocal()
+    try:
+        n = 0
+        for d in db.query(Doctor).filter(Doctor.full_name == "").all():
+            full = DOCTOR_FULL_NAMES.get(d.name)
+            if full:
+                d.full_name = full
+                n += 1
+        db.commit()
+        return n
+    finally:
+        db.close()
+
+
 def finish_booking_schema_setup() -> dict:
     """The half that needs `departments`/`doctors` to already have rows --
     call this AFTER seed() or backfill_i18n() has run, not before."""
@@ -359,4 +380,4 @@ def finish_booking_schema_setup() -> dict:
     fees_filled = backfill_doctor_fees()
     policy_seeded = seed_default_cancellation_policy()
     return {"department_routes_added": routes_added, "doctor_fees_filled": fees_filled,
-            "cancellation_policy_seeded": policy_seeded}
+            "cancellation_policy_seeded": policy_seeded, "doctor_full_names_filled": backfill_doctor_full_names()}

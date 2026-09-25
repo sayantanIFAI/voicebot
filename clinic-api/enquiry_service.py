@@ -44,6 +44,8 @@ from models import (
 from sqlalchemy.orm import Session
 
 REPORT_OTP_TTL_MINUTES = 10
+# A second request for a code inside this many seconds is a retry: it gets the code already issued.
+OTP_REISSUE_WINDOW_S = 60
 REPORT_LINK_TTL_HOURS = 48
 CALLBACK_MIN_LEAD_MINUTES = 30
 
@@ -219,6 +221,10 @@ def prescription_requirement(db: Session, lab_test_id: int, lang: str = "bn") ->
 
 def record_out_of_scope(db: Session, call_id: str, caller_question: str,
                          reason_code: str = "out_of_scope") -> dict:
+    twin = db.query(CallOutcome).filter_by(call_id=call_id, reason_code=reason_code,
+                                           caller_question=caller_question).first()
+    if twin is not None:                                     # the same question on the same call is recorded once
+        return {"recorded": True, "id": twin.id, "duplicate": True}
     row = CallOutcome(call_id=call_id, reason_code=reason_code, caller_question=caller_question,
                        created_at=_now())
     db.add(row)
@@ -229,6 +235,10 @@ def record_out_of_scope(db: Session, call_id: str, caller_question: str,
 # ========================================================= KCD-398: callback
 
 def request_callback(db: Session, phone: str, call_id: str, requested_window: str, reason: str = "") -> dict:
+    twin = (db.query(CallbackRequest).filter_by(phone=phone, call_id=call_id, requested_window=requested_window,
+                                                status="scheduled").first())
+    if twin is not None:                                     # the same callback asked for twice is one callback
+        return {"success": True, "id": twin.id, "requested_window": requested_window, "duplicate": True}
     row = CallbackRequest(phone=phone, call_id=call_id, requested_window=requested_window,
                            reason=reason, status="scheduled", created_at=_now())
     db.add(row)
@@ -254,6 +264,11 @@ def request_report_otp(db: Session, confirmation_id: str, phone: str) -> dict:
     if report.patient_phone != phone:
         return {"success": False, "reason": "phone_mismatch"}
 
+    # A retry within the window gets the code already issued, not a second one that would leave the first dangling.
+    live = (db.query(ReportDeliveryOTP).filter_by(report_id=report.id, phone=phone, verified=False)
+            .order_by(ReportDeliveryOTP.created_at.desc()).first())
+    if live is not None and live.expires_at > _now() and (_now() - live.created_at).total_seconds() < OTP_REISSUE_WINDOW_S:
+        return {"success": True, "otp_id": live.id, "expires_in_minutes": REPORT_OTP_TTL_MINUTES, "duplicate": True}
     otp = f"{secrets.randbelow(1_000_000):06d}"
     row = ReportDeliveryOTP(report_id=report.id, phone=phone, otp_code=otp, verified=False,
                              expires_at=_now() + datetime.timedelta(minutes=REPORT_OTP_TTL_MINUTES),

@@ -26,12 +26,13 @@ import agent_messages as am
 import patient_context as pc
 import registry as reg
 from db import SessionLocal, get_db
-from fastapi import Depends, FastAPI, Query, Request
+from idempotency import idempotent, set_key_from_header as set_idempotency_key
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from models import FAQ, Appointment, AuditLog, Department, Doctor, DoctorSchedule, LabTest
 import gazetteer as gz
 from phonetic_match import phonetic_key, phonetic_match
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -50,6 +51,7 @@ async def require_service_token(request: Request, call_next):
     and is not a substitute for verifying a patient's identity (agent/identity.py). Read per
     request so it can be rotated without a code change; compared in constant time."""
     token = os.environ.get("CLINIC_API_TOKEN", "")
+    set_idempotency_key(request.headers.get("idempotency-key"))          # for the write endpoints (idempotency.py)
     if request.url.path.startswith("/api/v1/") and (token or os.environ.get("CLINIC_API_REQUIRE_TOKEN") == "1"):
         supplied = request.headers.get("authorization", "")
         if not token or not secrets.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
@@ -191,6 +193,7 @@ def catalogue(db: Session = Depends(get_db)):
         ],
         "doctors": [
             {"name": d.name,
+             "full_name": d.full_name or d.name,
              "surname": d.name.split()[-1],
              "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
              "aliases_hi": [a for a in (d.aliases_hi or "").split("|") if a]}
@@ -677,6 +680,7 @@ def _generate_slots(start: str, end: str, step_min: int = SLOT_STEP_MIN) -> list
 
 
 @app.post("/api/v1/appointments")
+@idempotent("appointments")
 def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
     """This is the ORIGINAL, pre-Epic-E26 booking endpoint, kept for
     backward compatibility. CodeRabbit-flagged, real bug: it used to
@@ -826,6 +830,7 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
 
 
 @app.post("/api/v1/bookings/hold")
+@idempotent("bookings.hold")
 def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
@@ -858,6 +863,7 @@ class ConfirmRequest(BaseModel):
 
 
 @app.post("/api/v1/bookings/confirm")
+@idempotent("bookings.confirm")
 def confirm_booking_endpoint(req: ConfirmRequest, db: Session = Depends(get_db)):
     return bs.confirm_booking(db, req.hold_token, req.doctor_id, req.date, req.time_slot,
                                req.patient_name, req.phone, req.caller_phone,
@@ -871,6 +877,7 @@ class RescheduleRequest(BaseModel):
 
 
 @app.post("/api/v1/bookings/reschedule")
+@idempotent("bookings.reschedule")
 def reschedule_booking(req: RescheduleRequest, db: Session = Depends(get_db)):
     appt = db.query(Appointment).filter_by(confirmation_id=req.confirmation_id, status="confirmed").first()
     if not appt:
@@ -888,6 +895,7 @@ class CancelRequest(BaseModel):
 
 
 @app.post("/api/v1/bookings/cancel")
+@idempotent("bookings.cancel")
 def cancel_booking(req: CancelRequest, db: Session = Depends(get_db)):
     return bs.cancel_appointment(db, req.confirmation_id, req.confirm_charge)
 
@@ -910,6 +918,7 @@ class SeniorModeRequest(BaseModel):
 
 
 @app.post("/api/v1/patients/senior")
+@idempotent("patients.senior")
 def set_patient_senior(req: SeniorModeRequest, db: Session = Depends(get_db)):
     """KCD-084: persist the delivery mode against the patient. Boolean only."""
     return {"updated": bs.set_patient_senior(db, req.phone, req.senior, req.caller_phone)}
@@ -939,6 +948,7 @@ class TestsBookingRequest(BaseModel):
 
 
 @app.post("/api/v1/bookings/tests")
+@idempotent("bookings.tests")
 def book_tests_endpoint(req: TestsBookingRequest, db: Session = Depends(get_db)):
     err = _validate_date_not_past(req.date)
     if err:
@@ -961,6 +971,7 @@ class AddTestRequest(BaseModel):
 
 
 @app.post("/api/v1/bookings/add-test")
+@idempotent("bookings.add_test")
 def add_test_endpoint(req: AddTestRequest, db: Session = Depends(get_db)):
     return bs.add_test_to_booking(db, req.confirmation_id, req.test_name)
 
@@ -990,6 +1001,7 @@ class SmsRequest(BaseModel):
 
 
 @app.post("/api/v1/notifications/sms")
+@idempotent("notifications.sms")
 def send_sms(req: SmsRequest, db: Session = Depends(get_db)):
     """The open placeholder the caller-confirmation flow already writes
     to via booking_service.queue_sms(). Exposed as its own endpoint too,
@@ -1001,9 +1013,19 @@ def send_sms(req: SmsRequest, db: Session = Depends(get_db)):
     return bs.queue_sms(db, req.to, req.template_key, req.message, req.related_confirmation_id)
 
 
+class ResendRequest(BaseModel):
+    confirmation_id: str
+
+
 @app.post("/api/v1/bookings/resend")
-def resend_booking_confirmation(confirmation_id: str, db: Session = Depends(get_db)):
-    return bs.resend_confirmation(db, confirmation_id)
+@idempotent("bookings.resend")
+def resend_booking_confirmation(req: ResendRequest | None = None, confirmation_id: str | None = Query(None),
+                                db: Session = Depends(get_db)):
+    """The confirmation id comes in the body (ResendRequest); the old `?confirmation_id=` form is still accepted."""
+    cid = req.confirmation_id if req is not None else confirmation_id
+    if not cid:
+        raise HTTPException(status_code=422, detail="confirmation_id is required")
+    return bs.resend_confirmation(db, cid)
 
 
 class DraftRequest(BaseModel):
@@ -1013,6 +1035,7 @@ class DraftRequest(BaseModel):
 
 
 @app.post("/api/v1/bookings/draft")
+@idempotent("bookings.draft")
 def save_draft_endpoint(req: DraftRequest, db: Session = Depends(get_db)):
     bs.save_draft(db, req.caller_phone, req.call_id, req.slots_json)
     return {"saved": True}
@@ -1110,6 +1133,7 @@ class OutOfScopeRequest(BaseModel):
 
 
 @app.post("/api/v1/calls/out-of-scope")
+@idempotent("calls.out_of_scope")
 def out_of_scope_endpoint(req: OutOfScopeRequest, db: Session = Depends(get_db)):
     return eq.record_out_of_scope(db, req.call_id, req.caller_question, req.reason_code)
 
@@ -1122,6 +1146,7 @@ class CallbackRequestBody(BaseModel):
 
 
 @app.post("/api/v1/callbacks")
+@idempotent("callbacks")
 def callback_endpoint(req: CallbackRequestBody, db: Session = Depends(get_db)):
     return eq.request_callback(db, req.phone, req.call_id, req.requested_window, req.reason)
 
@@ -1137,6 +1162,7 @@ class ReportOTPRequest(BaseModel):
 
 
 @app.post("/api/v1/reports/request-otp")
+@idempotent("reports.request_otp")
 def report_request_otp_endpoint(req: ReportOTPRequest, db: Session = Depends(get_db)):
     return eq.request_report_otp(db, req.confirmation_id, req.phone)
 
@@ -1147,6 +1173,7 @@ class ReportDeliverRequest(BaseModel):
 
 
 @app.post("/api/v1/reports/deliver")
+@idempotent("reports.deliver")
 def report_deliver_endpoint(req: ReportDeliverRequest, db: Session = Depends(get_db)):
     return eq.deliver_report(db, req.confirmation_id, req.otp_code)
 
@@ -1167,7 +1194,7 @@ def department_hours_endpoint(department_name: str, lang: str = Query("bn"), db:
 class CallEventRequest(BaseModel):
     seq: int
     kind: str
-    payload: dict = {}
+    payload: dict = Field(default_factory=dict)
     caller_phone: str | None = None
 
 
@@ -1224,6 +1251,7 @@ class PreferencesRequest(BaseModel):
 
 
 @app.post("/api/v1/patients/{patient_ref}/preferences")
+@idempotent("patients.preferences")
 def set_patient_preferences(patient_ref: int, req: PreferencesRequest, db: Session = Depends(get_db)):
     fields = req.model_dump(exclude={"caller_phone"})
     return pc.set_preferences(db, patient_ref, req.caller_phone, **fields)

@@ -173,3 +173,28 @@ Pod-only, to check on a call:
 Not fixed, found while testing: "blood sugar preparation" (no "fasting"/"PP" said) is matched to the PP test at 0.88,
 because a partial name reaches the commit floor against the longer form; the reply names the test, but it is a wrong-entity
 risk for a preparation answer and wants an ambiguity margin between the two best tests.
+
+
+---
+
+## Code hygiene pass and doctors' whole names (2026-09-25)
+
+* `tools/hygiene_scan.py` (AST scan, run over every `.py` file and asserted clean by
+  `tests/test_idempotency_hygiene_names.py`): mutable default arguments, dataclass/pydantic mutable field defaults,
+  `x in ("abc")` (a substring test, not a one-element tuple), `("abc")` constants meant as tuples,
+  `.startswith([...])` / `isinstance(x, [...])`. One finding in the whole repository (a pydantic `payload: dict = {}`),
+  fixed with `Field(default_factory=dict)`.
+* Request models: every write endpoint of the clinic API takes a pydantic model. The one exception was
+  `POST /bookings/resend` (a bare query parameter); it now takes `ResendRequest` and still accepts `?confirmation_id=`.
+* Idempotent writes (`clinic-api/idempotency.py`): a write carrying `Idempotency-Key` runs once and a retry with the same
+  key and body gets the stored answer (a different body under the same key is a 422). Applied to 16 write endpoints
+  (bookings, cancel, reschedule, tests, SMS, resend, draft, callbacks, out-of-scope, report OTP/deliver, senior mode,
+  preferences). Without a key, the endpoints with a natural identity de-duplicate on it: the same SMS to the same number
+  for the same booking within 60 s, the same callback, the same out-of-scope question on a call, an OTP re-requested within
+  60 s (gets the code already issued). Reads that use POST (resolve, find, verify, search) are deliberately NOT
+  idempotency-keyed: `verify` counts attempts. The agent's client now sends a key on its writes.
+  Not covered: two truly concurrent requests with one key can both run before either stores (documented in the module);
+  a retry with NO key after the 60 s window is a new operation. Not verified on a real flaky line.
+* `doctors.full_name` (new column, migration + backfill at start-up, never overwrites an entered value): the whole name of
+  each of the 32 doctors, exposed in the catalogue as `full_name`. The seeded given names are FICTIONAL placeholders (the seed
+  only held initials); replace them with the real names by editing the column. Spoken replies still use the short name.

@@ -46,6 +46,8 @@ from sqlalchemy.orm import Session
 HOLD_TTL_SECONDS = 90
 DRAFT_BOOKING_TTL_MINUTES = 30
 SMS_RESEND_MIN_INTERVAL_S = 60
+# A repeat of the same message to the same number for the same booking within this many seconds is one message.
+SMS_DEDUP_WINDOW_S = 60
 
 
 def _now() -> datetime.datetime:
@@ -643,6 +645,12 @@ def queue_sms(db: Session, to_phone: str, template_key: str, message: str,
         return {"queued": False, "reason": "no_phone_on_file"}
     # KCD-353: a text channel states it is automated, every time (idempotent).
     message = _with_disclosure_notice(message)
+    # The same notice to the same number for the same booking inside the window is a retry, not a second message.
+    twin = (db.query(SmsOutbox).filter_by(to_phone=to_phone, template_key=template_key, message=message,
+                                          related_confirmation_id=related_confirmation_id)
+            .order_by(SmsOutbox.created_at.desc()).first())
+    if twin is not None and (_now() - twin.created_at).total_seconds() < SMS_DEDUP_WINDOW_S:
+        return {"queued": True, "id": twin.id, "duplicate": True}
     row = SmsOutbox(to_phone=to_phone, template_key=template_key, message=message,
                      status="queued", related_confirmation_id=related_confirmation_id, created_at=_now())
     db.add(row)

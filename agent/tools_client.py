@@ -14,6 +14,7 @@ distinct "I couldn't check that right now" reply instead of a false
 from __future__ import annotations
 
 import os
+import uuid
 
 import httpx
 
@@ -246,8 +247,8 @@ class ClinicToolsClient:
 
     async def resend_confirmation(self, confirmation_id: str) -> dict:
         try:
-            r = await self._client.post("/api/v1/bookings/resend",
-                                        params={"confirmation_id": confirmation_id})
+            r = await self._client.post("/api/v1/bookings/resend", json={"confirmation_id": confirmation_id},
+                                        headers={"Idempotency-Key": uuid.uuid4().hex})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:
@@ -281,7 +282,7 @@ class ClinicToolsClient:
 
     async def _post(self, path: str, body: dict, what: str) -> dict:
         try:
-            r = await self._client.post(path, json=body)
+            r = await self._client.post(path, json=body, headers={"Idempotency-Key": uuid.uuid4().hex})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:
