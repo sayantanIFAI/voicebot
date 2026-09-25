@@ -48,6 +48,38 @@ _PRONOUN_MARKERS: dict[str, tuple[str, ...]] = {
 }
 
 
+# How many turns back the topic still counts as "what we were just talking about". REASONED, not measured: a
+# follow-up to the last answer is almost always the very next turn or the one after; past this, a bare question with no
+# test named is asked about, not assumed.
+FOLLOWUP_MAX_GAP = 3
+
+# Words that can only POINT at a test or doctor, never name one: "this", "that", "the same", the classifier suffixes
+# Bengali attaches to them, and the ASR's spellings of them (the recogniser wrote "same" as "সমে"). A slot value made of
+# nothing but these (plus the words for "test" / "doctor") is a reference, not a name -- it must never be sent to the
+# clinic lookup as if it were one ("'সমে টেস্ট' নামে কোনো টেস্ট নেই", heard on the live pod).
+_POINTER_WORDS = frozenset({
+    # Bengali
+    "এই", "ওই", "ঐ", "সেই", "এটা", "ওটা", "সেটা", "এটি", "ওটি", "সেটি", "এটার", "ওটার", "সেটার", "এইটা", "এইটার",
+    "ওইটা", "একই", "সেম", "সমে", "সেমে", "সেইম", "টা", "টি", "টাই", "টাও", "ই", "ওই", "তো",
+    # Hindi
+    "यह", "वह", "यही", "वही", "इस", "उस", "इसी", "उसी", "ये", "वो", "सेम", "समे", "ही",
+    # English
+    "same", "this", "that", "the", "one", "it", "ones", "these", "those", "such",
+})
+_NOUN_WORDS = frozenset({
+    "টেস্ট", "টেস্টের", "টেস্টটা", "টেস্টটি", "টেস্টগুলো", "ডাক্তার", "ডাক্তারের", "ডাঃ", "ডক্টর",
+    "टेस्ट", "जांच", "जाँच", "डॉक्टर", "डॉ",
+    "test", "tests", "doctor", "dr", "doc",
+})
+
+
+def is_reference_only(value: str | None, lang: str = "bn") -> bool:
+    """True when `value` is made only of pointing words and the word for "test"/"doctor" -- i.e. the caller pointed
+    at something and named nothing. An empty value is not a reference (nothing was said)."""
+    tokens = [t for t in (value or "").lower().replace("।", " ").replace("?", " ").replace(",", " ").split() if t]
+    return bool(tokens) and all(t in _POINTER_WORDS or t in _NOUN_WORDS for t in tokens)
+
+
 def has_pronoun_reference(text: str, lang: str) -> bool:
     t = text.strip().lower()
     markers = _PRONOUN_MARKERS.get(lang, _PRONOUN_MARKERS["en"])
@@ -61,7 +93,8 @@ class EnquiryEntity:
 
 
 def resolve_followup_slot(intent: str, slots: dict, text: str, lang: str,
-                          last_entities: list[EnquiryEntity]) -> tuple[dict, bool]:
+                          last_entities: list[EnquiryEntity],
+                          turns_since_last: int | None = None) -> tuple[dict, bool]:
     """If `intent`'s primary slot is empty, the caller's turn reads as a
     pronoun/elliptical follow-up, and exactly ONE remembered entity of
     the right kind exists, fill the slot from it. Returns (slots,
@@ -73,9 +106,23 @@ def resolve_followup_slot(intent: str, slots: dict, text: str, lang: str,
     same as zero: ambiguous reference must ask, never guess -- the
     story's own acceptance criterion."""
     needed_kind = PRIMARY_SLOT.get(intent)
-    if needed_kind is None or slots.get(needed_kind):
+    if needed_kind is None:
         return slots, False
-    if not last_entities or not has_pronoun_reference(text, lang):
+    value = slots.get(needed_kind)
+    pointed = bool(value) and is_reference_only(value, lang)          # "the same test": a reference, not a name
+    if value and not pointed:
+        return slots, False                                           # the caller named something: use it
+    if not last_entities:
+        return slots, False
+    # When is an empty (or pointing-only) slot filled from what we were just talking about?
+    #   * the caller pointed ("the same test", "ওটার জন্য"), at any distance; or
+    #   * they asked a test or doctor question with nothing named and the topic was one of the last few turns
+    #     ("do I need to fast?" straight after a price for one test). Only for tests and doctors: a FAQ question with
+    #     no topic is not a follow-up, it is a question we did not understand. The reply always NAMES what it answers
+    #     about, so a wrong assumption is heard and can be corrected.
+    recent = (needed_kind in ("test_name", "doctor_name") and turns_since_last is not None
+              and turns_since_last <= FOLLOWUP_MAX_GAP)
+    if not (pointed or has_pronoun_reference(text, lang) or recent):
         return slots, False
 
     matches = [e for e in last_entities if e.kind == needed_kind]

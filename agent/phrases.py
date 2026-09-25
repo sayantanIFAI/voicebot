@@ -32,7 +32,7 @@ PHRASES: dict[str, dict[str, str]] = {
         # explicit request: the short, informal "আচ্ছা ঠিক আছে" ("okay,
         # alright") rather than a longer "please hold" phrase -- closer to
         # what a person at the counter actually says while checking.
-        "please_wait": "আচ্ছা, ঠিক আছে।",
+        "please_wait": "একটু দেখছি।",
         # KCD-486: spoken instead of a confirmation number when the write
         # could not be verified in the system of record -- never a false
         # confirmation, and never the generic tool_failure apology either,
@@ -65,7 +65,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
         "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
         "language_switched": "ठीक है, अब हिंदी में बात करती हूँ।",
-        "please_wait": "ठीक है।",
+        "please_wait": "एक पल, देख रही हूँ।",
         "booking_hold_for_verification": "आपकी बुकिंग प्रोसेस हो रही है, मैं अभी पुष्टि करके बताती हूँ।",
         "reask_low_volume": "माफ़ कीजिए। आपकी आवाज़ थोड़ी धीमी है। क्या आप थोड़ा ज़ोर से बोलेंगे?",
         "reask_noisy": "माफ़ कीजिए। लाइन पर थोड़ा शोर है। क्या आप शांत जगह से फिर बोलेंगे?",

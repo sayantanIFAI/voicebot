@@ -116,3 +116,39 @@ port. Synthetic input only; nothing here used a real caller's audio.
 A cold-restart check that the warm-up now leaves the 7B model resident (item 2); real recordings for item 5; the ear-choice for item 4;
 the load-test number for item 2; a real caller's call through the public URL.
 
+
+
+---
+
+## Latency, measured on the pod (2026-09-25, second live conversation)
+
+The caller reported "more than a second" and asked for under 500 ms, and for a repeated question to be served from a
+cache with no model and no synthesis. p50 turn latency on the pod was 3.5 s (p95 4.0 s). Every turn now logs one line
+(`turn timing: prep | lid | asr | intent | reply | tts | send | total`), and recognisers log their own times
+(`ASR timings`), so this is measured, not assumed. Measured with `tools`-style synthetic caller speech through the real
+WebSocket, so recogniser accuracy on it is not representative; the STAGE TIMES are.
+
+| Stage | Before | Now | What changed |
+|---|---|---|---|
+| Language ID (CPU) + recognition | 0.19 s, then 0.64 s in sequence (three recognisers) | about 0.12 s and 0.12 s, **overlapping**: total ~0.15-0.25 s | The call's language and English start with language ID; Hindi runs only when language ID points to it |
+| Semantic-cache lookup before the model | up to 1.5 s spent waiting, then a miss | 0 s on a miss (the model starts after a 0.15 s head start), instant on a hit | Lookup and model run together |
+| Clinic lookup | 8 ms | 8 ms | unchanged (the truth boundary: prices are read live) |
+| Speech synthesis of an answer | 20-85 ms | 0 ms for every catalogue answer | The audio of every test price, preparation and FAQ answer is pre-rendered and pinned in the TTS cache; keyed by the exact text, so a changed price is a different clip |
+| The intent model (non-routine turns only) | 1.3-1.5 s | 1.3-1.6 s | **Not changed.** |
+
+Server-side, from the start of a turn to the first audio out, on turns the fast path serves (no model): **160 ms**
+(a parking question) and **349 ms** (a price question). On a turn that needs the model it is about 1.5-2 s plus the
+recognition time; the holding phrase ("একটু দেখছি।") is now spoken after 0.9 s instead of 2.5 s of silence.
+
+What is NOT under 500 ms, and why:
+* A turn that reaches the model is bound by the model (1.3-1.6 s for the 7B intent extractor: a long JSON reply). A
+  smaller model, a shorter output schema or a constrained decoder could cut that; each changes accuracy and needs
+  the golden-set comparison first, so it was not done.
+* What the CALLER perceives includes the turn detector's wait after they stop speaking (tail guard 0.3 s plus a 0.2 s
+  poll), which is outside the numbers above.
+* The first call after a restart pays kernel warm-up (the first Bengali recognition took 0.6 s, later ones 0.12 s).
+
+Should catalogue answers always be kept in cache? The rendered AUDIO: yes, pinned, rebuilt every 10 minutes from live
+data, bounded (3,000 clips), cleared of clips for answers that no longer exist. The FACT (a price, a fasting rule): no
+-- it is read from the clinic API on every turn, so a price change is spoken at once; only a clip whose exact text is
+still current is ever reused. Not pre-recorded by a person: prices change and a recording cannot.

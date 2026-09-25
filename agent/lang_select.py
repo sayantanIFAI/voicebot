@@ -78,6 +78,35 @@ def languages_to_verify(language: str, scores: dict[str, float],
     return ranked if second >= SECOND_LANGUAGE_FLOOR else None
 
 
+# A second Indic language is only worth running a recogniser for when language ID is genuinely torn between the two.
+# Below this it cannot win anyway (pick_candidate: an Indic engine other than language ID's favourite needs SWITCH_MIN_LID
+# to overrule it, and needs INDIC_MIN_LID just to be considered), so its ~0.6 s of GPU time buys nothing.
+OTHER_INDIC_MIN_LID = 0.30
+
+
+def engines_needed(language: str, scores: dict[str, float], active: tuple[str, ...]) -> list[str]:
+    """The recognisers that can still change the answer, best language-ID score first (ties keep that order, so the
+    LID-preferred language wins them). Measured on the pod: running all three took ~0.64 s; English took 0.21 s.
+
+      * unknown language, or no scores: all of them, as before;
+      * otherwise language ID's favourite, plus the OTHER Indic language only if LID is torn (>= OTHER_INDIC_MIN_LID);
+      * English ALWAYS: it is cheap and concurrent, and language ID mislabels accented English as Bengali or Hindi
+        (measured: English speech came back as bn 0.83 / hi 0.16 / en 0.01), so its probability cannot rule it out."""
+    ranked = [lang for lang, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True) if lang in active]
+    for lang in active:
+        if lang not in ranked:
+            ranked.append(lang)
+    if language == "unknown" or not scores:
+        return ranked
+    need = []
+    for lang in ranked:
+        if lang == "en" or lang == language or scores.get(lang, 0.0) >= OTHER_INDIC_MIN_LID:
+            need.append(lang)
+    if language in active and language not in need:
+        need.insert(0, language)
+    return need
+
+
 # English gate. Measured on synthetic clips (clean, 8 kHz, and through the live
 # service), decoder agreement of the ENGLISH engine: 0.67-1.00 on English
 # audio (n=7 runs), 0.00-0.43 on Bengali and Hindi audio (n=8). The Bengali engine cannot be used the same way: it
@@ -94,6 +123,33 @@ ENGLISH_MIN_AGREEMENT = 0.6
 # language ID is the one signal that is. English is exempt: LID mislabels accented English, which is exactly why
 # the English engine has its own decoder-agreement gate.
 INDIC_MIN_LID = 0.10
+
+# English may win outright on its own decoder agreement (LID mislabels accented English), but that gate alone let a
+# Bengali sentence through: the English recogniser wrote it out in Latin letters with agreement 1.00 while language ID
+# had given English 0.00, and the call was answered in English. So English must ALSO be real English: language ID
+# gives it some probability, or most of what it wrote is words an English speaker actually says.
+ENGLISH_MIN_LID = 0.05
+ENGLISH_MIN_WORD_SHARE = 0.5
+_ENGLISH_WORDS = frozenset("""
+a an the and or but if so of to in on at for from with by about as is are was were be been am do does did have has had
+i me my we our you your he she it they them this that these those there here what which who whom when where why how
+can could will would shall should may might must not no yes ok okay please thanks thank hello hi sorry
+price prices cost costs rate rates fee charge how much many test tests doctor doctors dr appointment appointments book
+booking cancel reschedule time timing timings open close hours today tomorrow morning evening day week monday tuesday
+wednesday thursday friday saturday sunday fasting fast empty stomach report reports result results sample blood urine
+clinic address location parking insurance payment card cash number phone confirm confirmation need want tell give
+know check see get take come go available sit sits sitting chamber counter staff person help
+""".split())
+
+
+def english_word_share(text: str) -> float:
+    """Share of the tokens that are ordinary English words (a small fixed list). A Bengali or Hindi sentence written
+    out in Latin letters ("sibisi test rate koto") scores low; a real English question scores high."""
+    tokens = [t.strip(".,?!'\"").lower() for t in (text or "").split()]
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        return 0.0
+    return sum(t in _ENGLISH_WORDS for t in tokens) / len(tokens)
 # Leaving the language the call has been in needs language ID to believe the new one, not merely allow it.
 SWITCH_MIN_LID = 0.50
 
@@ -116,7 +172,10 @@ def pick_candidate(candidates: list[tuple[str, object]], lid_scores: dict[str, f
     for lang, r in usable:
         if (lang == "en" and r.decoder_agreement >= ENGLISH_MIN_AGREEMENT
                 and script_share(r.text, "en") >= 0.9):
-            return lang, r
+            # With language ID scores in hand, "English" must also be English (see ENGLISH_MIN_WORD_SHARE).
+            if lid_scores is None or lid_scores.get("en", 0.0) >= ENGLISH_MIN_LID \
+                    or english_word_share(r.text) >= ENGLISH_MIN_WORD_SHARE:
+                return lang, r
     rest = [(lang, r) for lang, r in usable if lang != "en"] or usable
     if lid_scores:
         believed = [(lang, r) for lang, r in rest if lid_scores.get(lang, 0.0) >= INDIC_MIN_LID]

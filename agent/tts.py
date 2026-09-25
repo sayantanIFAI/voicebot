@@ -103,6 +103,8 @@ PREWARM_LINES_BN = [
 # ~400 short clips at 22kHz mono. Bounded so a long-running process can't
 # grow without limit on unique test names.
 AUDIO_CACHE_MAX = 400
+# The pinned clips (every catalogue answer, three languages) are bounded separately: ~1,000 short clips at ~100 KB.
+MAX_PINNED_CLIPS = 3000
 
 
 class TTSClient:
@@ -110,6 +112,10 @@ class TTSClient:
         self._client = httpx.AsyncClient(timeout=timeout_s)
         self.base_url = base_url
         self._audio_cache: collections.OrderedDict[str, bytes] = collections.OrderedDict()
+        # Clips that are never evicted: the rendered audio of every catalogue answer (see main.py _warm_answers).
+        # Keyed by the exact text (and language and speed), so a changed price is a different key: this can hold
+        # audio for an answer that is no longer given, never audio that disagrees with the text being spoken.
+        self._pinned: dict[str, bytes] = {}
         self._cache_lock = threading.Lock()
         self.stats = {"hits": 0, "misses": 0, "evictions": 0}
         self.prewarmed_clips = 0
@@ -123,6 +129,10 @@ class TTSClient:
 
     def _cache_get(self, key: str) -> bytes | None:
         with self._cache_lock:
+            wav = self._pinned.get(key)
+            if wav is not None:
+                self.stats["hits"] += 1
+                return wav
             wav = self._audio_cache.get(key)
             if wav is not None:
                 self._audio_cache.move_to_end(key)
@@ -137,8 +147,16 @@ class TTSClient:
                 self._audio_cache.popitem(last=False)
                 self.stats["evictions"] += 1
 
+    def retain_pinned(self, keep: set[str]) -> int:
+        """Drop pinned clips that are not in `keep` (the answers of the latest warm-up round); returns how many stay.
+        A clip for an answer that has since changed becomes evictable instead of living forever."""
+        with self._cache_lock:
+            for key in [k for k in self._pinned if k not in keep]:
+                self._audio_cache[key] = self._pinned.pop(key)
+            return len(self._pinned)
+
     async def synthesize(self, text: str, lang: str = "bn", speed: float = 1.0,
-                         prosody: dict | None = None) -> bytes:
+                         prosody: dict | None = None, pin: set[str] | None = None) -> bytes:
         """Returns WAV bytes, or raises. Callers should catch ToolCallError-
         shaped infra failures and UnspeakableTextError separately (see
         main.py's _speak()) and fall back to `fallback_audio()`.
@@ -175,6 +193,12 @@ class TTSClient:
         key = self._key(f"{lang}\x00{speed}\x00{prosody_key}\x00{spoken}")
         cached = self._cache_get(key)
         if cached is not None:
+            if pin is not None:
+                with self._cache_lock:
+                    if len(self._pinned) < MAX_PINNED_CLIPS:
+                        self._pinned[key] = cached
+                        self._audio_cache.pop(key, None)
+                pin.add(key)
             return cached
 
         with self._cache_lock:
@@ -186,7 +210,15 @@ class TTSClient:
         r = await self._client.post(self.base_url, json=payload)
         r.raise_for_status()
         wav = r.content
-        self._cache_put(key, wav)
+        if pin is not None:
+            with self._cache_lock:
+                if len(self._pinned) < MAX_PINNED_CLIPS:
+                    self._pinned[key] = wav
+                else:
+                    self._audio_cache[key] = wav
+            pin.add(key)
+        else:
+            self._cache_put(key, wav)
         return wav
 
     async def prewarm(self, lines_by_lang: dict[str, list[str]] | None = None):
@@ -236,7 +268,8 @@ class TTSClient:
         total = self.stats["hits"] + self.stats["misses"]
         return {
             **self.stats,
-            "cached_clips": len(self._audio_cache),
+            "cached_clips": len(self._audio_cache) + len(self._pinned),
+            "pinned_clips": len(self._pinned),
             "max_clips": AUDIO_CACHE_MAX,
             "prewarmed_clips": self.prewarmed_clips,
             "hit_rate": round(self.stats["hits"] / total, 3) if total else 0.0,

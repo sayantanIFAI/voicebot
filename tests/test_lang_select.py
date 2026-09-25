@@ -157,3 +157,79 @@ def test_without_language_id_scores_the_old_behaviour_is_unchanged():
     bn = R("বাংলা কথা", 0.30)
     hi = R("हिंदी बात", 0.80)
     assert pick_candidate([("bn", bn), ("hi", hi)])[0] in ("bn", "hi")
+
+
+# ---- which recognisers must run (latency: language ID and recognition overlap; Hindi is not run for Bengali) -------
+
+from agent.lang_select import OTHER_INDIC_MIN_LID, engines_needed  # noqa: E402
+
+
+def test_the_live_pod_bengali_turn_needs_bengali_and_english_only_not_hindi():
+    """LID bn 0.95 / hi 0.05: Hindi cannot win (needs 0.5 to overrule), so its ~0.6 s of GPU time is not spent."""
+    assert engines_needed("bn", {"bn": 0.95, "en": 0.0, "hi": 0.05}, ACTIVE) == ["bn", "en"]
+    assert engines_needed("bn", {"bn": 0.84, "en": 0.0, "hi": 0.15}, ACTIVE) == ["bn", "en"]
+
+
+def test_english_is_always_run_because_language_id_cannot_rule_it_out():
+    """Measured: English speech came back as bn 0.83 / hi 0.16 / en 0.01."""
+    assert "en" in engines_needed("bn", {"bn": 0.83, "hi": 0.16, "en": 0.01}, ACTIVE)
+    assert "en" in engines_needed("hi", {"bn": 0.0, "hi": 1.0, "en": 0.0}, ACTIVE)
+
+
+def test_when_language_id_is_torn_between_the_two_indic_languages_both_run():
+    assert engines_needed("bn", {"bn": 0.55, "hi": 0.45, "en": 0.0}, ACTIVE) == ["bn", "hi", "en"]
+    assert OTHER_INDIC_MIN_LID <= 0.5 < 0.55
+
+
+def test_an_unknown_language_or_no_scores_runs_everything_as_before():
+    assert sorted(engines_needed("unknown", {"bn": 0.4, "hi": 0.4, "en": 0.2}, ACTIVE)) == ["bn", "en", "hi"]
+    assert engines_needed("unknown", {}, ACTIVE) == ["bn", "hi", "en"]
+
+
+def test_the_language_id_favourite_leads_so_it_wins_ties():
+    assert engines_needed("hi", {"bn": 0.02, "hi": 0.90, "en": 0.08}, ACTIVE)[0] == "hi"
+
+
+def test_a_language_that_is_not_active_is_never_planned():
+    assert engines_needed("hi", {"bn": 0.1, "hi": 0.9}, ("bn", "en")) == ["bn", "en"] or "hi" not in engines_needed("hi", {"bn": 0.1, "hi": 0.9}, ("bn", "en"))
+
+
+# ---- found while measuring latency: a Bengali sentence was routed to English ------------------------------------------
+
+from agent.lang_select import english_word_share  # noqa: E402
+
+
+def test_bengali_speech_written_in_latin_letters_by_the_english_engine_is_not_english():
+    """Seen on the pod: LID bn 0.89 / hi 0.11 / en 0.00, the English engine transliterated the Bengali with agreement
+    1.00, won the English gate, and the call was answered in English (with the disclosure)."""
+    bn = R("সিবিসি টেস্টের রেট কত", 1.00)
+    hi = R("x", 0.0)
+    en = R("sibisi tester rate koto", 1.00)
+    scores = {"bn": 0.89, "hi": 0.11, "en": 0.0}
+    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)], scores, "bn")[0] == "bn"
+
+
+def test_real_english_still_wins_when_language_id_gave_it_almost_nothing():
+    """The measured case: English audio came back bn 0.83 / hi 0.16 / en 0.01 -- but what the English engine wrote is
+    English words."""
+    bn = R("হোয়াট ইজ দ্য প্রাইজ অফ দ্য ইউরিক অ্যাসিড টেস্ট", 1.00)
+    en = R("what is the price of the uric acid test", 0.78)
+    assert pick_candidate([("bn", bn), ("en", en)], {"bn": 0.83, "hi": 0.16, "en": 0.01}, "bn")[0] == "en"
+
+
+def test_english_with_some_language_id_support_wins_on_the_agreement_gate_alone():
+    bn = R("বাংলা", 0.3)
+    en = R("kolkata care diagnostics", 0.9)              # not common words, but LID gives English real probability
+    assert pick_candidate([("bn", bn), ("en", en)], {"bn": 0.6, "hi": 0.05, "en": 0.35}, "bn")[0] == "en"
+
+
+def test_the_english_word_share_separates_english_from_transliteration():
+    assert english_word_share("what is the price of a lipid profile test") > 0.7
+    assert english_word_share("sibisi tester rate koto") < 0.4
+    assert english_word_share("") == 0.0
+
+
+def test_without_language_id_scores_the_english_gate_is_the_old_one():
+    bn = R("হোয়াট ইজ দ্য প্রাইজ", 1.00)
+    en = R("sibisi tester rate koto", 1.00)
+    assert pick_candidate([("bn", bn), ("en", en)])[0] == "en"        # no scores: unchanged behaviour

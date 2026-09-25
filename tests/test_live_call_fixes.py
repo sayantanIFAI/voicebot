@@ -43,13 +43,17 @@ class FakeLID:
 
 
 class FakeRouter:
-    def __init__(self, results):
-        self.results = results
+    def __init__(self, results, delays=None):
+        self.results, self.ran, self.delays = results, [], delays or {}
 
     async def transcribe_many(self, languages, path):
         return [(lang, self.results[lang]) for lang in languages]
 
     async def transcribe(self, language, path):
+        import asyncio
+        self.ran.append(language)
+        if self.delays.get(language):
+            await asyncio.sleep(self.delays[language])
         return self.results[language]
 
 
@@ -156,3 +160,82 @@ def test_bengali_no_longer_reads_a_scan_category_out_as_a_sample():
     result = {"found": True, "test_name": "Chest X-Ray", "test_name_bn": "বুকের এক্স-রে", "rate_inr": 400,
               "sample_type": "Imaging", "report_time_hours": 4}
     assert "নমুনা" not in price_reply({"test_name": "x"}, result, "bn")
+
+
+# ================================================================= 4. language ID and recognition overlap; no wasted engine
+
+@pytest.mark.asyncio
+async def test_a_bengali_turn_runs_bengali_and_english_and_never_hindi(m, env, monkeypatch):
+    monkeypatch.undo()
+    router = FakeRouter({"bn": Result("বাংলা", 0.90), "hi": Result("हिंदी", 0.10), "en": Result("x", 0.0)})
+    monkeypatch.setattr(m, "_lid", FakeLID("bn", {"bn": 0.95, "en": 0.0, "hi": 0.05}))
+    monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
+    monkeypatch.setattr(m, "_asr_router", router)
+    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    assert lang == "bn" and sorted(router.ran) == ["bn", "en"]              # Hindi's GPU time is not spent
+
+
+@pytest.mark.asyncio
+async def test_recognition_starts_before_language_id_finishes(m, env, monkeypatch):
+    """The recognisers for the call's language and for English start at the same instant as language ID."""
+    import asyncio
+    import time
+    monkeypatch.undo()
+    started = {}
+
+    class SlowLID(FakeLID):
+        def identify_path(self, path):
+            time.sleep(0.3)
+            started["lid_done"] = time.monotonic()
+            return self._r
+
+    class Router(FakeRouter):
+        async def transcribe(self, language, path):
+            started.setdefault(language, time.monotonic())
+            return await super().transcribe(language, path)
+    monkeypatch.setattr(m, "_lid", SlowLID("bn", {"bn": 0.95, "en": 0.0, "hi": 0.05}))
+    monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
+    monkeypatch.setattr(m, "_asr_router", Router({"bn": Result("বাংলা", 0.9), "hi": Result("x", 0.0), "en": Result("x", 0.0)}))
+    t0 = time.monotonic()
+    await m._route_and_transcribe(env.session, "x.wav")
+    assert started["bn"] - t0 < 0.1 and started["en"] - t0 < 0.1              # not after the 0.3 s of language ID
+
+
+@pytest.mark.asyncio
+async def test_hindi_is_run_the_moment_language_id_points_to_it(m, env, monkeypatch):
+    monkeypatch.undo()
+    router = FakeRouter({"bn": Result("বাংলা", 0.1), "hi": Result("सीबीसी का रेट", 0.9), "en": Result("x", 0.0)})
+    monkeypatch.setattr(m, "_lid", FakeLID("hi", {"bn": 0.02, "en": 0.0, "hi": 0.98}))
+    monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
+    monkeypatch.setattr(m, "_asr_router", router)
+    lang, result = await m._route_and_transcribe(env.session, "x.wav")
+    assert lang == "hi" and "hi" in router.ran
+
+
+@pytest.mark.asyncio
+async def test_english_speech_that_language_id_calls_bengali_is_still_found(m, env, monkeypatch):
+    """The reason English always runs: bn 0.83 / hi 0.16 / en 0.01 was measured on English audio."""
+    monkeypatch.undo()
+    router = FakeRouter({"bn": Result("হোয়াট ইজ দ্য প্রাইজ", 1.00), "hi": Result("x", 0.0),
+                         "en": Result("what is the price of the uric acid test", 0.78)})
+    monkeypatch.setattr(m, "_lid", FakeLID("bn", {"bn": 0.83, "hi": 0.16, "en": 0.01}))
+    monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
+    monkeypatch.setattr(m, "_asr_router", router)
+    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    assert lang == "en"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_engine_is_dropped_not_fatal(m, env, monkeypatch):
+    monkeypatch.undo()
+
+    class Router(FakeRouter):
+        async def transcribe(self, language, path):
+            if language == "en":
+                raise RuntimeError("english asr is down")
+            return await super().transcribe(language, path)
+    monkeypatch.setattr(m, "_lid", FakeLID("bn", {"bn": 0.95, "en": 0.0, "hi": 0.05}))
+    monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
+    monkeypatch.setattr(m, "_asr_router", Router({"bn": Result("বাংলা", 0.9), "hi": Result("x", 0), "en": Result("x", 0)}))
+    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    assert lang == "bn"

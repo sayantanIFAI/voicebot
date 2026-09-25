@@ -156,7 +156,7 @@ from agent.reask_policy import ReaskTracker
 from agent.senior_voice import SeniorEvidence, explicit_senior_cue, stated_age_is_senior
 from agent.senior_voice import estimate as estimate_senior
 from agent.speech_policy import derive_policy, effective_rate, limit_questions
-from agent.lang_select import languages_to_verify, pick_candidate
+from agent.lang_select import languages_to_verify, pick_candidate, engines_needed
 from agent.lang_select import speakable as _speakable
 from agent.language_switch import detect_language_switch_request
 from agent.lid import (
@@ -288,7 +288,7 @@ CONDITION_INPUT = os.environ.get("CONDITION_INPUT", "off")
 # warm LLM call's own "~9s across retries" evidence agent/llm.py's own
 # KCD-465 fix cites, short enough that a genuinely slow turn does not
 # leave the caller wondering whether the line is still open.
-FILLER_THRESHOLD_S = 2.5
+FILLER_THRESHOLD_S = float(os.environ.get("FILLER_THRESHOLD_S", "0.9"))   # was 2.5 s of silence
 
 # KCD-076: agent/channel_quality.py's FFT-based classification is pure
 # CPU arithmetic over one short clip -- REASONED, not measured against
@@ -341,6 +341,7 @@ _tools: ClinicToolsClient | None = None
 _tts: TTSClient | None = None
 _intent_cache: SemanticCache | None = None
 _fast_path: FastPath | None = None
+_answer_warm_task = None
 _asr_router: ASRRouter | None = None
 _lid: SpeechBrainVoxLingua107LID | None = None
 _tts_router: TTSRouter | None = None
@@ -406,24 +407,86 @@ async def _warm_speech_models() -> None:
     logger.info("speech models warm (%.1fs)", time.monotonic() - t0)
 
 
+async def _fetch_catalogue() -> dict:
+    """GET /api/v1/catalogue with the service token; raises on any failure or on a body that is not a catalogue."""
+    import httpx as _hx
+    token = os.environ.get("CLINIC_API_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    async with _hx.AsyncClient(timeout=10) as c:
+        resp = await c.get(f"{CLINIC_API_BASE}/api/v1/catalogue", headers=headers)
+    resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, dict) or "tests" not in payload:
+        raise ValueError("clinic-api /api/v1/catalogue did not return a catalogue")
+    return payload
+
+
+# ---- the answers every caller asks for, rendered ahead of time -------------------------------------------------
+ANSWER_WARM_INTERVAL_S = float(os.environ.get("ANSWER_WARM_INTERVAL_S", "600"))
+_answers_warm: dict = {"rounds": 0, "pinned_clips": 0, "last_round_s": None, "last_error": None}
+
+
+async def _warm_answers_once() -> int:
+    """Render, and pin in the TTS cache, the spoken audio of every test price, every test-preparation answer and every
+    clinic FAQ answer, in every active language -- exactly the clauses a live turn would synthesise, so the next caller
+    who asks gets them from the cache with no synthesis. The TEXT is still built from live clinic data every time
+    (the truth boundary is unchanged: nothing here stores a price as a fact); only the rendered AUDIO is kept, keyed
+    by the exact text, so a changed price is simply a different clip. Each round re-reads the catalogue, renders only
+    clips it does not already hold, and lets clips for answers that no longer exist become evictable."""
+    if _tools is None or _tts is None:
+        return 0
+    t0 = time.monotonic()
+    cat = await _fetch_catalogue()
+    keep: set[str] = set()
+    rate = derive_policy("neutral")
+    for lang in _languages_active:
+        replies: list[str] = []
+        for row in cat.get("tests", []):
+            name = row["name"]
+            try:
+                replies.append(test_rate_reply({"test_name": name}, await _tools.get_test_rate(name), lang))
+                replies.append(test_prep_reply({"test_name": name}, await _tools.get_test_prep(name, lang), lang))
+            except ToolCallError as e:
+                logger.warning("answer warm-up: lookup for %r failed (%s)", name, e)
+        for f in cat.get("faq_topics", []):
+            try:
+                replies.append(clinic_faq_reply({"faq_topic": f["topic"]}, await _tools.get_faq(f["topic"], lang), lang))
+            except ToolCallError as e:
+                logger.warning("answer warm-up: FAQ %r failed (%s)", f["topic"], e)
+        for reply in replies:
+            spoken, _ = AckTracker(mode=ACK_MODE).decorate(reply, lang, substantive=True)     # as _finish_enquiry_turn does
+            for clause in split_into_clauses(spoken) or [spoken]:
+                speed = effective_rate(rate, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None)
+                try:
+                    await _tts.synthesize(clause, lang, speed=speed, pin=keep)
+                except Exception as e:  # noqa: BLE001 - an unspeakable or failed clip is skipped, never fatal
+                    logger.debug("answer warm-up: skipped %r (%s)", clause[:30], e)
+                await asyncio.sleep(0)                          # never hog the loop while calls are live
+    n = _tts.retain_pinned(keep)
+    _answers_warm.update(rounds=_answers_warm["rounds"] + 1, pinned_clips=n, last_round_s=round(time.monotonic() - t0, 1),
+                         last_error=None)
+    logger.info("answer warm-up: %d clips pinned in %.1fs", n, time.monotonic() - t0)
+    return n
+
+
+async def _answer_warm_loop() -> None:
+    while True:
+        try:
+            await _warm_answers_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - advisory: a failure only means the next caller pays a synthesis
+            _answers_warm["last_error"] = str(e)
+            logger.warning("answer warm-up failed: %s", e)
+        await asyncio.sleep(ANSWER_WARM_INTERVAL_S)
+
+
 async def _load_fast_path() -> FastPath | None:
     """Fetch the catalogue and build the fast path, or None if clinic-api is
     not reachable. Optional by design: without it every turn goes to the LLM,
     which is the behaviour that existed before this path did."""
-    import httpx as _hx
     try:
-        # The clinic API requires the service token on everything under /api/v1/. Without it this got a 401,
-        # took the error body for a catalogue and logged "fast path ready over 0 catalogue rows": the fast path
-        # was silently off and, being non-None, was never retried. Send the token, refuse a non-success reply,
-        # and refuse a body that is not a catalogue, so a failure degrades to "no fast path yet" and is retried.
-        token = os.environ.get("CLINIC_API_TOKEN", "")
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        async with _hx.AsyncClient(timeout=10) as c:
-            resp = await c.get(f"{CLINIC_API_BASE}/api/v1/catalogue", headers=headers)
-        resp.raise_for_status()
-        payload = resp.json()
-        if not isinstance(payload, dict) or "tests" not in payload:
-            raise ValueError("clinic-api /api/v1/catalogue did not return a catalogue")
+        payload = await _fetch_catalogue()
         fp = FastPath(Catalogue(payload))
         logger.info("fast path ready over %d catalogue rows", len(fp.catalogue))
         return fp
@@ -548,14 +611,17 @@ async def _startup():
     await _tts.prewarm({lang: lines[lang] for lang in _languages_active})
     await _warm_speech_models()
 
-    global _READY_AT
+    global _READY_AT, _answer_warm_task
     _READY_AT = time.monotonic()
+    _answer_warm_task = asyncio.create_task(_answer_warm_loop())         # background: startup does not wait for it
     logger.info("startup complete -- ready for calls (%.1fs from process start)",
                 _READY_AT - _PROCESS_STARTED_AT)
 
 
 @app.on_event("shutdown")
 async def _shutdown():
+    if _answer_warm_task is not None:
+        _answer_warm_task.cancel()
     if _health_task:
         _health_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -626,6 +692,7 @@ async def stats():
     real traffic rather than against my assumptions about it."""
     return {
         "fast_path": _fast_path.snapshot() if _fast_path else None,
+        "answer_warmup": _answers_warm,
         "intent_cache": _intent_cache.snapshot() if _intent_cache else None,
         "tts_cache": _tts.snapshot() if _tts else None,
         "admission": _admission.snapshot() if _admission else None,
@@ -888,6 +955,8 @@ class CallSession:
         # yes or no to "shall I go back to it".
         self.suspended = None
         self.awaiting_resume = False
+        self.pending_enquiry = None       # (intent, turn) when we just asked "which test / which doctor"
+        self.last_enquiry_turn = 0        # turn_count when the last test/doctor answer was given (agent/enquiry_followup.py)
         self.no_at_confirm = False       # the caller said "no, ..." at the confirmation step and it was not a bare no
         # KCD-499: stored preferences, offered after the answer and applied only if the caller says yes.
         self.pending_pref = None
@@ -1054,7 +1123,9 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
     for i, clause in enumerate(clauses):
         if session.speak_epoch != session.turn_epoch:
             break                              # interrupted mid-reply: the rest is discarded, not sent
+        _mark(session, "reply")
         wav = await _synthesize_one_clause(session, clause, lang, fallback_reason)
+        _mark(session, "tts")
         if session.speak_epoch != session.turn_epoch:
             break                              # interrupted while this clause was being synthesised
 
@@ -1067,6 +1138,9 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
         session.register_agent_audio(wav, voice=lang)
         await session.send_audio(wav)
         total_duration += duration
+        if i == 0:
+            _mark(session, "send")
+            _log_timing(session)
 
         # "Time to first audio" (admission.py's own docstring) means the
         # FIRST clause, not the last -- recorded once, right after it is
@@ -1326,7 +1400,9 @@ async def _slice_utterance(session: CallSession, start_s: float, end_s: float, s
 # before the apology is spoken. Equal to the model's own default deadline (agent/llm.py, 12 s, REASONED, not
 # measured on real telephony). The holding phrase is spoken once FILLER_THRESHOLD_S has passed without an answer.
 INTENT_BUDGET_S = float(os.environ.get("INTENT_TURN_BUDGET_S", "12"))
-# The semantic-cache embedding lookup may not take more than this of that budget; slower is a miss.
+# The semantic-cache embedding lookup gets this head start on the model; after that both run together.
+CACHE_HEAD_START_S = float(os.environ.get("INTENT_CACHE_HEAD_START_S", "0.15"))
+# ...and it may never hold the turn for more than this (kept as a ceiling on the head start).
 CACHE_LOOKUP_MAX_S = float(os.environ.get("INTENT_CACHE_MAX_S", "1.5"))
 # Below this much budget left, asking the model is pointless: go straight to the apology.
 MIN_MODEL_BUDGET_S = 0.5
@@ -1344,12 +1420,20 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
     def left() -> float:
         return INTENT_BUDGET_S - (time.monotonic() - start)
 
+    # The cache lookup (an embedding call) and the model run TOGETHER, not one after the other. The lookup gets a
+    # short head start; if it has not answered by then the model starts anyway and the lookup keeps going. A hit ends
+    # the wait at once and the model's answer is dropped; a miss costs the model turn nothing. Measured on the pod, the
+    # serial version spent up to 1.5 s waiting for a lookup that then missed, before the 1.3 s model call even began.
+    lookup = asyncio.ensure_future(asyncio.to_thread(_intent_cache.get, key))
+    lookup.add_done_callback(lambda f: f.cancelled() or f.exception())         # a failed lookup is a miss, never an error
     try:
-        cached, how = await asyncio.wait_for(asyncio.to_thread(_intent_cache.get, key),
-                                             timeout=max(0.05, min(CACHE_LOOKUP_MAX_S, left())))
+        cached, how = await asyncio.wait_for(asyncio.shield(lookup),
+                                             timeout=max(0.02, min(CACHE_HEAD_START_S, CACHE_LOOKUP_MAX_S, left())))
     except asyncio.TimeoutError:
-        cached, how = None, "timeout"
-        logger.warning("[%s] intent cache lookup exceeded %.1fs: treated as a miss", session.call_id, CACHE_LOOKUP_MAX_S)
+        cached, how = None, "pending"
+    except Exception as e:  # noqa: BLE001 - the semantic cache is optional
+        logger.warning("[%s] intent cache lookup failed (%s): treated as a miss", session.call_id, e)
+        cached, how = None, "error"
     if cached is not None:
         logger.info("[%s] intent cache %s hit", session.call_id, how)
         return cached
@@ -1357,10 +1441,20 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
     budget_left = left()
     if budget_left < MIN_MODEL_BUDGET_S:
         raise ExtractionError(f"intent budget of {INTENT_BUDGET_S}s used up before the model was asked")
+    # the extractor bounds itself by `budget_left`; the wait_for is the backstop for a thread that does not
+    model = asyncio.ensure_future(asyncio.wait_for(asyncio.to_thread(extract_intent, text, 2, lang, budget_left),
+                                                   timeout=budget_left + 1.0))
+    model.add_done_callback(lambda f: f.cancelled() or f.exception())
+    if not lookup.done():
+        await asyncio.wait({lookup, model}, return_when=asyncio.FIRST_COMPLETED)
+    if lookup.done() and not lookup.cancelled() and lookup.exception() is None and not model.done():
+        hit, how = lookup.result()
+        if hit is not None:
+            model.cancel()                    # its thread finishes on its own, bounded by its deadline; the answer is dropped
+            logger.info("[%s] intent cache %s hit (while the model was running)", session.call_id, how)
+            return hit
     try:
-        # the extractor bounds itself by `budget_left`; the wait_for is the backstop for a thread that does not
-        data, diag = await asyncio.wait_for(asyncio.to_thread(extract_intent, text, 2, lang, budget_left),
-                                            timeout=budget_left + 1.0)
+        data, diag = await model
     except asyncio.TimeoutError:
         raise ExtractionError(f"intent extraction did not complete within the {INTENT_BUDGET_S}s budget") from None
     logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
@@ -1514,6 +1608,7 @@ async def _finish_enquiry_turn(session: CallSession, text: str, lang: str,
             # requires it be explicitly addressed, never silently dropped.
             base_reply = f"{base_reply} {addendum or phrase('unclear', lang)}"
     session.last_enquiry_entities = entities_from_turn(*turn_entities)
+    session.last_enquiry_turn = session.turn_count
     suggestion, _ = _suggested.get(), _suggested.set(None)
     if suggestion is not None and session.pending_entity is None:
         replay = {**data, "intent": suggestion["intent"], "secondary_intent": None,
@@ -1528,25 +1623,86 @@ async def _finish_enquiry_turn(session: CallSession, text: str, lang: str,
     await _speak(session, base_reply, lang)
 
 
+def _mark(session: CallSession, name: str) -> None:
+    """Record when a stage of THIS turn finished (first occurrence only). Read by _log_timing at first audio."""
+    marks = getattr(session, "marks", None)
+    if marks is not None and all(n != name for n, _t in marks):
+        marks.append((name, time.monotonic()))
+
+
+def _log_timing(session: CallSession) -> None:
+    """One line per turn: where the time from "the turn started" to "the first audio left" went. Latency was being
+    felt and reported without a breakdown; this is the breakdown, per stage, in the log."""
+    marks, session.marks = getattr(session, "marks", None), None
+    if not marks or len(marks) < 2:
+        return
+    parts, prev = [], marks[0][1]
+    for name, t in marks[1:]:
+        parts.append(f"{name} {int((t - prev) * 1000)} ms")
+        prev = t
+    logger.info("[%s] turn timing: %s | total %d ms", session.call_id, " | ".join(parts),
+                int((marks[-1][1] - marks[0][1]) * 1000))
+
+
 async def _route_and_transcribe(session: CallSession, utterance_wav: str):
     """LID -> routing decision -> ASR. Returns (language, ASRResult), or
     (None, None) when the router says a human should take the call."""
     if _lid is None or len(_languages_active) < 2:
         return "bn", await _asr_router.transcribe("bn", utterance_wav)
 
+    # Language ID (CPU, ~0.19 s) and recognition used to run one after the other. They now overlap: the recognisers
+    # that are almost always needed -- the language this call has been in, and English (cheap, and never ruled out by
+    # language ID) -- start at the SAME moment as language ID, and any other one is started the moment it says so.
+    # A recogniser nobody needs is simply not run (agent/lang_select.engines_needed): Hindi's ~0.6 s of GPU time was
+    # being spent on every Bengali turn for a result that could never win.
+    prior = session.lang_router.previous_language or "bn"
+    tasks: dict[str, asyncio.Future] = {}
+    took: dict[str, float] = {}
+
+    def start(lang: str) -> None:
+        if lang in tasks or lang not in _languages_active:
+            return
+
+        async def run(lang=lang):
+            t0 = time.perf_counter()
+            try:
+                return await _asr_router.transcribe(lang, utterance_wav)
+            finally:
+                took[lang] = (time.perf_counter() - t0) * 1000
+        tasks[lang] = asyncio.ensure_future(run())
+        tasks[lang].add_done_callback(lambda f: f.cancelled() or f.exception())     # an unused failure is not an error
+
+    for lang in dict.fromkeys((prior, "en")):
+        start(lang)
     try:
         lid = await asyncio.to_thread(_lid.identify_path, utterance_wav)
     except Exception as e:  # noqa: BLE001 - a LID fault must degrade the turn, not kill it
         logger.warning("[%s] LID failed (%s) -- treating as unknown", session.call_id, e)
         lid = LIDResult(language="unknown", confidence=0.0)
+    _mark(session, "lid")
 
-    # LID's top label alone is not trusted: Indian-accented English is
-    # labelled Hindi at ~0.9, or not found at all (measured; see
-    # agent/lang_select.py). Unless LID is decisive, let every active ASR
-    # try and keep the one whose decoders agree.
+    async def outcomes_for(langs: list[str]) -> list[tuple[str, object]]:
+        for lang in langs:
+            start(lang)
+        done = await asyncio.gather(*[tasks[lang] for lang in langs if lang in tasks], return_exceptions=True)
+        good, order = [], [lang for lang in langs if lang in tasks]
+        for lang, out in zip(order, done):
+            if isinstance(out, BaseException):
+                logger.warning("[%s] ASR %s failed: %s", session.call_id, lang, out)
+            else:
+                good.append((lang, out))
+        if not good:
+            raise next(o for o in done if isinstance(o, BaseException))
+        logger.info("[%s] ASR timings: %s", session.call_id, " | ".join(f"{l} {int(took.get(l, 0))} ms" for l, _ in good))
+        return good
+
+    # LID's top label alone is not trusted: Indian-accented English is labelled Hindi at ~0.9, or not found at all
+    # (measured; see agent/lang_select.py). Unless LID is decisive, run the recognisers that can still matter and keep
+    # the one whose decoders agree AND whom language ID believes.
     verify = languages_to_verify(lid.language, lid.scores, _languages_active) if lid.scores else None
     if verify:
-        outcomes = await _asr_router.transcribe_many(verify, utterance_wav)
+        need = engines_needed(lid.language, lid.scores, _languages_active)
+        outcomes = await outcomes_for(need)
         lang, result = pick_candidate(outcomes, lid.scores, session.lang_router.previous_language)
         logger.info("[%s] LID %s %s not decisive -> ran %s, chose %s (%s)",
                     session.call_id, lid.language, {k: round(v, 2) for k, v in lid.scores.items()},
@@ -1564,10 +1720,12 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
 
     if decision.action == "dual_asr" and decision.secondary_language:
         primary, secondary = decision.language, decision.secondary_language
-        r1, r2 = await _asr_router.transcribe_dual(primary, secondary, utterance_wav)
-        return pick_candidate([(primary, r1), (secondary, r2)], lid.scores, session.lang_router.previous_language)
+        both = await outcomes_for([primary, secondary])
+        if len(both) == 2:
+            return pick_candidate(both, lid.scores, session.lang_router.previous_language)
+        return both[0]
 
-    return decision.language, await _asr_router.transcribe(decision.language, utterance_wav)
+    return decision.language, (await outcomes_for([decision.language]))[0][1]
 
 
 async def _dispatch_turn(session: CallSession, utterance_wav: str):
@@ -1579,6 +1737,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.acks.next_turn()
         session.turn_acknowledged = False
         session.turn_started_at = time.monotonic()
+        session.marks = [("start", session.turn_started_at)]
         channel_quality = session.call_state.channel_quality
         analysis: dict | None = None
         audio_issues: list[str] = []
@@ -1596,7 +1755,9 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if conditioned:
                     temp_wavs.append(conditioned)
                     asr_wav = conditioned
+            _mark(session, "prep")
             lang, asr_result = await _route_and_transcribe(session, asr_wav)
+            _mark(session, "asr")
             # KCD-075/KCD-076: measured inside its own budget slice, on
             # the SAME clip ASR already read, before the finally below
             # deletes it. A slow or failed classification just keeps
@@ -1804,6 +1965,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
 
         intent = data["intent"]
         slots = data["slots"]
+        pending, session.pending_enquiry = session.pending_enquiry, None
+        if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
+            intent = pending[0]           # "the same test", a bare name: the answer to the question we just asked
+        _mark(session, "intent")
         _rec(session, "intent", intent)
         _note_stated_age(session, slots, lang)
 
@@ -1865,6 +2030,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # Ask for the name only, instead of "say that again" for the whole sentence.
             name_slot = {"test_rate": "test_name", "test_prep": "test_name", "doctor_availability": "doctor_name"}.get(intent)
             if name_slot:
+                session.pending_enquiry = (intent, session.turn_count)
                 await _speak(session, f"{phrase('name_not_caught', lang)} {missing_slot_prompt(intent, name_slot, lang)}", lang)
             else:
                 await _speak(session, insufficient_information_reply(lang), lang)
@@ -1882,33 +2048,37 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
 
         try:
             if intent == "test_rate":
-                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                slots, _ = _followup(session, intent, slots, text, lang)
                 reply = await _answer_enquiry_intent(intent, slots, lang)
                 if reply is None:
+                    session.pending_enquiry = (intent, session.turn_count)
                     await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                     return
                 await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "doctor_availability":
-                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                slots, _ = _followup(session, intent, slots, text, lang)
                 reply = await _answer_enquiry_intent(intent, slots, lang)
                 if reply is None:
+                    session.pending_enquiry = (intent, session.turn_count)
                     await _speak(session, missing_slot_prompt(intent, "doctor_name", lang), lang)
                     return
                 await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "test_prep":
-                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                slots, _ = _followup(session, intent, slots, text, lang)
                 reply = await _answer_enquiry_intent(intent, slots, lang)
                 if reply is None:
+                    session.pending_enquiry = (intent, session.turn_count)
                     await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                     return
                 await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "clinic_faq":
-                slots, _ = resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities)
+                slots, _ = _followup(session, intent, slots, text, lang)
                 reply = await _answer_enquiry_intent(intent, slots, lang)
                 if reply is None:
+                    session.pending_enquiry = (intent, session.turn_count)
                     await _speak(session, missing_slot_prompt(intent, "faq_topic", lang), lang)
                     return
                 await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
@@ -2132,6 +2302,13 @@ async def _reopen_after_no(session: CallSession, st, lang: str) -> None:
     st.pending_charge_inr = None
     await _speak(session, missing_slot_prompt(st.action,
                  "doctor_name" if st.action == "book_appointment" else "date", lang), lang)
+
+
+def _followup(session: CallSession, intent: str, slots: dict, text: str, lang: str):
+    """The enquiry slots, with the topic of the last few turns filled in when the caller pointed at it or simply
+    did not name a different one (agent/enquiry_followup.py). Deterministic; the model decides nothing here."""
+    gap = session.turn_count - session.last_enquiry_turn if session.last_enquiry_entities else None
+    return resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities, gap)
 
 
 def _next_question(session: CallSession, st, intent: str, missing: list[str], lang: str) -> str:

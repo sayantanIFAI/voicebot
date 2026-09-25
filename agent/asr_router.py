@@ -139,8 +139,20 @@ class ASRRouter:
         import asyncio
         import logging
 
-        outcomes = await asyncio.gather(*[self.transcribe(lang, wav_path) for lang in languages],
-                                        return_exceptions=True)
+        import time
+
+        took: dict[str, float] = {}
+
+        async def timed(lang: str):
+            t0 = time.perf_counter()
+            try:
+                return await self.transcribe(lang, wav_path)
+            finally:
+                took[lang] = (time.perf_counter() - t0) * 1000
+
+        outcomes = await asyncio.gather(*[timed(lang) for lang in languages], return_exceptions=True)
+        logging.getLogger("asr_router").info("ASR timings (concurrent): %s",
+                                             " | ".join(f"{lang} {int(ms)} ms" for lang, ms in took.items()))
         good = []
         for lang, out in zip(languages, outcomes):
             if isinstance(out, BaseException):
