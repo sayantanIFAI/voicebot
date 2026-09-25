@@ -114,6 +114,7 @@ from agent.code_switch import mixture_bucket
 from agent.confidence_gate import (
     VERIFIED, confidence_state, is_low_confidence, needs_entity_readback, should_withhold_factual_answer,
 )
+from agent import abuse, call_end
 from agent import entity_confirmation as entity_text
 from agent.emergency import detect_emergency
 from agent.detector_budget import run_within_budget
@@ -939,6 +940,7 @@ class CallSession:
         self.silence_since: float | None = None
         self.silence_prompts = 0
         self.awaiting_close_answer = False
+        self.abuse_count = 0                     # abusive turns so far this call (agent/abuse.py)
         # KCD-353: the disclosure was spoken in the greeting (Bengali); once more, in the
         # caller's own language, the first time it differs.
         self.disclosed_langs: set[str] = {"bn"}
@@ -1552,6 +1554,7 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
 # that was never the issue.
 _HOLD_FAILURE_FIELD = {
     "doctor_not_found": "doctor_name",
+    "doctor_ambiguous": "doctor_name",
     "invalid_date": "date",
     "date_in_past": "date",
     "doctor_not_available_that_day": "date",
@@ -1777,6 +1780,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.turn_epoch = session.speak_epoch      # this turn is current; an interrupt from now on makes it stale
         session.acks.next_turn()
         session.turn_acknowledged = False
+        prior_lang = session.lang            # the language the call was in BEFORE this turn's recognition (see _keep_language)
         # An answer to a question we asked: the last thing we said had a question mark, or a flow that asks in commands
         # ("please tell me your full name") is waiting on this very turn.
         session.answering = session.awaiting_answer or session.history_state in ("need_phone", "need_name") or (
@@ -1874,6 +1878,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         text = asr_result.text.strip()
         if not text:
             logger.info("[%s] ASR returned empty text", session.call_id)
+            lang = _keep_language(session, prior_lang)
             await _reask_or_handoff(
                 session, session.reask.decide(asr_empty=True, audio_issues=audio_issues), lang,
                 fallback_reason="asr_empty")
@@ -1891,6 +1896,21 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _handoff_to_human(session, "emergency", (lang,))
             session.outcome = "emergency"
             return
+        # Swearing at the agent: a calm fixed boundary in the caller's own language, never the model (agent/abuse.py);
+        # the third time in one call, a courteous close.
+        if abuse.is_abusive(text):
+            session.abuse_count += 1
+            reply_lang = _abuse_reply_language(text, lang, prior_lang)
+            _keep_language(session, reply_lang)
+            logger.info("[%s] abusive turn %d", session.call_id, session.abuse_count)
+            await session.send_json("User", text)
+            session.turn_count += 1
+            if abuse.closes_the_call(session.abuse_count):
+                session.outcome = "abusive_caller"
+                await _end_call(session, reply_lang, abuse.response_key(session.abuse_count))
+            else:
+                await _speak(session, phrase(abuse.response_key(session.abuse_count), reply_lang), reply_lang)
+            return
         # A yes/no to a confirmation is legitimately one short word; the
         # jumbled-transcript checks would misread it as a fragment.
         # The same holds for a dictated phone number, a spelled name or a bare
@@ -1906,6 +1926,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             or session.awaiting_resume or session.awaiting_close_answer)          # KCD-104; "anything else?" -> a bare no: a bare yes or no to "shall I go back to it" is an answer
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
+            lang = _keep_language(session, prior_lang)
             await _reask_or_handoff(
                 session, session.reask.decide(transcript_issue=problem, audio_issues=audio_issues), lang)
             return
@@ -1913,15 +1934,15 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.silence_prompts = 0
         await session.send_json("User", text)
         session.turn_count += 1
-        if session.awaiting_close_answer:
-            session.awaiting_close_answer = False
-            answer = classify_yes_no(text, lang)
-            if answer == "no":                                  # "nothing else": say goodbye and end the call
-                await _end_call(session, lang, "silence_goodbye")
-                return
-            if answer == "yes":
-                await _speak(session, phrase("silence_go_on", lang), lang)
-                return
+        after_prompt, session.awaiting_close_answer = session.awaiting_close_answer, False
+        answer = classify_yes_no(text, lang) if after_prompt else None
+        # "end the call", "শেষ করে দিন" (as the answer to "anything else?"): the call ends, decided by words, not the model
+        if call_end.wants_to_end(text, lang, after_prompt=after_prompt) or answer == "no":
+            await _end_call(session, lang, "silence_goodbye")
+            return
+        if answer == "yes":
+            await _speak(session, phrase("silence_go_on", lang), lang)
+            return
         code_switch_buckets.record(mixture_bucket(text), "seen", lang)
 
         # KCD-353: a request for a person is honoured IMMEDIATELY -- deterministic, before any
@@ -3042,6 +3063,25 @@ async def _save_unfinished_draft(session: CallSession) -> None:
         await asyncio.wait_for(_tools.save_draft_booking(phone, session.call_id, body), 3.0)
     except Exception as e:  # noqa: BLE001
         logger.warning("[%s] could not save the unfinished booking: %s", session.call_id, e)
+
+
+def _keep_language(session: CallSession, prior_lang: str) -> str:
+    """A turn we could not read (empty, jumbled) says nothing about which language the caller speaks: the call stays in the
+    language it was in, and is answered in it. Before this, a swear word or a mumble that language ID happened to label
+    Hindi moved a Bengali call to Hindi for the re-ask."""
+    session.lang = prior_lang
+    session.lang_router.note_response_language(prior_lang)
+    apply_language(session.call_state, prior_lang)
+    return prior_lang
+
+
+def _abuse_reply_language(text: str, lang: str, prior_lang: str) -> str:
+    """The language to answer abuse in: the script it was written in (Bengali or Devanagari), else the call's own."""
+    from agent.lang_select import script_share
+    for candidate in ("bn", "hi"):
+        if script_share(text, candidate) >= 0.5:
+            return candidate
+    return prior_lang if prior_lang in _languages_active else lang
 
 
 async def _end_call(session: CallSession, lang: str, key: str) -> None:

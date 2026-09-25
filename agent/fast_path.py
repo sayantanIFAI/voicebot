@@ -171,12 +171,20 @@ class Catalogue:
                 langs |= {k[len("aliases_"):] for k in row if k.startswith("aliases_")}
         for row in payload.get("faq_topics", []):
             langs |= {k[len("keywords_"):] for k in row if k.startswith("keywords_")}
+        # Which doctors (by position in the payload) a spoken form belongs to: "sen" belongs to every Sen. A form with
+        # more than one owner is ambiguous, whatever its similarity score, and the fast path never answers on it.
+        self._doctor_owners: dict[tuple[str, str], set[int]] = defaultdict(set)
         self._tables: dict[tuple[str, str], FormTable] = {}
+        for lang in sorted(langs):
+            for i, d in enumerate(payload.get("doctors", [])):
+                for form in self._doctor_forms_of(d, lang):
+                    self._doctor_owners[(lang, form)].add(i)
         for lang in sorted(langs):
             cue_table = cues.table_for(lang)
             exact_below = cue_table.exact_below_chars if cue_table else 5
             for kind, rows in (("test", self._test_rows(payload, lang)),
                                ("doctor", self._doctor_rows(payload, lang)),
+                               ("doctorfull", self._doctor_full_rows(payload, lang)),
                                ("faq", self._faq_rows(payload, lang))):
                 self._tables[(kind, lang)] = FormTable(
                     rows, exact_below_chars=exact_below, index_min_forms=index_min_forms,
@@ -196,13 +204,32 @@ class Catalogue:
         return rows
 
     @staticmethod
+    def _doctor_forms_of(d: dict, lang: str) -> list[str]:
+        forms = [_normalize(a) for a in d.get(f"aliases_{lang}", [])]
+        forms.append(_normalize(d.get("surname") or d["name"].split()[-1]))
+        whole = Catalogue._full_name_form(d, lang)
+        if whole:
+            forms.append(whole)                    # owned by this doctor: a shared surname's owners are counted with it
+        return _dedupe(forms)
+
+    @staticmethod
+    def _full_name_form(d: dict, lang: str) -> str:
+        latin = " ".join(w for w in (d.get("full_name") or "").split() if w.strip(".").lower() not in ("dr", "doctor"))
+        whole = {"bn": d.get("full_name_bn"), "hi": d.get("full_name_hi"), "en": latin}.get(lang)
+        return _normalize(whole) if whole else ""
+
+    @staticmethod
+    def _doctor_full_rows(payload: dict, lang: str):
+        """(doctor, [whole name]) for each doctor that has one: "পার্থ রায়" is one doctor's even where "রায়" is two's."""
+        return [(d["name"], [f]) for d in payload.get("doctors", []) if (f := Catalogue._full_name_form(d, lang))]
+
+    @staticmethod
     def _doctor_rows(payload: dict, lang: str):
-        rows = []
-        for d in payload.get("doctors", []):
-            forms = [_normalize(a) for a in d.get(f"aliases_{lang}", [])]
-            forms.append(_normalize(d.get("surname") or d["name"].split()[-1]))
-            rows.append((d["name"], _dedupe(forms)))
-        return rows
+        return [(d["name"], Catalogue._doctor_forms_of(d, lang)) for d in payload.get("doctors", [])]
+
+    def doctor_owner_count(self, lang: str, form: str | None) -> int:
+        """How many doctors the spoken form `form` belongs to (0 when unknown)."""
+        return len(self._doctor_owners.get((lang, form), ())) if form else 0
 
     @staticmethod
     def _faq_rows(payload: dict, lang: str):
@@ -449,7 +476,14 @@ class FastPath:
             return None
 
         if wants_avail:
-            name, form, score = self.catalogue.match(text, "doctor", lang, COMMIT_FLOOR)
+            name, form, score = self.catalogue.match(text, "doctorfull", lang, 0.9)      # the whole name, if it was said
+            if not name:
+                name, form, score = self.catalogue.match(text, "doctor", lang, COMMIT_FLOOR)
+            if name and score >= COMMIT_FLOOR and self.catalogue.doctor_owner_count(lang, form) > 1:
+                # "Dr. A. Sen" when Ashok Sen and Abhishek Sen both sit here: the model's turn reaches the clinic API,
+                # which answers "which one -- Ashok Sen or Abhishek Sen?" (by whole name, in the caller's script).
+                self._abstain("ambiguous_doctor", "doctor_availability", lang)
+                return None
             if name and score >= COMMIT_FLOOR:
                 date_iso, confident = self._resolve_date(text, table)
                 if not confident:

@@ -83,6 +83,35 @@ DOCTOR_FULL_NAMES = {
     "Dr. P. Ray": "Dr. Partha Ray", "Dr. A. Sarkar": "Dr. Abhijit Sarkar", "Dr. S. Chakraborty": "Dr. Snehasish Chakraborty",
 }
 
+# How the given names above are written and said in Bengali and Hindi (placeholders like the names themselves).
+_GIVEN_BN_HI = {
+    "Sourav": ("সৌরভ", "सौरव"), "Arindam": ("অরিন্দম", "अरिंदम"), "Prabir": ("প্রবীর", "प्रबीर"),
+    "Rajib": ("রাজীব", "राजीव"), "Kaushik": ("কৌশিক", "कौशिक"), "Nirmal": ("নির্মল", "निर्मल"),
+    "Subrata": ("সুব্রত", "सुब्रत"), "Manas": ("মানস", "मानस"), "Sutapa": ("সুতপা", "सुतपा"),
+    "Aparna": ("অপর্ণা", "अपर्णा"), "Rina": ("রিনা", "रीना"), "Paromita": ("পারমিতা", "पारमिता"),
+    "Debasish": ("দেবাশিস", "देबाशीष"), "Tapan": ("তপন", "तपन"), "Amit": ("অমিত", "अमित"),
+    "Subhankar": ("শুভঙ্কর", "शुभंकर"), "Ranjan": ("রঞ্জন", "रंजन"), "Kalyan": ("কল্যাণ", "कल्याण"),
+    "Sanjay": ("সঞ্জয়", "संजय"), "Biswajit": ("বিশ্বজিৎ", "बिस्वजीत"), "Mitali": ("মিতালী", "मिताली"),
+    "Ashok": ("অশোক", "अशोक"), "Pritha": ("পৃথা", "पृथा"), "Samir": ("সমীর", "समीर"),
+    "Nandini": ("নন্দিনী", "नंदिनी"), "Rupa": ("রূপা", "रूपा"), "Anirban": ("অনির্বাণ", "अनिर्बान"),
+    "Shreya": ("শ্রেয়া", "श्रेया"), "Kunal": ("কুণাল", "कुणाल"), "Partha": ("পার্থ", "पार्थ"),
+    "Abhijit": ("অভিজিৎ", "अभिजीत"), "Snehasish": ("স্নেহাশিস", "स्नेहाशीष"),
+}
+
+
+def doctor_full_names() -> dict[str, tuple[str, str, str]]:
+    """short name -> (whole name, the same in Bengali script, the same in Devanagari)."""
+    out = {}
+    for short, full in DOCTOR_FULL_NAMES.items():
+        given, surname = full.split()[1], full.split()[-1]
+        bn_given, hi_given = _GIVEN_BN_HI[given]
+        bn_surname = (SURNAME_BN.get(surname) or [""])[0]
+        hi_surname = (SURNAME_HI.get(surname) or [""])[0]
+        out[short] = (full, f"{bn_given} {bn_surname}".strip() if bn_surname else "",
+                      f"{hi_given} {hi_surname}".strip() if hi_surname else "")
+    return out
+
+
 DEPARTMENTS = {
     "General Medicine": [
         ("Dr. S. Mukherjee", "MBBS, MD (Gen. Med.)"),
@@ -315,8 +344,9 @@ def seed():
             for doc_name, quals in doctors:
                 surname = doc_name.split()[-1]
                 aliases = "|".join(SURNAME_BN.get(surname, []))
-                doc = Doctor(name=doc_name, full_name=DOCTOR_FULL_NAMES.get(doc_name, ""), qualifications=quals,
-                             aliases_bn=aliases,
+                latin, full_bn, full_hi = doctor_full_names().get(doc_name, ("", "", ""))
+                doc = Doctor(name=doc_name, full_name=latin, full_name_bn=full_bn, full_name_hi=full_hi,
+                             qualifications=quals, aliases_bn=aliases,
                              aliases_hi="|".join(SURNAME_HI.get(surname, [])),
                              department_id=dept.id)
                 db.add(doc)

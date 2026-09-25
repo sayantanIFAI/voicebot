@@ -264,6 +264,13 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
                          f"Which one would you like?")
         return ("वह समय बुक हो चुका है, और आसपास कोई समय खाली नहीं है।" if hi
                 else "That time is already booked, and nothing nearby is free.")
+    if reason == "doctor_ambiguous":
+        names = result.get("did_you_mean_hi" if hi else "did_you_mean") or result.get("did_you_mean") or []
+        if hi:
+            return (f"एक से ज़्यादा डॉक्टर मिले -- आप किसके बारे में पूछ रहे हैं, {' या '.join(names)}?" if names
+                    else "एक से ज़्यादा डॉक्टर मिले। आप किस डॉक्टर के बारे में पूछ रहे हैं, पूरा नाम बताएँगे?")
+        return (f"I found more than one doctor -- which do you mean, {' or '.join(names)}?" if names
+                else "I found more than one doctor. Which one do you mean? Please say the full name.")
     if reason == "doctor_not_found":
         q = _query(slots, "doctor_name", lang)
         if hi:

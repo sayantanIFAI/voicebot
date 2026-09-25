@@ -164,8 +164,10 @@ def test_doctor_availability_offers_a_choice_for_a_genuinely_ambiguous_surname(c
     body = resp.json()
     assert body["found"] is False
     assert body["ambiguous"] is True
-    assert "Dr. N. Roy" in body["did_you_mean"]
-    assert "Dr. P. Ray" in body["did_you_mean"]
+    # DELIBERATE SPEC CHANGE (2026-09-25, duplicate-doctor handling): the choice is named by WHOLE name, because two
+    # doctors can share a short name ("Dr. A. Sen") and a "which one?" that repeats it cannot be answered.
+    assert "Dr. Nirmal Roy" in body["did_you_mean"]
+    assert "Dr. Partha Ray" in body["did_you_mean"]
     assert len(body["did_you_mean"]) <= 3
 
 

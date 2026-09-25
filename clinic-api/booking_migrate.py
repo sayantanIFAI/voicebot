@@ -45,6 +45,8 @@ DOCTOR_BOOKING_COLUMNS: dict[str, str] = {
     # convention as every other price in seed.py.
     "consultation_fee_inr": "INTEGER NOT NULL DEFAULT 500",
     "full_name": "VARCHAR NOT NULL DEFAULT ''",
+    "full_name_bn": "VARCHAR NOT NULL DEFAULT ''",
+    "full_name_hi": "VARCHAR NOT NULL DEFAULT ''",
 }
 
 
@@ -354,19 +356,22 @@ def seed_default_cancellation_policy() -> bool:
 
 
 def backfill_doctor_full_names() -> int:
-    """Fills `doctors.full_name` where it is still empty, from seed.DOCTOR_FULL_NAMES (keyed by the short name).
-    Idempotent, and never overwrites a name a clinician has since entered."""
+    """Fills `doctors.full_name`, `full_name_bn` and `full_name_hi` where still empty, from seed.DOCTOR_FULL_NAMES (keyed
+    by the short name). Idempotent, and never overwrites a name a clinician has since entered. Returns how many values
+    were filled."""
     from models import Doctor
-    from seed import DOCTOR_FULL_NAMES
+    from seed import doctor_full_names
 
     db = SessionLocal()
     try:
         n = 0
-        for d in db.query(Doctor).filter(Doctor.full_name == "").all():
-            full = DOCTOR_FULL_NAMES.get(d.name)
-            if full:
-                d.full_name = full
-                n += 1
+        names = doctor_full_names()
+        for d in db.query(Doctor).all():
+            latin, bn, hi = names.get(d.name, ("", "", ""))
+            for column, value in (("full_name", latin), ("full_name_bn", bn), ("full_name_hi", hi)):
+                if value and not getattr(d, column):
+                    setattr(d, column, value)
+                    n += 1
         db.commit()
         return n
     finally:

@@ -180,6 +180,11 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         if alts:
             return f"ওই সময়টা বুক হয়ে গেছে। এই সময়গুলো ফাঁকা আছে: {', '.join(alts)}। কোনটা চান?"
         return "ওই সময়টা বুক হয়ে গেছে, এবং কাছাকাছি কোনো সময় ফাঁকা নেই।"
+    if reason == "doctor_ambiguous":
+        # Two doctors fit the name (two Sens): never picked -- asked, by whole name.
+        names = result.get("did_you_mean_bn") or result.get("did_you_mean") or []
+        return f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(names)}?" if names else \
+            "একাধিক ডাক্তার পেলাম। আপনি কোন ডাক্তারের কথা বলছেন, পুরো নামটা বলবেন?"
     if reason == "doctor_not_found":
         return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার খুঁজে পেলাম না।"
     if reason == "doctor_not_available_that_day":

@@ -91,6 +91,11 @@ def test_bengali_decisions_match_the_frozen_pre_change_module_except_where_a_gen
             # DELIBERATE SPEC CHANGE, marked (2026-09-25, fourth live call): also an abstain when the old answer was NOT an
             # exact match and a second test fit within AMBIGUITY_MARGIN of it (agent/fast_path.py): the model's turn asks
             # the clinic API "which one?" instead of the fast path picking between two.
+            # DELIBERATE SPEC CHANGE, marked (2026-09-25): also an abstain when the old answer was a DOCTOR's surname form that
+            # belongs to more than one doctor ("রায়" is both Dr. Roy and Dr. Ray): the clinic API asks "which one?".
+            if a.intent == "doctor_availability" and new.catalogue.doctor_owner_count("bn", a.matched_form) > 1:
+                abstained += 1
+                continue
             if not any(g in (a.matched_form or "").split() for g in generic):
                 text = new._without_cues(_normalize_text(u), cues.table_for("bn"))
                 best, _f, score = new.catalogue.match(text, "test", "bn", COMMIT_FLOOR)

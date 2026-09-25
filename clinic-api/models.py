@@ -43,6 +43,10 @@ class Doctor(Base):
     # and filled by booking_migrate.backfill_doctor_full_names(); empty means "not recorded", and callers fall back to
     # `name`. The seeded given names are FICTIONAL placeholders, like every other seeded row.
     full_name = Column(String, nullable=False, default="", server_default="")
+    # ...and how a Bengali or Hindi voice can SAY it: a Latin name is unspeakable there (agent/bn_normalize.py), and the
+    # surname alone ("সেন") cannot tell two doctors named Sen apart when the agent must ask "which one?".
+    full_name_bn = Column(String, nullable=False, default="", server_default="")
+    full_name_hi = Column(String, nullable=False, default="", server_default="")
     qualifications = Column(String, nullable=False)     # "MBBS, MD (Gen. Med.)"
     # Bengali-script spellings of the surname, "|"-joined. Real callers say
     # "ডক্টর সেন", not "Dr. Sen" -- matching only the Latin name against

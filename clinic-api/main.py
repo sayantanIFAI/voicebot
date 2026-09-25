@@ -194,6 +194,8 @@ def catalogue(db: Session = Depends(get_db)):
         "doctors": [
             {"name": d.name,
              "full_name": d.full_name or d.name,
+             "full_name_bn": d.full_name_bn,
+             "full_name_hi": d.full_name_hi,
              "surname": d.name.split()[-1],
              "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
              "aliases_hi": [a for a in (d.aliases_hi or "").split("|") if a]}
@@ -301,7 +303,14 @@ def _test_forms(t: LabTest) -> list[str]:
 def _doctor_forms(d: Doctor) -> list[str]:
     """A doctor is called by surname or by an alias; the initials in the formal name ("Dr. S. Mukherjee")
     are not something a caller says and only add noise to a similarity comparison."""
-    return [d.name.split()[-1]] + [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a.strip()]
+    forms = [d.name.split()[-1]] + [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a.strip()]
+    # The whole name in every script, so "Ashok Sen" / "অশোক সেন" reaches one doctor and not every Sen.
+    forms += [f for f in (_strip_title(d.full_name), d.full_name_bn, d.full_name_hi) if f]
+    return forms
+
+
+def _strip_title(name: str) -> str:
+    return " ".join(w for w in (name or "").split() if w.strip(".,").lower() not in _TITLE_WORDS)
 
 
 def _gazetteer(db: Session, kind: str) -> "gz.Gazetteer":
@@ -512,20 +521,66 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
     doctors = db.query(Doctor).all()
 
     def tokens(d):
-        return [t.strip(".,").lower() for t in d.name.split()]
+        # the short name's words and the whole name's words ("dr", "a", "sen" and "ashok"): both are written forms
+        return [t.strip(".,").lower() for t in (d.name + " " + (d.full_name or "")).split()]
 
     # A whole name token that IS what was said ("Sen" is Dr. Sen's surname) outranks a mere substring
     # of another name ("Sen" inside "Sengupta"): it is the written form, not a coincidence of letters.
     whole = [d for d in doctors if all(w in tokens(d) for w in needle_tokens)]
     if whole:
         return whole
+    # The whole name in Bengali or Devanagari ("অশোক সেন") is more specific than the surname alias every Sen shares:
+    # when it was said in full, that doctor and no other.
+    said_in_full = [d for d in doctors if any(fn and fn in name for fn in (d.full_name_bn, d.full_name_hi))]
+    if said_in_full:
+        return said_in_full
     out = []
     for d in doctors:
-        aliases = [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
+        aliases = [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "") + "|" + (d.full_name_bn or "") + "|"
+                               + (d.full_name_hi or "")).split("|") if a]
         # a one- or two-letter fragment ("ry") sits inside far too many names to identify any of them
         if (len(needle) >= MIN_SUBSTRING_CHARS and needle in d.name.lower()) or any(name in a or a in name for a in aliases):
             out.append(d)
     return out
+
+
+def _doctor_choices(db: Session, name: str, doctors: list[Doctor], near: bool = False) -> dict:
+    """The "which one?" answer: every doctor in the running, each named so the caller can tell them apart -- by the
+    WHOLE name (and in Bengali / Devanagari script for a voice that cannot say a Latin one), never by the short name two
+    doctors can share ("Dr. A. Sen" for Ashok Sen and Abhishek Sen). If two still read the same, their department is
+    added. Ordered by id so the question is the same every time it is asked."""
+    ordered = sorted(doctors, key=lambda d: d.id)[:4]
+    depts = {d.id: (db.get(Department, d.department_id).name if d.department_id else "") for d in ordered}
+
+    def label(d: Doctor, script: str) -> str:
+        if script == "bn":
+            return d.full_name_bn or _first_alias_bn(d.aliases_bn) or d.full_name or d.name
+        if script == "hi":
+            return d.full_name_hi or _first_alias_bn(d.aliases_hi) or d.full_name or d.name
+        return d.full_name or d.name
+
+    body = {"found": False, "query": name, "ambiguous": True}
+    for script, key in (("en", "did_you_mean"), ("bn", "did_you_mean_bn"), ("hi", "did_you_mean_hi")):
+        labels = [label(d, script) for d in ordered]
+        if len(set(labels)) < len(labels):                               # still alike: say which department
+            labels = [f"{lab} ({depts[d.id]})" if depts[d.id] else lab for lab, d in zip(labels, ordered)]
+        body[key] = labels
+    if near:
+        body["needs_confirmation"] = True
+    return body
+
+
+def _doctor_ref(db: Session, d: Doctor) -> str:
+    """What a reply calls this doctor: the short name, unless another doctor has the same short name ("Dr. A. Sen" twice),
+    in which case the whole name -- a name that can be looked up again must point at one doctor."""
+    twins = db.query(Doctor).filter(Doctor.name == d.name, Doctor.id != d.id).count()
+    return (d.full_name or d.name) if twins else d.name
+
+
+def _ambiguous_doctor(db: Session, name: str) -> dict | None:
+    """The "which one?" body when the name fits more than one doctor (two Sens, "Dr. A. Sen" for two A. Sens), else None."""
+    matches = _doctor_exact_matches(db, name)
+    return _doctor_choices(db, name, matches) if len(matches) > 1 else None
 
 
 def _find_doctor(db: Session, name: str) -> Doctor | None:
@@ -604,14 +659,12 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
     # doctor's real schedule, the CLAUDE.md "Doctor Nobody" class of bug.
     exact = _doctor_exact_matches(db, name)
     if len(exact) > 1:
-        return _scripted(db, {"found": False, "query": name, "ambiguous": True,
-                              "did_you_mean": [d.name for d in exact[:3]]}, Doctor)
+        return _doctor_choices(db, name, exact)
     doctor = exact[0] if exact else None
     if not doctor:
         near = _find_doctor_candidates(db, name)
         if len(near) > 1:
-            return _scripted(db, {"found": False, "query": name, "ambiguous": True,
-                                  "did_you_mean": [d.name for d in near[:3]], "needs_confirmation": True}, Doctor)
+            return _doctor_choices(db, name, near, near=True)
         return _scripted(db, {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name),
                               "needs_confirmation": True}, Doctor)
 
@@ -625,7 +678,7 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
         sched = _schedule_for_weekday(db, doctor.id, target.weekday())
         if sched:
             return {
-                "found": True, "doctor_name": doctor.name,
+                "found": True, "doctor_name": _doctor_ref(db, doctor),
                 "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
                 "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": target.isoformat(),
                 "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
@@ -633,7 +686,7 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
             }
         next_date = _next_available_date(db, doctor.id, target + datetime.timedelta(days=1))
         return {
-            "found": True, "doctor_name": doctor.name,
+            "found": True, "doctor_name": _doctor_ref(db, doctor),
                 "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
                 "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": target.isoformat(),
             "available": False, "chamber_hours": None, "next_available_date": next_date,
@@ -643,14 +696,14 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
     next_date = _next_available_date(db, doctor.id, today)
     if not next_date:
         return {
-            "found": True, "doctor_name": doctor.name,
+            "found": True, "doctor_name": _doctor_ref(db, doctor),
                 "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
                 "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": None,
             "available": False, "chamber_hours": None, "next_available_date": None,
         }
     sched = _schedule_for_weekday(db, doctor.id, datetime.date.fromisoformat(next_date).weekday())
     return {
-        "found": True, "doctor_name": doctor.name,
+        "found": True, "doctor_name": _doctor_ref(db, doctor),
                 "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
                 "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": next_date,
         "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
@@ -696,6 +749,9 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
     through the SAME hold_slot()/confirm_booking() primitives instead of
     maintaining a second, unguarded booking path -- one atomicity
     guarantee, not two that can silently disagree."""
+    amb = _ambiguous_doctor(db, req.doctor_name)
+    if amb is not None:
+        return {"success": False, "reason": "doctor_ambiguous", **{k: v for k, v in amb.items() if k.startswith("did_you_mean")}}
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
         return {"success": False, "reason": "doctor_not_found",
@@ -733,7 +789,7 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
 
     return {
         "success": True, "confirmation_id": result["confirmation_id"],
-        "doctor_name": doctor.name,
+        "doctor_name": _doctor_ref(db, doctor),
         "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
                 "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": req.date, "time_slot": req.time_slot,
     }
@@ -832,6 +888,9 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
 @app.post("/api/v1/bookings/hold")
 @idempotent("bookings.hold")
 def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
+    amb = _ambiguous_doctor(db, req.doctor_name)
+    if amb is not None:
+        return {"success": False, "reason": "doctor_ambiguous", **{k: v for k, v in amb.items() if k.startswith("did_you_mean")}}
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
         return {"success": False, "reason": "doctor_not_found",
@@ -846,7 +905,7 @@ def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
                                         bs.nearest_alternatives(db, doctor.id, req.date, req.time_slot)]
     else:
         result["doctor_id"] = doctor.id
-        result["doctor_name"] = doctor.name
+        result["doctor_name"] = _doctor_ref(db, doctor)
     return result
 
 
@@ -978,13 +1037,16 @@ def add_test_endpoint(req: AddTestRequest, db: Session = Depends(get_db)):
 
 @app.get("/api/v1/doctors/earliest")
 def doctor_earliest(name: str = Query(...), db: Session = Depends(get_db)):
+    amb = _ambiguous_doctor(db, name)
+    if amb is not None:
+        return amb
     doctor = _find_doctor(db, name)
     if not doctor:
         return {"found": False, "query": name}
     result = bs.earliest_available(db, doctor.id, datetime.date.today())
     if not result:
-        return {"found": True, "available": False, "doctor_name": doctor.name}
-    return {"found": True, "available": True, "doctor_name": doctor.name,
+        return {"found": True, "available": False, "doctor_name": _doctor_ref(db, doctor)}
+    return {"found": True, "available": True, "doctor_name": _doctor_ref(db, doctor),
             "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), **result}
 
 
@@ -1053,11 +1115,14 @@ def get_draft_endpoint(phone: str = Query(...), db: Session = Depends(get_db)):
 
 @app.get("/api/v1/doctors/{doctor_name}/leave")
 def doctor_leave_endpoint(doctor_name: str, date: str = Query(...), db: Session = Depends(get_db)):
+    amb = _ambiguous_doctor(db, doctor_name)
+    if amb is not None:
+        return amb
     doctor = _find_doctor(db, doctor_name)
     if not doctor:
         return {"found": False, "query": doctor_name}
     leave = eq.doctor_leave_on(db, doctor.id, date)
-    return {"found": True, "doctor_name": doctor.name, "on_leave": leave is not None, "leave": leave}
+    return {"found": True, "doctor_name": _doctor_ref(db, doctor), "on_leave": leave is not None, "leave": leave}
 
 
 class PrepMergeRequest(BaseModel):

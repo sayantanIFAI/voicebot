@@ -35,6 +35,10 @@ PHRASES: dict[str, dict[str, str]] = {
         "silence_prompt": "আর কিছু জানতে চান? না চাইলে আমি কল শেষ করে দেব।",
         "silence_go_on": "জি, বলুন।",
         "silence_goodbye": "ঠিক আছে, ধন্যবাদ। ভালো থাকবেন।",
+        # Abuse from the caller (agent/abuse.py): calm, no imitation, no lecture; the third time the call is closed.
+        "abuse_first": "আমি আপনাকে সাহায্য করতে এখানে আছি। ভদ্রভাবে বললে আমি আরও ভালো সাহায্য করতে পারব। বলুন, কী জানতে চান?",
+        "abuse_second": "ভদ্রভাবে কথা বললেই আমি সাহায্য করতে পারব। আপনি কি কোনো তথ্য জানতে চান?",
+        "abuse_final": "আমি এভাবে কথা চালিয়ে যেতে পারছি না। দরকার হলে আবার ফোন করবেন। ধন্যবাদ।",
         # KCD-486: spoken instead of a confirmation number when the write
         # could not be verified in the system of record -- never a false
         # confirmation, and never the generic tool_failure apology either,
@@ -71,6 +75,9 @@ PHRASES: dict[str, dict[str, str]] = {
         "silence_prompt": "क्या आप कुछ और जानना चाहते हैं? नहीं तो मैं कॉल समाप्त कर दूँगी।",
         "silence_go_on": "जी, बताइए।",
         "silence_goodbye": "ठीक है, धन्यवाद। अपना ख़याल रखिए।",
+        "abuse_first": "मैं आपकी मदद के लिए यहाँ हूँ। सम्मान से बात करेंगे तो मैं और अच्छी मदद कर पाऊँगी। बताइए, आप क्या जानना चाहते हैं?",
+        "abuse_second": "सम्मान से बात करने पर ही मैं मदद कर पाऊँगी। क्या आप कोई जानकारी चाहते हैं?",
+        "abuse_final": "मैं इस तरह बात जारी नहीं रख सकती। ज़रूरत हो तो दोबारा फ़ोन करें। धन्यवाद।",
         "booking_hold_for_verification": "आपकी बुकिंग प्रोसेस हो रही है, मैं अभी पुष्टि करके बताती हूँ।",
         "reask_low_volume": "माफ़ कीजिए। आपकी आवाज़ थोड़ी धीमी है। क्या आप थोड़ा ज़ोर से बोलेंगे?",
         "reask_noisy": "माफ़ कीजिए। लाइन पर थोड़ा शोर है। क्या आप शांत जगह से फिर बोलेंगे?",
@@ -95,6 +102,9 @@ PHRASES: dict[str, dict[str, str]] = {
         "silence_prompt": "Is there anything else you would like to know? If not, I will end the call.",
         "silence_go_on": "Yes, please go ahead.",
         "silence_goodbye": "Alright, thank you. Take care.",
+        "abuse_first": "I am here to help you. I can help you better if we speak politely. What would you like to know?",
+        "abuse_second": "I can only help if we speak politely. Is there some information you need?",
+        "abuse_final": "I cannot continue the conversation like this. Please call again whenever you need. Thank you.",
         "booking_hold_for_verification": "Your booking is being processed, let me confirm it for you.",
         "reask_low_volume": "Sorry. Your voice is a little soft. Could you please speak a little louder?",
         "reask_noisy": "Sorry. There is some noise on the line. Could you try somewhere quieter?",
