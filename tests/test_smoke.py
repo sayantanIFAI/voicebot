@@ -38,6 +38,15 @@ from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent.tts import TTSClient
 
 CLINIC = "http://localhost:8080"
+
+
+def _clinic_headers() -> dict:
+    """DELIBERATE SPEC CHANGE (marked, not a weakened check): the clinic API now requires its service token on
+    everything under /api/v1/ (an external review: patient data was served to anyone who could reach the port).
+    These calls were written before that and got a 401 on a correctly configured pod. Every assertion below is
+    unchanged; the request now carries the token the deployment already has, exactly as agent/tools_client.py does."""
+    token = os.environ.get("CLINIC_API_TOKEN", "")
+    return {"Authorization": f"Bearer {token}"} if token else {}
 AGENT = "http://localhost:8100"
 TTS = "http://localhost:8002"
 
@@ -122,7 +131,7 @@ class TestClinicAPI:
 
     def test_known_test_returns_price(self):
         r = httpx.get(f"{CLINIC}/api/v1/tests/search",
-                      params={"name": "lipid"}, timeout=10)
+                      params={"name": "lipid"}, timeout=10, headers=_clinic_headers())
         assert r.status_code == 200
         body = r.json()
         assert body["found"] is True, f"seeded test not found: {body!r}"
@@ -133,7 +142,7 @@ class TestClinicAPI:
         Quoting a real price for a test the caller did not ask about is the
         exact 'Naloxone' failure this project already reproduced once."""
         r = httpx.get(f"{CLINIC}/api/v1/tests/search",
-                      params={"name": "zzzznotarealtest"}, timeout=10)
+                      params={"name": "zzzznotarealtest"}, timeout=10, headers=_clinic_headers())
         assert r.status_code == 200
         body = r.json()
         assert body["found"] is False, \
@@ -142,7 +151,7 @@ class TestClinicAPI:
 
     def test_known_doctor_availability(self):
         r = httpx.get(f"{CLINIC}/api/v1/doctors/availability",
-                      params={"name": "Sen"}, timeout=10)
+                      params={"name": "Sen"}, timeout=10, headers=_clinic_headers())
         assert r.status_code == 200
 
     def test_unknown_doctor_is_not_fuzzy_matched(self):
@@ -150,7 +159,7 @@ class TestClinicAPI:
         similarity floor and returned that real doctor's real schedule.
         Fixed by matching on surname only, FUZZY_SURNAME_FLOOR = 0.60."""
         r = httpx.get(f"{CLINIC}/api/v1/doctors/availability",
-                      params={"name": "Nobody"}, timeout=10)
+                      params={"name": "Nobody"}, timeout=10, headers=_clinic_headers())
         assert r.status_code in (200, 404)
         if r.status_code == 200:
             body = r.json()

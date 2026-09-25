@@ -149,3 +149,48 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
         "Home sample collection is available for most blood tests. Please mention it when you book.",
     ),
 }
+
+
+# topic -> (Hindi keyword phrases, English keyword phrases). What FastPath matches a caller's words against for
+# a clinic FAQ question (KCD-095). Phrases, not single generic words: a fast-path hit is answered without a
+# model, so "time" alone would send a question about report time to the opening hours. REASONED, not measured
+# against real calls; a native reviewer should add the phrasings callers actually use.
+FAQ_KEYWORDS_I18N: dict[str, tuple[list[str], list[str]]] = {
+    "hours": (
+        ["क्लिनिक कब खुलता है", "क्लिनिक कब बंद होता है", "खुलने का समय", "बंद होने का समय", "क्लिनिक का समय"],
+        ["opening hours", "opening time", "closing time", "what time do you open", "what time do you close",
+         "clinic timings", "clinic hours", "are you open"],
+    ),
+    "location": (
+        ["आप कहाँ हैं", "आप कहां हैं", "क्लिनिक कहाँ है", "क्लिनिक कहां है", "आपका पता", "पता क्या है", "कैसे पहुँचें",
+         "कैसे पहुंचें"],
+        ["where are you", "where is the clinic", "clinic address", "your address", "how do i get there",
+         "how to reach", "where are you located"],
+    ),
+    "payment_methods": (
+        ["पेमेंट कैसे", "भुगतान कैसे", "कार्ड चलता है", "यूपीआई", "नकद"],
+        ["payment methods", "pay by card", "do you take cards", "do you accept upi", "can i pay in cash",
+         "how can i pay", "payment options"],
+    ),
+    "insurance": (
+        ["इंश्योरेंस", "बीमा", "कैशलेस", "मेडिक्लेम"],
+        ["insurance", "cashless", "mediclaim", "health insurance"],
+    ),
+    "parking": (
+        ["पार्किंग", "गाड़ी कहाँ खड़ी", "गाड़ी कहां खड़ी"],
+        ["parking", "car parking", "where can i park", "park my car"],
+    ),
+    "report_collection": (
+        ["रिपोर्ट कैसे मिलेगी", "रिपोर्ट कहाँ से", "रिपोर्ट कहां से", "रिपोर्ट लेने"],
+        ["collect my report", "report collection", "how do i get my report", "where to collect the report",
+         "get the report"],
+    ),
+    "contact_number": (
+        ["फोन नंबर", "संपर्क नंबर", "हेल्पलाइन नंबर", "नंबर क्या है"],
+        ["phone number", "contact number", "helpline number", "how can i contact you", "your number"],
+    ),
+    "home_collection": (
+        ["होम कलेक्शन", "घर से सैंपल", "घर आकर", "घर पर सैंपल"],
+        ["home collection", "sample from home", "collect at home", "come to my house", "home visit for sample"],
+    ),
+}

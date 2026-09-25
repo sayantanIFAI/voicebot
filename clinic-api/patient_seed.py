@@ -135,10 +135,14 @@ def _sample_appointment(db: Session, patient: Patient) -> int:
         if db.query(DoctorSchedule).filter_by(doctor_id=doctor.id, weekday=d.weekday()).first():
             slots = bs.available_slots(db, doctor.id, d.isoformat())
             if slots:
+                # The LAST slot of the day, never the first: every booking test (and a real caller told "the
+                # first free slot") takes the first one, so a sample appointment there made those tests pass
+                # or fail depending on the weekday they ran on.
+                slot = slots[-1]
                 # through the SAME hold-then-confirm primitives a call uses, so the slot is really taken
-                held = bs.hold_slot(db, doctor.id, d.isoformat(), slots[0])
+                held = bs.hold_slot(db, doctor.id, d.isoformat(), slot)
                 if held.get("success"):
-                    done = bs.confirm_booking(db, held["hold_token"], doctor.id, d.isoformat(), slots[0],
+                    done = bs.confirm_booking(db, held["hold_token"], doctor.id, d.isoformat(), slot,
                                               patient.name, patient.phone, patient.phone, patient.age)
                     return 1 if done.get("success") else 0
     return 0

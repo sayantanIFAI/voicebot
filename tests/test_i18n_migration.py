@@ -53,7 +53,10 @@ def test_old_database_gains_columns_and_translations_without_losing_rows(old_db)
 
     added = seed.add_i18n_columns()
     assert set(added) == {"doctors.aliases_hi", "lab_tests.aliases_hi", "lab_tests.prep_instructions_hi",
-                          "lab_tests.prep_instructions_en", "faqs.answer_hi", "faqs.answer_en"}
+                          "lab_tests.prep_instructions_en", "faqs.answer_hi", "faqs.answer_en",
+                          # DELIBERATE SPEC CHANGE (KCD-095): the FAQ keyword phrases in Hindi and English, so the
+                          # fast path serves those callers. An old database must gain them; nothing else changed.
+                          "faqs.keywords_hi", "faqs.keywords_en"}
 
     # Epic E26 and Epic E27 each added their own mapped columns (see
     # clinic-api/booking_migrate.py and clinic-api/enquiry_migrate.py).

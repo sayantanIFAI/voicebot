@@ -108,3 +108,12 @@ def test_speakable_rejects_wrong_script_and_untalkable_spans():
     assert not speakable("नमस्कार", "en")
     assert speakable("Hello, how can I help?", "en")
     assert not speakable("", "bn")
+
+
+def test_a_bengali_reply_ending_in_a_danda_is_speakable_and_devanagari_letters_still_are_not():
+    """The danda is the full stop of Bengali too; it lives in the Devanagari block and used to make every Bengali
+    reply that ended in one 'the wrong script'."""
+    assert speakable("ধন্যবাদ" + chr(0x0964) + " আর কিছু জানতে চান?", "bn")
+    assert speakable("ধন্যবাদ" + chr(0x0965), "bn")
+    assert not speakable("नमस्कार, मैं क्या मदद कर सकती हूँ?", "bn")       # real Devanagari letters: still rejected
+    assert speakable("नमस्कार" + chr(0x0964), "hi")

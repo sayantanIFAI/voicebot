@@ -64,6 +64,9 @@ class BookingState:
     # or date -- only on the two fields that have a graceful degraded path.
     retry_counts: dict = field(default_factory=dict)
     phone_declined: bool = False
+    # KCD-103: fields the agent has already asked for, so a question that did not land is not repeated as the same
+    # long group (agent/slot_grouping.py asks a repeated field alone).
+    asked_fields: set = field(default_factory=set)
 
     def touch(self) -> None:
         self.last_updated = time.monotonic()

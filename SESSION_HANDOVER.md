@@ -358,3 +358,43 @@ against a real clinic API with the sample patients (speech, language model and T
   `docs/emergency-for-approval.md`; native review of all new wording; real recordings for every audio threshold.
 - Not done: preferences are offered and recorded but branch, channel and address are not yet applied to a
   booking; the "continue it" offer restores the saved slots but does not re-hold a slot.
+
+
+---
+
+## Update: Deterministic Fast Path and AI Orchestrator stories about the caller (KCD-092/095/096/101/103/104)
+
+Off-pod tests plus a first live-pod run (`docs/pod-verification-checklist.md`, "Results"). Every threshold below is
+REASONED and every comparison is on SYNTHETIC input unless it says otherwise.
+
+| Story | What | Where | Measured (synthetic) |
+|---|---|---|---|
+| 096 | Phonetic-fold gazetteer with an index: exact / sound / one-edit sound / short-name vowel-aware / spelling tiers, tie rule, never a resolution. Used for the clinic API's "did you mean". | `agent/gazetteer.py` (byte-identical copy `clinic-api/gazetteer.py`), `clinic-api/main.py`, `tools/gazetteer_eval.py` | Doctors F1 0.70 -> 0.95, tests 0.68 -> 0.98 (mispronunciation bucket); with ONE suggestion each 0.936 -> 0.955 and 0.923 -> 0.986; scan 229 ms at 10,000 forms vs index 9.5 ms. Nonsense names ("Doctor Nobody") get nothing. |
+| 096 | Fast-path matching made fast: exact pruning by a provable upper bound plus a bigram shortlist on large tables. The commit gate stays a character similarity. | `agent/form_index.py`, `agent/fast_path.py` | 17-156 ms -> about 3 ms per turn at 74 rows; 5,000 rows ~5 s -> inside 150 ms. Bengali decisions identical to the frozen pre-change module on 1,698 utterances. |
+| 095 | Per-language cue tables (bn/hi/en) behind one interface; unknown language abstains; serve rate per language and a gap-defect flag; a language is added as data. Hindi/English FAQ keywords in the database. | `agent/fast_path_cues.py`, `clinic-api/i18n_content.py`, `seed.py`, `models.py` | Hindi/English serve routine price, availability, preparation, FAQ and greeting turns; risky ones abstain. Cue tables are written by a non-native reviewer: native review needed. |
+| 103 | Several fields in one question (day+time, name+phone), any subset accepted; the caller-state table (senior/distressed) always caps it to one. | `agent/slot_grouping.py`, `main.py: _next_question` | Median questions to complete a booking falls on scripted callers; never worse for any of them. |
+| 104 | A topic change is answered and the caller is brought back; the confirmation step no longer swallows questions or corrections; a different task is set aside and offered back; a correction of doctor/date/time moves the hold. | `agent/topic_flow.py`, `main.py: _enter_task, _with_resume, _continue_resume_offer` | Tested at every stage of the flow, including after the final prompt. |
+| 101 | One wall-clock budget covers the cache lookup and every model attempt; a slow cache is a miss; the holding phrase once; then the apology. | `main.py: _resolve_intent_uncached` (`INTENT_TURN_BUDGET_S`, `INTENT_CACHE_MAX_S`) | Ends inside the budget even with a slow cache and a model that ignores its deadline. |
+| 092 | (already done) Re-verified: under the 150 ms budget. | `tests/test_fast_path_languages.py` | |
+
+Stories in the same epic written for an engineer, clinical lead, compliance officer or product owner were NOT
+done: 093, 094 (its behaviour is inside 095), 097, 098, 099, 100, 102, 105.
+
+### Real defects found while doing them (all fixed, all with tests)
+- The fast path was silently OFF on `main`: the catalogue fetch sent no service token, got a 401 and built an empty
+  catalogue that was never retried.
+- The startup intent-model warm-up used the 12 s per-turn deadline, so on a 47-74 s cold load it timed out and the
+  model never became resident (`INTENT_WARMUP_DEADLINE_S`).
+- `speakable()` treated the Devanagari danda, which is also Bengali's full stop, as "wrong script".
+- The sample-patient seed booked Dr. Sen's FIRST slot, so booking tests passed or failed by weekday.
+- "No, make it eleven" at the confirmation step was read as a bare "no" and the correction was thrown away.
+- `/speakers` listed a stray `"` speaker from the Bengali checkpoint.
+
+### Deliberate changes to existing tests (each marked in the test)
+`test_i18n_migration.py` (two new FAQ columns), `test_smoke.py` (sends the service token), and the fake catalogues in
+`test_orchestrator_history.py` / `test_orchestrator_security.py` (follow the new `match(text, kind, lang, floor)`).
+
+### Not done / needs people
+Native review of the Hindi and English cue words and the new grouped/resume wording; real transcripts to calibrate
+every floor; the load-test number for the TTS lock; a cold restart of the pod to confirm the warm-up fix; the
+deferred KCD-019.

@@ -187,7 +187,9 @@ def speakers():
     out: dict[str, list[str]] = {}
     for lang, synth in SYNTHESIZERS.items():
         try:
-            out[lang] = sorted(synth.tts_model.speaker_manager.name_to_id.keys())
+            # the Bengali checkpoint's own speaker table carries a stray '"' entry; only real names are offered
+            out[lang] = sorted(n for n in synth.tts_model.speaker_manager.name_to_id.keys()
+                               if isinstance(n, str) and n.replace("_", "").replace("-", "").isalnum())
         except Exception:  # noqa: BLE001 - a single-speaker model simply has none to list
             out[lang] = []
     return {"default": DEFAULT_SPEAKER, "speakers": out}

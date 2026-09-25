@@ -73,7 +73,7 @@ class ASRResult:
 
 
 class FakeCatalogue:
-    def match(self, text, kind):
+    def match(self, text, kind, lang="bn", floor=0.0):   # follows agent.fast_path.Catalogue.match (KCD-095)
         t = (text or "").lower()
         if "cbc" in t:
             return "CBC", "cbc", 1.0

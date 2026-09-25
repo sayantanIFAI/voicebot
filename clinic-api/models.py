@@ -123,6 +123,9 @@ class FAQ(Base):
     topic = Column(String, nullable=False, unique=True)   # stable key, e.g. "hours"
     # "|"-joined Bengali keyword/phrase set fast_path matches against.
     keywords_bn = Column(String, nullable=False, default="")
+    # KCD-095: the same cue phrases for Hindi and English callers, so the fast path is not Bengali-only.
+    keywords_hi = Column(String, nullable=False, default="")
+    keywords_en = Column(String, nullable=False, default="")
     answer_bn = Column(String, nullable=False)
     answer_hi = Column(String, nullable=False, default="")
     answer_en = Column(String, nullable=False, default="")

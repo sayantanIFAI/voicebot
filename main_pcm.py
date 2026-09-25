@@ -121,6 +121,7 @@ from agent.endpointing import classify_completeness, decide as decide_turn_end
 from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.enquiry_followup import entities_from_turn, resolve_followup_slot
 from agent.fast_path import Catalogue, FastPath
+from agent import slot_grouping, topic_flow
 from agent.filler import await_with_filler
 from agent.full_duplex import FullDuplexProcessor, wav_to_pcm16k
 from agent.latency_metrics import turn_latency_by_language
@@ -411,8 +412,18 @@ async def _load_fast_path() -> FastPath | None:
     which is the behaviour that existed before this path did."""
     import httpx as _hx
     try:
+        # The clinic API requires the service token on everything under /api/v1/. Without it this got a 401,
+        # took the error body for a catalogue and logged "fast path ready over 0 catalogue rows": the fast path
+        # was silently off and, being non-None, was never retried. Send the token, refuse a non-success reply,
+        # and refuse a body that is not a catalogue, so a failure degrades to "no fast path yet" and is retried.
+        token = os.environ.get("CLINIC_API_TOKEN", "")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         async with _hx.AsyncClient(timeout=10) as c:
-            payload = (await c.get(f"{CLINIC_API_BASE}/api/v1/catalogue")).json()
+            resp = await c.get(f"{CLINIC_API_BASE}/api/v1/catalogue", headers=headers)
+        resp.raise_for_status()
+        payload = resp.json()
+        if not isinstance(payload, dict) or "tests" not in payload:
+            raise ValueError("clinic-api /api/v1/catalogue did not return a catalogue")
         fp = FastPath(Catalogue(payload))
         logger.info("fast path ready over %d catalogue rows", len(fp.catalogue))
         return fp
@@ -431,6 +442,26 @@ async def _maybe_reload_fast_path() -> None:
         return
     _fast_path_retry_at = time.monotonic() + 30.0
     _fast_path = await _load_fast_path()
+
+
+# How long the startup warm-up may take to get the intent model into VRAM. NOT the per-turn deadline
+# (agent.llm.DEFAULT_DEADLINE_S, 12 s, KCD-465): a cold 7B load measured 47-74 s on this pod, so a warm-up under
+# the turn deadline times out, the client disconnects, and Ollama abandons the load -- the model never becomes
+# resident and the FIRST CALLER pays the cold start against a 12 s deadline (seen on the live pod: "intent model
+# warmup failed ... 12.0s deadline" in both entrypoints' logs). REASONED headroom above the measured 74 s.
+INTENT_WARMUP_DEADLINE_S = float(os.environ.get("INTENT_WARMUP_DEADLINE_S", "300"))
+
+
+async def _warm_intent_model() -> bool:
+    """Load the intent model now, with a deadline that fits a cold load. Advisory: a failure is logged and
+    startup continues (calls then pay the cold start, which is the behaviour without a warm-up)."""
+    try:
+        _, diag = await asyncio.to_thread(extract_intent, "নমস্কার", 2, "bn", INTENT_WARMUP_DEADLINE_S)
+        logger.info("intent model warm (%.1fs)", diag["total_time_s"])
+        return True
+    except Exception as e:  # noqa: BLE001 - warmup is advisory
+        logger.warning("intent model warmup failed: %s", e)
+        return False
 
 
 @app.on_event("startup")
@@ -504,11 +535,7 @@ async def _startup():
     # Load Qwen into VRAM now. Cold, it measured 74 s for its first intent --
     # that is the first caller's wait, and it would also poison the latency
     # window admission control sheds load on.
-    try:
-        _, diag = await asyncio.to_thread(extract_intent, "নমস্কার")
-        logger.info("intent model warm (%.1fs)", diag["total_time_s"])
-    except Exception as e:  # noqa: BLE001 - warmup is advisory
-        logger.warning("intent model warmup failed: %s", e)
+    await _warm_intent_model()
 
     # Load the 74-row catalogue once so the fast path can identify a test
     # or doctor locally. Optional: if the clinic API is not up yet, every
@@ -857,6 +884,11 @@ class CallSession:
         # KCD-496: an unfinished booking from an earlier call, offered after verification.
         self.pending_draft: dict | None = None
         self.awaiting_draft_answer = False
+        # KCD-104: a booking set aside while the caller did a different task, and whether we are waiting for their
+        # yes or no to "shall I go back to it".
+        self.suspended = None
+        self.awaiting_resume = False
+        self.no_at_confirm = False       # the caller said "no, ..." at the confirmation step and it was not a bare no
         # KCD-499: stored preferences, offered after the answer and applied only if the caller says yes.
         self.pending_pref = None
         self.awaiting_pref_answer = False
@@ -1290,16 +1322,47 @@ async def _slice_utterance(session: CallSession, start_s: float, end_s: float, s
     return clip_path
 
 
+# KCD-101: the whole wall-clock a caller may wait for "what do they want" (cache lookup + model, all attempts)
+# before the apology is spoken. Equal to the model's own default deadline (agent/llm.py, 12 s, REASONED, not
+# measured on real telephony). The holding phrase is spoken once FILLER_THRESHOLD_S has passed without an answer.
+INTENT_BUDGET_S = float(os.environ.get("INTENT_TURN_BUDGET_S", "12"))
+# The semantic-cache embedding lookup may not take more than this of that budget; slower is a miss.
+CACHE_LOOKUP_MAX_S = float(os.environ.get("INTENT_CACHE_MAX_S", "1.5"))
+# Below this much budget left, asking the model is pointless: go straight to the apology.
+MIN_MODEL_BUDGET_S = 0.5
+
+
 async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, key: str) -> dict:
     """Tier 2 (semantic cache) + tier 3 (LLM), run AFTER fast_path already
     abstained. Split out from _resolve_intent so the filler race below can
     wrap the WHOLE remaining sequence -- see KCD-459 note there."""
-    cached, how = await asyncio.to_thread(_intent_cache.get, key)
+    # KCD-101: ONE wall-clock budget covers the cache lookup AND every model attempt. The model call already had
+    # its own deadline (KCD-465), but the embedding lookup in front of it did not count against it, so a slow
+    # cache plus a slow model could keep a caller waiting past the budget. A slow cache is treated as a miss.
+    start = time.monotonic()
+
+    def left() -> float:
+        return INTENT_BUDGET_S - (time.monotonic() - start)
+
+    try:
+        cached, how = await asyncio.wait_for(asyncio.to_thread(_intent_cache.get, key),
+                                             timeout=max(0.05, min(CACHE_LOOKUP_MAX_S, left())))
+    except asyncio.TimeoutError:
+        cached, how = None, "timeout"
+        logger.warning("[%s] intent cache lookup exceeded %.1fs: treated as a miss", session.call_id, CACHE_LOOKUP_MAX_S)
     if cached is not None:
         logger.info("[%s] intent cache %s hit", session.call_id, how)
         return cached
 
-    data, diag = await asyncio.to_thread(extract_intent, text, 2, lang)
+    budget_left = left()
+    if budget_left < MIN_MODEL_BUDGET_S:
+        raise ExtractionError(f"intent budget of {INTENT_BUDGET_S}s used up before the model was asked")
+    try:
+        # the extractor bounds itself by `budget_left`; the wait_for is the backstop for a thread that does not
+        data, diag = await asyncio.wait_for(asyncio.to_thread(extract_intent, text, 2, lang, budget_left),
+                                            timeout=budget_left + 1.0)
+    except asyncio.TimeoutError:
+        raise ExtractionError(f"intent extraction did not complete within the {INTENT_BUDGET_S}s budget") from None
     logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
                 session.call_id, diag["total_time_s"], diag["attempts"])
     await asyncio.to_thread(_intent_cache.put, key, data)
@@ -1314,12 +1377,13 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # entity is a string-matching problem with a 0.32 confidence margin,
     # where the embedding route had 0.03 -- see agent/fast_path.py. This
     # returns None whenever it is not sure, which is the common case for
-    # anything except a routine price or availability question. Its cues
-    # are Bengali, so for Hindi/English it mostly abstains and the turn
-    # goes to the LLM -- safe by construction, just not free.
+    # anything except a routine price or availability question. It has a
+    # cue table per language (agent/fast_path_cues.py, KCD-095) and abstains
+    # for a language it has none for, so the turn goes to the LLM -- safe by
+    # construction, just not free.
     await _maybe_reload_fast_path()
     if _fast_path is not None:
-        hit = await asyncio.to_thread(_fast_path.resolve, text)
+        hit = await asyncio.to_thread(_fast_path.resolve, text, lang)
         if hit is not None:
             logger.info("[%s] fast path resolved %s (%.2f) -- no LLM call",
                         session.call_id, hit.intent, hit.confidence)
@@ -1456,6 +1520,7 @@ async def _finish_enquiry_turn(session: CallSession, text: str, lang: str,
                   "slots": {**suggestion["slots"], suggestion["slot"]: suggestion["name"]}}
         session.pending_entity = entity_text.PendingEntity(suggestion["intent"], suggestion["slot"],
                                                            suggestion["name"], replay)
+    base_reply = _with_resume(session, base_reply, lang)            # KCD-104: back to the booking, if one is open
     # KCD-513: the thanks (or a brief acknowledgement) first; KCD-512: a senior's warm closing after.
     base_reply, _acked = session.acks.decorate(
         base_reply, lang, substantive=True, already_acknowledged=session.turn_acknowledged)
@@ -1629,7 +1694,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         problem = transcript_problem(
             text, lang, analysis["audio"].duration_s if analysis else None, asr_result.decoder_agreement,
             slot_answer=in_booking_flow or session.pending_entity is not None or session.awaiting_handoff_offer
-            or session.history_state is not None or session.awaiting_draft_answer or session.awaiting_pref_answer)
+            or session.history_state is not None or session.awaiting_draft_answer or session.awaiting_pref_answer
+            or session.awaiting_resume)          # KCD-104: a bare yes or no to "shall I go back to it" is an answer
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
             await _reask_or_handoff(
@@ -1706,9 +1772,16 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # LLM round trip, both for the zero-extra-latency requirement and
         # because CLAUDE.md's truth boundary keeps exactly this kind of
         # high-stakes binary decision out of the model's hands.
-        if session.booking is not None and session.booking.stage in ("confirming", "awaiting_charge_confirm"):
-            await _handle_booking_confirmation_turn(session, text, lang)
+        if session.awaiting_resume and await _continue_resume_offer(session, text, lang):
             return
+        if session.booking is not None and session.booking.stage in ("confirming", "awaiting_charge_confirm"):
+            # KCD-104: only a yes or a no is decided here. Anything else -- a question, a correction, another
+            # task -- used to be answered by reading the confirmation out again; it is now a fresh turn, and the
+            # pending confirmation stays pending (see _with_resume and the "unclear" branch below).
+            session.no_at_confirm = False
+            if await _handle_booking_confirmation_turn(session, text, lang) is not False:
+                await _after_task_finished(session, lang)
+                return
 
         confirmed_entity = False
         pending, session.pending_entity = session.pending_entity, None
@@ -1740,9 +1813,18 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # (register, no hedging, no reassurance or advice, sentence length) or is replaced.
             # KCD-500: and it may not claim anything about THIS caller's past -- history is rendered
             # from retrieved fields by agent/history_templates.py, never composed.
-            await _speak(session, reply if (_speakable(reply or "", lang) and persona_clean(reply or "", lang)
-                                            and not history_text.mentions_personal_history(reply or "", lang))
-                         else phrase("smalltalk_default", lang), lang)
+            chosen = (reply if (_speakable(reply or "", lang) and persona_clean(reply or "", lang)
+                                and not history_text.mentions_personal_history(reply or "", lang))
+                      else phrase("smalltalk_default", lang))
+            await _speak(session, _with_resume(session, chosen, lang), lang)
+            return
+
+        if intent == "unclear" and session.booking is not None \
+                and session.booking.stage in ("confirming", "awaiting_charge_confirm"):
+            if session.no_at_confirm:
+                await _reopen_after_no(session, session.booking, lang)     # a no with nothing to change in it
+            else:
+                await _speak(session, booking_confirmation_readback(session.booking.slots, session.booking.action, lang), lang)
             return
 
         if intent == "unclear":
@@ -1826,11 +1908,13 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
             elif intent == "book_appointment":
-                if session.booking is None or session.booking.action != "book_appointment":
-                    session.booking = new_state("book_appointment")
-                st = session.booking
+                st = _enter_task(session, "book_appointment")
                 prior_slots = dict(st.slots)
                 changed = merge_slots(st, slots)
+                if st.hold_token and {"doctor_name", "date", "time_slot"} & set(changed):
+                    # KCD-104: the caller changed WHICH slot they want; the hold is on the old one. Drop it so
+                    # the new doctor/date/time is held below (the old hold expires on its own).
+                    st.hold_token, st.hold_doctor_id = None, None
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
                 if ack:
                     await _speak(session, ack, lang)
@@ -1876,11 +1960,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                         await _speak(session, spelling_prompt(lang), lang)
                         return
                     else:
-                        await _speak(session, missing_slot_prompt(intent, field_name, lang), lang)
+                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
                         return
                     missing = missing_required(st)
                     if missing:
-                        await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
                         return
 
                 # Skipped when no real phone exists to check by -- the
@@ -1902,9 +1986,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     await _speak(session, booking_confirmation_readback(st.slots, "book_appointment", lang), lang)
 
             elif intent == "book_test":
-                if session.booking is None or session.booking.action != "book_test":
-                    session.booking = new_state("book_test")
-                st = session.booking
+                st = _enter_task(session, "book_test")
                 prior_slots = dict(st.slots)
                 changed = merge_slots(st, slots)
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
@@ -1919,11 +2001,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     if field_name == "phone" and st.note_retry("phone") >= 2:
                         st.phone_declined = True
                     else:
-                        await _speak(session, missing_slot_prompt(intent, field_name, lang), lang)
+                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
                         return
                     missing = missing_required(st)
                     if missing:
-                        await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
                         return
                 if is_ready_to_confirm(st):
                     mark_confirming(st)
@@ -1932,9 +2014,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     await _speak(session, booking_confirmation_readback(st.slots, "book_test", lang), lang)
 
             elif intent == "reschedule_appointment":
-                if session.booking is None or session.booking.action != "reschedule_appointment":
-                    session.booking = new_state("reschedule_appointment")
-                st = session.booking
+                st = _enter_task(session, "reschedule_appointment")
                 prior_slots = dict(st.slots)
                 changed = merge_slots(st, slots)
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
@@ -1962,9 +2042,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     await _speak(session, booking_confirmation_readback(st.slots, "reschedule_appointment", lang), lang)
 
             elif intent == "cancel_appointment":
-                if session.booking is None or session.booking.action != "cancel_appointment":
-                    session.booking = new_state("cancel_appointment")
-                st = session.booking
+                st = _enter_task(session, "cancel_appointment")
                 prior_slots = dict(st.slots)
                 changed = merge_slots(st, slots)
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
@@ -1989,9 +2067,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     await _speak(session, booking_confirmation_readback(st.slots, "cancel_appointment", lang), lang)
 
             elif intent == "add_test_booking":
-                if session.booking is None or session.booking.action != "add_test_booking":
-                    session.booking = new_state("add_test_booking")
-                st = session.booking
+                st = _enter_task(session, "add_test_booking")
                 prior_slots = dict(st.slots)
                 changed = merge_slots(st, slots)
                 ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
@@ -2013,7 +2089,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     return
                 result = await _tools.lookup_bookings(
                     phone=slots.get("phone"), confirmation_id=slots.get("confirmation_id"))
-                await _speak(session, lookup_reply(result.get("bookings") or [], lang), lang)
+                await _speak(session, _with_resume(session, lookup_reply(result.get("bookings") or [], lang), lang), lang)
 
             elif intent == "resend_confirmation":
                 confirmation_id = slots.get("confirmation_id")
@@ -2029,7 +2105,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     await _speak(session, missing_slot_prompt("cancel_appointment", "confirmation_id", lang), lang)
                     return
                 result = await _tools.resend_confirmation(confirmation_id)
-                await _speak(session, resend_reply(result, lang), lang)
+                await _speak(session, _with_resume(session, resend_reply(result, lang), lang), lang)
 
             elif intent == "department_query":
                 reply = await _answer_enquiry_intent(intent, slots, lang)
@@ -2043,7 +2119,98 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
 
 
-async def _handle_booking_confirmation_turn(session: CallSession, text: str, lang: str) -> None:
+async def _reopen_after_no(session: CallSession, st, lang: str) -> None:
+    """The caller refused the confirmation and gave nothing to change: collection reopens, the details captured
+    stay, and the first question is asked again (KCD-367)."""
+    st.stage = "collecting"
+    st.pending_charge_inr = None
+    await _speak(session, missing_slot_prompt(st.action,
+                 "doctor_name" if st.action == "book_appointment" else "date", lang), lang)
+
+
+def _next_question(session: CallSession, st, intent: str, missing: list[str], lang: str) -> str:
+    """KCD-103: the next question, one field or a group. The caller-state table (`questions_per_turn`) always wins
+    over grouping, and a field already asked is asked alone (agent/slot_grouping.py)."""
+    fields = slot_grouping.next_fields(st.action, missing, session.policy.questions_per_turn, st.asked_fields)
+    grouped = slot_grouping.grouped_prompt(fields, lang) if len(fields) > 1 else None
+    if grouped is None:
+        fields = fields[:1]
+    st.asked_fields.update(fields)
+    return grouped or missing_slot_prompt(intent, fields[0], lang)
+
+
+def _resume_tail(session: CallSession, reply: str, lang: str) -> str:
+    """KCD-104: what brings the caller back to a booking left open while they asked something else -- the next
+    question while details are still being collected, "shall I confirm it" at the confirmation step. Empty when
+    there is no booking worth returning to, when the policy allows no question, or when the reply already asks one."""
+    st = session.booking
+    if not topic_flow.worth_suspending(st) or not topic_flow.resume_allowed(session.policy.questions_per_turn, reply):
+        return ""
+    if st.stage in ("confirming", "awaiting_charge_confirm"):
+        return topic_flow.confirm_resume_line(lang)
+    missing = missing_required(st)
+    if not missing:
+        return ""
+    return topic_flow.resume_line(_next_question(session, st, st.action, missing, lang), lang)
+
+
+def _with_resume(session: CallSession, reply: str, lang: str) -> str:
+    tail = _resume_tail(session, reply, lang)
+    return f"{reply} {tail}" if tail else reply
+
+
+def _enter_task(session: CallSession, action: str):
+    """The booking state for `action`. A DIFFERENT task started while one is half-done sets the old one aside
+    instead of replacing it (KCD-104); it is offered back once the new task is finished."""
+    current = session.booking
+    if current is not None and current.action == action:
+        return current
+    if topic_flow.worth_suspending(current):
+        session.suspended = current
+    session.booking = new_state(action)
+    return session.booking
+
+
+async def _after_task_finished(session: CallSession, lang: str) -> None:
+    """A task just ended (confirmed, refused or aborted). If another was set aside, offer -- never assume -- to
+    go back to it."""
+    if session.booking is not None or session.suspended is None:
+        return
+    if not topic_flow.worth_suspending(session.suspended):
+        session.suspended = None
+        return
+    session.awaiting_resume = True
+    await _speak(session, topic_flow.offer_resume(session.suspended.action, lang), lang)
+
+
+async def _continue_resume_offer(session: CallSession, text: str, lang: str) -> bool:
+    """The caller's answer to "shall I go back to it?". A yes restores the booking with everything it held; a
+    no drops it; anything else lapses the offer and is handled as a fresh turn."""
+    session.awaiting_resume = False
+    st, session.suspended = session.suspended, None
+    if st is None:
+        return False
+    answer = classify_yes_no(text, lang)
+    if answer == "no":
+        await _say_history(session, [history_text.ok_anything_else(lang)], lang)
+        return True
+    if answer != "yes":
+        return False
+    st.touch()
+    session.booking = st
+    if st.stage in ("confirming", "awaiting_charge_confirm"):
+        await _speak(session, booking_confirmation_readback(st.slots, st.action, lang), lang)
+        return True
+    missing = missing_required(st)
+    if missing:
+        await _speak(session, _next_question(session, st, st.action, missing, lang), lang)
+    else:
+        mark_confirming(st)
+        await _speak(session, booking_confirmation_readback(st.slots, st.action, lang), lang)
+    return True
+
+
+async def _handle_booking_confirmation_turn(session: CallSession, text: str, lang: str) -> bool | None:
     """The caller's answer to a "shall I confirm this?" readback --
     resolved deterministically (see the classify_yes_no call site in
     _dispatch_turn), never via the LLM.
@@ -2062,18 +2229,20 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
     answer = classify_yes_no(text, lang)
 
     if answer is None:
-        await _speak(session, booking_confirmation_readback(st.slots, st.action, lang), lang)
-        return
+        return False          # KCD-104: not a yes or a no -- the caller handles it as a fresh turn
 
     if answer == "no":
         if st.action == "cancel_appointment":
             await _speak(session, phrase("cancel_aborted", lang), lang)
             session.booking = None
             return
-        st.stage = "collecting"
-        st.pending_charge_inr = None
-        await _speak(session, missing_slot_prompt(st.action,
-                     "doctor_name" if st.action == "book_appointment" else "date", lang), lang)
+        if len(text.split()) > 2:
+            # KCD-104: "no, make it eleven" is a correction, not just a refusal. Only a BARE no reopens the
+            # booking by asking again; anything longer is handled as a fresh turn (the correction is applied and
+            # read back; a question is answered; a bare no from the extractor's point of view reopens below).
+            session.no_at_confirm = True
+            return False
+        await _reopen_after_no(session, st, lang)
         return
 
     # answer == "yes": commit for real.
@@ -2514,7 +2683,8 @@ async def _answer_history(session: CallSession, lang: str) -> None:
         timeline = await _tools.patient_timeline(int(ident.patient_ref), phone, session.call_id)
         if hq.kind == "last_test":
             catalogue = _fast_path.catalogue if _fast_path is not None else None
-            name, _form, score = catalogue.match(hq.test_hint or "", "test") if catalogue else (None, None, 0.0)
+            name, _form, score = (catalogue.match(hq.test_hint or "", "test", lang, HISTORY_TEST_MATCH_MIN)
+                                  if catalogue else (None, None, 0.0))
             if not name or score < HISTORY_TEST_MATCH_MIN:
                 session.history_state = "need_test"
                 await _say_history(session, [history_text.ask_which_test(lang)], lang)

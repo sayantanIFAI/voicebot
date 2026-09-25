@@ -3,11 +3,10 @@ agent/tools_client.py in the voice agent already expects. Backed by
 PostgreSQL, seeded with dummy departments/doctors/schedules/tests via
 seed.py.
 
-Matching is deliberately simple (ILIKE + difflib) for this prototype --
-production callers slurring "লিপিড প্রোফাইল" through a phone mic deserve
-something closer to voicerx/glossary.py's phonetic-fold gazetteer, not a
-plain substring match. Flagged here rather than silently left as if this
-were already that robust.
+Resolving a name is deliberately simple and exact (written-form containment, see _find_test and
+_find_doctor). "Who might the caller have meant" -- the suggestions read back to a caller who mispronounced
+a test or a doctor -- comes from a phonetic-fold gazetteer with an index (gazetteer.py, KCD-096), built once
+per catalogue and looked up, not scanned per request. A suggestion is never a resolution.
 """
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ import json
 import logging
 import os
 import secrets
+import time
 import unicodedata
 import uuid
 
@@ -29,6 +29,7 @@ from db import SessionLocal, get_db
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from models import FAQ, Appointment, AuditLog, Department, Doctor, DoctorSchedule, LabTest
+import gazetteer as gz
 from phonetic_match import phonetic_key, phonetic_match
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -203,7 +204,9 @@ def catalogue(db: Session = Depends(get_db)):
         # cached routing decision can never serve a stale FAQ answer.
         "faq_topics": [
             {"topic": f.topic,
-             "keywords_bn": [k for k in (f.keywords_bn or "").split("|") if k]}
+             "keywords_bn": [k for k in (f.keywords_bn or "").split("|") if k],
+             "keywords_hi": [k for k in (f.keywords_hi or "").split("|") if k],
+             "keywords_en": [k for k in (f.keywords_en or "").split("|") if k]}
             for f in db.query(FAQ).all()
         ],
     }
@@ -263,20 +266,62 @@ def _find_test(db: Session, name: str) -> LabTest | None:
     return None
 
 
+# ------------------------------------------------------------ the gazetteer (KCD-096)
+
+# The gazetteer is built from every row once and reused; this is how long a built one is trusted before the
+# catalogue is read again. A change in the NUMBER of rows rebuilds it at once (see _catalogue_stamp); an edit to
+# a single alias shows up within this many seconds. REASONED: catalogue edits are rare and a suggestion that lags
+# an alias edit by half a minute costs nothing, whereas rebuilding on every request would be the scan again.
+GAZETTEER_TTL_S = 30.0
+_gazetteers: dict[tuple, tuple[float, tuple, "gz.Gazetteer"]] = {}
+
+
+def invalidate_gazetteers() -> None:
+    """Drop every built gazetteer. Call after writing catalogue rows or aliases so the next lookup sees them."""
+    _gazetteers.clear()
+
+
+def _catalogue_stamp(db: Session, model) -> tuple:
+    return (db.query(func.count(model.id)).scalar(), db.query(func.max(model.id)).scalar())
+
+
+def _test_forms(t: LabTest) -> list[str]:
+    """Every way a test is written or said: its name, the name without its bracket, the bracketed code
+    ("Complete Blood Count (CBC)" is called "CBC"), and each Bengali and Hindi alias."""
+    forms = [t.name]
+    if "(" in t.name and ")" in t.name:
+        forms += [t.name.split("(")[0].strip(), t.name.split("(")[1].split(")")[0].strip()]
+    forms += [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a.strip()]
+    return [f for f in forms if f]
+
+
+def _doctor_forms(d: Doctor) -> list[str]:
+    """A doctor is called by surname or by an alias; the initials in the formal name ("Dr. S. Mukherjee")
+    are not something a caller says and only add noise to a similarity comparison."""
+    return [d.name.split()[-1]] + [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a.strip()]
+
+
+def _gazetteer(db: Session, kind: str) -> "gz.Gazetteer":
+    model, forms_of, drop = (LabTest, _test_forms, _GENERIC_WORDS) if kind == "test" else (Doctor, _doctor_forms, _TITLE_WORDS)
+    key = (kind, id(db.get_bind()))
+    stamp = _catalogue_stamp(db, model)
+    now = time.monotonic()
+    cached = _gazetteers.get(key)
+    if cached and cached[1] == stamp and now - cached[0] < GAZETTEER_TTL_S:
+        return cached[2]
+    entries = [(row.name, form) for row in db.query(model).all() for form in forms_of(row)]
+    built = gz.Gazetteer(entries, drop_words=drop)
+    _gazetteers[key] = (now, stamp, built)
+    return built
+
+
 def _phonetic_test_matches(db: Session, name: str) -> list[LabTest]:
-    """KCD-434, now suggestion-only: tests whose name or alias folds to the same consonant skeleton
-    as `name` (a romanised Bengali/Hindi spelling, or a loanword transliterated into another script).
-    Gated on a minimum key length so a short generic fold can never stand in for a real match. These
-    are what the caller MIGHT have meant; the agent asks, it does not act on them."""
-    qk = phonetic_key(name)
-    if len(qk) < 3:
-        return []
-    out = []
-    for t in db.query(LabTest).all():
-        forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
-        if any(phonetic_key(f) == qk for f in forms):
-            out.append(t)
-    return out
+    """Tests that sound like `name`, from the gazetteer's sound tiers (KCD-434/096): a romanised Bengali or
+    Hindi spelling, or a loanword written in another script. Suggestions only -- what the caller MIGHT have
+    meant; the agent asks, it does not act on them."""
+    names = [s.canonical for s in _gazetteer(db, "test").suggest(name, limit=3) if s.basis.startswith("sound")]
+    by_name = {t.name: t for t in db.query(LabTest).filter(LabTest.name.in_(names)).all()} if names else {}
+    return [by_name[n] for n in names if n in by_name]
 
 
 def _find_test_candidates(db: Session, name: str) -> list[LabTest]:
@@ -342,20 +387,7 @@ def _scripted(db: Session, body: dict, model) -> dict:
 
 
 def _test_suggestions(db: Session, name: str) -> list[str]:
-    phonetic = [t.name for t in _phonetic_test_matches(db, name)]
-    return list(dict.fromkeys(phonetic + _test_suggestions_by_spelling(db, name)))[:3]
-
-
-def _test_suggestions_by_spelling(db: Session, name: str) -> list[str]:
-    all_tests = db.query(LabTest).all()
-    candidates = []
-    for t in all_tests:
-        candidates.append(t.name)
-        candidates.extend(a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a)
-    suggestions = difflib.get_close_matches(name, candidates, n=3, cutoff=0.5)
-    alias_to_name = {a: t.name for t in all_tests
-                     for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a}
-    return list(dict.fromkeys(alias_to_name.get(s, s) for s in suggestions))
+    return [sg.canonical for sg in _gazetteer(db, "test").suggest(name, limit=3)]
 
 
 @app.get("/api/v1/tests/search")
@@ -512,20 +544,20 @@ def _find_doctor(db: Session, name: str) -> Doctor | None:
 # "would _find_doctor have accepted this one alone" stay the same
 # question asked twice, never two different bars that could disagree.
 def _find_doctor_candidates(db: Session, name: str) -> list[Doctor]:
-    """Every doctor whose surname or alias clears FUZZY_SURNAME_FLOOR
-    against `name`, not just the single best one -- so two similarly-
-    spelled doctors (e.g. two surnames both folding close to a garbled
-    query) surface as a genuine "which one" choice (KCD-446's doctor-side
-    counterpart) instead of _find_doctor silently picking whichever one
-    happened to score a hair higher. Exact/alias matches never reach this
-    function -- _find_doctor already returns on those, same as
-    _find_test_candidates never needing to consider _find_test's own
-    exact/alias tiers."""
-    all_doctors = db.query(Doctor).all()
+    """Every doctor whose surname or alias clears FUZZY_SURNAME_FLOOR against `name`, not just the single best
+    one -- so two similarly-spelled doctors surface as a genuine "which one" choice (KCD-446's doctor-side
+    counterpart) instead of one being picked because it scored a hair higher. Exact/alias matches never reach
+    this function -- _doctor_exact_matches already returned on those.
+
+    The floor and the "within a hair of the top" rule are unchanged; what changed (KCD-096) is which doctors
+    they are applied to: the gazetteer's shortlist, not every row. The floor is a character similarity of at
+    least 0.60, and every form that clears it shares character pairs with the query, so it is on the shortlist."""
+    shortlisted = {c for c, _f, _r in _gazetteer(db, "doctor").neighbours(name)}
+    if not shortlisted:
+        return []
     scored = []
-    for d in all_doctors:
-        candidates = [d.name.split()[-1].lower()] + [
-            a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
+    for d in db.query(Doctor).filter(Doctor.name.in_(shortlisted)).all():
+        candidates = _doctor_forms(d)
         best_ratio = max(
             (difflib.SequenceMatcher(None, name.lower(), c.lower()).ratio() for c in candidates),
             default=0.0,
@@ -535,34 +567,15 @@ def _find_doctor_candidates(db: Session, name: str) -> list[Doctor]:
     if not scored:
         return []
     top = max(r for r, _ in scored)
-    # Only doctors within a hair of the top score are genuinely "in the
-    # running" -- a query that clearly favours one doctor over another
-    # (both above the floor, but one far ahead) is not an ambiguous case,
-    # it is a confident match with a distant runner-up.
+    # Only doctors within a hair of the top score are genuinely "in the running" -- a query that clearly
+    # favours one doctor over another is not an ambiguous case, it is a confident match with a distant runner-up.
     return [d for r, d in scored if top - r <= 0.05]
 
 
 def _doctor_suggestions(db: Session, name: str) -> list[str]:
-    """Who the caller MIGHT have meant: near-spellings and sound-alikes. Never acted on -- see
-    _find_doctor. Sound-alikes (agent/phonetic_match.py, KCD-436) rank first."""
-    phonetic = []
-    for d in db.query(Doctor).all():
-        cands = [d.name.split()[-1]] + [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a]
-        if any(len(phonetic_key(c)) >= 3 and phonetic_match(name, c) for c in cands):
-            phonetic.append(d.name)
-    return list(dict.fromkeys(phonetic + _doctor_suggestions_by_spelling(db, name)))[:3]
-
-
-def _doctor_suggestions_by_spelling(db: Session, name: str) -> list[str]:
-    all_doctors = db.query(Doctor).all()
-    candidates = []
-    for d in all_doctors:
-        candidates.append(d.name)
-        candidates.extend(a for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a)
-    suggestions = difflib.get_close_matches(name, candidates, n=3, cutoff=0.5)
-    alias_to_name = {a: d.name for d in all_doctors
-                     for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|") if a}
-    return list(dict.fromkeys(alias_to_name.get(s, s) for s in suggestions))
+    """Who the caller MIGHT have meant: sound-alikes (including one- and two-consonant surnames such as Sen,
+    Das, Roy) and near-spellings, best first (KCD-436/096). Never acted on -- see _find_doctor."""
+    return [sg.canonical for sg in _gazetteer(db, "doctor").suggest(name, limit=3)]
 
 
 def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSchedule | None:

@@ -40,15 +40,34 @@ extraction with caller-specific data in it, which is exactly the case
 where a pattern-matcher's failure mode is silent and wrong. The fast path
 handles the questions with one entity and no PII, and hands over anything
 else. Abstaining is a first-class result here, not a failure.
+
+PER LANGUAGE (KCD-095)
+----------------------
+The cue words that say "this is a price question" live in agent/fast_path_cues.py, one table per language behind one
+interface; `resolve(text, lang)` uses the table for `lang` and abstains for a language it has none for (including
+"unknown"). Serve rate is counted per language and `snapshot()["language_gap"]` flags a gap wider than
+LANGUAGE_GAP_MARGIN as a defect. Adding a language is a `fast_path_cues.register(...)` call plus catalogue columns,
+not code.
+
+FAST AT ANY CATALOGUE SIZE (KCD-096)
+------------------------------------
+Matching used to score every form against every word-window with difflib: 17-156 ms per turn at 74 rows and seconds
+at thousands. It now goes through agent/form_index.py: an exact pruning step (a proven upper bound skips comparisons
+that cannot reach the commit floor; results at or above the floor are unchanged) and, on large tables only, a bigram
+shortlist whose only failure mode is an abstain. The commit gate stays a CHARACTER similarity on purpose: a
+fast-path answer has no model behind it, and a sound-alike is a suggestion for the caller to confirm
+(agent/gazetteer.py), never evidence to act on.
 """
 from __future__ import annotations
 
 import datetime
-import difflib
 import logging
 import re
 import unicodedata
+from collections import defaultdict
 
+from agent import fast_path_cues as cues
+from agent.form_index import INDEX_MIN_FORMS, FormTable
 from agent.outcome_metrics import abstentions, fast_path_served
 
 logger = logging.getLogger("fast_path")
@@ -75,33 +94,11 @@ COMMIT_FLOOR = 0.72
 # in this codebase.
 FAQ_COMMIT_FLOOR = 0.72
 
-_RATE_CUES = ("রেট", "দাম", "খরচ", "চার্জ", "মূল্য", "কত টাকা", "কত পড়বে",
-              "কত লাগবে", "কত নেবে", "প্রাইস", "টাকা লাগে")
-_AVAIL_CUES = ("কবে", "কখন", "বসবেন", "বসেন", "চেম্বার", "আছেন", "থাকবেন",
-               "পাওয়া যাবে", "ভিজিট", "সময়সূচি", "শিডিউল")
-_BOOK_CUES = ("বুক", "বুকিং", "অ্যাপয়েন্টমেন্ট", "অ্যাপয়েনমেন্ট", "সিরিয়াল",
-              "নাম লেখা", "স্লট")
-# What must the caller DO before/for a test -- distinct from _RATE_CUES
-# ("কত টাকা") and _AVAIL_CUES (a DOCTOR's schedule), so a test-prep
-# question never gets misrouted as a price or a doctor question even
-# though all three can mention a test/doctor name in the same sentence
-# shape.
-_PREP_CUES = ("প্রস্তুতি", "উপবাস", "উপোস", "খালি পেটে", "ফাস্টিং", "আগে কী করতে হবে",
-              "আগে কি করতে হবে", "কী মানতে হবে", "কি মানতে হবে", "খাওয়া যাবে কিনা",
-              "আগে খাওয়া যাবে")
-_GREETING_CUES = ("নমস্কার", "নমষ্কার", "হ্যালো", "হ্যালো?", "শুভ সকাল", "আসসালামু")
-_THANKS_CUES = ("ধন্যবাদ", "থ্যাঙ্ক", "থ্যাংক")
-
-# Relative day words the fast path is willing to resolve itself. Anything
-# else with a date in it (weekday names, "১৫ তারিখে", explicit dates) goes
-# to the LLM, which already has date-resolution rules and today's date.
-_RELATIVE_DAYS = {"আজ": 0, "আজকে": 0, "কাল": 1, "আগামীকাল": 1, "কালকে": 1, "পরশু": 2}
-
-# Words that make an utterance more than a simple lookup: a comparison, a
-# list request, a negation, a follow-up. Cheap insurance -- if any appear,
-# abstain rather than answer half the question.
-_COMPLEXITY_CUES = ("সব", "সবগুলো", "তালিকা", "কোন কোন", "আর", "এবং", "না",
-                    "নাকি", "বদলে", "চেয়ে", "ছাড়া", "কিন্তু", "অন্য")
+# A gap in serve rate between two languages wider than this is a DEFECT in the cue data of the slower one (Blueprint
+# 4.4: no language may be a second-class citizen). REASONED, not measured.
+LANGUAGE_GAP_MARGIN = 0.25
+# A language with fewer than this many turns is too thin to compare: its rate is noise.
+MIN_TURNS_FOR_GAP = 20
 
 _RE_WS = re.compile(r"\s+")
 _RE_PUNCT = re.compile(r"[।?!,.;:'\"()\-]+")
@@ -112,22 +109,23 @@ def _normalize(text: str) -> str:
     encodings, and two visually identical strings compare unequal if one
     is composed and the other is not. ASR output and seeded aliases come
     from different sources, so this is a live risk, not a theoretical one.
+    The Devanagari nukta (U+093C) is dropped too: the Hindi recogniser
+    writes a consonant with and without it for the same spoken word.
     """
-    text = unicodedata.normalize("NFC", text)
+    text = unicodedata.normalize("NFC", text).replace(chr(0x093C), "")
     return _RE_WS.sub(" ", _RE_PUNCT.sub(" ", text)).strip().lower()
 
 
-def _best_window_ratio(needle: str, haystack_words: list[str]) -> float:
-    """Highest similarity between `needle` and any word-window of the
-    utterance near its own length. A whole-string ratio would be diluted
-    by the surrounding sentence and would reject valid matches."""
-    span = len(needle.split())
-    best = 0.0
-    for width in {max(1, span - 1), span, span + 1}:
-        for i in range(max(1, len(haystack_words) - width + 1)):
-            window = " ".join(haystack_words[i:i + width])
-            best = max(best, difflib.SequenceMatcher(None, needle, window).ratio())
-    return best
+def _name_forms(name: str) -> list[str]:
+    """A test called "Complete Blood Count (CBC)" is said as the whole name, without the bracket, or as the code."""
+    forms = [name]
+    if "(" in name and ")" in name:
+        forms += [name.split("(")[0].strip(), name.split("(")[1].split(")")[0].strip()]
+    return forms
+
+
+def _dedupe(forms) -> list[str]:
+    return list(dict.fromkeys(f for f in forms if f))
 
 
 class Catalogue:
@@ -138,46 +136,83 @@ class Catalogue:
     ranked/partial matches, that is the signal to promote it to a real
     retrieval index (Epic E25) -- a flat keyword scan is the right tool
     only while it stays small and exhaustively enumerable, same trade-off
-    fast_path.py's own docstring makes for the 74-row catalogue itself.
+    this file's own docstring makes for the 74-row catalogue itself.
+
+    One FormTable per (kind, language). The payload keys are `aliases_<lang>` (tests, doctors) and
+    `keywords_<lang>` (FAQ); every language with a cue table gets a table, and a payload that carries another
+    language's columns gets one for it too. The Bengali forms are exactly what they always were; Hindi and English
+    also learn a test's own name, its bracket-less form and its code.
     """
 
-    def __init__(self, payload: dict):
-        self.tests: list[tuple[str, list[str]]] = []
-        self.doctors: list[tuple[str, list[str]]] = []
-        self.faq_topics: list[tuple[str, list[str]]] = []
+    def __init__(self, payload: dict, index_min_forms: int = INDEX_MIN_FORMS):
+        self._n_rows = (len(payload.get("tests", [])) + len(payload.get("doctors", []))
+                        + len(payload.get("faq_topics", [])))
+        langs = set(cues.languages()) | {"bn", "hi", "en"}
+        for group in ("tests", "doctors"):
+            for row in payload.get(group, []):
+                langs |= {k[len("aliases_"):] for k in row if k.startswith("aliases_")}
+        for row in payload.get("faq_topics", []):
+            langs |= {k[len("keywords_"):] for k in row if k.startswith("keywords_")}
+        self._tables: dict[tuple[str, str], FormTable] = {}
+        for lang in sorted(langs):
+            cue_table = cues.table_for(lang)
+            exact_below = cue_table.exact_below_chars if cue_table else 5
+            for kind, rows in (("test", self._test_rows(payload, lang)),
+                               ("doctor", self._doctor_rows(payload, lang)),
+                               ("faq", self._faq_rows(payload, lang))):
+                self._tables[(kind, lang)] = FormTable(rows, exact_below_chars=exact_below,
+                                                       index_min_forms=index_min_forms)
+        # the Bengali rows, under the names other code and tests have always read
+        self.tests = self._tables[("test", "bn")].rows
+        self.doctors = self._tables[("doctor", "bn")].rows
+        self.faq_topics = self._tables[("faq", "bn")].rows
 
+    @staticmethod
+    def _test_rows(payload: dict, lang: str):
+        rows = []
         for t in payload.get("tests", []):
-            forms = [_normalize(a) for a in t.get("aliases_bn", [])]
-            forms.append(_normalize(t["name"]))
-            self.tests.append((t["name"], [f for f in forms if f]))
+            aliases = [_normalize(a) for a in t.get(f"aliases_{lang}", [])]
+            names = [_normalize(t["name"])] if lang == "bn" else [_normalize(f) for f in _name_forms(t["name"])]
+            rows.append((t["name"], _dedupe(aliases + names)))
+        return rows
 
+    @staticmethod
+    def _doctor_rows(payload: dict, lang: str):
+        rows = []
         for d in payload.get("doctors", []):
-            forms = [_normalize(a) for a in d.get("aliases_bn", [])]
+            forms = [_normalize(a) for a in d.get(f"aliases_{lang}", [])]
             forms.append(_normalize(d.get("surname") or d["name"].split()[-1]))
-            self.doctors.append((d["name"], [f for f in forms if f]))
+            rows.append((d["name"], _dedupe(forms)))
+        return rows
 
-        for f in payload.get("faq_topics", []):
-            forms = [_normalize(k) for k in f.get("keywords_bn", [])]
-            self.faq_topics.append((f["topic"], [x for x in forms if x]))
+    @staticmethod
+    def _faq_rows(payload: dict, lang: str):
+        return [(f["topic"], _dedupe(_normalize(k) for k in f.get(f"keywords_{lang}", [])))
+                for f in payload.get("faq_topics", [])]
 
     def __len__(self) -> int:
-        return len(self.tests) + len(self.doctors) + len(self.faq_topics)
+        return self._n_rows
 
-    def _rows(self, kind: str) -> list[tuple[str, list[str]]]:
-        return {"test": self.tests, "doctor": self.doctors, "faq": self.faq_topics}[kind]
+    def languages(self) -> set[str]:
+        return {lang for (_kind, lang) in self._tables}
 
-    def match(self, text: str, kind: str) -> tuple[str | None, str | None, float]:
+    def table(self, kind: str, lang: str = "bn") -> FormTable | None:
+        return self._tables.get((kind, lang))
+
+    def match(self, text: str, kind: str, lang: str = "bn",
+              floor: float = 0.0) -> tuple[str | None, str | None, float]:
         """-> (canonical_key, matched_spoken_form, score). `canonical_key`
         is a test/doctor name for kind in {"test", "doctor"}, or a FAQ
-        topic key for kind="faq"."""
-        words = _normalize(text).split()
-        best_name, best_form, best_score = None, None, 0.0
-        for name, forms in self._rows(kind):
-            for form in forms:
-                score = _best_window_ratio(form, words)
-                if score > best_score:
-                    best_name, best_form, best_score = name, form, score
-        return best_name, best_form, best_score
+        topic key for kind="faq".
+
+        floor=0 scores everything and returns the best score however low (what a caller that applies its own
+        threshold, such as the history flow, has always seen). With a floor, comparisons that provably cannot
+        reach it are skipped, which is what keeps this fast (agent/form_index.py); a best score at or above the
+        floor is unchanged, and below it the answer is (None, None, 0.0)."""
+        table = self._tables.get((kind, lang))
+        if table is None:
+            return None, None, 0.0
+        return table.best(_normalize(text).split(), floor)
 
 
 class FastPathResult:
@@ -192,7 +227,8 @@ class FastPathResult:
 
     def as_llm_shape(self) -> dict:
         """Same dict shape agent/llm.py returns, so callers cannot tell
-        which path produced it and no downstream code needs a branch."""
+        which path produced it and no downstream code needs a branch.
+        (`direct_reply_bn` is the historical name: it holds the reply in the caller's language.)"""
         return {
             "intent": self.intent,
             "slots": self.slots,
@@ -207,26 +243,34 @@ def _empty_slots(**kw) -> dict:
     return slots
 
 
-def _any_cue(text: str, cues) -> bool:
-    """Substring match. Correct for the INTENT cues, which need to survive
-    Bengali inflection -- "রেট" has to fire on "রেটটা", "রেটের", "রেটটি"."""
-    return any(cue in text for cue in cues)
+def _complexity(text: str, table: cues.CueTable) -> bool:
+    """Whole-word match, for cues where a substring hit would be a false positive.
 
-
-def _any_cue_word(text: str, cues) -> bool:
-    """Whole-word match, for cues where a substring hit would be a false
-    positive.
-
-    A real one this caught: the complexity guard rejected
-    "ডাক্তার সেন কবে চেম্বারে বসবেন" -- a textbook availability question --
-    because "বসবেন" (will sit) contains "সব" (all) as a substring. Bengali
-    writes without internal word boundaries, so short function words like
-    সব / আর / না appear inside longer unrelated words constantly. Every
-    cue in _COMPLEXITY_CUES is a standalone word, so matching them as
-    whole words is both correct and strictly safer.
-    """
+    A real one this caught: the complexity guard rejected a textbook Bengali availability question ("Doctor Sen,
+    when will he sit in his chamber") because the word for "will sit" contains the word for "all" as a substring.
+    Bengali writes without internal word boundaries, so short function words appear inside longer unrelated words
+    constantly. Every cue in a complexity list is a standalone word, so matching them as whole words is both
+    correct and strictly safer -- for every language."""
     words = set(text.split())
-    return any((cue in words) if " " not in cue else (cue in text) for cue in cues)
+    return any((cue in words) if " " not in cue else (cue in text) for cue in table.complexity)
+
+
+def serve_rate_gap(by_lang: dict[str, dict[str, int]], margin: float = LANGUAGE_GAP_MARGIN,
+                   min_turns: int = MIN_TURNS_FOR_GAP) -> dict:
+    """Serve rate per language and the widest gap between two languages with enough turns to compare. A gap wider
+    than `margin` is a defect in the cue data of the lower one (KCD-095)."""
+    rates = {}
+    for lang, c in by_lang.items():
+        turns = c["served"] + c["abstained"]
+        rates[lang] = {"served": c["served"], "abstained": c["abstained"], "turns": turns,
+                       "serve_rate": round(c["served"] / turns, 3) if turns else 0.0}
+    eligible = {lang: r["serve_rate"] for lang, r in rates.items() if r["turns"] >= min_turns}
+    gap, widest = None, None
+    if len(eligible) >= 2:
+        top, bottom = max(eligible, key=eligible.get), min(eligible, key=eligible.get)
+        gap, widest = round(eligible[top] - eligible[bottom], 3), [top, bottom]
+    return {"by_language": rates, "margin": margin, "min_turns": min_turns, "gap": gap, "widest": widest,
+            "defect": gap is not None and gap > margin}
 
 
 class FastPath:
@@ -234,8 +278,9 @@ class FastPath:
         self.catalogue = catalogue
         self._today = today
         self.stats = {"served": 0, "abstained": 0}
+        self.by_lang: dict[str, dict[str, int]] = defaultdict(lambda: {"served": 0, "abstained": 0})
 
-    def _abstain(self, reason: str, intent: str = "unknown") -> None:
+    def _abstain(self, reason: str, intent: str = "unknown", lang: str = "") -> None:
         """KCD-457: abstention is a first-class, EXPECTED result here (see
         module docstring), but "why" still needs to be visible -- a shift
         in the reason distribution usually means an upstream change
@@ -244,123 +289,128 @@ class FastPath:
         LLM anyway, which is the whole point: this file's own decision is
         the thing being measured, not just the turn's eventual outcome."""
         self.stats["abstained"] += 1
-        abstentions.record(reason, intent)
+        self.by_lang[lang or "?"]["abstained"] += 1
+        abstentions.record(reason, intent, lang)
 
-    def _serve(self, intent: str) -> None:
-        """KCD-460: serve rate published PER INTENT, not just the
-        aggregate -- fast_path.py's own module docstring already claims
-        "microseconds" per lookup; this is what actually proves it,
-        broken down by which kind of question is being served instantly
-        vs. falling through to the LLM."""
+    def _serve(self, intent: str, lang: str) -> None:
+        """KCD-460: serve rate published PER INTENT AND PER LANGUAGE --
+        "a routine question is answered instantly, and their serve rate is
+        published per intent and language" is this story's own wording."""
         self.stats["served"] += 1
-        fast_path_served.record(intent, "served", "bn")   # this module is Bengali-only today
+        self.by_lang[lang]["served"] += 1
+        fast_path_served.record(intent, "served", lang)
 
-    def _resolve_date(self, text: str) -> tuple[str | None, bool]:
+    def _resolve_date(self, text: str, table: cues.CueTable) -> tuple[str | None, bool]:
         """-> (iso_date_or_None, is_confident). Not confident means the
         utterance contains date-ish language this module will not try to
         parse, so the whole turn must go to the LLM."""
         today = self._today or datetime.date.today()
-        for word, offset in _RELATIVE_DAYS.items():
-            if word in text:
+        if table.strict_dates and (re.search(r"\d", text) or table.any(text, table.date_words)):
+            return None, False
+        for word, offset in table.relative_days.items():
+            if table.contains(text, word):
                 return (today + datetime.timedelta(days=offset)).isoformat(), True
         # Any digit or weekday name means a date we are not handling here.
-        if re.search(r"\d", text) or any(
-            d in text for d in ("সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি", "রবি", "তারিখ")
-        ):
+        if re.search(r"\d", text) or table.any(text, table.date_words):
             return None, False
         return None, True
 
-    def resolve(self, transcript: str) -> FastPathResult | None:
+    def resolve(self, transcript: str, lang: str = "bn") -> FastPathResult | None:
         """Returns None whenever it is not confident. None is the normal,
         expected outcome for anything non-routine -- the caller falls back
-        to the semantic cache and then the LLM."""
+        to the semantic cache and then the LLM. A language with no cue table (including "unknown") always
+        returns None: a table for one language never fires on another."""
+        table = cues.table_for(lang)
+        if table is None:
+            self._abstain("unknown_language", lang=str(lang))
+            return None
         text = _normalize(transcript)
         if not text:
-            self._abstain("empty_transcript")
+            self._abstain("empty_transcript", lang=lang)
             return None
 
         # Booking is never handled here: open-ended extraction with PII in
         # it. Check first, before any cue that might also appear in it.
-        if _any_cue(text, _BOOK_CUES):
-            self._abstain("booking_excluded")
+        if table.any(text, table.book):
+            self._abstain("booking_excluded", lang=lang)
             return None
 
-        if _any_cue_word(text, _COMPLEXITY_CUES):
-            self._abstain("complexity_cue")
+        if _complexity(text, table):
+            self._abstain("complexity_cue", lang=lang)
             return None
 
-        wants_rate = _any_cue(text, _RATE_CUES)
-        wants_avail = _any_cue(text, _AVAIL_CUES)
-        wants_prep = _any_cue(text, _PREP_CUES)
+        wants_rate = table.any(text, table.rate)
+        wants_avail = table.any(text, table.avail)
+        wants_prep = table.any(text, table.prep)
 
         # More than one cue set firing means an utterance asking about more
-        # than one thing (or genuinely ambiguous between them -- "কী মানতে
-        # হবে" alone can read as prep, but combined with a rate/avail cue
+        # than one thing (or genuinely ambiguous between them -- "what must I
+        # observe" alone can read as prep, but combined with a rate/avail cue
         # it is not this module's call to make). Let the model decide.
         if sum((wants_rate, wants_avail, wants_prep)) > 1:
-            self._abstain("ambiguous_multi_cue")
+            self._abstain("ambiguous_multi_cue", lang=lang)
             return None
 
         if wants_rate:
-            name, form, score = self.catalogue.match(text, "test")
+            name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
             if name and score >= COMMIT_FLOOR:
-                self._serve("test_rate")
-                logger.info("fast path: test_rate %r (%.2f) from %r", name, score, transcript)
+                self._serve("test_rate", lang)
+                logger.info("fast path: test_rate %r (%.2f) [%s] from %r", name, score, lang, transcript)
                 return FastPathResult("test_rate", _empty_slots(test_name=form or name),
                                       score, matched_form=form)
-            self._abstain("below_commit_floor", "test_rate")
+            self._abstain("below_commit_floor", "test_rate", lang)
             return None
 
         if wants_prep:
-            name, form, score = self.catalogue.match(text, "test")
+            name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
             if name and score >= COMMIT_FLOOR:
-                self._serve("test_prep")
-                logger.info("fast path: test_prep %r (%.2f) from %r", name, score, transcript)
+                self._serve("test_prep", lang)
+                logger.info("fast path: test_prep %r (%.2f) [%s] from %r", name, score, lang, transcript)
                 return FastPathResult("test_prep", _empty_slots(test_name=form or name),
                                       score, matched_form=form)
-            self._abstain("below_commit_floor", "test_prep")
+            self._abstain("below_commit_floor", "test_prep", lang)
             return None
 
         if wants_avail:
-            name, form, score = self.catalogue.match(text, "doctor")
-            if not (name and score >= COMMIT_FLOOR):
-                self._abstain("below_commit_floor", "doctor_availability")
+            name, form, score = self.catalogue.match(text, "doctor", lang, COMMIT_FLOOR)
+            if name and score >= COMMIT_FLOOR:
+                date_iso, confident = self._resolve_date(text, table)
+                if not confident:
+                    self._abstain("date_not_confident", "doctor_availability", lang)
+                    return None
+                self._serve("doctor_availability", lang)
+                logger.info("fast path: doctor_availability %r (%.2f) date=%s [%s] from %r",
+                            name, score, date_iso, lang, transcript)
+                return FastPathResult("doctor_availability",
+                                      _empty_slots(doctor_name=form or name, date=date_iso),
+                                      score, matched_form=form)
+            if not table.faq_after_failed_avail:
+                self._abstain("below_commit_floor", "doctor_availability", lang)
                 return None
-            date_iso, confident = self._resolve_date(text)
-            if not confident:
-                self._abstain("date_not_confident", "doctor_availability")
-                return None
-            self._serve("doctor_availability")
-            logger.info("fast path: doctor_availability %r (%.2f) date=%s from %r",
-                        name, score, date_iso, transcript)
-            return FastPathResult("doctor_availability",
-                                  _empty_slots(doctor_name=form or name, date=date_iso),
-                                  score, matched_form=form)
+            # no doctor named: "what time do you open" is a clinic question, not a doctor's schedule
 
         # No rate/prep/availability cue at all -- try the FAQ topic table
         # before falling through to greeting/thanks/abstain. Deliberately
         # LAST among the "answerable" branches: every FAQ keyword phrase
-        # is generic clinic language ("সময়", "কোথায়") with no test/doctor
-        # cue word in it by construction, so this cannot silently steal a
+        # is generic clinic language with no test/doctor cue word in it by
+        # construction, so this cannot silently steal a
         # rate/prep/availability question -- those already returned above.
-        faq_topic, faq_form, faq_score = self.catalogue.match(text, "faq")
+        faq_topic, faq_form, faq_score = self.catalogue.match(text, "faq", lang, FAQ_COMMIT_FLOOR)
         if faq_topic and faq_score >= FAQ_COMMIT_FLOOR:
-            self._serve("clinic_faq")
-            logger.info("fast path: clinic_faq %r (%.2f) from %r", faq_topic, faq_score, transcript)
+            self._serve("clinic_faq", lang)
+            logger.info("fast path: clinic_faq %r (%.2f) [%s] from %r", faq_topic, faq_score, lang, transcript)
             return FastPathResult("clinic_faq", _empty_slots(faq_topic=faq_topic),
                                   faq_score, matched_form=faq_form)
 
         # Pure greeting or thanks, with no entity and no question in it.
-        if _any_cue(text, _GREETING_CUES) and len(text.split()) <= 4:
-            self._serve("smalltalk")
-            return FastPathResult("smalltalk", _empty_slots(), 1.0,
-                                  direct_reply_bn="নমস্কার, কী সাহায্য করতে পারি?")
-        if _any_cue(text, _THANKS_CUES) and len(text.split()) <= 4:
-            self._serve("smalltalk")
-            return FastPathResult("smalltalk", _empty_slots(), 1.0,
-                                  direct_reply_bn="ধন্যবাদ। আর কিছু জানতে চান?")
+        if table.greeting_reply and table.any(text, table.greeting) and len(text.split()) <= 4:
+            self._serve("smalltalk", lang)
+            return FastPathResult("smalltalk", _empty_slots(), 1.0, direct_reply_bn=table.greeting_reply)
+        if table.thanks_reply and table.any(text, table.thanks) and len(text.split()) <= 4:
+            self._serve("smalltalk", lang)
+            return FastPathResult("smalltalk", _empty_slots(), 1.0, direct_reply_bn=table.thanks_reply)
 
-        self._abstain("no_cue_matched")
+        self._abstain("no_cue_matched", lang=lang)
         return None
 
     def snapshot(self) -> dict:
@@ -369,6 +419,7 @@ class FastPath:
             **self.stats,
             "catalogue_rows": len(self.catalogue),
             "serve_rate": round(self.stats["served"] / total, 3) if total else 0.0,
+            "language_gap": serve_rate_gap(dict(self.by_lang)),
             "abstention_reasons": abstentions.snapshot(),
             "served_by_intent": fast_path_served.snapshot(),
         }

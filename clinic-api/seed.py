@@ -12,7 +12,7 @@ from __future__ import annotations
 from db import engine, SessionLocal
 from models import Base, Department, Doctor, DoctorSchedule, LabTest, FAQ
 from i18n_content import (
-    TEST_ALIASES_HI, SURNAME_HI, PREP_I18N, DEFAULT_PREP_HI, DEFAULT_PREP_EN, FAQ_I18N,
+    TEST_ALIASES_HI, SURNAME_HI, PREP_I18N, DEFAULT_PREP_HI, DEFAULT_PREP_EN, FAQ_I18N, FAQ_KEYWORDS_I18N,
 )
 
 # ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ FAQ_ENTRIES = [
 I18N_COLUMNS = {
     "doctors": ["aliases_hi"],
     "lab_tests": ["aliases_hi", "prep_instructions_hi", "prep_instructions_en"],
-    "faqs": ["answer_hi", "answer_en"],
+    "faqs": ["answer_hi", "answer_en", "keywords_hi", "keywords_en"],
 }
 
 
@@ -271,7 +271,9 @@ def backfill_i18n(db=None) -> dict:
                     filled += 1
         for f in db.query(FAQ).all():
             ans_hi, ans_en = FAQ_I18N.get(f.topic, ("", ""))
-            for attr, val in (("answer_hi", ans_hi), ("answer_en", ans_en)):
+            kw_hi, kw_en = FAQ_KEYWORDS_I18N.get(f.topic, ([], []))
+            for attr, val in (("answer_hi", ans_hi), ("answer_en", ans_en),
+                              ("keywords_hi", "|".join(kw_hi)), ("keywords_en", "|".join(kw_en))):
                 if not getattr(f, attr):
                     setattr(f, attr, val)
                     filled += 1
@@ -321,8 +323,10 @@ def seed():
 
         for topic, keywords_bn, answer_bn in FAQ_ENTRIES:
             ans_hi, ans_en = FAQ_I18N.get(topic, ("", ""))
+            kw_hi, kw_en = FAQ_KEYWORDS_I18N.get(topic, ([], []))
             db.add(FAQ(topic=topic, keywords_bn="|".join(keywords_bn), answer_bn=answer_bn,
-                       answer_hi=ans_hi, answer_en=ans_en))
+                       answer_hi=ans_hi, answer_en=ans_en,
+                       keywords_hi="|".join(kw_hi), keywords_en="|".join(kw_en)))
 
         db.commit()
         print(f"Seeded {len(DEPARTMENTS)} departments, {doctor_index} doctors, "

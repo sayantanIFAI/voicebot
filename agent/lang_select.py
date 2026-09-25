@@ -20,6 +20,7 @@ from agent.speech_norm import unspeakable_spans
 
 _SCRIPT_RANGE = {"bn": ("ঀ", "৿"), "hi": ("ऀ", "ॿ")}
 _WRONG_SCRIPT = {"bn": ("ऀ", "ॿ"), "hi": ("ঀ", "৿")}
+_SHARED_PUNCTUATION = frozenset(chr(0x0964) + chr(0x0965))
 
 
 def script_share(text: str, lang: str) -> float:
@@ -40,7 +41,10 @@ def speakable(text: str, lang: str) -> bool:
     if not text or unspeakable_spans(text, lang):
         return False
     wrong = _WRONG_SCRIPT.get(lang)
-    return not (wrong and any(wrong[0] <= c <= wrong[1] for c in text))
+    # The danda (U+0964) and double danda (U+0965) sit in the Devanagari block but are the full stop of Bengali
+    # too. Counting them as "wrong script" made every Bengali reply ending in "।" unspeakable, so it was
+    # silently replaced by a default line.
+    return not (wrong and any(wrong[0] <= c <= wrong[1] and c not in _SHARED_PUNCTUATION for c in text))
 
 
 # ---------------------------------------------------------------- selection
