@@ -122,13 +122,17 @@ class FormTable:
         keep.update(i for i, v in votes.items() if v >= self._need[i])
         return sorted(keep)
 
-    def best(self, words: list[str], floor: float = 0.0) -> tuple[str | None, str | None, float]:
+    def best(self, words: list[str], floor: float = 0.0,
+             skip_name: str | None = None) -> tuple[str | None, str | None, float]:
         """(canonical name, spoken form, score) of the best form in `words`, first-best on a tie in table order.
 
         floor=0 is the exact original scan: every pair scored, the best score returned even when it is low.
         floor>0 skips pairs that provably cannot reach `floor` (and, on a large table, forms the shortlist drops):
         a best score AT OR ABOVE `floor` is identical to the full scan's; below it the result is (None, None, 0.0),
-        which every caller already treats as "not found"."""
+        which every caller already treats as "not found".
+
+        `skip_name` leaves one canonical name out of the scan: the best of the OTHERS is the runner-up, which is how
+        the fast path tells "blood sugar" (two tests fit it) from "blood sugar fasting" (one does)."""
         self.stats["lookups"] += 1
         if not self._forms:
             return None, None, 0.0
@@ -146,6 +150,8 @@ class FormTable:
         best_score = 0.0
         compared = 0
         for i in order:
+            if skip_name is not None and self._names[i] == skip_name:
+                continue
             form, fbag = self._forms[i], self._bags[i]
             flen = len(form)
             span = self._spans[i]

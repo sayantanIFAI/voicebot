@@ -223,8 +223,13 @@ def test_prep_reply(slots: dict, result: dict, lang: str) -> str:
     if not result.get("found"):
         return _not_found_test(slots, result, lang)
     name = _test_name(slots, result, lang)
-    default = ("इस टेस्ट के लिए किसी ख़ास तैयारी की ज़रूरत नहीं है।" if lang == "hi"
-               else "No special preparation is needed for this test.")
+    # The lab-test table decides: its preparation text if it has one; else its fasting_required column.
+    if result.get("fasting_required"):
+        default = ("इस टेस्ट के लिए खाली पेट रहना होगा। कितने घंटे, यह काउंटर पर पूछ लें।" if lang == "hi"
+                   else "Fasting is required for this test. Please ask the counter how many hours.")
+    else:
+        default = ("इस टेस्ट के लिए किसी ख़ास तैयारी की ज़रूरत नहीं है।" if lang == "hi"
+                   else "No special preparation is needed for this test.")
     instructions = result.get("prep_instructions") or default
     return (f"{name} टेस्ट के लिए: {instructions}" if lang == "hi"
             else f"For the {name} test: {instructions}")

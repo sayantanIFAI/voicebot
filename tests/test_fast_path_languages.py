@@ -22,8 +22,9 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tools"), os.path.join(REPO_ROOT, 
 import _fast_path_legacy as legacy                                       # noqa: E402
 import gazetteer_eval as ev                                              # noqa: E402
 from agent import fast_path_cues as cues                                 # noqa: E402
-from agent.fast_path import (Catalogue, FastPath, LANGUAGE_GAP_MARGIN, MIN_TURNS_FOR_GAP,   # noqa: E402
-                             serve_rate_gap)
+from agent.fast_path import (AMBIGUITY_MARGIN, COMMIT_FLOOR, Catalogue, FastPath, LANGUAGE_GAP_MARGIN,   # noqa: E402
+                             MIN_TURNS_FOR_GAP, serve_rate_gap)
+from agent.fast_path import _normalize as _normalize_text                  # noqa: E402
 from agent.outcome_metrics import abstentions                            # noqa: E402
 
 TODAY = datetime.date(2026, 9, 25)
@@ -87,7 +88,14 @@ def test_bengali_decisions_match_the_frozen_pre_change_module_except_where_a_gen
             identical += 1
         elif a is None or b is None:
             assert b is None, (u, "the new module must never ANSWER where the old one abstained")
-            assert any(g in (a.matched_form or "").split() for g in generic), (u, a.matched_form)
+            # DELIBERATE SPEC CHANGE, marked (2026-09-25, fourth live call): also an abstain when the old answer was NOT an
+            # exact match and a second test fit within AMBIGUITY_MARGIN of it (agent/fast_path.py): the model's turn asks
+            # the clinic API "which one?" instead of the fast path picking between two.
+            if not any(g in (a.matched_form or "").split() for g in generic):
+                text = new._without_cues(_normalize_text(u), cues.table_for("bn"))
+                best, _f, score = new.catalogue.match(text, "test", "bn", COMMIT_FLOOR)
+                other, _f2, other_score = new.catalogue.match(text, "test", "bn", COMMIT_FLOOR, skip_name=best)
+                assert best and score < 1.0 and other and score - other_score < AMBIGUITY_MARGIN, (u, a.matched_form)
             abstained += 1
         else:
             same_answer = (a.intent, a.slots["test_name"], a.slots["doctor_name"], a.slots["faq_topic"],

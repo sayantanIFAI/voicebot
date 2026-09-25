@@ -150,7 +150,11 @@ def test_prep_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
 
     name = _spoken_test_name(slots, result)
-    instructions = result.get("prep_instructions") or "এই টেস্টের জন্য বিশেষ কোনো প্রস্তুতির প্রয়োজন নেই।"
+    # The lab-test table decides: its preparation text if it has one; else its fasting_required column. A test the table
+    # marks as needing fasting is never told "no special preparation" because the text column was left empty.
+    instructions = result.get("prep_instructions") or (
+        "এই টেস্টের জন্য উপবাস থাকতে হবে। কত ঘণ্টা, তা কাউন্টারে জেনে নিন।" if result.get("fasting_required")
+        else "এই টেস্টের জন্য বিশেষ কোনো প্রস্তুতির প্রয়োজন নেই।")
     return f"{name} টেস্টের জন্য: {instructions}"
 
 

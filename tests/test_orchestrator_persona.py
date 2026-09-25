@@ -142,35 +142,32 @@ def env(m, monkeypatch, tmp_path):
 # ================================================================== KCD-513 acknowledgement
 
 @pytest.mark.asyncio
-async def test_an_answer_opens_with_the_thanks_and_the_thanks_adds_nothing(m, env):
-    # SPEC CHANGE (KCD-513, as the operator asked): every substantive reply opens with "Thank you for
-    # telling me" (ACK_MODE=always), not a short rotating acknowledgement. It still adds no fact.
-    from agent.turn_ack import thanks_for
+async def test_an_answer_to_the_callers_own_question_has_no_thanks_in_front_of_it(m, env):
+    # DELIBERATE SPEC CHANGE (owner, 2026-09-25, third live call): "Thank you for telling me" in front of a price was
+    # heard as nonsense. An answer starts with the answer; the bare "Thank you." is spoken only after the caller has
+    # answered a question the agent asked (tests/test_filler_thanks_silence.py).
     await env.turn()
-    said = env.session.ws.spoken()
-    assert len(said) == 1 and said[0] == f"{thanks_for('en')} {env.state['reply']}"
-    prefix = said[0][: -len(env.state["reply"])].strip()
-    assert not any(ch.isdigit() for ch in prefix)
+    assert env.session.ws.spoken() == [env.state["reply"]]
 
 
 @pytest.mark.asyncio
-async def test_the_thanks_is_spoken_on_every_substantive_reply(m, env):
-    # SPEC CHANGE (KCD-513): "always" -- it is not suppressed on the next reply.
-    from agent.turn_ack import thanks_for
+async def test_no_reply_to_a_question_of_the_callers_is_thanked_however_many_they_ask(m, env):
+    # DELIBERATE SPEC CHANGE (owner, 2026-09-25): was "the thanks is spoken on every substantive reply".
     await env.turn()
     await env.turn()
-    first, second = env.session.ws.spoken()
-    assert first.startswith(thanks_for("en")) and second.startswith(thanks_for("en"))
+    assert env.session.ws.spoken() == [env.state["reply"], env.state["reply"]]
 
 
-@pytest.mark.asyncio
-async def test_the_varied_mode_still_suppresses_repeats(m, env, monkeypatch):
+def test_the_varied_mode_still_suppresses_repeats():
+    # DELIBERATE, MARKED CHANGE: the orchestrator no longer decorates replies with AckTracker, so the varied mode of
+    # the class itself is what is checked (it was checked through the orchestrator before).
     from agent.turn_ack import AckTracker
-    env.session.acks = AckTracker(mode="varied")
-    await env.turn()
-    await env.turn()
-    first, second = env.session.ws.spoken()
-    assert first != env.state["reply"] and second == env.state["reply"]
+    t = AckTracker(mode="varied")
+    reply = "The CBC costs three hundred and fifty rupees."
+    first, _ = t.decorate(reply, "en")
+    t.next_turn()
+    second, _ = t.decorate(reply, "en")
+    assert first != reply and second == reply
 
 
 # ====================================================================== KCD-514 apology

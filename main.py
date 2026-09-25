@@ -1755,7 +1755,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.turn_epoch = session.speak_epoch      # this turn is current; an interrupt from now on makes it stale
         session.acks.next_turn()
         session.turn_acknowledged = False
-        session.answering, session.awaiting_answer = session.awaiting_answer, False
+        # An answer to a question we asked: the last thing we said had a question mark, or a flow that asks in commands
+        # ("please tell me your full name") is waiting on this very turn.
+        session.answering = session.awaiting_answer or session.history_state in ("need_phone", "need_name") or (
+            session.security is not None and not session.security.finished)
+        session.awaiting_answer = False
         session.silence_since = None
         session.turn_started_at = time.monotonic()
         session.marks = [("start", session.turn_started_at)]

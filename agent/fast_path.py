@@ -94,6 +94,12 @@ COMMIT_FLOOR = 0.72
 # agent/lid.py's module docstring for what "measured vs reasoned" means
 # in this codebase.
 FAQ_COMMIT_FLOOR = 0.72
+# Two DIFFERENT tests that fit what was said nearly equally well ("blood sugar" fits both the fasting and the PP test)
+# is not something to pick between: a price or a preparation rule for the wrong one is a confident wrong answer. When
+# the best match is not exact and the runner-up is within this of it, the fast path abstains, and the model's turn
+# reaches the clinic API, which answers "which one -- A or B?" (KCD-446). REASONED, not measured: the measured
+# margins were 0.08-0.12 for the ambiguous phrasings and 0.24 or more for a name that is one test's.
+AMBIGUITY_MARGIN = 0.2
 
 # A gap in serve rate between two languages wider than this is a DEFECT in the cue data of the slower one (Blueprint
 # 4.4: no language may be a second-class citizen). REASONED, not measured.
@@ -213,7 +219,7 @@ class Catalogue:
         return self._tables.get((kind, lang))
 
     def match(self, text: str, kind: str, lang: str = "bn",
-              floor: float = 0.0) -> tuple[str | None, str | None, float]:
+              floor: float = 0.0, skip_name: str | None = None) -> tuple[str | None, str | None, float]:
         """-> (canonical_key, matched_spoken_form, score). `canonical_key`
         is a test/doctor name for kind in {"test", "doctor"}, or a FAQ
         topic key for kind="faq".
@@ -225,7 +231,7 @@ class Catalogue:
         table = self._tables.get((kind, lang))
         if table is None:
             return None, None, 0.0
-        return table.best(_normalize(text).split(), floor)
+        return table.best(_normalize(text).split(), floor, skip_name)
 
 
 class FastPathResult:
@@ -329,20 +335,36 @@ class FastPath:
         return None, True
 
     @staticmethod
-    def _names_nothing(text: str, table: cues.CueTable) -> bool:
-        """True when, once the rate/preparation cue phrases are taken out, everything left is a little function word or
-        a pointing word ("the same", "that", "test"): the caller asked about the topic, they did not name a test. One
-        word this does not recognise -- possibly a test name -- makes it False, and the turn goes to the model."""
+    def _without_cues(text: str, table: cues.CueTable) -> str:
+        """`text` with the rate and preparation cue phrases taken out: what is left is what NAMES something."""
         remaining = f" {text} "
-        phrases = sorted(table.rate + table.prep, key=len, reverse=True)
-        for cue in phrases:
+        for cue in sorted(table.rate + table.prep, key=len, reverse=True):
             if table.match == "substring":
                 remaining = remaining.replace(cue, " ")
             else:
                 while f" {cue} " in remaining:
                     remaining = remaining.replace(f" {cue} ", " ")
+        return " ".join(remaining.split())
+
+    def _ambiguous_test(self, text: str, lang: str, table: cues.CueTable, score: float) -> bool:
+        """Two different tests fit the words that NAME a test almost equally well. Judged on the text without the cue
+        phrases: "খালি পেটে" is a cue for preparation, not part of the name of the test called "খালি পেটে সুগার", and
+        letting it count made an ordinary "<test> ... খালি পেটে ..." look ambiguous."""
+        if score >= 1.0:
+            return False                                           # said in full: exactly one test's name
+        body = self._without_cues(text, table)
+        first, _form, first_score = self.catalogue.match(body, "test", lang, COMMIT_FLOOR)
+        if first is None or first_score >= 1.0:
+            return False
+        other, _form2, other_score = self.catalogue.match(body, "test", lang, COMMIT_FLOOR, skip_name=first)
+        return other is not None and first_score - other_score < AMBIGUITY_MARGIN
+
+    def _names_nothing(self, text: str, table: cues.CueTable) -> bool:
+        """True when, once the rate/preparation cue phrases are taken out, everything left is a little function word or
+        a pointing word ("the same", "that", "test"): the caller asked about the topic, they did not name a test. One
+        word this does not recognise -- possibly a test name -- makes it False, and the turn goes to the model."""
         known = set(table.function_words)
-        return all(t in known or is_reference_only(t) for t in remaining.split())
+        return all(t in known or is_reference_only(t) for t in self._without_cues(text, table).split())
 
     def resolve(self, transcript: str, lang: str = "bn", topic_test: str | None = None) -> FastPathResult | None:
         """Returns None whenever it is not confident. None is the normal,
@@ -402,6 +424,9 @@ class FastPath:
 
         if wants_rate:
             name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
+            if name and score >= COMMIT_FLOOR and self._ambiguous_test(text, lang, table, score):
+                self._abstain("ambiguous_test", "test_rate", lang)
+                return None
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_rate", lang)
                 logger.info("fast path: test_rate %r (%.2f) [%s] from %r", name, score, lang, transcript)
@@ -412,6 +437,9 @@ class FastPath:
 
         if wants_prep:
             name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
+            if name and score >= COMMIT_FLOOR and self._ambiguous_test(text, lang, table, score):
+                self._abstain("ambiguous_test", "test_prep", lang)
+                return None
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_prep", lang)
                 logger.info("fast path: test_prep %r (%.2f) [%s] from %r", name, score, lang, transcript)

@@ -156,7 +156,8 @@ async def test_the_whole_conversation_from_question_to_verified_answer(env):
     assert said[-2] == sc.VERIFIED["en"]
     assert s.identity.is_verified and s.identity.method == "security_questions"
     answer = said[-1]
-    assert answer.startswith("Thank you for telling me.")                          # KCD-513: always
+    assert not answer.startswith("Thank you")     # DELIBERATE SPEC CHANGE (2026-09-25): an answer to their question has no thanks;
+    assert "Thank you." in said[:-2]              # ...the bare thanks came after the security answers they gave
     assert "Complete Blood Count" in answer and days_ago(10) in answer and "last done" in answer
     assert s.kindness.active is False                                               # 40 years old: not a senior
 
@@ -387,13 +388,13 @@ async def test_a_message_changed_in_the_database_is_what_the_next_call_says(m, e
     assert put.json()["success"]
     try:
         await m._refresh_messages()
-        await env.say("what is the price of a CBC test", intent="test_rate")
-        env.state["intent"] = "test_rate"
-        await env.say("what is the price of a CBC test", test_name="CBC")
-        assert any(t.startswith("Thanks for letting me know.") for t in spoken(env))
+        # DELIBERATE SPEC CHANGE (2026-09-25): the thanks is spoken after an answer to OUR question, not in front of a price
+        env.session.answering = True
+        await m._thank(env.session, "en")
+        assert any(t == "Thanks for letting me know." for t in spoken(env))
     finally:
         await env.tools._client.put("/api/v1/agent/messages", json={
-            "key": "thanks_ack", "lang": "en", "text": "Thank you for telling me.", "updated_by": "test-cleanup"})
+            "key": "thanks_ack", "lang": "en", "text": "Thank you.", "updated_by": "test-cleanup"})
 
 
 @pytest.mark.asyncio
