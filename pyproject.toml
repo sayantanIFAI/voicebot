@@ -63,15 +63,20 @@ check_untyped_defs = true
 module = [
     "agent.abuse",
     "agent.acknowledgement",
+    "agent.action_gate",
     "agent.api_models",
     "agent.apology",
+    "agent.asr_manifest",
+    "agent.asr_metrics",
     "agent.attention",
     "agent.barge_in",
     "agent.call_end",
     "agent.call_score",
+    "agent.catalogue_forms",
     "agent.clause_split",
     "agent.code_switch",
     "agent.confidence_gate",
+    "agent.confusables",
     "agent.disclosure",
     "agent.echo_cancel",
     "agent.emergency",
@@ -92,6 +97,7 @@ module = [
     "agent.speech_norm",
     "agent.spoken_text_lint",
     "agent.topic_flow",
+    "agent.transcript_rules",
     "agent.turn_ack",
 ]
 disallow_untyped_defs = true
