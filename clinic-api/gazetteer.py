@@ -34,6 +34,7 @@ tools/gazetteer_eval.py, not from real callers. Recalibrate against real call tr
 This file is byte-identical in agent/ and clinic-api/ (clinic-api is a separate service that never imports
 agent/); tests/test_gazetteer.py fails if the two copies drift.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -41,13 +42,13 @@ import heapq
 import re
 import unicodedata
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Iterable
 
-try:                                    # clinic-api ships its own copy of the fold
+try:  # clinic-api ships its own copy of the fold
     from phonetic_match import phonetic_key
-except ImportError:                     # the agent side
+except ImportError:  # the agent side
     from agent.phonetic_match import phonetic_key
 
 # Same-script character similarity a sound-alike (skeleton-equal) form must ALSO reach. Loose on purpose: the
@@ -85,10 +86,22 @@ TIE_MARGIN = 0.08
 
 _TIERS = {"exact": 0, "sound": 1, "sound_short": 2, "sound_near": 3, "spelling": 4}
 
-_FLAPS = ((chr(0x09A1) + chr(0x09BC), "র"), (chr(0x09A2) + chr(0x09BC), "র"),   # Bengali DDA/DDHA + nukta -> RA
-         (chr(0x0921) + chr(0x093C), "र"), (chr(0x0922) + chr(0x093C), "र"))   # Devanagari DDA/DDHA + nukta -> RA
-_BN_VOWELS = {**dict.fromkeys("াঅআ", "A"), **dict.fromkeys("িীেৈইঈএঐ", "I"), **dict.fromkeys("ুূোৌউঊওঔ", "U")}
-_HI_VOWELS = {**dict.fromkeys("ाअआ", "A"), **dict.fromkeys("िीेैइईएऐ", "I"), **dict.fromkeys("ुूोौउऊओऔ", "U")}
+_FLAPS = (
+    (chr(0x09A1) + chr(0x09BC), "র"),
+    (chr(0x09A2) + chr(0x09BC), "র"),  # Bengali DDA/DDHA + nukta -> RA
+    (chr(0x0921) + chr(0x093C), "र"),
+    (chr(0x0922) + chr(0x093C), "र"),
+)  # Devanagari DDA/DDHA + nukta -> RA
+_BN_VOWELS = {
+    **dict.fromkeys("াঅআ", "A"),
+    **dict.fromkeys("িীেৈইঈএঐ", "I"),
+    **dict.fromkeys("ুূোৌউঊওঔ", "U"),
+}
+_HI_VOWELS = {
+    **dict.fromkeys("ाअआ", "A"),
+    **dict.fromkeys("िीेैइईएऐ", "I"),
+    **dict.fromkeys("ुूोौउऊओऔ", "U"),
+}
 _LATIN_VOWELS = {"a": "A", "e": "I", "i": "I", "y": "I", "o": "U", "u": "U"}
 _BENGALI_RANGE = re.compile(r"[ঀ-৿]")
 _DEVANAGARI_RANGE = re.compile(r"[ऀ-ॿ]")
@@ -101,8 +114,12 @@ def normalise(text: str, drop_words: frozenset[str] = frozenset()) -> str:
     for src, dst in _FLAPS:
         t = t.replace(src, dst)
     t = t.replace("़", "").lower().replace("-", " ")
-    kept = "".join(ch if (ch.isalnum() or unicodedata.category(ch) in ("Mn", "Mc") or ch.isspace()) else " "
-                   for ch in t)
+    kept = "".join(
+        ch
+        if (ch.isalnum() or unicodedata.category(ch) in ("Mn", "Mc") or ch.isspace())
+        else " "
+        for ch in t
+    )
     words = [w for w in kept.split() if w not in drop_words]
     return " ".join(words)
 
@@ -127,11 +144,18 @@ def vowelled_key(norm: str) -> str:
     for ch in norm:
         if ch.isspace():
             continue
-        cls = _BN_VOWELS.get(ch) or _HI_VOWELS.get(ch) or _LATIN_VOWELS.get(ch) or _consonant(ch)
+        cls = (
+            _BN_VOWELS.get(ch)
+            or _HI_VOWELS.get(ch)
+            or _LATIN_VOWELS.get(ch)
+            or _consonant(ch)
+        )
         if not cls:
             continue
         if cls in "AIU" and out and out[-1] in "AIU":
-            out[-1] = cls          # a run of vowels is one syllable nucleus: the glide wins (ai, ay, ei -> I)
+            out[-1] = (
+                cls  # a run of vowels is one syllable nucleus: the glide wins (ai, ay, ei -> I)
+            )
         elif not out or out[-1] != cls:
             out.append(cls)
     return "".join(out)
@@ -149,28 +173,30 @@ def _within_one_edit(a: str, b: str) -> bool:
     i = 0
     while i < len(short) and short[i] == long_[i]:
         i += 1
-    return short[i:] == long_[i + 1:]
+    return short[i:] == long_[i + 1 :]
 
 
 def _deletes(key: str) -> set[str]:
-    return {key[:i] + key[i + 1:] for i in range(len(key))}
+    return {key[:i] + key[i + 1 :] for i in range(len(key))}
 
 
 def _bigrams(norm: str) -> set[str]:
     padded = f"^{norm}$"
-    return {padded[i:i + 2] for i in range(len(padded) - 1)}
+    return {padded[i : i + 2] for i in range(len(padded) - 1)}
 
 
 @dataclass(frozen=True)
 class Suggestion:
-    canonical: str          # the entity the form belongs to (a test or doctor name)
-    form: str               # the spoken form that matched
-    score: float            # 0..1, for ordering and the eval only; never a resolution threshold
-    basis: str              # exact | sound | sound_short | sound_near | spelling
+    canonical: str  # the entity the form belongs to (a test or doctor name)
+    form: str  # the spoken form that matched
+    score: float  # 0..1, for ordering and the eval only; never a resolution threshold
+    basis: str  # exact | sound | sound_short | sound_near | spelling
 
 
 class Gazetteer:
-    def __init__(self, entries: Iterable[tuple[str, str]], drop_words: Iterable[str] = ()):
+    def __init__(
+        self, entries: Iterable[tuple[str, str]], drop_words: Iterable[str] = ()
+    ):
         """`entries`: (canonical name, one spoken/written form of it), any number of forms per canonical name."""
         self._drop = frozenset(w.lower() for w in drop_words)
         self._canon: list[str] = []
@@ -234,25 +260,33 @@ class Gazetteer:
     def _collect(self, query: str) -> dict[int, tuple[int, float]]:
         q = normalise(query, self._drop)
         scored = 0
-        found: dict[int, tuple[int, float]] = {}      # item -> (tier, ratio)
+        found: dict[int, tuple[int, float]] = {}  # item -> (tier, ratio)
         if q:
             qskel, qv, qscript = phonetic_key(q), vowelled_key(q), script_of(q)
             for i in self._by_norm.get(q, ()):
                 found[i] = (_TIERS["exact"], 1.0)
             if len(qskel) >= MIN_SKELETON:
                 for i in self._by_skel.get(qskel, ()):
-                    scored += self._offer(found, i, q, qscript, "sound", SOUND_MIN_RATIO)
+                    scored += self._offer(
+                        found, i, q, qscript, "sound", SOUND_MIN_RATIO
+                    )
             elif qv:
                 for i in self._by_vkey.get(qv, ()):
                     if len(self._skel[i]) < MIN_SKELETON:
-                        scored += self._offer(found, i, q, qscript, "sound_short", SOUND_MIN_RATIO)
+                        scored += self._offer(
+                            found, i, q, qscript, "sound_short", SOUND_MIN_RATIO
+                        )
             if len(qskel) >= NEAR_MIN_SKELETON:
                 near: set[int] = set()
                 for d in _deletes(qskel) | {qskel}:
                     near.update(self._by_del.get(d, ()))
                 for i in near:
-                    if len(self._skel[i]) >= NEAR_MIN_SKELETON and _within_one_edit(qskel, self._skel[i]):
-                        scored += self._offer(found, i, q, qscript, "sound_near", SOUND_NEAR_MIN_RATIO)
+                    if len(self._skel[i]) >= NEAR_MIN_SKELETON and _within_one_edit(
+                        qskel, self._skel[i]
+                    ):
+                        scored += self._offer(
+                            found, i, q, qscript, "sound_near", SOUND_NEAR_MIN_RATIO
+                        )
             scored += self._spelling(found, q, qscript)
         self.stats["queries"] += 1
         self.stats["scored"] += scored
@@ -262,11 +296,15 @@ class Gazetteer:
     def _offer(self, found, i, q, qscript, basis, floor) -> int:
         """Score one candidate; keep it if it clears the second gate. Returns 1 (a candidate was scored)."""
         same_script = self._script[i] == qscript
-        ratio = difflib.SequenceMatcher(None, q, self._norm[i]).ratio() if same_script else 0.0
+        ratio = (
+            difflib.SequenceMatcher(None, q, self._norm[i]).ratio()
+            if same_script
+            else 0.0
+        )
         if same_script and ratio < floor:
             return 1
         if basis == "sound_near" and not same_script:
-            return 1     # a near skeleton is weak evidence; with no shared characters there is nothing to back it
+            return 1  # a near skeleton is weak evidence; with no shared characters there is nothing to back it
         tier = _TIERS[basis]
         if i not in found or (tier, -ratio) < (found[i][0], -found[i][1]):
             found[i] = (tier, ratio)
@@ -283,33 +321,57 @@ class Gazetteer:
             for i in posting:
                 votes[i] += 1
         scored = 0
-        for i, _v in heapq.nlargest(SHORTLIST, votes.items(), key=lambda kv: (kv[1], -kv[0])):
+        for i, _v in heapq.nlargest(
+            SHORTLIST, votes.items(), key=lambda kv: (kv[1], -kv[0])
+        ):
             if self._script[i] != qscript:
                 continue
             scored += 1
             ratio = difflib.SequenceMatcher(None, q, self._norm[i]).ratio()
-            floor = SPELLING_SHORT_MIN_RATIO if min(len(q), len(self._norm[i])) < SHORT_FORM_CHARS else SPELLING_MIN_RATIO
-            if ratio >= floor and (i not in found or (_TIERS["spelling"], -ratio) < (found[i][0], -found[i][1])):
+            floor = (
+                SPELLING_SHORT_MIN_RATIO
+                if min(len(q), len(self._norm[i])) < SHORT_FORM_CHARS
+                else SPELLING_MIN_RATIO
+            )
+            if ratio >= floor and (
+                i not in found
+                or (_TIERS["spelling"], -ratio) < (found[i][0], -found[i][1])
+            ):
                 found[i] = (_TIERS["spelling"], ratio)
         return scored
 
-    def _rank(self, found: dict[int, tuple[int, float]], limit: int) -> list[Suggestion]:
+    def _rank(
+        self, found: dict[int, tuple[int, float]], limit: int
+    ) -> list[Suggestion]:
         basis = {v: k for k, v in _TIERS.items()}
         out: list[Suggestion] = []
         seen: set[str] = set()
         has_sound = any(t < _TIERS["spelling"] for t, _r in found.values())
         top_tier, top_ratio = -1, 0.0
-        for i, (tier, ratio) in sorted(found.items(), key=lambda kv: (kv[1][0], -kv[1][1], kv[0])):
+        for i, (tier, ratio) in sorted(
+            found.items(), key=lambda kv: (kv[1][0], -kv[1][1], kv[0])
+        ):
             if self._canon[i] in seen:
                 continue
-            if tier == _TIERS["spelling"] and has_sound and ratio < SPELLING_WITH_SOUND_MIN_RATIO:
+            if (
+                tier == _TIERS["spelling"]
+                and has_sound
+                and ratio < SPELLING_WITH_SOUND_MIN_RATIO
+            ):
                 continue
             if out and not (tier == top_tier and top_ratio - ratio <= TIE_MARGIN):
                 continue
             if not out:
                 top_tier, top_ratio = tier, ratio
             seen.add(self._canon[i])
-            out.append(Suggestion(self._canon[i], self._raw[i], round(1.0 - tier * 0.1 - (1.0 - ratio) * 0.05, 3), basis[tier]))
+            out.append(
+                Suggestion(
+                    self._canon[i],
+                    self._raw[i],
+                    round(1.0 - tier * 0.1 - (1.0 - ratio) * 0.05, 3),
+                    basis[tier],
+                )
+            )
             if len(out) >= limit:
                 break
         return out

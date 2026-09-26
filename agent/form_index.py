@@ -25,6 +25,7 @@ What this module does NOT do is fold to phonemes. A fast-path COMMIT is answered
 sound-alike is exactly the "Doctor Nobody" evidence CLAUDE.md forbids acting on; sound-alikes are for suggestions
 that a caller then confirms (agent/gazetteer.py). The commit gate here stays a character similarity.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -42,20 +43,28 @@ MIN_PAIR_SHARE = 0.4
 INDEX_MIN_FORMS = 400
 
 
-def _bag_bound(form_bag: Counter, form_len: int, win_bag: Counter, win_len: int) -> float:
+def _bag_bound(
+    form_bag: Counter, form_len: int, win_bag: Counter, win_len: int
+) -> float:
     common = 0
     for ch, n in form_bag.items():
         m = win_bag.get(ch)
         if m:
-            common += n if n < m else m
+            common += min(m, n)
     return 2.0 * common / (form_len + win_len)
 
 
 class FormTable:
     """One (kind, language) table: canonical name -> spoken forms, already normalised by the caller."""
 
-    def __init__(self, rows: list[tuple[str, list[str]]], *, exact_below_chars: int = 0,
-                 index_min_forms: int = INDEX_MIN_FORMS, generic_words: frozenset[str] = frozenset()):
+    def __init__(
+        self,
+        rows: list[tuple[str, list[str]]],
+        *,
+        exact_below_chars: int = 0,
+        index_min_forms: int = INDEX_MIN_FORMS,
+        generic_words: frozenset[str] = frozenset(),
+    ):
         self.rows = rows
         self._exact_below = exact_below_chars
         self._generic = generic_words
@@ -82,7 +91,7 @@ class FormTable:
                 if len(form) < SHORT_FORM_CHARS:
                     self._always.append(i)
                     continue
-                grams = {form[k:k + 2] for k in range(len(form) - 1)}
+                grams = {form[k : k + 2] for k in range(len(form) - 1)}
                 self._need[i] = max(1, math.ceil(MIN_PAIR_SHARE * len(grams)))
                 for g in grams:
                     self._postings[g].append(i)
@@ -100,7 +109,10 @@ class FormTable:
             return False
         hit = self._fuzzy_generic.get(token)
         if hit is None:
-            hit = any(difflib.SequenceMatcher(None, token, g).ratio() >= 0.8 for g in self._generic)
+            hit = any(
+                difflib.SequenceMatcher(None, token, g).ratio() >= 0.8
+                for g in self._generic
+            )
             self._fuzzy_generic[token] = hit
         return hit
 
@@ -113,7 +125,7 @@ class FormTable:
         return " ".join(kept) if kept and len(kept) < len(words) else None
 
     def _candidates(self, text: str) -> list[int]:
-        grams = {text[k:k + 2] for k in range(len(text) - 1)}
+        grams = {text[k : k + 2] for k in range(len(text) - 1)}
         votes: dict[int, int] = defaultdict(int)
         for g in grams:
             for i in self._postings.get(g, ()):
@@ -122,8 +134,9 @@ class FormTable:
         keep.update(i for i, v in votes.items() if v >= self._need[i])
         return sorted(keep)
 
-    def best(self, words: list[str], floor: float = 0.0,
-             skip_name: str | None = None) -> tuple[str | None, str | None, float]:
+    def best(
+        self, words: list[str], floor: float = 0.0, skip_name: str | None = None
+    ) -> tuple[str | None, str | None, float]:
         """(canonical name, spoken form, score) of the best form in `words`, first-best on a tie in table order.
 
         floor=0 is the exact original scan: every pair scored, the best score returned even when it is low.
@@ -137,13 +150,22 @@ class FormTable:
         if not self._forms:
             return None, None, 0.0
         text = " ".join(words)
-        order = self._candidates(text) if (self.indexed and floor > 0.0) else range(len(self._forms))
+        order = (
+            self._candidates(text)
+            if (self.indexed and floor > 0.0)
+            else range(len(self._forms))
+        )
         windows: dict[int, list[tuple[str, Counter, int]]] = {}
 
         def windows_of(width: int):
             if width not in windows:
-                windows[width] = [(w, Counter(w), len(w)) for w in
-                                  (" ".join(words[i:i + width]) for i in range(max(1, len(words) - width + 1)))]
+                windows[width] = [
+                    (w, Counter(w), len(w))
+                    for w in (
+                        " ".join(words[i : i + width])
+                        for i in range(max(1, len(words) - width + 1))
+                    )
+                ]
             return windows[width]
 
         best_name = best_form = None
@@ -172,15 +194,18 @@ class FormTable:
                     if core is not None and score > form_best and score >= floor:
                         # the form contains a generic word ("test"): the match must hold on the naming words alone
                         wcore = self._core(w, fuzzy=True) or " ".join(
-                            t for t in w.split() if not self._is_generic(t, True))
+                            t for t in w.split() if not self._is_generic(t, True)
+                        )
                         if not wcore:
                             score = 0.0
                         else:
-                            core_score = (1.0 if wcore == core else 0.0) if len(core) < self._exact_below \
+                            core_score = (
+                                (1.0 if wcore == core else 0.0)
+                                if len(core) < self._exact_below
                                 else difflib.SequenceMatcher(None, core, wcore).ratio()
+                            )
                             score = min(score, core_score)
-                    if score > form_best:
-                        form_best = score
+                    form_best = max(form_best, score)
             if form_best > best_score:
                 best_name, best_form, best_score = self._names[i], form, form_best
         self.stats["compared"] += compared

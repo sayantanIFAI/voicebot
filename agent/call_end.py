@@ -15,36 +15,146 @@ Whole-token matching for short cues (a substring hit would fire "bye" inside "ma
 Bengali phrases (Bengali is written without spaces between a word and its endings). REASONED cue lists, not measured;
 a native speaker should review them (docs/pod-verification-checklist.md).
 """
+
 from __future__ import annotations
 
 import re
 import unicodedata
 
 _EXPLICIT = {
-    "bn": ("কল শেষ", "কল কেটে", "কল রেখে", "কল বন্ধ", "ফোন রাখ", "ফোন রেখে", "ফোন কেটে", "ফোন ছেড়ে", "লাইন কেটে", "রাখছি",
-           "রেখে দিচ্ছি", "বাই", "গুডবাই", "টা টা"),
-    "hi": ("कॉल खत्म", "कॉल काट", "कॉल बंद", "फोन रख", "फोन काट", "लाइन काट", "रखता हूं", "रखती हूं", "रखता हूँ", "रखती हूँ",
-           "बाय", "अलविदा", "गुडबाय", "टाटा"),
-    "en": ("end the call", "end this call", "end call", "hang up", "hanging up", "goodbye", "good bye", "bye", "that's all",
-           "thats all", "that is all", "i'm done", "im done", "i am done"),
+    "bn": (
+        "কল শেষ",
+        "কল কেটে",
+        "কল রেখে",
+        "কল বন্ধ",
+        "ফোন রাখ",
+        "ফোন রেখে",
+        "ফোন কেটে",
+        "ফোন ছেড়ে",
+        "লাইন কেটে",
+        "রাখছি",
+        "রেখে দিচ্ছি",
+        "বাই",
+        "গুডবাই",
+        "টা টা",
+    ),
+    "hi": (
+        "कॉल खत्म",
+        "कॉल काट",
+        "कॉल बंद",
+        "फोन रख",
+        "फोन काट",
+        "लाइन काट",
+        "रखता हूं",
+        "रखती हूं",
+        "रखता हूँ",
+        "रखती हूँ",
+        "बाय",
+        "अलविदा",
+        "गुडबाय",
+        "टाटा",
+    ),
+    "en": (
+        "end the call",
+        "end this call",
+        "end call",
+        "hang up",
+        "hanging up",
+        "goodbye",
+        "good bye",
+        "bye",
+        "that's all",
+        "thats all",
+        "that is all",
+        "i'm done",
+        "im done",
+        "i am done",
+    ),
 }
 _WHEN_ASKED = {
-    "bn": ("শেষ করে দিন", "শেষ করে দাও", "শেষ করুন", "শেষ করে দেন", "শেষ", "বন্ধ করে দিন", "বন্ধ করুন", "কেটে দিন", "কেটে দাও",
-           "আর কিছু না", "আর কিছু নেই", "আর কিছু লাগবে না", "কিছু জানার নেই", "কিছু জানতে চাই না", "কিছু না", "থাক",
-           "দরকার নেই", "লাগবে না", "না ধন্যবাদ", "না, ধন্যবাদ"),
-    "hi": ("खत्म कर दीजिए", "खत्म कर दो", "खत्म करें", "खत्म करिए", "खत्म", "बंद कर दीजिए", "बंद करें", "काट दीजिए", "काट दो",
-           "और कुछ नहीं", "कुछ नहीं", "कुछ और नहीं", "बस", "रहने दीजिए", "रहने दो", "नहीं चाहिए", "नहीं, धन्यवाद", "नहीं धन्यवाद"),
-    "en": ("end it", "go ahead and end", "finish it", "nothing", "nothing else", "no thanks", "no thank you", "that's it",
-           "thats it", "nope", "i'm good", "im good", "all good", "no more"),
+    "bn": (
+        "শেষ করে দিন",
+        "শেষ করে দাও",
+        "শেষ করুন",
+        "শেষ করে দেন",
+        "শেষ",
+        "বন্ধ করে দিন",
+        "বন্ধ করুন",
+        "কেটে দিন",
+        "কেটে দাও",
+        "আর কিছু না",
+        "আর কিছু নেই",
+        "আর কিছু লাগবে না",
+        "কিছু জানার নেই",
+        "কিছু জানতে চাই না",
+        "কিছু না",
+        "থাক",
+        "দরকার নেই",
+        "লাগবে না",
+        "না ধন্যবাদ",
+        "না, ধন্যবাদ",
+    ),
+    "hi": (
+        "खत्म कर दीजिए",
+        "खत्म कर दो",
+        "खत्म करें",
+        "खत्म करिए",
+        "खत्म",
+        "बंद कर दीजिए",
+        "बंद करें",
+        "काट दीजिए",
+        "काट दो",
+        "और कुछ नहीं",
+        "कुछ नहीं",
+        "कुछ और नहीं",
+        "बस",
+        "रहने दीजिए",
+        "रहने दो",
+        "नहीं चाहिए",
+        "नहीं, धन्यवाद",
+        "नहीं धन्यवाद",
+    ),
+    "en": (
+        "end it",
+        "go ahead and end",
+        "finish it",
+        "nothing",
+        "nothing else",
+        "no thanks",
+        "no thank you",
+        "that's it",
+        "thats it",
+        "nope",
+        "i'm good",
+        "im good",
+        "all good",
+        "no more",
+    ),
 }
 # A bare "শেষ" can also mean "finish the booking": with a task word in the sentence it is not a request to hang up.
-_TASK_WORDS = ("বুকিং", "অ্যাপয়েন্টমেন্ট", "টেস্ট", "সিরিয়াল", "बुकिंग", "अपॉइंटमेंट", "टेस्ट", "booking", "appointment", "test",
-               "slot")
+_TASK_WORDS = (
+    "বুকিং",
+    "অ্যাপয়েন্টমেন্ট",
+    "টেস্ট",
+    "সিরিয়াল",
+    "बुकिंग",
+    "अपॉइंटमेंट",
+    "टेस्ट",
+    "booking",
+    "appointment",
+    "test",
+    "slot",
+)
 _PUNCT = re.compile(r"[?!.,;:।\"'()\[\]]")
 
 
 def _normalise(text: str) -> str:
-    t = unicodedata.normalize("NFC", text or "").replace("़", "").lower().replace("’", "'")
+    t = (
+        unicodedata.normalize("NFC", text or "")
+        .replace("़", "")
+        .lower()
+        .replace("’", "'")
+    )
     t = _PUNCT.sub(lambda m: "'" if m.group(0) == "'" else " ", t)
     return " ".join(t.split())
 
@@ -52,8 +162,10 @@ def _normalise(text: str) -> str:
 def _has(text: str, cue: str) -> bool:
     cue = _normalise(cue)
     if " " in cue or len(cue) >= 5:
-        return cue in text                                       # a phrase, or a long enough word to be unambiguous
-    return f" {cue} " in f" {text} "                             # a short word: whole tokens only ("bye" is not in "maybe")
+        return cue in text  # a phrase, or a long enough word to be unambiguous
+    return (
+        f" {cue} " in f" {text} "
+    )  # a short word: whole tokens only ("bye" is not in "maybe")
 
 
 def wants_to_end(text: str, lang: str, after_prompt: bool = False) -> bool:
@@ -62,7 +174,9 @@ def wants_to_end(text: str, lang: str, after_prompt: bool = False) -> bool:
     t = _normalise(text)
     if not t:
         return False
-    languages = (lang,) + tuple(x for x in _EXPLICIT if x != lang)          # a caller may end it in any language
+    languages = (lang,) + tuple(
+        x for x in _EXPLICIT if x != lang
+    )  # a caller may end it in any language
     if any(_has(t, c) for lg in languages for c in _EXPLICIT.get(lg, ())):
         return True
     if after_prompt and not any(w in t for w in _TASK_WORDS):

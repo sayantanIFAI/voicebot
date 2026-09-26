@@ -25,6 +25,7 @@ other side. The numbers are a regression harness and a comparison of two algorit
 They are not an estimate of how a real caller is understood: that needs real Bengali/Hindi/English call
 transcripts, which the repository does not have (docs/pod-verification-checklist.md).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,20 +41,25 @@ for _p in (ROOT,):
     if _p not in sys.path:
         sys.path.append(_p)
 
-from agent.gazetteer import Gazetteer, normalise            # noqa: E402
-from agent.phonetic_match import phonetic_key                # noqa: E402
+from agent.gazetteer import Gazetteer, normalise
+from agent.phonetic_match import phonetic_key
 
 TITLES = {"dr", "doctor", "doc", "ডাক্তার", "ডক্টর", "ডাঃ", "डॉक्टर", "डॉ", "डाक्टर"}
 FAMILIES = ("in_class", "vowel", "drop_insert", "out_of_class", "spelling")
 
 # ------------------------------------------------------------------ catalogue
 
-def entries_from_catalogue(cat: dict) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+
+def entries_from_catalogue(
+    cat: dict,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """(doctor entries, test entries) as (canonical, form) -- the same forms clinic-api indexes."""
     doctors, tests = [], []
     for d in cat.get("doctors", []):
         doctors.append((d["name"], d.get("surname") or d["name"].split()[-1]))
-        doctors += [(d["name"], a) for a in d.get("aliases_bn", []) + d.get("aliases_hi", [])]
+        doctors += [
+            (d["name"], a) for a in d.get("aliases_bn", []) + d.get("aliases_hi", [])
+        ]
     for t in cat.get("tests", []):
         forms = {t["name"], t["name"].split("(")[0].strip()}
         if "(" in t["name"]:
@@ -62,18 +68,76 @@ def entries_from_catalogue(cat: dict) -> tuple[list[tuple[str, str]], list[tuple
         tests += [(t["name"], f) for f in sorted(forms) if f]
     return doctors, tests
 
+
 # ---------------------------------------------------------------- generators
 
-_LATIN_SWAP = {"b": "pv", "p": "bf", "f": "pb", "v": "bw", "k": "gc", "g": "kj", "c": "ks", "j": "gz", "s": "zc",
-               "z": "sj", "d": "t", "t": "d", "m": "n", "n": "m"}
-_LATIN_OOC = {"k": "t", "t": "k", "r": "l", "l": "r", "m": "b", "n": "l", "d": "g", "p": "t"}
+_LATIN_SWAP = {
+    "b": "pv",
+    "p": "bf",
+    "f": "pb",
+    "v": "bw",
+    "k": "gc",
+    "g": "kj",
+    "c": "ks",
+    "j": "gz",
+    "s": "zc",
+    "z": "sj",
+    "d": "t",
+    "t": "d",
+    "m": "n",
+    "n": "m",
+}
+_LATIN_OOC = {
+    "k": "t",
+    "t": "k",
+    "r": "l",
+    "l": "r",
+    "m": "b",
+    "n": "l",
+    "d": "g",
+    "p": "t",
+}
 _LATIN_VOW = {"a": "oe", "e": "ia", "i": "ey", "o": "ua", "u": "oa"}
-_BN_SWAP = {"শ": "সষ", "ষ": "শস", "স": "শষ", "ব": "ভ", "ভ": "ব", "ত": "ট", "ট": "ত", "দ": "ড", "ড": "দ",
-            "প": "ফ", "ফ": "প", "ক": "খ", "খ": "ক", "গ": "ঘ", "ঘ": "গ", "জ": "য", "চ": "ছ"}
+_BN_SWAP = {
+    "শ": "সষ",
+    "ষ": "শস",
+    "স": "শষ",
+    "ব": "ভ",
+    "ভ": "ব",
+    "ত": "ট",
+    "ট": "ত",
+    "দ": "ড",
+    "ড": "দ",
+    "প": "ফ",
+    "ফ": "প",
+    "ক": "খ",
+    "খ": "ক",
+    "গ": "ঘ",
+    "ঘ": "গ",
+    "জ": "য",
+    "চ": "ছ",
+}
 _BN_OOC = {"ক": "ত", "ত": "ক", "র": "ল", "ল": "র", "ম": "ব", "ন": "ল"}
 _BN_VOW = {"ি": "ী", "ী": "ি", "ু": "ূ", "ূ": "ু", "া": "", "ে": "ি", "ো": "ু"}
-_HI_SWAP = {"श": "सष", "ष": "शस", "स": "शष", "ब": "भव", "भ": "ब", "त": "ट", "ट": "त", "द": "ड", "ड": "द",
-            "प": "फ", "फ": "प", "क": "ख", "ख": "क", "ग": "घ", "घ": "ग", "ज": "झ", "च": "छ"}
+_HI_SWAP = {
+    "श": "सष",
+    "ष": "शस",
+    "स": "शष",
+    "ब": "भव",
+    "भ": "ब",
+    "त": "ट",
+    "ट": "त",
+    "द": "ड",
+    "ड": "द",
+    "प": "फ",
+    "फ": "प",
+    "क": "ख",
+    "ख": "क",
+    "ग": "घ",
+    "घ": "ग",
+    "ज": "झ",
+    "च": "छ",
+}
 _HI_OOC = {"क": "त", "त": "क", "र": "ल", "ल": "र", "म": "ब", "न": "ल"}
 _HI_VOW = {"ि": "ी", "ी": "ि", "ु": "ू", "ू": "ु", "े": "ि", "ो": "ु"}
 
@@ -87,8 +151,11 @@ def _script(s: str) -> str:
 
 
 def _tables(script: str):
-    return {"latin": (_LATIN_SWAP, _LATIN_OOC, _LATIN_VOW), "bn": (_BN_SWAP, _BN_OOC, _BN_VOW),
-            "hi": (_HI_SWAP, _HI_OOC, _HI_VOW)}[script]
+    return {
+        "latin": (_LATIN_SWAP, _LATIN_OOC, _LATIN_VOW),
+        "bn": (_BN_SWAP, _BN_OOC, _BN_VOW),
+        "hi": (_HI_SWAP, _HI_OOC, _HI_VOW),
+    }[script]
 
 
 def _replace_one(s: str, table: dict, rng: random.Random) -> str | None:
@@ -97,7 +164,7 @@ def _replace_one(s: str, table: dict, rng: random.Random) -> str | None:
         return None
     i = rng.choice(spots)
     options = table[s[i].lower()]
-    return s[:i] + (rng.choice(options) if options else "") + s[i + 1:]
+    return s[:i] + (rng.choice(options) if options else "") + s[i + 1 :]
 
 
 def variants(form: str, rng: random.Random) -> dict[str, list[str]]:
@@ -117,28 +184,64 @@ def variants(form: str, rng: random.Random) -> dict[str, list[str]]:
         if v and v != base:
             out["vowel"].append(v)
     if script == "latin" and len(base) >= 4:
-        out["vowel"].append(base.replace("ee", "i").replace("oo", "u") if ("ee" in base or "oo" in base)
-                            else base + base[-1])
+        out["vowel"].append(
+            base.replace("ee", "i").replace("oo", "u")
+            if ("ee" in base or "oo" in base)
+            else base + base[-1]
+        )
         cons = [i for i, c in enumerate(base) if c.isalpha() and c not in "aeiou"]
         if cons:
             i = rng.choice(cons)
-            out["drop_insert"].append(base[:i] + base[i + 1:])
-            out["drop_insert"].append(base[:i] + base[i] + "a" + base[i:] if i else base + "a")
+            out["drop_insert"].append(base[:i] + base[i + 1 :])
+            out["drop_insert"].append(
+                base[:i] + base[i] + "a" + base[i:] if i else base + "a"
+            )
     elif len(base) >= 4:
         i = rng.randrange(1, len(base) - 1)
-        out["drop_insert"].append(base[:i] + base[i + 1:])
+        out["drop_insert"].append(base[:i] + base[i + 1 :])
     if len(base) >= 4:
         j = rng.randrange(0, len(base) - 1)
-        out["spelling"].append(base[:j] + base[j + 1] + base[j] + base[j + 2:])
-        out["spelling"].append(base[:j] + rng.choice("xqz" if script == "latin" else "কমন") + base[j + 1:])
+        out["spelling"].append(base[:j] + base[j + 1] + base[j] + base[j + 2 :])
+        out["spelling"].append(
+            base[:j] + rng.choice("xqz" if script == "latin" else "কমন") + base[j + 1 :]
+        )
     return {k: [x for x in dict.fromkeys(v) if x and x != base] for k, v in out.items()}
 
 
-NEGATIVES = ["Nobody", "Doctor Nobody", "Xyz", "Qwerty", "Zzzz", "Blorp", "Hello", "Thank you", "Please", "Table",
-             "Rahman", "Kapoor", "Verma", "Iyer", "Fernandes", "Khan", "Singh", "Kumar", "Sharma", "Gupta",
-             "কিছু একটা", "আচ্ছা", "ঠিক আছে", "টেবিল", "কলম", "ठीक है", "मेज़", "कलम", "नमस्ते"]
+NEGATIVES = [
+    "Nobody",
+    "Doctor Nobody",
+    "Xyz",
+    "Qwerty",
+    "Zzzz",
+    "Blorp",
+    "Hello",
+    "Thank you",
+    "Please",
+    "Table",
+    "Rahman",
+    "Kapoor",
+    "Verma",
+    "Iyer",
+    "Fernandes",
+    "Khan",
+    "Singh",
+    "Kumar",
+    "Sharma",
+    "Gupta",
+    "কিছু একটা",
+    "আচ্ছা",
+    "ঠিক আছে",
+    "টেবিল",
+    "কলম",
+    "ठीक है",
+    "मेज़",
+    "कलम",
+    "नमस्ते",
+]
 
 # ------------------------------------------------------------------ baseline
+
 
 class LinearScan:
     """The behaviour clinic-api had before KCD-096, reproduced: a consonant-skeleton equality test over every
@@ -158,15 +261,24 @@ class LinearScan:
         qk = phonetic_key(name)
         phonetic = []
         if len(qk) >= 3:
-            phonetic = [c for c, f in self.entries if phonetic_key(f) == qk and len(phonetic_key(f)) >= 3]
-        spelled = [self.canon_of.get(s, s) for s in difflib.get_close_matches(name, self.forms, n=3, cutoff=0.5)]
+            phonetic = [
+                c
+                for c, f in self.entries
+                if phonetic_key(f) == qk and len(phonetic_key(f)) >= 3
+            ]
+        spelled = [
+            self.canon_of.get(s, s)
+            for s in difflib.get_close_matches(name, self.forms, n=3, cutoff=0.5)
+        ]
         n = len(self.entries) * 2
         self.stats["queries"] += 1
         self.stats["scored"] += n
         self.stats["last_scored"] = n
         return list(dict.fromkeys(phonetic + spelled))[:limit]
 
+
 # ---------------------------------------------------------------- evaluation
+
 
 def _score(results: list[tuple[str | None, list[str]]]) -> dict:
     tp = fp = fn = 0
@@ -179,11 +291,17 @@ def _score(results: list[tuple[str | None, list[str]]]) -> dict:
             fp += sum(1 for g in got if g != gold)
     p = tp / (tp + fp) if tp + fp else 0.0
     r = tp / (tp + fn) if tp + fn else 0.0
-    return {"precision": round(p, 3), "recall": round(r, 3),
-            "f1": round(2 * p * r / (p + r), 3) if p + r else 0.0, "n": len(results)}
+    return {
+        "precision": round(p, 3),
+        "recall": round(r, 3),
+        "f1": round(2 * p * r / (p + r), 3) if p + r else 0.0,
+        "n": len(results),
+    }
 
 
-def build_queries(entries, seed: int = 20260925) -> dict[str, list[tuple[str | None, str]]]:
+def build_queries(
+    entries, seed: int = 20260925
+) -> dict[str, list[tuple[str | None, str]]]:
     rng = random.Random(seed)
     by_family: dict[str, list[tuple[str | None, str]]] = {f: [] for f in FAMILIES}
     for canonical, form in entries:
@@ -205,7 +323,9 @@ def evaluate(entries, drop_words=TITLES) -> dict:
         if fam != "negative":
             mis_new += new
             mis_old += old
-    neg_new = [(g, [s.canonical for s in gaz.suggest(q)]) for g, q in queries["negative"]]
+    neg_new = [
+        (g, [s.canonical for s in gaz.suggest(q)]) for g, q in queries["negative"]
+    ]
     neg_old = [(g, scan.suggest(q)) for g, q in queries["negative"]]
     report["mispronunciation_bucket"] = {"new": _score(mis_new), "old": _score(mis_old)}
     report["negatives"] = {
@@ -215,18 +335,49 @@ def evaluate(entries, drop_words=TITLES) -> dict:
         "new_queries_with_a_suggestion": sum(bool(g) for _x, g in neg_new),
         "old_queries_with_a_suggestion": sum(bool(g) for _x, g in neg_old),
     }
+
     # Like for like: BOTH methods limited to one suggestion (the caller is asked about one name first). This is
     # the comparison that does not depend on how many names each method is willing to list.
     def one(fn):
-        rows = [(g, fn(q)) for fam, qs in queries.items() if fam != "negative" for g, q in qs]
+        rows = [
+            (g, fn(q))
+            for fam, qs in queries.items()
+            if fam != "negative"
+            for g, q in qs
+        ]
         return _score(rows)
-    report["top1"] = {"new": one(lambda q: [s.canonical for s in gaz.suggest(q, 1)]),
-                      "old": one(lambda q: scan.suggest(q, 1))}
+
+    report["top1"] = {
+        "new": one(lambda q: [s.canonical for s in gaz.suggest(q, 1)]),
+        "old": one(lambda q: scan.suggest(q, 1)),
+    }
     return report
+
 
 # --------------------------------------------------------------------- scale
 
-_ONSETS = ["b", "bh", "ch", "d", "dh", "g", "gh", "j", "k", "kh", "l", "m", "n", "p", "r", "s", "sh", "t", "th", ""]
+_ONSETS = [
+    "b",
+    "bh",
+    "ch",
+    "d",
+    "dh",
+    "g",
+    "gh",
+    "j",
+    "k",
+    "kh",
+    "l",
+    "m",
+    "n",
+    "p",
+    "r",
+    "s",
+    "sh",
+    "t",
+    "th",
+    "",
+]
 _VOWELS = ["a", "aa", "i", "ee", "u", "oo", "e", "o", "ai", "au"]
 _CODAS = ["", "", "n", "r", "l", "m", "s", "t", "k", "y"]
 
@@ -236,15 +387,19 @@ def synthetic_catalogue(n: int, seed: int = 7) -> list[tuple[str, str]]:
     rng = random.Random(seed)
     seen, out = set(), []
     while len(out) < n:
-        name = "".join(rng.choice(_ONSETS) + rng.choice(_VOWELS) + rng.choice(_CODAS)
-                       for _ in range(rng.choice((2, 3, 3, 4))))
+        name = "".join(
+            rng.choice(_ONSETS) + rng.choice(_VOWELS) + rng.choice(_CODAS)
+            for _ in range(rng.choice((2, 3, 3, 4)))
+        )
         if name not in seen:
             seen.add(name)
             out.append((name.title(), name))
     return out
 
 
-def scale_probe(sizes=(74, 1000, 10000, 50000), queries_per_size: int = 60, seed: int = 11) -> list[dict]:
+def scale_probe(
+    sizes=(74, 1000, 10000, 50000), queries_per_size: int = 60, seed: int = 11
+) -> list[dict]:
     rng = random.Random(seed)
     rows = []
     for n in sizes:
@@ -258,19 +413,35 @@ def scale_probe(sizes=(74, 1000, 10000, 50000), queries_per_size: int = 60, seed
         for _c, f in sample:
             vs = [v for vv in variants(f, rng).values() for v in vv]
             qs.append(rng.choice(vs) if vs else f)
-        def run(fn):
+
+        def run(fn, qs=qs):
             times = []
             for q in qs:
                 t = time.perf_counter()
                 fn(q)
                 times.append((time.perf_counter() - t) * 1000)
             times.sort()
-            return {"mean_ms": round(sum(times) / len(times), 3), "p95_ms": round(times[int(len(times) * 0.95) - 1], 3)}
+            return {
+                "mean_ms": round(sum(times) / len(times), 3),
+                "p95_ms": round(times[int(len(times) * 0.95) - 1], 3),
+            }
+
         new = run(gaz.suggest)
-        old = run(scan.suggest) if n <= 10000 else None      # the scan at 50k rows is minutes; extrapolated below
-        rows.append({"forms": n, "build_ms": round(build_ms, 1), "new": new, "old": old,
-                     "new_scored_per_query": round(gaz.stats["scored"] / max(1, gaz.stats["queries"]), 1),
-                     "old_scored_per_query": n})
+        old = (
+            run(scan.suggest) if n <= 10000 else None
+        )  # the scan at 50k rows is minutes; extrapolated below
+        rows.append(
+            {
+                "forms": n,
+                "build_ms": round(build_ms, 1),
+                "new": new,
+                "old": old,
+                "new_scored_per_query": round(
+                    gaz.stats["scored"] / max(1, gaz.stats["queries"]), 1
+                ),
+                "old_scored_per_query": n,
+            }
+        )
     return rows
 
 
@@ -278,26 +449,41 @@ def _print(report: dict) -> None:
     print(f"\nForms indexed: {report['forms']}")
     hdr = f"{'bucket':22s}{'old P':>8}{'old R':>8}{'old F1':>8}   {'new P':>8}{'new R':>8}{'new F1':>8}   n"
     print(hdr)
-    rows = list(report["families"].items()) + [("MISPRONUNCIATION (all)", report["mispronunciation_bucket"])]
+    rows = list(report["families"].items()) + [
+        ("MISPRONUNCIATION (all)", report["mispronunciation_bucket"])
+    ]
     for name, r in rows:
         if name == "negative":
             continue
         o, n = r["old"], r["new"]
-        print(f"{name:22s}{o['precision']:8.3f}{o['recall']:8.3f}{o['f1']:8.3f}   "
-              f"{n['precision']:8.3f}{n['recall']:8.3f}{n['f1']:8.3f}   {n['n']}")
+        print(
+            f"{name:22s}{o['precision']:8.3f}{o['recall']:8.3f}{o['f1']:8.3f}   "
+            f"{n['precision']:8.3f}{n['recall']:8.3f}{n['f1']:8.3f}   {n['n']}"
+        )
     o, n = report["top1"]["old"], report["top1"]["new"]
-    print(f"\nONE suggestion each  old P {o['precision']:.3f} R {o['recall']:.3f} F1 {o['f1']:.3f}   "
-          f"new P {n['precision']:.3f} R {n['recall']:.3f} F1 {n['f1']:.3f}")
+    print(
+        f"\nONE suggestion each  old P {o['precision']:.3f} R {o['recall']:.3f} F1 {o['f1']:.3f}   "
+        f"new P {n['precision']:.3f} R {n['recall']:.3f} F1 {n['f1']:.3f}"
+    )
     ng = report["negatives"]
-    print(f"negatives ({ng['queries']} queries that should suggest nothing): suggestions listed "
-          f"old {ng['old_false_suggestions']} (on {ng['old_queries_with_a_suggestion']} queries), "
-          f"new {ng['new_false_suggestions']} (on {ng['new_queries_with_a_suggestion']})")
-    print("\nSynthetic variants generated by rules; a regression harness, not a measurement of real callers.")
+    print(
+        f"negatives ({ng['queries']} queries that should suggest nothing): suggestions listed "
+        f"old {ng['old_false_suggestions']} (on {ng['old_queries_with_a_suggestion']} queries), "
+        f"new {ng['new_false_suggestions']} (on {ng['new_queries_with_a_suggestion']})"
+    )
+    print(
+        "\nSynthetic variants generated by rules; a regression harness, not a measurement of real callers."
+    )
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--catalogue", help="a saved /api/v1/catalogue JSON; default is the seeded clinic data")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--catalogue",
+        help="a saved /api/v1/catalogue JSON; default is the seeded clinic data",
+    )
     ap.add_argument("--sizes", default="74,1000,10000,50000")
     ap.add_argument("--no-scale", action="store_true")
     ap.add_argument("--json", action="store_true")
@@ -308,6 +494,7 @@ def main(argv=None) -> int:
     else:
         sys.path.append(os.path.join(ROOT, "tests"))
         from _clinic_app import clinic_app
+
         with clinic_app(sample_patients=False) as (_app, client):
             cat = client.get("/api/v1/catalogue").json()
     doctors, tests = entries_from_catalogue(cat)
@@ -317,14 +504,20 @@ def main(argv=None) -> int:
         rep = evaluate(entries)
         _print(rep)
         out[label] = rep
-    scale = [] if args.no_scale else scale_probe(tuple(int(s) for s in args.sizes.split(",")))
+    scale = (
+        []
+        if args.no_scale
+        else scale_probe(tuple(int(s) for s in args.sizes.split(",")))
+    )
     if scale:
         print("\n===== scale (synthetic names) =====")
         for r in scale:
             o = f"{r['old']['mean_ms']}/{r['old']['p95_ms']}" if r["old"] else "not run"
-            print(f"  {r['forms']:>6} forms  build {r['build_ms']:>8.1f} ms   scan mean/p95 {o:>14} ms   "
-                  f"index mean/p95 {r['new']['mean_ms']}/{r['new']['p95_ms']} ms   "
-                  f"scored/query: scan {r['old_scored_per_query']}, index {r['new_scored_per_query']}")
+            print(
+                f"  {r['forms']:>6} forms  build {r['build_ms']:>8.1f} ms   scan mean/p95 {o:>14} ms   "
+                f"index mean/p95 {r['new']['mean_ms']}/{r['new']['p95_ms']} ms   "
+                f"scored/query: scan {r['old_scored_per_query']}, index {r['new_scored_per_query']}"
+            )
     out["scale"] = scale
     if args.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))

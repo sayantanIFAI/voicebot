@@ -26,18 +26,25 @@ already validated against the closed intent set (agent/llm.py); this module neve
 still decided by agent/booking_flow.classify_yes_no, deterministically, and anything else at the confirmation step
 is treated as a fresh turn rather than a guess at yes or no.
 """
+
 from __future__ import annotations
 
 from agent.booking_flow import BookingState
 from agent.enquiry_followup import ENQUIRY_INTENTS
 
-BOOKING_ACTIONS = ("book_appointment", "book_test", "reschedule_appointment", "cancel_appointment", "add_test_booking")
+BOOKING_ACTIONS = (
+    "book_appointment",
+    "book_test",
+    "reschedule_appointment",
+    "cancel_appointment",
+    "add_test_booking",
+)
 
 # What a turn is, relative to the task in progress.
-NO_TASK = "none"                  # nothing in progress
-CONTINUE = "continue"             # the same task, a correction, or a bare answer to what was asked
-TOPIC_CHANGE = "topic_change"     # an enquiry or small talk: answer it, keep the task
-NEW_TASK = "new_task"             # a different booking action: suspend the task, start the new one
+NO_TASK = "none"  # nothing in progress
+CONTINUE = "continue"  # the same task, a correction, or a bare answer to what was asked
+TOPIC_CHANGE = "topic_change"  # an enquiry or small talk: answer it, keep the task
+NEW_TASK = "new_task"  # a different booking action: suspend the task, start the new one
 
 
 def classify(booking: BookingState | None, intent: str) -> str:
@@ -47,9 +54,13 @@ def classify(booking: BookingState | None, intent: str) -> str:
         return CONTINUE
     if intent in BOOKING_ACTIONS:
         return NEW_TASK
-    if intent in ENQUIRY_INTENTS or intent in ("smalltalk", "lookup_booking", "resend_confirmation"):
+    if intent in ENQUIRY_INTENTS or intent in (
+        "smalltalk",
+        "lookup_booking",
+        "resend_confirmation",
+    ):
         return TOPIC_CHANGE
-    return CONTINUE               # an intent this module does not know: leave the task alone, decide nothing
+    return CONTINUE  # an intent this module does not know: leave the task alone, decide nothing
 
 
 def worth_suspending(booking: BookingState | None) -> bool:
@@ -57,34 +68,67 @@ def worth_suspending(booking: BookingState | None) -> bool:
     confirmation is."""
     if booking is None or booking.stage == "done" or booking.is_stale():
         return False
-    return bool(booking.slots) or bool(booking.test_names) or booking.hold_token is not None \
+    return (
+        bool(booking.slots)
+        or bool(booking.test_names)
+        or booking.hold_token is not None
         or booking.stage in ("confirming", "awaiting_charge_confirm")
+    )
 
 
 def resume_allowed(questions_per_turn: int, reply_so_far: str) -> bool:
     """A resume line is a question. Not when the policy allows none, and not on top of a reply that already asks."""
-    return questions_per_turn >= 1 and "?" not in reply_so_far and "؟" not in reply_so_far
+    return (
+        questions_per_turn >= 1 and "?" not in reply_so_far and "؟" not in reply_so_far
+    )
 
 
 # ---------------------------------------------------------------------------------------------------- wording
 
-_BACK = {"en": "Coming back to your booking.", "hi": "अब आपकी बुकिंग पर आते हैं।", "bn": "এবার আপনার বুকিংয়ের কথায় আসি।"}
-_CONFIRM_Q = {"en": "Shall I confirm it?", "hi": "क्या मैं इसे कन्फ़र्म कर दूँ?", "bn": "কনফার্ম করে দেব?"}
+_BACK = {
+    "en": "Coming back to your booking.",
+    "hi": "अब आपकी बुकिंग पर आते हैं।",
+    "bn": "এবার আপনার বুকিংয়ের কথায় আসি।",
+}
+_CONFIRM_Q = {
+    "en": "Shall I confirm it?",
+    "hi": "क्या मैं इसे कन्फ़र्म कर दूँ?",
+    "bn": "কনফার্ম করে দেব?",
+}
 _WHAT = {
-    "book_appointment": {"en": "booking an appointment", "hi": "अपॉइंटमेंट बुक करने के बारे में",
-                         "bn": "অ্যাপয়েন্টমেন্ট বুক করা নিয়ে"},
-    "book_test": {"en": "booking a test", "hi": "टेस्ट बुक करने के बारे में", "bn": "টেস্ট বুক করা নিয়ে"},
-    "reschedule_appointment": {"en": "changing an appointment", "hi": "अपॉइंटमेंट का समय बदलने के बारे में",
-                               "bn": "অ্যাপয়েন্টমেন্টের সময় বদল নিয়ে"},
-    "cancel_appointment": {"en": "cancelling an appointment", "hi": "अपॉइंटमेंट रद्द करने के बारे में",
-                           "bn": "অ্যাপয়েন্টমেন্ট বাতিল করা নিয়ে"},
-    "add_test_booking": {"en": "adding a test", "hi": "टेस्ट जोड़ने के बारे में", "bn": "টেস্ট যোগ করা নিয়ে"},
+    "book_appointment": {
+        "en": "booking an appointment",
+        "hi": "अपॉइंटमेंट बुक करने के बारे में",
+        "bn": "অ্যাপয়েন্টমেন্ট বুক করা নিয়ে",
+    },
+    "book_test": {
+        "en": "booking a test",
+        "hi": "टेस्ट बुक करने के बारे में",
+        "bn": "টেস্ট বুক করা নিয়ে",
+    },
+    "reschedule_appointment": {
+        "en": "changing an appointment",
+        "hi": "अपॉइंटमेंट का समय बदलने के बारे में",
+        "bn": "অ্যাপয়েন্টমেন্টের সময় বদল নিয়ে",
+    },
+    "cancel_appointment": {
+        "en": "cancelling an appointment",
+        "hi": "अपॉइंटमेंट रद्द करने के बारे में",
+        "bn": "অ্যাপয়েন্টমেন্ট বাতিল করা নিয়ে",
+    },
+    "add_test_booking": {
+        "en": "adding a test",
+        "hi": "टेस्ट जोड़ने के बारे में",
+        "bn": "টেস্ট যোগ করা নিয়ে",
+    },
 }
 # Each phrase is a noun phrase that reads correctly after "talking about" in its language (an earlier draft used
 # "you were doing <gerund>", which came out as "doing changing an appointment").
-_OFFER = {"en": "Earlier we were talking about {what}. Shall I go back to it?",
-          "hi": "पहले हम {what} बात कर रहे थे। क्या मैं उसी पर वापस चलूँ?",
-          "bn": "আগে আমরা {what} কথা বলছিলাম। সেটায় ফিরে যাব?"}
+_OFFER = {
+    "en": "Earlier we were talking about {what}. Shall I go back to it?",
+    "hi": "पहले हम {what} बात कर रहे थे। क्या मैं उसी पर वापस चलूँ?",
+    "bn": "আগে আমরা {what} কথা বলছিলাম। সেটায় ফিরে যাব?",
+}
 
 
 def resume_line(next_question: str, lang: str) -> str:

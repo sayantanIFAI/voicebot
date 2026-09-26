@@ -17,6 +17,7 @@ Pure and deterministic: the same signals always give the same score, in the same
 conversation goes in or comes out -- only counts and flags -- so the score can be stored with the call record without
 adding anything personal to it.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -28,29 +29,41 @@ BASE_SCORE = 80
 # A reply slower than this to the first audio counts as a slow one (seconds). REASONED: the owner's target is 0.5 s; a
 # caller notices past about a second and a half.
 SLOW_REPLY_S = 1.5
-MIN_TURNS_TO_SCORE = 2                       # a call with fewer caller turns says too little to score
+MIN_TURNS_TO_SCORE = 2  # a call with fewer caller turns says too little to score
 
 # (points per occurrence, the most this signal can take away or add in total). Negative = the call went worse.
 _COUNTED: dict[str, tuple[int, int]] = {
-    "reasks":            (-6, -24),    # "I didn't hear / understand that" -- the caller had to repeat themselves
-    "system_failures":   (-10, -30),   # the bot could only say "a problem, please wait" / "I can't check that"
-    "abuse_turns":       (-12, -36),   # the caller swore at the bot
-    "silence_prompts":   (-3, -6),     # the caller went quiet long enough to be asked if they were still there
-    "language_flips":    (-5, -15),    # the bot changed the call's language and had to be corrected
-    "barge_ins":         (-3, -12),    # the caller talked over the bot
-    "slow_replies":      (-3, -15),    # a reply took longer than SLOW_REPLY_S
-    "corrections":       (-4, -12),    # "no, that's wrong" at a read-back
-    "answers_given":     (6, 12),      # a question the caller asked was answered
+    "reasks": (
+        -6,
+        -24,
+    ),  # "I didn't hear / understand that" -- the caller had to repeat themselves
+    "system_failures": (
+        -10,
+        -30,
+    ),  # the bot could only say "a problem, please wait" / "I can't check that"
+    "abuse_turns": (-12, -36),  # the caller swore at the bot
+    "silence_prompts": (
+        -3,
+        -6,
+    ),  # the caller went quiet long enough to be asked if they were still there
+    "language_flips": (
+        -5,
+        -15,
+    ),  # the bot changed the call's language and had to be corrected
+    "barge_ins": (-3, -12),  # the caller talked over the bot
+    "slow_replies": (-3, -15),  # a reply took longer than SLOW_REPLY_S
+    "corrections": (-4, -12),  # "no, that's wrong" at a read-back
+    "answers_given": (6, 12),  # a question the caller asked was answered
 }
 # (points, applies-once) flags
 _FLAGS: dict[str, int] = {
-    "asked_for_person":   -15,         # the caller asked for a human
-    "system_handoff":     -10,         # the bot itself had to hand the call to a person
-    "silence_timeout":    -15,         # the call was ended because the caller said nothing
-    "left_mid_task":      -15,         # a booking was still half-done at hang-up
-    "task_completed":     12,          # a booking / cancellation / change was completed
-    "caller_thanked":     6,           # the caller said thank you
-    "ended_by_caller":    4,           # the caller ended it politely, in their own words
+    "asked_for_person": -15,  # the caller asked for a human
+    "system_handoff": -10,  # the bot itself had to hand the call to a person
+    "silence_timeout": -15,  # the call was ended because the caller said nothing
+    "left_mid_task": -15,  # a booking was still half-done at hang-up
+    "task_completed": 12,  # a booking / cancellation / change was completed
+    "caller_thanked": 6,  # the caller said thank you
+    "ended_by_caller": 4,  # the caller ended it politely, in their own words
 }
 BANDS = ((80, "happy"), (60, "neutral"), (40, "unhappy"), (0, "very_unhappy"))
 
@@ -58,6 +71,7 @@ BANDS = ((80, "happy"), (60, "neutral"), (40, "unhappy"), (0, "very_unhappy"))
 @dataclass
 class CallSignals:
     """Counters and flags for one call. Cheap to update from anywhere in a turn (see main._note)."""
+
     turns: int = 0
     reasks: int = 0
     system_failures: int = 0
@@ -76,7 +90,9 @@ class CallSignals:
     caller_thanked: bool = False
     ended_by_caller: bool = False
     emergency: bool = False
-    reply_ms: list = field(default_factory=list)          # first-audio time of each turn, milliseconds
+    reply_ms: list = field(
+        default_factory=list
+    )  # first-audio time of each turn, milliseconds
 
     def note(self, name: str, n: int = 1) -> None:
         """Count (int fields) or raise (bool fields) a signal; an unknown name is a programming error, not ignored."""
@@ -86,7 +102,7 @@ class CallSignals:
         elif isinstance(cur, int):
             setattr(self, name, cur + n)
         else:
-            raise AttributeError(name)
+            raise TypeError(f"signal {name!r} is not a counter or a flag")
 
     def note_reply(self, seconds: float) -> None:
         self.reply_ms.append(int(seconds * 1000))
@@ -96,10 +112,12 @@ class CallSignals:
 
 @dataclass(frozen=True)
 class ScoreResult:
-    score: int | None                       # 0-100, or None when the call cannot be scored (see `reason`)
-    band: str                               # happy | neutral | unhappy | very_unhappy | unscored
-    reasons: tuple[tuple[str, int], ...]    # (signal, points) for every signal that moved the score, biggest first
-    reason: str = ""                        # why it is unscored
+    score: int | None  # 0-100, or None when the call cannot be scored (see `reason`)
+    band: str  # happy | neutral | unhappy | very_unhappy | unscored
+    reasons: tuple[
+        tuple[str, int], ...
+    ]  # (signal, points) for every signal that moved the score, biggest first
+    reason: str = ""  # why it is unscored
     version: str = SCORE_MODEL_VERSION
     basis: str = "behaviour"
 
@@ -108,8 +126,15 @@ class ScoreResult:
         d = dataclasses.asdict(signals)
         replies = d.pop("reply_ms")
         d["median_reply_ms"] = sorted(replies)[len(replies) // 2] if replies else None
-        return {"score": self.score, "band": self.band, "reasons": [list(r) for r in self.reasons],
-                "reason": self.reason, "version": self.version, "basis": self.basis, "signals": d}
+        return {
+            "score": self.score,
+            "band": self.band,
+            "reasons": [list(r) for r in self.reasons],
+            "reason": self.reason,
+            "version": self.version,
+            "basis": self.basis,
+            "signals": d,
+        }
 
 
 def band_for(score: int) -> str:
@@ -118,7 +143,9 @@ def band_for(score: int) -> str:
 
 def score_call(s: CallSignals) -> ScoreResult:
     if s.emergency:
-        return ScoreResult(None, "unscored", (), reason="emergency")      # a satisfaction number means nothing here
+        return ScoreResult(
+            None, "unscored", (), reason="emergency"
+        )  # a satisfaction number means nothing here
     if s.turns < MIN_TURNS_TO_SCORE:
         return ScoreResult(None, "unscored", (), reason="too_short")
     moved: list[tuple[str, int]] = []

@@ -12,6 +12,7 @@ A specimen is a sample a person gives; anything else says nothing about a sample
 English replies already did. The names below are everyday words in each language and are for a native reviewer to
 confirm; the sentence structure is one clause with no colon.
 """
+
 from __future__ import annotations
 
 _SPECIMENS = {

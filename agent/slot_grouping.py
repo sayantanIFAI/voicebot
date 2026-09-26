@@ -24,12 +24,16 @@ REASONED, NOT MEASURED: which fields belong together is a judgement about what a
 time; their own name and number), not a measurement; "median turns to complete a booking falls" is shown on
 scripted callers in tests/test_slot_grouping.py, not on real ones.
 """
+
 from __future__ import annotations
 
 # Fields asked together, in the order they are asked. A group is only ever asked from the front: the first missing
 # field decides which group is in play, and only that group's still-missing fields are asked.
 GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
-    "book_appointment": (("doctor_name", "date", "time_slot"), ("patient_name", "phone")),
+    "book_appointment": (
+        ("doctor_name", "date", "time_slot"),
+        ("patient_name", "phone"),
+    ),
     "book_test": (("test_names", "date"), ("patient_name", "phone")),
 }
 
@@ -38,24 +42,71 @@ MAX_FIELDS_PER_QUESTION = 3
 
 # (frame, {field: fragment}, and, comma) per action-group-language. `{}` in the frame is the joined fragments.
 _FRAMES: dict[tuple[str, str], dict[str, tuple]] = {
-    ("schedule", "en"): {"frame": "For the appointment, {}?", "and": " and ", "comma": ", ",
-                          "f": {"doctor_name": "which doctor", "date": "which day", "time_slot": "what time"}},
-    ("schedule", "hi"): {"frame": "अपॉइंटमेंट के लिए {} बताइए?", "and": " और ", "comma": ", ",
-                          "f": {"doctor_name": "कौन से डॉक्टर", "date": "कौन सा दिन", "time_slot": "कौन सा समय"}},
-    ("schedule", "bn"): {"frame": "অ্যাপয়েন্টমেন্টের জন্য {} বলবেন?", "and": " আর ", "comma": ", ",
-                          "f": {"doctor_name": "কোন ডাক্তার", "date": "কোন দিন", "time_slot": "কোন সময়"}},
-    ("tests", "en"): {"frame": "For the test booking, {}?", "and": " and ", "comma": ", ",
-                       "f": {"test_names": "which tests", "date": "which day"}},
-    ("tests", "hi"): {"frame": "टेस्ट बुकिंग के लिए {} बताइए?", "and": " और ", "comma": ", ",
-                       "f": {"test_names": "कौन से टेस्ट", "date": "कौन सा दिन"}},
-    ("tests", "bn"): {"frame": "টেস্ট বুকিংয়ের জন্য {} বলবেন?", "and": " আর ", "comma": ", ",
-                       "f": {"test_names": "কোন টেস্টগুলো", "date": "কোন দিন"}},
-    ("details", "en"): {"frame": "May I have {}?", "and": " and ", "comma": ", ",
-                         "f": {"patient_name": "the patient's name", "phone": "a phone number for the confirmation"}},
-    ("details", "hi"): {"frame": "{} बताइए?", "and": " और ", "comma": ", ",
-                         "f": {"patient_name": "मरीज़ का नाम", "phone": "कन्फ़र्मेशन के लिए एक फ़ोन नंबर"}},
-    ("details", "bn"): {"frame": "{} বলবেন?", "and": " আর ", "comma": ", ",
-                         "f": {"patient_name": "রোগীর নাম", "phone": "কনফার্মেশনের জন্য একটা ফোন নম্বর"}},
+    ("schedule", "en"): {
+        "frame": "For the appointment, {}?",
+        "and": " and ",
+        "comma": ", ",
+        "f": {
+            "doctor_name": "which doctor",
+            "date": "which day",
+            "time_slot": "what time",
+        },
+    },
+    ("schedule", "hi"): {
+        "frame": "अपॉइंटमेंट के लिए {} बताइए?",
+        "and": " और ",
+        "comma": ", ",
+        "f": {
+            "doctor_name": "कौन से डॉक्टर",
+            "date": "कौन सा दिन",
+            "time_slot": "कौन सा समय",
+        },
+    },
+    ("schedule", "bn"): {
+        "frame": "অ্যাপয়েন্টমেন্টের জন্য {} বলবেন?",
+        "and": " আর ",
+        "comma": ", ",
+        "f": {"doctor_name": "কোন ডাক্তার", "date": "কোন দিন", "time_slot": "কোন সময়"},
+    },
+    ("tests", "en"): {
+        "frame": "For the test booking, {}?",
+        "and": " and ",
+        "comma": ", ",
+        "f": {"test_names": "which tests", "date": "which day"},
+    },
+    ("tests", "hi"): {
+        "frame": "टेस्ट बुकिंग के लिए {} बताइए?",
+        "and": " और ",
+        "comma": ", ",
+        "f": {"test_names": "कौन से टेस्ट", "date": "कौन सा दिन"},
+    },
+    ("tests", "bn"): {
+        "frame": "টেস্ট বুকিংয়ের জন্য {} বলবেন?",
+        "and": " আর ",
+        "comma": ", ",
+        "f": {"test_names": "কোন টেস্টগুলো", "date": "কোন দিন"},
+    },
+    ("details", "en"): {
+        "frame": "May I have {}?",
+        "and": " and ",
+        "comma": ", ",
+        "f": {
+            "patient_name": "the patient's name",
+            "phone": "a phone number for the confirmation",
+        },
+    },
+    ("details", "hi"): {
+        "frame": "{} बताइए?",
+        "and": " और ",
+        "comma": ", ",
+        "f": {"patient_name": "मरीज़ का नाम", "phone": "कन्फ़र्मेशन के लिए एक फ़ोन नंबर"},
+    },
+    ("details", "bn"): {
+        "frame": "{} বলবেন?",
+        "and": " আর ",
+        "comma": ", ",
+        "f": {"patient_name": "রোগীর নাম", "phone": "কনফার্মেশনের জন্য একটা ফোন নম্বর"},
+    },
 }
 
 
@@ -69,14 +120,19 @@ def _kind(fields: tuple[str, ...]) -> str | None:
     return None
 
 
-def next_fields(action: str, missing: list[str], questions_per_turn: int, asked: set[str] | frozenset = frozenset()) -> list[str]:
+def next_fields(
+    action: str,
+    missing: list[str],
+    questions_per_turn: int,
+    asked: set[str] | frozenset = frozenset(),
+) -> list[str]:
     """The fields the next question asks for: one, or a group. `missing` is what is still needed, in the order
     booking_flow.missing_required lists it. Always at least one field when anything is missing."""
     if not missing:
         return []
     first = missing[0]
     if questions_per_turn <= 1:
-        return [first]                                   # the caller-state table always wins
+        return [first]  # the caller-state table always wins
     for group in GROUPS.get(action, ()):
         if first in group:
             wanted = [f for f in group if f in missing][:MAX_FIELDS_PER_QUESTION]
@@ -96,5 +152,9 @@ def grouped_prompt(fields: list[str], lang: str) -> str | None:
     if table is None or any(f not in table["f"] for f in fields):
         return None
     parts = [table["f"][f] for f in fields]
-    joined = parts[0] if len(parts) == 1 else table["comma"].join(parts[:-1]) + table["and"] + parts[-1]
+    joined = (
+        parts[0]
+        if len(parts) == 1
+        else table["comma"].join(parts[:-1]) + table["and"] + parts[-1]
+    )
     return table["frame"].format(joined)
