@@ -69,3 +69,24 @@ touched: reformatting them all is one large, mechanical diff that should be its 
 
 Honest summary: the design rule that matters most (the model cannot state a fact, move money or touch data) is enforced in code and tests.
 Typing, schemas at every boundary, CI, dependency locking, supply-chain controls and file structure are behind the standard, and the list above closes them.
+
+
+---
+
+## Status after the follow-up work (2026-09-26, later the same day)
+
+| Item from the fix plan | Now |
+|---|---|
+| `pyproject.toml`, ruff and mypy configured | Done. Ruff rules are a modest set (pyflakes, import order, bugbear, pyupgrade); the only ignores are B008 (FastAPI `Depends`) and B905, plus the test/tool `sys.path` idiom (E402, F811, one-line setups), each with its reason in the file. |
+| Boundary checker | Fixed to look at real imports (`import openai`, `from anthropic import ...`, `importlib.import_module("openai")`), not the word in a comment. Tested both ways (`tests/test_check_boundaries.py`). |
+| One-time reformat of the old files | Done as its own mechanical commit: `ruff format` and safe `ruff check --fix` over `agent`, `tools`, `clinic-api`, `tests`, `scripts`, then `main.py`. `ruff format --check` and `ruff check` now pass on all 222 files. The full suite (1,965 tests then) passed unchanged in a clean environment. |
+| Strict typing | Seven modules pass mypy with `disallow_untyped_defs` and friends (`call_score`, `call_end`, `abuse`, `topic_flow`, `slot_grouping`, `intent_schema`, `api_models`). The rest of `agent/` is checked non-strictly and reports 42 errors (down from 86): informational in CI until worked down. |
+| Property-based tests | Added (Hypothesis): the call score, the end-of-call and abuse matching, the idempotency fingerprint, the tuple/list scanner, cue removal, and the model-output parser. On its first run Hypothesis found two real defects, both fixed: cue removal was not stable (`how price much`), and a model answer whose `intent` was a list crashed the old validator (unhashable). |
+| Pydantic for the model's output | `agent/intent_schema.py`: `IntentExtraction` and `Slots` replace the hand-written dict checks. Every slot is typed and normalised, an invented FAQ topic is nulled, only smalltalk may carry a model-written reply, a second question must be an enquiry intent with slots. The old `_validate` and `_normalize_age` remain as thin wrappers, so nothing else changed. |
+| Pydantic for the API's answers | `agent/api_models.py`: every read and write the agent makes is checked where it enters (`found` / `success` / `status` / `matched` / `conflict` / `verified` must be real booleans, prices real numbers, slot lists lists of strings). A malformed answer becomes a tool failure, never a spoken fact. The new tests found a third defect: a non-JSON body (a proxy error page) raised `JSONDecodeError` instead of the tool-failure error. Fixed for every client method. |
+| CI | `.github/workflows/ci.yml`: static checks, the suite in 8 shards, and an informational dependency audit. Validated as YAML and every command run locally; **never run on GitHub**, so its first run is its real test. |
+| Dependency audit | `pip-audit` (run today): 29 known vulnerabilities in the pins: 28 in `torch==2.1.0`, 1 in `fastapi==0.104.1`; `uvicorn[standard]` is unpinned. Not changed: the speech stack on the pod depends on those versions; upgrading needs a pod test. |
+
+Still open from the plan: scoping the service token per route group, a circuit breaker and jittered backoff around the model call,
+a versioned extraction prompt logged per call, the golden-set and adversarial release suites (Epic E24), splitting `main.py`,
+OpenTelemetry, a lockfile, and a canary/rollback path for the pod.

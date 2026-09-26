@@ -216,3 +216,20 @@ It is a PROXY from behaviour, not what the caller felt. Every weight is REASONED
 one-question survey on a sample of good calls and refit the weights to those answers; until then read it as a ranking of calls.
 Pod-only to check: that the numbers look sane on real calls (a smooth call should land in `happy`, a call with swearing or a
 hand-off in `unhappy`), that `slow_replies` is not inflated by the hold-line, and the per-language means.
+
+
+---
+
+## Intent-model latency: measure first, then switch (2026-09-26)
+
+Model turns cost about 1.3-1.6 s and nobody knew whether that was reading the prompt or writing the answer. Now every model turn logs
+one line (`intent model: N prompt tokens read in X ms, M tokens written in Y ms (Z tok/s) ...`, from Ollama's own timings).
+
+Two switches exist, both OFF by default, so nothing changes until they are tried on the pod:
+* `INTENT_PROMPT_VARIANT=fast`: asks for a compact answer (only the slots that have a value, not sixteen "null"s) and keeps the language and the date at the
+  END of the prompt, so the ~6,600 characters of instructions are identical on every call and Ollama can reuse its cached copy.
+* `OLLAMA_NUM_CTX=4096`: a 4,096-token context instead of the model's 32,768 (the prompt is about 2,000 tokens).
+
+Procedure on the pod: read the timing log for a few real calls; run `python tools/intent_ab.py --variants classic,fast --num-ctx 0,4096 --repeats 5`;
+switch on `fast` (and the smaller context) ONLY if it is no less accurate. The 28 sentences in that tool are a smoke test, not the golden set.
+Not done, and needs that golden set first: a smaller model (Qwen2.5 3B/1.5B) or speculative decoding.

@@ -18,6 +18,23 @@ import os
 import uuid
 
 import httpx
+from pydantic import BaseModel
+
+from agent.api_models import (
+    ConflictAnswer,
+    DoctorAnswer,
+    FaqAnswer,
+    FindAnswer,
+    FoundAnswer,
+    IdentifyAnswer,
+    LookupAnswer,
+    PrepAnswer,
+    RouteAnswer,
+    SuccessAnswer,
+    TestAnswer,
+    VerifyAnswer,
+    validated,
+)
 
 DEFAULT_TIMEOUT_S = 4.0  # a phone caller will not wait much longer than this per lookup
 
@@ -47,8 +64,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/tests/search", params={"name": test_name})
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(TestAnswer, r.json(), "get_test_rate")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_test_rate({test_name!r}): {e}") from e
 
     # ---- Tool 2: GET /api/v1/doctors/availability?name=...&date=YYYY-MM-DD ----
@@ -68,8 +85,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/doctors/availability", params=params)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(DoctorAnswer, r.json(), "get_doctor_availability")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_doctor_availability({doctor_name!r}, {date!r}): {e}") from e
 
     # ---- Tool 4: GET /api/v1/tests/prep?name=... ----
@@ -81,8 +98,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/tests/prep", params={"name": test_name, "lang": lang})
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(PrepAnswer, r.json(), "get_test_prep")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_test_prep({test_name!r}): {e}") from e
 
     # ---- Tool 5: GET /api/v1/faq?topic=... ----
@@ -95,8 +112,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/faq", params={"topic": topic, "lang": lang})
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(FaqAnswer, r.json(), "get_faq")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_faq({topic!r}): {e}") from e
 
     # ---- Tool 3: POST /api/v1/appointments ----
@@ -119,8 +136,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.post("/api/v1/appointments", json=body)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "book_appointment")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"book_appointment({body!r}): {e}") from e
 
     # =========================================================================
@@ -134,8 +151,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.post("/api/v1/bookings/hold", json=body)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "hold_slot")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"hold_slot({body!r}): {e}") from e
 
     async def confirm_booking(
@@ -164,8 +181,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.post("/api/v1/bookings/confirm", json=body)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "confirm_booking")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"confirm_booking({body!r}): {e}") from e
 
     async def reschedule_appointment(self, confirmation_id: str, new_date: str, new_time_slot: str) -> dict:
@@ -173,8 +190,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.post("/api/v1/bookings/reschedule", json=body)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "reschedule_appointment")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"reschedule_appointment({body!r}): {e}") from e
 
     async def cancel_appointment(self, confirmation_id: str, confirm_charge: bool = False) -> dict:
@@ -182,8 +199,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.post("/api/v1/bookings/cancel", json=body)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "cancel_appointment")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"cancel_appointment({body!r}): {e}") from e
 
     async def lookup_bookings(
@@ -193,8 +210,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/bookings/lookup", params=params)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(LookupAnswer, r.json(), "lookup_bookings")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"lookup_bookings({params!r}): {e}") from e
 
     # KCD-084: senior mode persisted against the patient (a boolean only).
@@ -205,7 +222,7 @@ class ClinicToolsClient:
             )
             r.raise_for_status()
             return r.json()
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON
             raise ToolCallError(f"set_patient_senior: {e}") from e
 
     async def get_patient_senior(self, phone: str, caller_phone: str | None = None) -> bool:
@@ -216,7 +233,7 @@ class ClinicToolsClient:
             )
             r.raise_for_status()
             return bool(r.json().get("senior"))
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON
             raise ToolCallError(f"get_patient_senior: {e}") from e
 
     async def booking_conflict(self, phone: str, date: str, time_slot: str) -> dict:
@@ -224,8 +241,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/bookings/conflict", params=params)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(ConflictAnswer, r.json(), "booking_conflict")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"booking_conflict({params!r}): {e}") from e
 
     async def book_tests(
@@ -250,8 +267,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.post("/api/v1/bookings/tests", json=body)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "book_tests")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"book_tests({body!r}): {e}") from e
 
     async def add_test_to_booking(self, confirmation_id: str, test_name: str) -> dict:
@@ -259,16 +276,16 @@ class ClinicToolsClient:
         try:
             r = await self._client.post("/api/v1/bookings/add-test", json=body)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "add_test_to_booking")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"add_test_to_booking({body!r}): {e}") from e
 
     async def doctor_earliest(self, doctor_name: str) -> dict:
         try:
             r = await self._client.get("/api/v1/doctors/earliest", params={"name": doctor_name})
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(FoundAnswer, r.json(), "doctor_earliest")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"doctor_earliest({doctor_name!r}): {e}") from e
 
     async def route_department(self, query_text: str, lang: str = "bn") -> dict:
@@ -276,8 +293,8 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/departments/route", params=params)
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(RouteAnswer, r.json(), "route_department")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"route_department({params!r}): {e}") from e
 
     async def resend_confirmation(self, confirmation_id: str) -> dict:
@@ -288,8 +305,8 @@ class ClinicToolsClient:
                 headers={"Idempotency-Key": uuid.uuid4().hex},
             )
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(SuccessAnswer, r.json(), "resend_confirmation")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"resend_confirmation({confirmation_id!r}): {e}") from e
 
     async def save_draft_booking(self, caller_phone: str, call_id: str, slots_json: str) -> dict:
@@ -298,7 +315,7 @@ class ClinicToolsClient:
             r = await self._client.post("/api/v1/bookings/draft", json=body)
             r.raise_for_status()
             return r.json()
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON
             raise ToolCallError(f"save_draft_booking({body!r}): {e}") from e
 
     async def get_draft_booking(self, caller_phone: str) -> dict:
@@ -306,29 +323,29 @@ class ClinicToolsClient:
             r = await self._client.get("/api/v1/bookings/draft", params={"phone": caller_phone})
             r.raise_for_status()
             return r.json()
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON
             raise ToolCallError(f"get_draft_booking({caller_phone!r}): {e}") from e
 
     # ---- Epic E33: patient context and history (clinic-api/patient_context.py) ----
-    async def _get(self, path: str, params: dict, what: str) -> dict:
+    async def _get(self, path: str, params: dict, what: str, model: type[BaseModel] | None = None) -> dict:
         try:
             r = await self._client.get(path, params={k: v for k, v in params.items() if v is not None})
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(model, r.json(), what) if model else r.json()
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"{what}: {e}") from e
 
-    async def _post(self, path: str, body: dict, what: str) -> dict:
+    async def _post(self, path: str, body: dict, what: str, model: type[BaseModel] | None = None) -> dict:
         try:
             r = await self._client.post(path, json=body, headers={"Idempotency-Key": uuid.uuid4().hex})
             r.raise_for_status()
-            return r.json()
-        except httpx.HTTPError as e:
+            return validated(model, r.json(), what) if model else r.json()
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"{what}: {e}") from e
 
     async def identify_patient(self, phone: str) -> dict:
         """KCD-494: {"status": new|single|ambiguous, "record_exists", "count"} -- never a name."""
-        return await self._get("/api/v1/patients/identify", {"phone": phone}, "identify_patient")
+        return await self._get("/api/v1/patients/identify", {"phone": phone}, "identify_patient", IdentifyAnswer)
 
     async def resolve_patient(self, phone: str, name: str, age: int | None = None) -> dict:
         return await self._post(
@@ -376,11 +393,12 @@ class ClinicToolsClient:
             "/api/v1/patients/verify",
             {"call_id": call_id, "patient_ref": patient_ref, "caller_phone": caller_phone, **answers},
             "verify_patient",
+            VerifyAnswer,
         )
 
     async def find_patient(self, call_id: str, answers: dict) -> dict:
         """KCD-497: find a patient from a patient id, or a date of birth with a name. Opaque reference only."""
-        return await self._post("/api/v1/patients/find", {"call_id": call_id, **answers}, "find_patient")
+        return await self._post("/api/v1/patients/find", {"call_id": call_id, **answers}, "find_patient", FindAnswer)
 
     async def agent_messages(self, lang: str | None = None) -> dict:
         """KCD-353/500/513: the operator-editable wording (agent/messages.py)."""

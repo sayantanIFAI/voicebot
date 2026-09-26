@@ -29,49 +29,31 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
+import os
+import threading
 import time
 import urllib.request
 
-from agent.enquiry_followup import ENQUIRY_INTENTS
+from agent.enquiry_followup import ENQUIRY_INTENTS  # noqa: F401  (re-exported: callers import it from here)
+from agent.intent_schema import FAQ_TOPICS, VALID_INTENTS, normalize_age, parse_extraction  # noqa: F401
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
+logger = logging.getLogger("llm")
 
-VALID_INTENTS = {
-    "test_rate",
-    "doctor_availability",
-    "book_appointment",
-    "test_prep",
-    "clinic_faq",
-    "smalltalk",
-    "unclear",
-    # Epic E26 -- booking, rescheduling and cancellation
-    "book_test",
-    "reschedule_appointment",
-    "cancel_appointment",
-    "lookup_booking",
-    "add_test_booking",
-    "resend_confirmation",
-    "department_query",
-}
+# How the model is asked (agent/llm.py: build_prompt). "classic" is the original prompt, unchanged. "fast" asks for a COMPACT
+# answer (only the slots that have a value, not sixteen "null"s) and keeps everything that differs between calls -- the
+# language and today's date -- at the END, so the long instructions are the same text on every call and the server can
+# reuse its cached copy of them. Default "classic": "fast" is switched on only after tools/intent_ab.py shows on the pod
+# that it is no less accurate.
+INTENT_PROMPT_VARIANT = os.environ.get("INTENT_PROMPT_VARIANT", "classic")
+# The context window Ollama allocates. Unset (0) = the model's own default (32,768 on the pod, far more than a
+# ~2,000-token prompt plus a short answer needs); a smaller value such as 4096 makes a smaller KV cache.
+OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "0"))
 
-# The FAQ topic keys FastPath.FAQCatalogue matches locally against
-# /api/v1/catalogue's faq_topics. Kept here too, as a fixed enum for the
-# model's OWN classification when fast_path abstains on a paraphrase its
-# keyword table doesn't cover -- the model still only ever picks a TOPIC
-# KEY, never composes the answer itself (agent/reply_templates.py fetches
-# and speaks the real one). If clinic-api's FAQ table grows, update both
-# this tuple and seed.py's FAQ_ENTRIES together.
-FAQ_TOPICS = (
-    "hours",
-    "location",
-    "payment_methods",
-    "insurance",
-    "parking",
-    "report_collection",
-    "contact_number",
-    "home_collection",
-)
+# VALID_INTENTS, FAQ_TOPICS, SLOT_KEYS and the answer schema live in agent/intent_schema.py
+
 
 SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's phone assistant. You will be given ONE caller utterance in {language_name}, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in the caller's own script.
 
@@ -157,6 +139,52 @@ Output ONLY a single valid JSON object, no other text, in exactly this shape:
 "direct_reply_bn" must be null for every intent except "smalltalk" -- for every other intent, the reply is composed later from real clinic data, not from you."""
 
 
+_FAST_OUTPUT_BLOCK = """Output ONLY a single valid JSON object, no other text. Include ONLY the fields that have a value: leave out every null slot, and leave out "secondary_intent", "secondary_slots" and "direct_reply_bn" unless they apply. Shape:
+{"intent": "<exactly one intent from the list above>", "slots": {"<slot name>": <value>, ...}}
+Slot names, and the type of each value: test_name, doctor_name, date, time_slot, new_date, new_time_slot, confirmation_id, patient_name, phone, contact_phone, relationship, symptom_description, faq_topic are strings; patient_age is a number; test_names and spelled_letters are arrays of strings.
+For a second question add "secondary_intent" ("test_rate", "doctor_availability", "test_prep", "clinic_faq" or "department_query") and "secondary_slots" (any of test_name, doctor_name, date, faq_topic, symptom_description). "direct_reply_bn" (a string) is only for "smalltalk"; for every other intent the reply is composed later from real clinic data, not from you."""
+
+
+def _fast_static_prompt() -> str:
+    """The instructions with everything that varies between calls taken out (the language, today's date) and the answer
+    shape made compact. Built from SYSTEM_PROMPT_TEMPLATE so the rules exist in one place."""
+    t = SYSTEM_PROMPT_TEMPLATE
+    t = t.replace(
+        "ONE caller utterance in {language_name}", "ONE caller utterance in the caller's language (named at the end)"
+    )
+    t = t.replace("Today's date is {today_iso} ({today_weekday}), Asia/Kolkata.\n\n", "")
+    t = t.replace(
+        "in {language_name}, in that language's own script", "in the caller's language, in that language's own script"
+    )
+    t = t.replace("(in {language_name} script, or English", "(in the caller's own script, or English")
+    t = t.replace("as said, in {language_name}.", "as said, in the caller's language.")
+    a = t.index("Output ONLY a single valid JSON object")
+    t = t[:a] + _FAST_OUTPUT_BLOCK
+    t = t.replace("{faq_topics}", ", ".join(FAQ_TOPICS))
+    assert "{language_name}" not in t and "{today_iso}" not in t, "the fast prompt still has a per-call placeholder"
+    return t
+
+
+_FAST_STATIC = _fast_static_prompt()
+
+
+def build_prompt(transcript: str, lang: str, now: datetime.datetime, variant: str = "classic") -> str:
+    """The prompt for one caller utterance. `classic` is the original text, byte for byte."""
+    language = _LANGUAGE_NAMES.get(lang, "Bengali")
+    if variant == "fast":
+        return (
+            f"{_FAST_STATIC}\n\nCALLER LANGUAGE: {language}. Today's date is {now.strftime('%Y-%m-%d')} "
+            f"({now.strftime('%A')}), Asia/Kolkata.\n\nCALLER UTTERANCE (ASR output):\n{transcript}\n\nJSON:"
+        )
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        today_iso=now.strftime("%Y-%m-%d"),
+        today_weekday=now.strftime("%A"),
+        faq_topics=", ".join(FAQ_TOPICS),
+        language_name=language,
+    )
+    return f"{system_prompt}\n\nCALLER UTTERANCE ({language}, ASR output):\n{transcript}\n\nJSON:"
+
+
 class ExtractionError(Exception):
     pass
 
@@ -177,7 +205,7 @@ def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
             # cold 7B load measured 74 s on this pod -- the first caller after any
             # quiet spell would wait that long for one intent.
             "keep_alive": -1,
-            "options": {"temperature": 0.0},
+            "options": _model_options(),
         }
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -187,130 +215,49 @@ def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
     )
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:
         body = json.loads(resp.read().decode("utf-8"))
+    _last_call.stats = summarise_timing(body)
     return body.get("response", "")
 
 
-def _normalize_list_slot(slots: dict, key: str) -> None:
-    """CodeRabbit-flagged, real bug: Ollama's JSON mode enforces valid
-    JSON syntax, not this schema's shape -- a documented failure mode for
-    a single-item list is the model collapsing it to a bare string
-    ("test_names": "CBC" instead of ["CBC"]). agent/booking_flow.merge_slots
-    does `for t in incoming_tests: ...` on whatever this slot holds; over
-    a STRING that iterates its individual CHARACTERS, each one then
-    treated as an entered test name -- exactly the class of silent,
-    confident-but-wrong fact CLAUDE.md's truth boundary exists to catch,
-    here self-inflicted by a schema-shape slip rather than a bad lookup.
-
-    A bare string is wrapped as a single-element list (test_names: one
-    test was meant) or split into characters (spelled_letters: the slot
-    IS the individual letters, so a collapsed string's characters ARE
-    the letters). Anything else that is not a list of strings is dropped
-    to null rather than guessed."""
-    val = slots.get(key)
-    if val is None:
-        return
-    if isinstance(val, str):
-        slots[key] = [val] if key == "test_names" else list(val)
-        return
-    if isinstance(val, list) and all(isinstance(v, str) for v in val):
-        return
-    slots[key] = None
+_last_call = threading.local()  # the timing of this thread's last model call, read by extract_intent
 
 
-def _normalize_age(value) -> int | None:
-    """The schema says "number or null", and a model may return "72" or
-    "seventy" or 7.2e1. Only a whole number in a human range survives; anything
-    else is None -- a wrong-typed age must not reach code that compares it."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, float) and value.is_integer():
-        value = int(value)
-    if isinstance(value, str):
-        try:
-            value = int(value.strip())
-        except ValueError:
-            return None
-    if isinstance(value, int) and 0 < value < 130:
-        return value
-    return None
+def _model_options() -> dict:
+    options: dict = {"temperature": 0.0}
+    if OLLAMA_NUM_CTX > 0:
+        options["num_ctx"] = OLLAMA_NUM_CTX
+    return options
+
+
+def summarise_timing(body: dict) -> dict:
+    """Where the model's time went, from what Ollama reports (all durations are nanoseconds): reading the prompt (prefill),
+    writing the answer (decode), loading the model, and how many tokens each was. Tells us which to shorten."""
+    ms = lambda key: round(int(body.get(key) or 0) / 1e6)  # noqa: E731
+    out_tokens, decode_ms = int(body.get("eval_count") or 0), ms("eval_duration")
+    return {
+        "prompt_tokens": int(body.get("prompt_eval_count") or 0),
+        "prefill_ms": ms("prompt_eval_duration"),
+        "output_tokens": out_tokens,
+        "decode_ms": decode_ms,
+        "load_ms": ms("load_duration"),
+        "total_ms": ms("total_duration"),
+        "tokens_per_s": round(out_tokens / (decode_ms / 1000), 1) if decode_ms else None,
+    }
+
+
+# Kept under their old names: tests and callers import them from here.
+_normalize_age = normalize_age
 
 
 def _validate(data: dict) -> tuple[bool, list[str]]:
-    errors = []
-    if data.get("intent") not in VALID_INTENTS:
-        errors.append(f"invalid intent: {data.get('intent')!r}")
-    slots = data.get("slots")
-    if not isinstance(slots, dict):
-        errors.append("slots: expected object")
-    else:
-        for key in (
-            "test_name",
-            "test_names",
-            "doctor_name",
-            "date",
-            "time_slot",
-            "new_date",
-            "new_time_slot",
-            "confirmation_id",
-            "patient_name",
-            "patient_age",
-            "phone",
-            "contact_phone",
-            "relationship",
-            "spelled_letters",
-            "symptom_description",
-            "faq_topic",
-        ):
-            if key not in slots:
-                errors.append(f"slots.{key}: missing")
-    if data.get("intent") != "smalltalk" and data.get("direct_reply_bn") not in (None, ""):
-        # Not fatal -- just strip it. The model overstepping here is the
-        # exact failure mode this schema exists to prevent (see module
-        # docstring), so we defend in code rather than trust a retry to fix it.
-        data["direct_reply_bn"] = None
-    if isinstance(slots, dict) and slots.get("faq_topic") not in (None, *FAQ_TOPICS):
-        # The model invented a topic key outside the fixed enum. Not fatal
-        # either: null it so main.py's missing-slot path asks the caller
-        # to repeat, rather than passing an unknown key to clinic-api's
-        # /api/v1/faq, which would just 404 -- same "the model proposes,
-        # code decides" discipline as direct_reply_bn above.
-        slots["faq_topic"] = None
-
-    if isinstance(slots, dict):
-        _normalize_list_slot(slots, "test_names")
-        _normalize_list_slot(slots, "spelled_letters")
-        slots["patient_age"] = _normalize_age(slots.get("patient_age"))
-
-    # KCD-395: a second question in the same turn. Optional and defended
-    # the same way as direct_reply_bn/faq_topic above -- an older cached
-    # intent (from before this field existed) or a model that omits it
-    # entirely is just "no second question", never a hard failure of the
-    # whole extraction. Restricted to the stateless, single-tool-call
-    # intents (agent/enquiry_followup.ENQUIRY_INTENTS) -- a booking action
-    # or "unclear" as a secondary_intent is defensively dropped here too,
-    # not just described-away in the prompt, because a model ignoring an
-    # instruction is exactly the failure mode this schema-level check
-    # exists to catch instead of trust.
-    secondary_intent = data.get("secondary_intent")
-    if secondary_intent not in (None, *ENQUIRY_INTENTS):
-        secondary_intent = None
-    secondary_slots = data.get("secondary_slots")
-    if secondary_intent is None or not isinstance(secondary_slots, dict):
-        secondary_intent, secondary_slots = None, None
-    elif secondary_slots.get("faq_topic") not in (None, *FAQ_TOPICS):
-        # Same guard as the primary slots' faq_topic above -- an invented
-        # secondary topic must not reach _tools.get_faq, which would 404
-        # and surface as tool_failure instead of the ordinary unclear/
-        # missing-slot prompt the caller actually needs here.
-        secondary_slots["faq_topic"] = None
-    data["secondary_intent"] = secondary_intent
-    data["secondary_slots"] = secondary_slots
-
-    return (
-        len([e for e in errors if "missing" not in e or "intent" in e or "slots: expected" in e]) == 0
-        and "slots" in data,
-        errors,
-    )
+    """Validate and normalise one model answer IN PLACE (the schema is agent/intent_schema.py). (ok, problems): not ok when
+    the answer cannot be used at all (an unknown intent, or `slots` that is not an object); a slot the model left out is a
+    problem worth reporting but not a reason to reject it."""
+    model, errors = parse_extraction(data)
+    if model is None:
+        return False, errors
+    data.update(model.to_dict())
+    return True, errors
 
 
 _LANGUAGE_NAMES = {"bn": "Bengali", "hi": "Hindi", "en": "English"}
@@ -347,17 +294,8 @@ def extract_intent(
     and each attempt's own network timeout is clamped to whatever of the
     deadline remains, so one slow attempt cannot by itself consume the
     whole budget meant to cover retries too."""
-    now = datetime.datetime.now()
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        today_iso=now.strftime("%Y-%m-%d"),
-        today_weekday=now.strftime("%A"),
-        faq_topics=", ".join(FAQ_TOPICS),
-        language_name=_LANGUAGE_NAMES.get(lang, "Bengali"),
-    )
-    prompt = (
-        f"{system_prompt}\n\nCALLER UTTERANCE ({_LANGUAGE_NAMES.get(lang, 'Bengali')}, "
-        f"ASR output):\n{transcript_bn}\n\nJSON:"
-    )
+    variant = INTENT_PROMPT_VARIANT
+    prompt = build_prompt(transcript_bn, lang, datetime.datetime.now(), variant)
 
     diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": [], "deadline_s": deadline_s}
     last_error: Exception | ExtractionError = ExtractionError("no attempt was made")
@@ -371,13 +309,27 @@ def extract_intent(
         diagnostics["attempts"] = attempt
         t0 = time.time()
         try:
+            _last_call.stats = None
             raw = _call_ollama(prompt, timeout_s=remaining)
             diagnostics["total_time_s"] += time.time() - t0
-            data = json.loads(raw)
-            ok, errors = _validate(data)
-            if not ok:
+            timing = getattr(_last_call, "stats", None)
+            if timing:
+                diagnostics["model_timing"] = timing
+                logger.info(
+                    "intent model: %s prompt tokens read in %d ms, %s tokens written in %d ms (%s tok/s), total %d ms [%s, ctx %s]",
+                    timing["prompt_tokens"],
+                    timing["prefill_ms"],
+                    timing["output_tokens"],
+                    timing["decode_ms"],
+                    timing["tokens_per_s"],
+                    timing["total_ms"],
+                    variant,
+                    OLLAMA_NUM_CTX or "default",
+                )
+            model, errors = parse_extraction(json.loads(raw), slots_optional=variant == "fast")
+            if model is None:
                 raise ValueError(f"schema validation failed: {errors}")
-            return data, diagnostics
+            return model.to_dict(), diagnostics
         except Exception as e:  # noqa: BLE001 - retry on anything, log it
             diagnostics["total_time_s"] += time.time() - t0
             last_error = e

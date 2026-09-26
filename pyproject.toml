@@ -65,6 +65,8 @@ module = [
     "agent.abuse",
     "agent.topic_flow",
     "agent.slot_grouping",
+    "agent.intent_schema",
+    "agent.api_models",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
