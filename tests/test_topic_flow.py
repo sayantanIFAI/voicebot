@@ -5,6 +5,7 @@
 The orchestrator behaviour (answering the aside, keeping the state, the confirmation step, suspend and resume) is
 tested at every stage of the booking flow in tests/test_orchestrator_booking_flow.py.
 """
+
 import os
 import sys
 import time
@@ -16,7 +17,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from agent import topic_flow as tf
-from agent.booking_flow import STATE_IDLE_TIMEOUT_S, merge_slots, mark_confirming, new_state
+from agent.booking_flow import STATE_IDLE_TIMEOUT_S, mark_confirming, merge_slots, new_state
 from agent.enquiry_followup import ENQUIRY_INTENTS
 from agent.speech_policy import check_reply, count_questions, derive_policy
 
@@ -29,6 +30,7 @@ def _state(action="book_appointment", stage="collecting", **slots):
 
 
 # ============================================================================================== classify
+
 
 def test_no_task_in_progress_means_nothing_to_protect():
     assert tf.classify(None, "test_rate") == tf.NO_TASK
@@ -49,7 +51,7 @@ def test_an_enquiry_or_small_talk_is_a_topic_change(intent):
 def test_the_same_action_or_a_bare_answer_continues_the_task():
     st = _state(doctor_name="Sen")
     assert tf.classify(st, "book_appointment") == tf.CONTINUE
-    assert tf.classify(st, "unclear") == tf.CONTINUE            # a bare "Ravi Das" the extractor could not label
+    assert tf.classify(st, "unclear") == tf.CONTINUE  # a bare "Ravi Das" the extractor could not label
 
 
 @pytest.mark.parametrize("other", ["book_test", "reschedule_appointment", "cancel_appointment", "add_test_booking"])
@@ -67,9 +69,10 @@ def test_every_enquiry_intent_is_covered_so_no_topic_change_is_missed():
 
 # ============================================================================================ worth_suspending
 
+
 def test_only_a_task_with_something_in_it_is_worth_offering_to_resume():
     assert not tf.worth_suspending(None)
-    assert not tf.worth_suspending(_state())                                   # just started: nothing to lose
+    assert not tf.worth_suspending(_state())  # just started: nothing to lose
     assert tf.worth_suspending(_state(doctor_name="Sen"))
     st = _state()
     st.test_names.append("CBC")
@@ -85,34 +88,48 @@ def test_only_a_task_with_something_in_it_is_worth_offering_to_resume():
 
 # ========================================================================================= when a resume line is allowed
 
+
 def test_a_resume_line_is_a_question_so_it_needs_a_policy_that_allows_one_and_a_reply_that_does_not_ask():
     assert tf.resume_allowed(2, "The CBC costs 350 rupees.")
     assert tf.resume_allowed(1, "The CBC costs 350 rupees.")
-    assert not tf.resume_allowed(0, "The CBC costs 350 rupees.")                  # the emergency policy: no question
+    assert not tf.resume_allowed(0, "The CBC costs 350 rupees.")  # the emergency policy: no question
     assert not tf.resume_allowed(2, "I found no test by that name. Did you mean CBC?")
     assert not tf.resume_allowed(2, "यह टेस्ट नहीं मिला। क्या आप सीबीसी कहना चाहते हैं?".replace("?", "؟"))
 
 
 # ============================================================================================== the wording
 
+
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
 def test_the_resume_lines_are_one_question_each_and_inside_the_policy(lang):
     normal, senior = derive_policy("neutral"), derive_policy("neutral", senior=True)
-    for line in (tf.resume_line("Which day would you like?" if lang == "en" else "কোন দিন?" if lang == "bn" else "किस दिन?", lang),
-                 tf.confirm_resume_line(lang),
-                 tf.offer_resume("cancel_appointment", lang)):
+    for line in (
+        tf.resume_line(
+            "Which day would you like?" if lang == "en" else "কোন দিন?" if lang == "bn" else "किस दिन?", lang
+        ),
+        tf.confirm_resume_line(lang),
+        tf.offer_resume("cancel_appointment", lang),
+    ):
         assert count_questions(line) == 1, line
         assert check_reply(line, normal) == [], line
-        assert check_reply(line, senior) == [], line          # one question, inside a senior caller's single question
+        assert check_reply(line, senior) == [], line  # one question, inside a senior caller's single question
         assert ":" not in line and "{" not in line and "[" not in line
 
 
 def test_the_english_wording_is_natural():
-    assert tf.resume_line("Which day would you like the appointment for?", "en") == \
-        "Coming back to your booking. Which day would you like the appointment for?"
+    assert (
+        tf.resume_line("Which day would you like the appointment for?", "en")
+        == "Coming back to your booking. Which day would you like the appointment for?"
+    )
     assert tf.confirm_resume_line("en") == "Coming back to your booking. Shall I confirm it?"
-    assert tf.offer_resume("book_appointment", "en") == "Earlier we were talking about booking an appointment. Shall I go back to it?"
-    assert tf.offer_resume("reschedule_appointment", "en") == "Earlier we were talking about changing an appointment. Shall I go back to it?"
+    assert (
+        tf.offer_resume("book_appointment", "en")
+        == "Earlier we were talking about booking an appointment. Shall I go back to it?"
+    )
+    assert (
+        tf.offer_resume("reschedule_appointment", "en")
+        == "Earlier we were talking about changing an appointment. Shall I go back to it?"
+    )
 
 
 @pytest.mark.parametrize("action", tf.BOOKING_ACTIONS)

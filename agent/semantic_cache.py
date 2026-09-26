@@ -37,6 +37,7 @@ else's details. So entries whose slots carry caller-specific data are
 stored for L1 (exact) retrieval only and are never eligible for L2. See
 `_is_l2_eligible`.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -137,7 +138,9 @@ class EmbeddingUnavailable(Exception):
 def embed(text: str, timeout_s: int = EMBED_TIMEOUT_S) -> list[float]:
     payload = json.dumps({"model": EMBED_MODEL, "input": text}).encode("utf-8")
     req = urllib.request.Request(
-        OLLAMA_EMBED_URL, data=payload, headers={"Content-Type": "application/json"},
+        OLLAMA_EMBED_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
@@ -161,14 +164,13 @@ class SemanticCache:
     cheaper to reason about (and to evict correctly) than standing up a
     vector store for what is at most a few thousand short questions."""
 
-    def __init__(self, threshold: float = DEFAULT_THRESHOLD,
-                 max_entries: int = 2000, ttl_s: float = 6 * 3600):
+    def __init__(self, threshold: float = DEFAULT_THRESHOLD, max_entries: int = 2000, ttl_s: float = 6 * 3600):
         self.threshold = threshold
         self.max_entries = max_entries
         self.ttl_s = ttl_s
         self._lock = threading.Lock()
-        self._exact: dict[str, dict] = {}          # normalized text -> entry
-        self._vectors: list[tuple[list[float], str]] = []   # (unit vec, normalized text)
+        self._exact: dict[str, dict] = {}  # normalized text -> entry
+        self._vectors: list[tuple[list[float], str]] = []  # (unit vec, normalized text)
         # Vectors computed by a get() that missed, held so the put() that
         # follows doesn't pay for the same embedding twice. Keyed by text,
         # NOT a single slot: concurrent calls interleave get/put freely, and
@@ -218,11 +220,10 @@ class SemanticCache:
             # words and reject valid matches.
             for width in {max(1, span - 1), span, span + 1}:
                 for i in range(max(1, len(words) - width + 1)):
-                    window = " ".join(words[i:i + width])
+                    window = " ".join(words[i : i + width])
                     best = max(best, difflib.SequenceMatcher(None, entity, window).ratio())
             if best < ENTITY_MATCH_FLOOR:
-                logger.info("semantic hit rejected: entity %r not in %r (best %.2f)",
-                            entity, text, best)
+                logger.info("semantic hit rejected: entity %r not in %r (best %.2f)", entity, text, best)
                 return False
         return True
 

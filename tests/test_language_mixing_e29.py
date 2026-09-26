@@ -3,6 +3,7 @@ which language each turn was spoken in.
 
     python -m pytest tests/test_language_mixing_e29.py -v
 """
+
 from agent.booking_flow import is_ready_to_confirm, merge_slots, missing_required, new_state
 
 
@@ -22,8 +23,11 @@ def test_language_switch_mid_booking_does_not_lose_captured_slots():
     merge_slots(state, {"phone": "9800000001"})
 
     assert state.slots == {
-        "doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-        "patient_name": "Ravi", "phone": "9800000001",
+        "doctor_name": "Sen",
+        "date": "2026-10-01",
+        "time_slot": "18:15",
+        "patient_name": "Ravi",
+        "phone": "9800000001",
     }
     assert is_ready_to_confirm(state)
 
@@ -32,9 +36,18 @@ def test_language_switch_after_confirmation_still_reopens_correctly():
     # The correction-reopens-collection behaviour (KCD-367) must also
     # survive a language switch at the exact moment of the correction.
     state = new_state("book_appointment")
-    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-                         "patient_name": "Ravi", "phone": "9800000001"})
+    merge_slots(
+        state,
+        {
+            "doctor_name": "Sen",
+            "date": "2026-10-01",
+            "time_slot": "18:15",
+            "patient_name": "Ravi",
+            "phone": "9800000001",
+        },
+    )
     from agent.booking_flow import mark_confirming
+
     mark_confirming(state)
 
     # Correction given in a different language from the one the booking

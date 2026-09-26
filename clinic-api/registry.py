@@ -23,6 +23,7 @@ endpoint refuses a call that has no live verification for that patient.
 Nothing clinical is here. The registry holds identity facts; the medicine and test tables hold THAT
 something was prescribed or done and when, never what it showed or what to do about it.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -30,42 +31,104 @@ import json
 import re
 import unicodedata
 
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
 from booking_service import NOT_PROVIDED_PHONE, _now
 from models import (
-    AuditLog, CallRecord, Patient, PatientCallCache, PatientHistory, PatientRegistry, VerificationSession,
+    AuditLog,
+    CallRecord,
+    Patient,
+    PatientCallCache,
+    PatientHistory,
+    PatientRegistry,
+    VerificationSession,
 )
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 MAX_ATTEMPTS_PER_CALL = 3
 MAX_FAILED_PER_PATIENT_24H = 6
 VERIFICATION_TTL_MIN = 15
 CACHE_TTL_HOURS = 24
-SENIOR_AGE = 60                         # India's definition of a senior citizen
-_WRITE_INTENTS = frozenset({"book_appointment", "book_test", "reschedule_appointment", "cancel_appointment",
-                            "add_test_booking"})
+SENIOR_AGE = 60  # India's definition of a senior citizen
+_WRITE_INTENTS = frozenset(
+    {"book_appointment", "book_test", "reschedule_appointment", "cancel_appointment", "add_test_booking"}
+)
 STRONG_FACTORS = frozenset({"patient_id", "dob"})
 FACTORS = ("patient_id", "dob", "name", "address")
 MIN_ADDRESS_TOKEN_LEN = 3
-_ADDRESS_STOPWORDS = frozenset({
-    "road", "street", "lane", "near", "opposite", "behind", "flat", "floor", "block", "house", "apartment",
-    "kolkata", "calcutta", "west", "bengal", "india", "the", "and", "para", "nagar", "pin", "pincode", "code",
-    "রোড", "লেন", "কলকাতা", "পশ্চিমবঙ্গ", "সড়ক", "ফ্ল্যাট", "বাড়ি", "নম্বর",
-    "रोड", "गली", "कोलकाता", "पश्चिम", "बंगाल", "मकान", "नंबर", "फ्लैट",
-})
+_ADDRESS_STOPWORDS = frozenset(
+    {
+        "road",
+        "street",
+        "lane",
+        "near",
+        "opposite",
+        "behind",
+        "flat",
+        "floor",
+        "block",
+        "house",
+        "apartment",
+        "kolkata",
+        "calcutta",
+        "west",
+        "bengal",
+        "india",
+        "the",
+        "and",
+        "para",
+        "nagar",
+        "pin",
+        "pincode",
+        "code",
+        "রোড",
+        "লেন",
+        "কলকাতা",
+        "পশ্চিমবঙ্গ",
+        "সড়ক",
+        "ফ্ল্যাট",
+        "বাড়ি",
+        "নম্বর",
+        "रोड",
+        "गली",
+        "कोलकाता",
+        "पश्चिम",
+        "बंगाल",
+        "मकान",
+        "नंबर",
+        "फ्लैट",
+    }
+)
 
 
 # ------------------------------------------------------------------------------------- audit
 
-def audit(db: Session, action: str, outcome: str = "ok", *, call_id: str | None = None,
-          patient_id: int | None = None, actor: str = "agent", **detail) -> None:
-    db.add(AuditLog(at=_now(), call_id=call_id, patient_id=patient_id, actor=actor, action=action,
-                    outcome=outcome, detail_json=json.dumps(detail, default=str)))
+
+def audit(
+    db: Session,
+    action: str,
+    outcome: str = "ok",
+    *,
+    call_id: str | None = None,
+    patient_id: int | None = None,
+    actor: str = "agent",
+    **detail,
+) -> None:
+    db.add(
+        AuditLog(
+            at=_now(),
+            call_id=call_id,
+            patient_id=patient_id,
+            actor=actor,
+            action=action,
+            outcome=outcome,
+            detail_json=json.dumps(detail, default=str),
+        )
+    )
     db.commit()
 
 
 # ------------------------------------------------------------------------------- normalising
+
 
 def _nfc(s: str | None) -> str:
     return unicodedata.normalize("NFC", s or "").lower()
@@ -108,6 +171,7 @@ def _aliases(s: str | None) -> list[str]:
 
 # ------------------------------------------------------------------------ the four factors
 
+
 def _name_matches(spoken: str | None, patient: Patient, reg: PatientRegistry) -> bool:
     """Every part of a registered name (or of one of its aliases) was said. The reverse direction
     on purpose: "my name is Asha Saha" contains "asha" and "saha", and a filler word cannot fail it;
@@ -123,8 +187,11 @@ def _name_matches(spoken: str | None, patient: Patient, reg: PatientRegistry) ->
 
 
 def _address_tokens(text: str | None) -> set[str]:
-    return {t for t in _tokens(text) if len(t) >= MIN_ADDRESS_TOKEN_LEN and t not in _ADDRESS_STOPWORDS
-            and not (t.isdigit() and len(t) != 6)}
+    return {
+        t
+        for t in _tokens(text)
+        if len(t) >= MIN_ADDRESS_TOKEN_LEN and t not in _ADDRESS_STOPWORDS and not (t.isdigit() and len(t) != 6)
+    }
 
 
 def _address_matches(spoken: str | None, reg: PatientRegistry) -> bool:
@@ -159,6 +226,7 @@ def _provided(answers: dict) -> dict:
 
 # ------------------------------------------------------------------------------ verification
 
+
 def _session(db: Session, call_id: str, patient_id: int) -> VerificationSession:
     row = db.query(VerificationSession).filter_by(call_id=call_id, patient_id=patient_id).first()
     if row is None:
@@ -174,8 +242,16 @@ def _session(db: Session, call_id: str, patient_id: int) -> VerificationSession:
 
 def _recent_failures(db: Session, patient_id: int) -> int:
     since = _now() - datetime.timedelta(hours=24)
-    return db.query(AuditLog).filter(AuditLog.action == "verify", AuditLog.outcome.in_(("failed", "locked")),
-                                     AuditLog.patient_id == patient_id, AuditLog.at >= since).count()
+    return (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.action == "verify",
+            AuditLog.outcome.in_(("failed", "locked")),
+            AuditLog.patient_id == patient_id,
+            AuditLog.at >= since,
+        )
+        .count()
+    )
 
 
 def is_verified(db: Session, call_id: str, patient_id: int) -> bool:
@@ -188,7 +264,14 @@ def verify(db: Session, call_id: str, patient_id: int, answers: dict, caller_pho
     patient = db.get(Patient, patient_id)
     reg = db.query(PatientRegistry).filter_by(patient_id=patient_id).first() if patient else None
     if patient is None or reg is None or reg.status != "active":
-        audit(db, "verify", "failed", call_id=call_id, patient_id=patient_id if patient else None, reason="no_registry_record")
+        audit(
+            db,
+            "verify",
+            "failed",
+            call_id=call_id,
+            patient_id=patient_id if patient else None,
+            reason="no_registry_record",
+        )
         return {"verified": False, "reason": "cannot_verify", "attempts_left": 0, "locked": True}
     sess = _session(db, call_id, patient_id)
     if sess.locked or _recent_failures(db, patient_id) >= MAX_FAILED_PER_PATIENT_24H:
@@ -198,13 +281,21 @@ def verify(db: Session, call_id: str, patient_id: int, answers: dict, caller_pho
         audit(db, "verify", "locked", call_id=call_id, patient_id=patient_id, reason="attempt_limit")
         return {"verified": False, "reason": "locked", "attempts_left": 0, "locked": True}
     if is_verified(db, call_id, patient_id):
-        return {"verified": True, "attempts_left": MAX_ATTEMPTS_PER_CALL - sess.attempts, "locked": False,
-                **_age_block(reg)}
+        return {
+            "verified": True,
+            "attempts_left": MAX_ATTEMPTS_PER_CALL - sess.attempts,
+            "locked": False,
+            **_age_block(reg),
+        }
     given = _provided(answers)
     if len(given) < 2:
         # one fact is never enough, and evaluating it would only leak whether it was right
-        return {"verified": False, "need_more": True, "attempts_left": MAX_ATTEMPTS_PER_CALL - sess.attempts,
-                "locked": False}
+        return {
+            "verified": False,
+            "need_more": True,
+            "attempts_left": MAX_ATTEMPTS_PER_CALL - sess.attempts,
+            "locked": False,
+        }
     matched = factor_matches(db, patient, reg, given)
     sess.attempts += 1
     if len(matched) >= 2 and matched & STRONG_FACTORS:
@@ -212,14 +303,27 @@ def verify(db: Session, call_id: str, patient_id: int, answers: dict, caller_pho
         sess.expires_at = sess.verified_at + datetime.timedelta(minutes=VERIFICATION_TTL_MIN)
         sess.factors_json = json.dumps(sorted(matched))
         db.commit()
-        audit(db, "verify", "ok", call_id=call_id, patient_id=patient_id, factors=sorted(matched), attempt=sess.attempts)
-        return {"verified": True, "attempts_left": MAX_ATTEMPTS_PER_CALL - sess.attempts, "locked": False,
-                **_age_block(reg)}
+        audit(
+            db, "verify", "ok", call_id=call_id, patient_id=patient_id, factors=sorted(matched), attempt=sess.attempts
+        )
+        return {
+            "verified": True,
+            "attempts_left": MAX_ATTEMPTS_PER_CALL - sess.attempts,
+            "locked": False,
+            **_age_block(reg),
+        }
     if sess.attempts >= MAX_ATTEMPTS_PER_CALL:
         sess.locked = True
     db.commit()
-    audit(db, "verify", "locked" if sess.locked else "failed", call_id=call_id, patient_id=patient_id,
-          factors_given=sorted(given), attempt=sess.attempts)
+    audit(
+        db,
+        "verify",
+        "locked" if sess.locked else "failed",
+        call_id=call_id,
+        patient_id=patient_id,
+        factors_given=sorted(given),
+        attempt=sess.attempts,
+    )
     return {"verified": False, "attempts_left": max(0, MAX_ATTEMPTS_PER_CALL - sess.attempts), "locked": sess.locked}
 
 
@@ -231,6 +335,7 @@ def _age_block(reg: PatientRegistry) -> dict:
 
 # ---------------------------------------------------------------------------- find (KCD-497)
 
+
 def find_by_details(db: Session, call_id: str, answers: dict) -> dict:
     """Find a patient from what the caller remembers when the phone number found nobody: a patient
     id, or a date of birth with a name. Returns only an opaque reference -- never a name, a date or
@@ -240,7 +345,9 @@ def find_by_details(db: Session, call_id: str, answers: dict) -> dict:
     ref = None
     candidates: list[Patient] = []
     if given.get("patient_id"):
-        reg = next((r for r in db.query(PatientRegistry).all() if _uid_matches(given["patient_id"], r.patient_uid)), None)
+        reg = next(
+            (r for r in db.query(PatientRegistry).all() if _uid_matches(given["patient_id"], r.patient_uid)), None
+        )
         if reg is not None and reg.status == "active":
             candidates = [db.get(Patient, reg.patient_id)]
     elif given.get("dob") and given.get("name"):
@@ -264,6 +371,7 @@ def find_by_details(db: Session, call_id: str, answers: dict) -> dict:
 
 # ---------------------------------------------------------------- call outcome -> history + cache
 
+
 def finalize_call(db: Session, row: CallRecord) -> None:
     """The call has closed: turn what it did into durable history (KCD-501), cache its summary for a
     day (KCD-496) and audit the close. Idempotent (unique keys), so a retried `end` changes nothing."""
@@ -271,42 +379,77 @@ def finalize_call(db: Session, row: CallRecord) -> None:
     intents = json.loads(row.intents_json)
     if row.patient_id:
         for a in actions:
-            _history_once(db, row.patient_id, row.call_id, a.get("name") or "action", a.get("ref") or "",
-                          {"at": a.get("at")})
-        _history_once(db, row.patient_id, row.call_id, "call_outcome", "",
-                      {"outcome": row.outcome, "intents": intents[-5:], "escalation": row.escalation_reason})
-    summary = {"intents": intents[-3:], "outcome": row.outcome, "escalation": row.escalation_reason,
-               "actions": [{"name": a.get("name"), "ref": a.get("ref")} for a in actions[-3:]],
-               "unfinished": row.outcome in ("abandoned", "failed") or (
-                   bool(intents) and not actions and intents[-1] in _WRITE_INTENTS)}
+            _history_once(
+                db, row.patient_id, row.call_id, a.get("name") or "action", a.get("ref") or "", {"at": a.get("at")}
+            )
+        _history_once(
+            db,
+            row.patient_id,
+            row.call_id,
+            "call_outcome",
+            "",
+            {"outcome": row.outcome, "intents": intents[-5:], "escalation": row.escalation_reason},
+        )
+    summary = {
+        "intents": intents[-3:],
+        "outcome": row.outcome,
+        "escalation": row.escalation_reason,
+        "actions": [{"name": a.get("name"), "ref": a.get("ref")} for a in actions[-3:]],
+        "unfinished": row.outcome in ("abandoned", "failed")
+        or (bool(intents) and not actions and intents[-1] in _WRITE_INTENTS),
+    }
     now = _now()
     if not db.query(PatientCallCache).filter_by(call_id=row.call_id).first():
-        db.add(PatientCallCache(patient_id=row.patient_id, caller_phone=row.caller_phone, call_id=row.call_id,
-                                summary_json=json.dumps(summary), created_at=now,
-                                expires_at=now + datetime.timedelta(hours=CACHE_TTL_HOURS)))
+        db.add(
+            PatientCallCache(
+                patient_id=row.patient_id,
+                caller_phone=row.caller_phone,
+                call_id=row.call_id,
+                summary_json=json.dumps(summary),
+                created_at=now,
+                expires_at=now + datetime.timedelta(hours=CACHE_TTL_HOURS),
+            )
+        )
         try:
             db.commit()
         except IntegrityError:
             db.rollback()
     db.query(PatientCallCache).filter(PatientCallCache.expires_at < now).delete()
     db.commit()
-    audit(db, "call_closed", "ok", call_id=row.call_id, patient_id=row.patient_id, call_outcome=row.outcome,
-          actions=len(actions), escalation=row.escalation_reason)
+    audit(
+        db,
+        "call_closed",
+        "ok",
+        call_id=row.call_id,
+        patient_id=row.patient_id,
+        call_outcome=row.outcome,
+        actions=len(actions),
+        escalation=row.escalation_reason,
+    )
 
 
 def _history_once(db: Session, patient_id: int, call_id: str, kind: str, ref: str, detail: dict) -> None:
     if db.query(PatientHistory).filter_by(call_id=call_id, kind=kind, ref=ref).first():
         return
-    db.add(PatientHistory(patient_id=patient_id, call_id=call_id, kind=kind, ref=ref,
-                          detail_json=json.dumps(detail, default=str), at=_now()))
+    db.add(
+        PatientHistory(
+            patient_id=patient_id,
+            call_id=call_id,
+            kind=kind,
+            ref=ref,
+            detail_json=json.dumps(detail, default=str),
+            at=_now(),
+        )
+    )
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
 
 
-def cached_context(db: Session, patient_id: int | None, caller_phone: str | None,
-                   exclude_call_id: str | None = None) -> list[dict]:
+def cached_context(
+    db: Session, patient_id: int | None, caller_phone: str | None, exclude_call_id: str | None = None
+) -> list[dict]:
     """The last calls (at most three) of this patient or number that are still inside their day.
     Expired rows are never returned."""
     now = _now()
@@ -319,6 +462,7 @@ def cached_context(db: Session, patient_id: int | None, caller_phone: str | None
     if not conds:
         return []
     from sqlalchemy import or_
+
     q = q.filter(or_(*conds))
     if exclude_call_id:
         q = q.filter(PatientCallCache.call_id != exclude_call_id)

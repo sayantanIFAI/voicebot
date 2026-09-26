@@ -7,13 +7,20 @@ prototype, not sourced from any real clinic's data.
 
 Run:  python3 seed.py     (idempotent -- safe to re-run, wipes and reloads)
 """
+
 from __future__ import annotations
 
-from db import engine, SessionLocal
-from models import Base, Department, Doctor, DoctorSchedule, LabTest, FAQ
+from db import SessionLocal, engine
 from i18n_content import (
-    TEST_ALIASES_HI, SURNAME_HI, PREP_I18N, DEFAULT_PREP_HI, DEFAULT_PREP_EN, FAQ_I18N, FAQ_KEYWORDS_I18N,
+    DEFAULT_PREP_EN,
+    DEFAULT_PREP_HI,
+    FAQ_I18N,
+    FAQ_KEYWORDS_I18N,
+    PREP_I18N,
+    SURNAME_HI,
+    TEST_ALIASES_HI,
 )
+from models import FAQ, Base, Department, Doctor, DoctorSchedule, LabTest
 
 # ---------------------------------------------------------------------------
 # 8 departments, 4 doctors each = 32 doctors.
@@ -60,42 +67,84 @@ SURNAME_BN = {
 }
 
 SHIFT_TEMPLATES = [
-    {"days": [0, 2, 4], "start": "10:00", "end": "12:00"},   # Mon/Wed/Fri morning
-    {"days": [1, 3, 5], "start": "10:00", "end": "12:00"},   # Tue/Thu/Sat morning
-    {"days": [0, 2, 4], "start": "18:00", "end": "20:00"},   # Mon/Wed/Fri evening
-    {"days": [1, 3, 5], "start": "17:30", "end": "19:30"},   # Tue/Thu/Sat evening
+    {"days": [0, 2, 4], "start": "10:00", "end": "12:00"},  # Mon/Wed/Fri morning
+    {"days": [1, 3, 5], "start": "10:00", "end": "12:00"},  # Tue/Thu/Sat morning
+    {"days": [0, 2, 4], "start": "18:00", "end": "20:00"},  # Mon/Wed/Fri evening
+    {"days": [1, 3, 5], "start": "17:30", "end": "19:30"},  # Tue/Thu/Sat evening
 ]
 
 # The whole name of each seeded doctor, keyed by the short name the rest of the system uses. FICTIONAL placeholders
 # (the seed only ever held initials): the given name starts with the initial the short name carries. The clinic replaces
 # them with real names by editing doctors.full_name; the backfill never overwrites a value that is already there.
 DOCTOR_FULL_NAMES = {
-    "Dr. S. Mukherjee": "Dr. Sourav Mukherjee", "Dr. A. Sen": "Dr. Arindam Sen", "Dr. P. Ghosh": "Dr. Prabir Ghosh",
-    "Dr. R. Chowdhury": "Dr. Rajib Chowdhury", "Dr. K. Bhattacharya": "Dr. Kaushik Bhattacharya",
-    "Dr. N. Roy": "Dr. Nirmal Roy", "Dr. S. Banerjee": "Dr. Subrata Banerjee", "Dr. M. Dutta": "Dr. Manas Dutta",
-    "Dr. S. Chatterjee": "Dr. Sutapa Chatterjee", "Dr. A. Basu": "Dr. Aparna Basu", "Dr. R. Mitra": "Dr. Rina Mitra",
-    "Dr. P. Sengupta": "Dr. Paromita Sengupta", "Dr. D. Das": "Dr. Debasish Das", "Dr. T. Bose": "Dr. Tapan Bose",
-    "Dr. A. Kar": "Dr. Amit Kar", "Dr. S. Nandi": "Dr. Subhankar Nandi", "Dr. R. Pal": "Dr. Ranjan Pal",
-    "Dr. K. Halder": "Dr. Kalyan Halder", "Dr. S. Guha": "Dr. Sanjay Guha", "Dr. B. Chanda": "Dr. Biswajit Chanda",
-    "Dr. M. Saha": "Dr. Mitali Saha", "Dr. A. Dey": "Dr. Ashok Dey", "Dr. P. Adhikari": "Dr. Pritha Adhikari",
-    "Dr. S. Bagchi": "Dr. Samir Bagchi", "Dr. N. Biswas": "Dr. Nandini Biswas", "Dr. R. Majumder": "Dr. Rupa Majumder",
-    "Dr. A. Mondal": "Dr. Anirban Mondal", "Dr. S. Ganguly": "Dr. Shreya Ganguly", "Dr. K. Sinha": "Dr. Kunal Sinha",
-    "Dr. P. Ray": "Dr. Partha Ray", "Dr. A. Sarkar": "Dr. Abhijit Sarkar", "Dr. S. Chakraborty": "Dr. Snehasish Chakraborty",
+    "Dr. S. Mukherjee": "Dr. Sourav Mukherjee",
+    "Dr. A. Sen": "Dr. Arindam Sen",
+    "Dr. P. Ghosh": "Dr. Prabir Ghosh",
+    "Dr. R. Chowdhury": "Dr. Rajib Chowdhury",
+    "Dr. K. Bhattacharya": "Dr. Kaushik Bhattacharya",
+    "Dr. N. Roy": "Dr. Nirmal Roy",
+    "Dr. S. Banerjee": "Dr. Subrata Banerjee",
+    "Dr. M. Dutta": "Dr. Manas Dutta",
+    "Dr. S. Chatterjee": "Dr. Sutapa Chatterjee",
+    "Dr. A. Basu": "Dr. Aparna Basu",
+    "Dr. R. Mitra": "Dr. Rina Mitra",
+    "Dr. P. Sengupta": "Dr. Paromita Sengupta",
+    "Dr. D. Das": "Dr. Debasish Das",
+    "Dr. T. Bose": "Dr. Tapan Bose",
+    "Dr. A. Kar": "Dr. Amit Kar",
+    "Dr. S. Nandi": "Dr. Subhankar Nandi",
+    "Dr. R. Pal": "Dr. Ranjan Pal",
+    "Dr. K. Halder": "Dr. Kalyan Halder",
+    "Dr. S. Guha": "Dr. Sanjay Guha",
+    "Dr. B. Chanda": "Dr. Biswajit Chanda",
+    "Dr. M. Saha": "Dr. Mitali Saha",
+    "Dr. A. Dey": "Dr. Ashok Dey",
+    "Dr. P. Adhikari": "Dr. Pritha Adhikari",
+    "Dr. S. Bagchi": "Dr. Samir Bagchi",
+    "Dr. N. Biswas": "Dr. Nandini Biswas",
+    "Dr. R. Majumder": "Dr. Rupa Majumder",
+    "Dr. A. Mondal": "Dr. Anirban Mondal",
+    "Dr. S. Ganguly": "Dr. Shreya Ganguly",
+    "Dr. K. Sinha": "Dr. Kunal Sinha",
+    "Dr. P. Ray": "Dr. Partha Ray",
+    "Dr. A. Sarkar": "Dr. Abhijit Sarkar",
+    "Dr. S. Chakraborty": "Dr. Snehasish Chakraborty",
 }
 
 # How the given names above are written and said in Bengali and Hindi (placeholders like the names themselves).
 _GIVEN_BN_HI = {
-    "Sourav": ("সৌরভ", "सौरव"), "Arindam": ("অরিন্দম", "अरिंदम"), "Prabir": ("প্রবীর", "प्रबीर"),
-    "Rajib": ("রাজীব", "राजीव"), "Kaushik": ("কৌশিক", "कौशिक"), "Nirmal": ("নির্মল", "निर्मल"),
-    "Subrata": ("সুব্রত", "सुब्रत"), "Manas": ("মানস", "मानस"), "Sutapa": ("সুতপা", "सुतपा"),
-    "Aparna": ("অপর্ণা", "अपर्णा"), "Rina": ("রিনা", "रीना"), "Paromita": ("পারমিতা", "पारमिता"),
-    "Debasish": ("দেবাশিস", "देबाशीष"), "Tapan": ("তপন", "तपन"), "Amit": ("অমিত", "अमित"),
-    "Subhankar": ("শুভঙ্কর", "शुभंकर"), "Ranjan": ("রঞ্জন", "रंजन"), "Kalyan": ("কল্যাণ", "कल्याण"),
-    "Sanjay": ("সঞ্জয়", "संजय"), "Biswajit": ("বিশ্বজিৎ", "बिस्वजीत"), "Mitali": ("মিতালী", "मिताली"),
-    "Ashok": ("অশোক", "अशोक"), "Pritha": ("পৃথা", "पृथा"), "Samir": ("সমীর", "समीर"),
-    "Nandini": ("নন্দিনী", "नंदिनी"), "Rupa": ("রূপা", "रूपा"), "Anirban": ("অনির্বাণ", "अनिर्बान"),
-    "Shreya": ("শ্রেয়া", "श्रेया"), "Kunal": ("কুণাল", "कुणाल"), "Partha": ("পার্থ", "पार्थ"),
-    "Abhijit": ("অভিজিৎ", "अभिजीत"), "Snehasish": ("স্নেহাশিস", "स्नेहाशीष"),
+    "Sourav": ("সৌরভ", "सौरव"),
+    "Arindam": ("অরিন্দম", "अरिंदम"),
+    "Prabir": ("প্রবীর", "प्रबीर"),
+    "Rajib": ("রাজীব", "राजीव"),
+    "Kaushik": ("কৌশিক", "कौशिक"),
+    "Nirmal": ("নির্মল", "निर्मल"),
+    "Subrata": ("সুব্রত", "सुब्रत"),
+    "Manas": ("মানস", "मानस"),
+    "Sutapa": ("সুতপা", "सुतपा"),
+    "Aparna": ("অপর্ণা", "अपर्णा"),
+    "Rina": ("রিনা", "रीना"),
+    "Paromita": ("পারমিতা", "पारमिता"),
+    "Debasish": ("দেবাশিস", "देबाशीष"),
+    "Tapan": ("তপন", "तपन"),
+    "Amit": ("অমিত", "अमित"),
+    "Subhankar": ("শুভঙ্কর", "शुभंकर"),
+    "Ranjan": ("রঞ্জন", "रंजन"),
+    "Kalyan": ("কল্যাণ", "कल्याण"),
+    "Sanjay": ("সঞ্জয়", "संजय"),
+    "Biswajit": ("বিশ্বজিৎ", "बिस्वजीत"),
+    "Mitali": ("মিতালী", "मिताली"),
+    "Ashok": ("অশোক", "अशोक"),
+    "Pritha": ("পৃথা", "पृथा"),
+    "Samir": ("সমীর", "समीर"),
+    "Nandini": ("নন্দিনী", "नंदिनी"),
+    "Rupa": ("রূপা", "रूपा"),
+    "Anirban": ("অনির্বাণ", "अनिर्बान"),
+    "Shreya": ("শ্রেয়া", "श्रेया"),
+    "Kunal": ("কুণাল", "कुणाल"),
+    "Partha": ("পার্থ", "पार्थ"),
+    "Abhijit": ("অভিজিৎ", "अभिजीत"),
+    "Snehasish": ("স্নেহাশিস", "स्नेहाशीष"),
 }
 
 
@@ -107,8 +156,11 @@ def doctor_full_names() -> dict[str, tuple[str, str, str]]:
         bn_given, hi_given = _GIVEN_BN_HI[given]
         bn_surname = (SURNAME_BN.get(surname) or [""])[0]
         hi_surname = (SURNAME_HI.get(surname) or [""])[0]
-        out[short] = (full, f"{bn_given} {bn_surname}".strip() if bn_surname else "",
-                      f"{hi_given} {hi_surname}".strip() if hi_surname else "")
+        out[short] = (
+            full,
+            f"{bn_given} {bn_surname}".strip() if bn_surname else "",
+            f"{hi_given} {hi_surname}".strip() if hi_surname else "",
+        )
     return out
 
 
@@ -208,19 +260,20 @@ LAB_TESTS = [
 # no-special-preparation default in _prep_for() below. Fictional but
 # clinically plausible, matching the rest of this file's seed data.
 PREP_OVERRIDES: dict[str, tuple[bool, str]] = {
-    "Blood Sugar Fasting": (True, "এই টেস্টের আগে অন্তত আট ঘণ্টা কিছু খাবেন না, শুধু জল খেতে পারেন। "
-                                    "সকালে খালি পেটে এসে টেস্ট করানো ভালো।"),
-    "Lipid Profile": (True, "এই টেস্টের আগে দশ থেকে বারো ঘণ্টা উপবাস থাকতে হবে, জল ছাড়া আর কিছু খাবেন না। "
-                             "আগের রাতে হালকা খাবার খাওয়া ভালো।"),
+    "Blood Sugar Fasting": (
+        True,
+        "এই টেস্টের আগে অন্তত আট ঘণ্টা কিছু খাবেন না, শুধু জল খেতে পারেন। সকালে খালি পেটে এসে টেস্ট করানো ভালো।",
+    ),
+    "Lipid Profile": (
+        True,
+        "এই টেস্টের আগে দশ থেকে বারো ঘণ্টা উপবাস থাকতে হবে, জল ছাড়া আর কিছু খাবেন না। আগের রাতে হালকা খাবার খাওয়া ভালো।",
+    ),
     "HbA1c": (False, "এই টেস্টের জন্য উপবাস থাকার দরকার নেই, স্বাভাবিক খাওয়াদাওয়ার পরেও করানো যায়।"),
     "Kidney Function Test (KFT)": (True, "এই টেস্টের আগে ছয় থেকে আট ঘণ্টা উপবাস থাকার পরামর্শ দেওয়া হয়।"),
     "Liver Function Test (LFT)": (True, "এই টেস্টের আগে আট ঘণ্টা উপবাস থাকার পরামর্শ দেওয়া হয়।"),
-    "USG Whole Abdomen": (True, "এই টেস্টের আগে ছয় ঘণ্টা কিছু খাবেন না এবং প্রস্রাব চেপে রাখতে হবে, "
-                                  "মূত্রথলি ভর্তি থাকা দরকার।"),
-    "USG Pregnancy Profile": (True, "এই টেস্টের আগে জল বেশি খেয়ে মূত্রথলি ভর্তি রাখতে হবে, "
-                                      "টেস্টের ঠিক আগে প্রস্রাব করবেন না।"),
-    "TMT (Treadmill Test)": (False, "হালকা, আরামদায়ক পোশাক ও জুতো পরে আসবেন। টেস্টের দুই ঘণ্টা আগে ভারী "
-                                      "খাবার না খাওয়াই ভালো।"),
+    "USG Whole Abdomen": (True, "এই টেস্টের আগে ছয় ঘণ্টা কিছু খাবেন না এবং প্রস্রাব চেপে রাখতে হবে, মূত্রথলি ভর্তি থাকা দরকার।"),
+    "USG Pregnancy Profile": (True, "এই টেস্টের আগে জল বেশি খেয়ে মূত্রথলি ভর্তি রাখতে হবে, টেস্টের ঠিক আগে প্রস্রাব করবেন না।"),
+    "TMT (Treadmill Test)": (False, "হালকা, আরামদায়ক পোশাক ও জুতো পরে আসবেন। টেস্টের দুই ঘণ্টা আগে ভারী খাবার না খাওয়াই ভালো।"),
 }
 
 _DEFAULT_PREP_BN = "এই টেস্টের জন্য বিশেষ কোনো প্রস্তুতির প্রয়োজন নেই, স্বাভাবিকভাবে এসে করাতে পারেন।"
@@ -235,30 +288,42 @@ def _prep_for(test_name: str) -> tuple[bool, str]:
 # same convention as DEPARTMENTS/LAB_TESTS above, not sourced from a real
 # clinic. This is the Tier-3 "approved content" table (models.FAQ).
 FAQ_ENTRIES = [
-    ("hours",
-     ["সময়", "কখন খোলে", "কখন বন্ধ", "খোলা থাকে", "ভিজিটিং আওয়ার্স", "ক্লিনিকের সময়"],
-     "আমাদের ক্লিনিক প্রতিদিন সকাল আটটা থেকে রাত আটটা পর্যন্ত খোলা থাকে, রবিবার সকাল আটটা থেকে দুপুর দুটো পর্যন্ত।"),
-    ("location",
-     ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব"],
-     "আমাদের ক্লিনিক কলকাতার রাজারহাট নিউ টাউনে, সিটি সেন্টার টু-এর কাছে।"),
-    ("payment_methods",
-     ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ"],
-     "নগদ, সব ধরনের কার্ড এবং ইউপিআই -- সব মাধ্যমেই পেমেন্ট নেওয়া হয়।"),
-    ("insurance",
-     ["ইনসিওরেন্স", "ইন্সুরেন্স", "বিমা", "ক্যাশলেস", "মেডিক্লেম"],
-     "প্রধান বিমা সংস্থাগুলোর ক্যাশলেস সুবিধা আছে। আপনার কার্ডের নাম বললে কাউন্টার থেকে নিশ্চিত করে দেওয়া হবে।"),
-    ("parking",
-     ["পার্কিং", "গাড়ি রাখার জায়গা", "গাড়ি কোথায় রাখব"],
-     "ক্লিনিকের নিজস্ব পার্কিং আছে, কোনো চার্জ লাগে না।"),
-    ("report_collection",
-     ["রিপোর্ট কীভাবে পাব", "রিপোর্ট নিতে", "রিপোর্ট কোথা থেকে"],
-     "রিপোর্ট সরাসরি কাউন্টার থেকে সংগ্রহ করতে পারেন, অথবা হোয়াটসঅ্যাপ ও ইমেলেও পাঠানো হয়।"),
-    ("contact_number",
-     ["ফোন নম্বর", "যোগাযোগ", "নম্বরটা কী"],
-     "আমাদের হেল্পডেস্ক নম্বরে ফোন করে সরাসরি কথা বলতে পারেন, এই কলটার পরেও নম্বরটা এসএমএস করে দেওয়া হবে।"),
-    ("home_collection",
-     ["বাড়িতে এসে", "হোম কালেকশন", "বাড়ি থেকে স্যাম্পল"],
-     "বেশিরভাগ ব্লাড টেস্টের জন্য বাড়িতে এসে স্যাম্পল নেওয়ার সুবিধা আছে। বুক করার সময় বলে দেবেন।"),
+    (
+        "hours",
+        ["সময়", "কখন খোলে", "কখন বন্ধ", "খোলা থাকে", "ভিজিটিং আওয়ার্স", "ক্লিনিকের সময়"],
+        "আমাদের ক্লিনিক প্রতিদিন সকাল আটটা থেকে রাত আটটা পর্যন্ত খোলা থাকে, রবিবার সকাল আটটা থেকে দুপুর দুটো পর্যন্ত।",
+    ),
+    (
+        "location",
+        ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব"],
+        "আমাদের ক্লিনিক কলকাতার রাজারহাট নিউ টাউনে, সিটি সেন্টার টু-এর কাছে।",
+    ),
+    (
+        "payment_methods",
+        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ"],
+        "নগদ, সব ধরনের কার্ড এবং ইউপিআই -- সব মাধ্যমেই পেমেন্ট নেওয়া হয়।",
+    ),
+    (
+        "insurance",
+        ["ইনসিওরেন্স", "ইন্সুরেন্স", "বিমা", "ক্যাশলেস", "মেডিক্লেম"],
+        "প্রধান বিমা সংস্থাগুলোর ক্যাশলেস সুবিধা আছে। আপনার কার্ডের নাম বললে কাউন্টার থেকে নিশ্চিত করে দেওয়া হবে।",
+    ),
+    ("parking", ["পার্কিং", "গাড়ি রাখার জায়গা", "গাড়ি কোথায় রাখব"], "ক্লিনিকের নিজস্ব পার্কিং আছে, কোনো চার্জ লাগে না।"),
+    (
+        "report_collection",
+        ["রিপোর্ট কীভাবে পাব", "রিপোর্ট নিতে", "রিপোর্ট কোথা থেকে"],
+        "রিপোর্ট সরাসরি কাউন্টার থেকে সংগ্রহ করতে পারেন, অথবা হোয়াটসঅ্যাপ ও ইমেলেও পাঠানো হয়।",
+    ),
+    (
+        "contact_number",
+        ["ফোন নম্বর", "যোগাযোগ", "নম্বরটা কী"],
+        "আমাদের হেল্পডেস্ক নম্বরে ফোন করে সরাসরি কথা বলতে পারেন, এই কলটার পরেও নম্বরটা এসএমএস করে দেওয়া হবে।",
+    ),
+    (
+        "home_collection",
+        ["বাড়িতে এসে", "হোম কালেকশন", "বাড়ি থেকে স্যাম্পল"],
+        "বেশিরভাগ ব্লাড টেস্টের জন্য বাড়িতে এসে স্যাম্পল নেওয়ার সুবিধা আছে। বুক করার সময় বলে দেবেন।",
+    ),
 ]
 
 
@@ -277,6 +342,7 @@ def add_i18n_columns() -> list[str]:
     "no such column" -- which is exactly how clinic-api crashed at boot on
     the pod's existing clinic.db."""
     from sqlalchemy import inspect, text
+
     added = []
     insp = inspect(engine)
     with engine.begin() as conn:
@@ -309,17 +375,23 @@ def backfill_i18n(db=None) -> dict:
                 filled += 1
         for t in db.query(LabTest).all():
             prep_hi, prep_en = PREP_I18N.get(t.name, (DEFAULT_PREP_HI, DEFAULT_PREP_EN))
-            for attr, val in (("aliases_hi", "|".join(TEST_ALIASES_HI.get(t.name, []))),
-                              ("prep_instructions_hi", prep_hi),
-                              ("prep_instructions_en", prep_en)):
+            for attr, val in (
+                ("aliases_hi", "|".join(TEST_ALIASES_HI.get(t.name, []))),
+                ("prep_instructions_hi", prep_hi),
+                ("prep_instructions_en", prep_en),
+            ):
                 if not getattr(t, attr):
                     setattr(t, attr, val)
                     filled += 1
         for f in db.query(FAQ).all():
             ans_hi, ans_en = FAQ_I18N.get(f.topic, ("", ""))
             kw_hi, kw_en = FAQ_KEYWORDS_I18N.get(f.topic, ([], []))
-            for attr, val in (("answer_hi", ans_hi), ("answer_en", ans_en),
-                              ("keywords_hi", "|".join(kw_hi)), ("keywords_en", "|".join(kw_en))):
+            for attr, val in (
+                ("answer_hi", ans_hi),
+                ("answer_en", ans_en),
+                ("keywords_hi", "|".join(kw_hi)),
+                ("keywords_en", "|".join(kw_en)),
+            ):
                 if not getattr(f, attr):
                     setattr(f, attr, val)
                     filled += 1
@@ -345,40 +417,69 @@ def seed():
                 surname = doc_name.split()[-1]
                 aliases = "|".join(SURNAME_BN.get(surname, []))
                 latin, full_bn, full_hi = doctor_full_names().get(doc_name, ("", "", ""))
-                doc = Doctor(name=doc_name, full_name=latin, full_name_bn=full_bn, full_name_hi=full_hi,
-                             qualifications=quals, aliases_bn=aliases,
-                             aliases_hi="|".join(SURNAME_HI.get(surname, [])),
-                             department_id=dept.id)
+                doc = Doctor(
+                    name=doc_name,
+                    full_name=latin,
+                    full_name_bn=full_bn,
+                    full_name_hi=full_hi,
+                    qualifications=quals,
+                    aliases_bn=aliases,
+                    aliases_hi="|".join(SURNAME_HI.get(surname, [])),
+                    department_id=dept.id,
+                )
                 db.add(doc)
                 db.flush()
 
                 template = SHIFT_TEMPLATES[doctor_index % len(SHIFT_TEMPLATES)]
                 for weekday in template["days"]:
-                    db.add(DoctorSchedule(
-                        doctor_id=doc.id, weekday=weekday,
-                        start_time=template["start"], end_time=template["end"],
-                    ))
+                    db.add(
+                        DoctorSchedule(
+                            doctor_id=doc.id,
+                            weekday=weekday,
+                            start_time=template["start"],
+                            end_time=template["end"],
+                        )
+                    )
                 doctor_index += 1
 
         for name, aliases_bn, rate, sample, hours in LAB_TESTS:
             fasting, prep_bn = _prep_for(name)
             prep_hi, prep_en = PREP_I18N.get(name, (DEFAULT_PREP_HI, DEFAULT_PREP_EN))
-            db.add(LabTest(name=name, aliases_bn="|".join(aliases_bn), rate_inr=rate,
-                            aliases_hi="|".join(TEST_ALIASES_HI.get(name, [])),
-                            sample_type=sample, report_time_hours=hours,
-                            fasting_required=fasting, prep_instructions_bn=prep_bn,
-                            prep_instructions_hi=prep_hi, prep_instructions_en=prep_en))
+            db.add(
+                LabTest(
+                    name=name,
+                    aliases_bn="|".join(aliases_bn),
+                    rate_inr=rate,
+                    aliases_hi="|".join(TEST_ALIASES_HI.get(name, [])),
+                    sample_type=sample,
+                    report_time_hours=hours,
+                    fasting_required=fasting,
+                    prep_instructions_bn=prep_bn,
+                    prep_instructions_hi=prep_hi,
+                    prep_instructions_en=prep_en,
+                )
+            )
 
         for topic, keywords_bn, answer_bn in FAQ_ENTRIES:
             ans_hi, ans_en = FAQ_I18N.get(topic, ("", ""))
             kw_hi, kw_en = FAQ_KEYWORDS_I18N.get(topic, ([], []))
-            db.add(FAQ(topic=topic, keywords_bn="|".join(keywords_bn), answer_bn=answer_bn,
-                       answer_hi=ans_hi, answer_en=ans_en,
-                       keywords_hi="|".join(kw_hi), keywords_en="|".join(kw_en)))
+            db.add(
+                FAQ(
+                    topic=topic,
+                    keywords_bn="|".join(keywords_bn),
+                    answer_bn=answer_bn,
+                    answer_hi=ans_hi,
+                    answer_en=ans_en,
+                    keywords_hi="|".join(kw_hi),
+                    keywords_en="|".join(kw_en),
+                )
+            )
 
         db.commit()
-        print(f"Seeded {len(DEPARTMENTS)} departments, {doctor_index} doctors, "
-              f"{len(LAB_TESTS)} lab tests, {len(FAQ_ENTRIES)} FAQ topics.")
+        print(
+            f"Seeded {len(DEPARTMENTS)} departments, {doctor_index} doctors, "
+            f"{len(LAB_TESTS)} lab tests, {len(FAQ_ENTRIES)} FAQ topics."
+        )
     finally:
         db.close()
 

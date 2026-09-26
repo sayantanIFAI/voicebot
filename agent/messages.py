@@ -18,6 +18,7 @@ which the call record stores so an audit can tell which wording a caller heard.
 Pure Python, no I/O: the refresh itself (an HTTP call) is made by the orchestrator, which hands the
 result to `load()`.
 """
+
 from __future__ import annotations
 
 import time
@@ -38,7 +39,7 @@ def load(payload: dict | None, now: float | None = None) -> int:
         rows = payload["messages"]
     except (TypeError, KeyError):
         return len(_cache)
-    if not isinstance(rows, dict):                 # a malformed body is ignored, never trusted
+    if not isinstance(rows, dict):  # a malformed body is ignored, never trusted
         return len(_cache)
     fresh: dict[tuple[str, str], tuple[str, int]] = {}
     for key, by_lang in rows.items():

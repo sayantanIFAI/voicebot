@@ -13,21 +13,44 @@ Everything the hook installs is removed afterwards, so it cannot leak a mock
     with pod_stubs() as import_module:
         m = import_module("main_pcm")
 """
+
 from __future__ import annotations
 
 import contextlib
 import importlib
 import importlib.abc
-import os
 import importlib.machinery
+import os
 import sys
 from unittest import mock
 
-STUBBED_ROOTS = ("torch", "torchaudio", "nemo", "speechbrain", "soundfile", "transformers", "omegaconf",
-                 "lightning", "pytorch_lightning", "onnxruntime", "TTS", "sentence_transformers")
+STUBBED_ROOTS = (
+    "torch",
+    "torchaudio",
+    "nemo",
+    "speechbrain",
+    "soundfile",
+    "transformers",
+    "omegaconf",
+    "lightning",
+    "pytorch_lightning",
+    "onnxruntime",
+    "TTS",
+    "sentence_transformers",
+)
 # modules that import the stubs and so must not survive the context
-_OWN_MODULES = ("main", "main_pcm", "agent.asr", "agent.lid", "agent.vad_stream", "agent.semantic_cache",
-                "agent.pcm_buffer", "agent.tts", "agent.tts_router", "agent.channel_quality")
+_OWN_MODULES = (
+    "main",
+    "main_pcm",
+    "agent.asr",
+    "agent.lid",
+    "agent.vad_stream",
+    "agent.semantic_cache",
+    "agent.pcm_buffer",
+    "agent.tts",
+    "agent.tts_router",
+    "agent.channel_quality",
+)
 
 
 class _Finder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -55,7 +78,9 @@ def pod_stubs(repo_root: str):
     saved_path = list(sys.path)
     sys.path[:] = [repo_root] + [p for p in sys.path if p != repo_root]
     stale_main = sys.modules.get("main")
-    if stale_main is not None and os.path.dirname(os.path.abspath(getattr(stale_main, "__file__", "") or "")) != os.path.abspath(repo_root):
+    if stale_main is not None and os.path.dirname(
+        os.path.abspath(getattr(stale_main, "__file__", "") or "")
+    ) != os.path.abspath(repo_root):
         del sys.modules["main"]
     else:
         stale_main = None

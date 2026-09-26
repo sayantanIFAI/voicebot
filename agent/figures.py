@@ -11,6 +11,7 @@ prosodic break.
 Kept separate so the grouping rule exists in exactly one place and is
 table-tested once, not re-derived per language.
 """
+
 from __future__ import annotations
 
 # The separator between spoken groups. Standalone (spaces both sides), not
@@ -29,7 +30,7 @@ def phone_groups(digits: str) -> list[str]:
         return [digits[:5], digits[5:]]
     if len(digits) <= 4:
         return [digits]
-    groups = [digits[i:i + 4] for i in range(0, len(digits), 4)]
+    groups = [digits[i : i + 4] for i in range(0, len(digits), 4)]
     if len(groups[-1]) < 2 and len(groups) > 1:
         last = groups.pop()
         groups[-1] += last
@@ -47,7 +48,7 @@ def id_groups(identifier: str) -> list[str]:
         if len(segment) <= 4:
             groups.append(segment)
         else:
-            groups.extend(segment[i:i + 4] for i in range(0, len(segment), 4))
+            groups.extend(segment[i : i + 4] for i in range(0, len(segment), 4))
     return groups
 
 

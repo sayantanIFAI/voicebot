@@ -157,9 +157,5 @@ def grouped_prompt(fields: list[str], lang: str) -> str | None:
     if table is None or any(f not in table["f"] for f in fields):
         return None
     parts = [table["f"][f] for f in fields]
-    joined = (
-        parts[0]
-        if len(parts) == 1
-        else table["comma"].join(parts[:-1]) + table["and"] + parts[-1]
-    )
+    joined = parts[0] if len(parts) == 1 else table["comma"].join(parts[:-1]) + table["and"] + parts[-1]
     return table["frame"].format(joined)

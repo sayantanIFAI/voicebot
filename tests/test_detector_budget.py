@@ -3,6 +3,7 @@ just proving the timeout/degrade behaviour with real (short) sleeps.
 
     python -m pytest tests/test_detector_budget.py -v
 """
+
 import os
 import sys
 import time
@@ -36,8 +37,8 @@ async def test_a_slow_detector_degrades_to_the_previous_value_without_waiting():
     t0 = time.monotonic()
     result = await run_within_budget("unit_test_slow", 0.05, _slow, previous_value="stale")
     elapsed = time.monotonic() - t0
-    assert result == "stale"          # degraded, not the slow function's real answer
-    assert elapsed < 0.2              # the TURN was not held up for the full 0.3s sleep
+    assert result == "stale"  # degraded, not the slow function's real answer
+    assert elapsed < 0.2  # the TURN was not held up for the full 0.3s sleep
 
 
 @pytest.mark.asyncio

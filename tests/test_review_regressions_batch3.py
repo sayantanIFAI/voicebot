@@ -3,6 +3,7 @@ failure the review described, so it cannot come back unnoticed.
 
     python -m pytest tests/test_review_regressions_batch3.py -v
 """
+
 import os
 import sys
 
@@ -19,15 +20,18 @@ from agent.llm import _normalize_age
 from agent.prosody import split_for_prosody
 from agent.speech_policy import count_questions, limit_questions
 
-
 # --------------------------------------------- confirmation must not be inferred from a maybe
 
-@pytest.mark.parametrize("text", [
-    "not sure I should confirm",
-    "I am not really sure but confirm it",
-    "maybe yes",
-    "unsure, go ahead",
-])
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not sure I should confirm",
+        "I am not really sure but confirm it",
+        "maybe yes",
+        "unsure, go ahead",
+    ],
+)
 def test_an_uncertain_answer_is_never_a_yes(text):
     assert classify_yes_no(text, "en") is None
 
@@ -38,6 +42,7 @@ def test_a_plain_affirmative_still_confirms(text):
 
 
 # --------------------------------------------- a statement is never dropped with a surplus question
+
 
 def test_limit_questions_keeps_a_statement_that_sits_between_two_questions():
     out = limit_questions("Which doctor? Your price is 500 rupees. Which day?", 1)
@@ -52,11 +57,15 @@ def test_limit_questions_does_not_split_a_decimal():
 
 # --------------------------------------------- dictated slots are not "jumbled"
 
-@pytest.mark.parametrize("text", [
-    "9 8 7 6 5 4 3 2 1 0",          # a phone number, digit by digit
-    "R A V I D A S",                # a name, letter by letter
-    "5 5 5 5 5 5",                  # a repeated digit run
-])
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "9 8 7 6 5 4 3 2 1 0",  # a phone number, digit by digit
+        "R A V I D A S",  # a name, letter by letter
+        "5 5 5 5 5 5",  # a repeated digit run
+    ],
+)
 def test_a_dictated_slot_answer_is_not_called_jumbled(text):
     # the reviewer's reproduction: outside a booking these ARE flagged ...
     assert transcript_problem(text, "en", 6.0, 0.9) in ("shattered", "repetitive")
@@ -75,6 +84,7 @@ def test_decoder_disagreement_still_counts_inside_a_booking():
 
 # --------------------------------------------- language policy
 
+
 def test_numerals_carry_no_script():
     assert script_counts("১২৩") == {"bengali": 0, "devanagari": 0, "latin": 0}
     assert script_counts("१२३") == {"bengali": 0, "devanagari": 0, "latin": 0}
@@ -84,12 +94,13 @@ def test_numerals_carry_no_script():
 
 def test_the_longest_whole_form_the_caller_used_wins():
     forms = ["স্ক্যান", "সিটি স্ক্যান"]
-    assert choose_spoken_form("সিটি স্ক্যান", forms, None) == "সিটি স্ক্যান"        # exact
+    assert choose_spoken_form("সিটি স্ক্যান", forms, None) == "সিটি স্ক্যান"  # exact
     assert choose_spoken_form("আমার সিটি স্ক্যান লাগবে", forms, None) == "সিটি স্ক্যান"  # longest contained
     assert choose_spoken_form("স্ক্যান", forms, None) == "স্ক্যান"
 
 
 # --------------------------------------------- prosody
+
 
 def test_a_newline_boundary_earns_a_sentence_pause():
     assert split_for_prosody("Hello\nWorld") == [("Hello", "sentence"), ("World", "none")]
@@ -101,15 +112,28 @@ def test_a_long_clause_without_a_comma_is_cut_at_word_boundaries():
     assert len(chunks) > 1
     assert all(len(c) <= 60 for c, _ in chunks)
     assert all(kind == "none" for _, kind in chunks[:-1])
-    assert chunks[-1][1] == "sentence"                       # the clause keeps its own pause at the end
+    assert chunks[-1][1] == "sentence"  # the clause keeps its own pause at the end
     assert " ".join(c for c, _ in chunks) == text
 
 
 # --------------------------------------------- the age slot is a number or nothing
 
-@pytest.mark.parametrize("value,expected", [
-    (72, 72), ("72", 72), (" 65 ", 65), (72.0, 72),
-    ("seventy", None), (None, None), (True, None), (0, None), (200, None), ("7.5", None), (-3, None),
-])
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (72, 72),
+        ("72", 72),
+        (" 65 ", 65),
+        (72.0, 72),
+        ("seventy", None),
+        (None, None),
+        (True, None),
+        (0, None),
+        (200, None),
+        ("7.5", None),
+        (-3, None),
+    ],
+)
 def test_patient_age_is_normalised_at_the_extraction_boundary(value, expected):
     assert _normalize_age(value) == expected

@@ -149,12 +149,7 @@ _PUNCT = re.compile(r"[?!.,;:।\"'()\[\]]")
 
 
 def _normalise(text: str) -> str:
-    t = (
-        unicodedata.normalize("NFC", text or "")
-        .replace("़", "")
-        .lower()
-        .replace("’", "'")
-    )
+    t = unicodedata.normalize("NFC", text or "").replace("़", "").lower().replace("’", "'")
     t = _PUNCT.sub(lambda m: "'" if m.group(0) == "'" else " ", t)
     return " ".join(t.split())
 
@@ -163,9 +158,7 @@ def _has(text: str, cue: str) -> bool:
     cue = _normalise(cue)
     if " " in cue or len(cue) >= 5:
         return cue in text  # a phrase, or a long enough word to be unambiguous
-    return (
-        f" {cue} " in f" {text} "
-    )  # a short word: whole tokens only ("bye" is not in "maybe")
+    return f" {cue} " in f" {text} "  # a short word: whole tokens only ("bye" is not in "maybe")
 
 
 def wants_to_end(text: str, lang: str, after_prompt: bool = False) -> bool:
@@ -174,9 +167,7 @@ def wants_to_end(text: str, lang: str, after_prompt: bool = False) -> bool:
     t = _normalise(text)
     if not t:
         return False
-    languages = (lang,) + tuple(
-        x for x in _EXPLICIT if x != lang
-    )  # a caller may end it in any language
+    languages = (lang,) + tuple(x for x in _EXPLICIT if x != lang)  # a caller may end it in any language
     if any(_has(t, c) for lg in languages for c in _EXPLICIT.get(lg, ())):
         return True
     if after_prompt and not any(w in t for w in _TASK_WORDS):

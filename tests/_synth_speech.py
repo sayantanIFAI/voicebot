@@ -1,13 +1,25 @@
 """Shared synthetic-speech generator for the audio tests (no real audio
 exists locally). Parameters control exactly the properties a detector is
 supposed to measure, so ground truth is known by construction."""
+
 import numpy as np
 
 SR = 16000
 
 
-def speech(f0=120.0, dur=6.0, syll_hz=4.5, pause_every=0, pause_s=0.0, tremor_hz=0.0,
-           tremor_st=0.0, jitter_st=0.05, breath=0.02, amp=0.3, seed=0):
+def speech(
+    f0=120.0,
+    dur=6.0,
+    syll_hz=4.5,
+    pause_every=0,
+    pause_s=0.0,
+    tremor_hz=0.0,
+    tremor_st=0.0,
+    jitter_st=0.05,
+    breath=0.02,
+    amp=0.3,
+    seed=0,
+):
     rng = np.random.default_rng(seed)
     t = np.arange(int(dur * SR)) / SR
     # pitch track in semitones: slow drift + tremor + smoothed random jitter
@@ -40,5 +52,14 @@ def young(seed=0, f0=120.0):
 
 
 def older(seed=0, f0=120.0):
-    return speech(f0=f0, syll_hz=2.3, pause_every=3, pause_s=0.55, tremor_hz=6.0, tremor_st=0.5,
-                  jitter_st=0.30, breath=0.10, seed=seed)
+    return speech(
+        f0=f0,
+        syll_hz=2.3,
+        pause_every=3,
+        pause_s=0.55,
+        tremor_hz=6.0,
+        tremor_st=0.5,
+        jitter_st=0.30,
+        breath=0.10,
+        seed=seed,
+    )

@@ -8,7 +8,7 @@ those libraries with mocks; nothing here touches them. What runs is the REAL
 
     python -m pytest tests/test_orchestrator_duplex.py -v
 """
-import asyncio
+
 import io
 import json
 import os
@@ -25,6 +25,7 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 from _pod_stubs import pod_stubs
 from _synth_echo import SR, caller, echo_scene
+
 from agent.endpointing import EndpointConfig
 
 
@@ -100,14 +101,15 @@ def session(pcm, monkeypatch):
 
 # ================================================================= gate wiring (KCD-050)
 
+
 def test_the_session_gate_behaves_as_the_old_attributes_did(session):
-    assert session.agent_speaking is True                    # starts closed
+    assert session.agent_speaking is True  # starts closed
     session.release_gate()
     assert session.agent_speaking is False and session.resync_pending is True
     session.hold_gate_for(2.0)
     assert session.agent_speaking is True
-    assert session.speak_deadline > session.gate._clock()    # the deadline property tracks the gate
-    session.resync_pending = False                           # the setter _resync_after_playback uses
+    assert session.speak_deadline > session.gate._clock()  # the deadline property tracks the gate
+    session.resync_pending = False  # the setter _resync_after_playback uses
     assert session.gate.resync_pending is False
 
 
@@ -118,25 +120,26 @@ def test_main_and_main_pcm_agree_on_the_gate(webm, pcm):
 
 # ============================================================ epochs and discard (KCD-052/163)
 
+
 @pytest.mark.asyncio
 async def test_a_reply_interrupted_mid_synthesis_sends_no_further_clauses(pcm, session):
     def interrupt_during_second_clause(n):
         if n == 2:
-            session.speak_epoch += 1                         # the caller takes the floor now
+            session.speak_epoch += 1  # the caller takes the floor now
 
     pcm._tts_router = FakeTTS(on_call=interrupt_during_second_clause)
     await pcm._speak(session, "Your appointment is booked. The fee is five hundred rupees. Please arrive early.", "en")
-    assert len(session.ws.audio) == 1                        # only the clause sent before the interrupt
-    assert pcm._tts_router.calls == 2                        # and nothing was even synthesised after it
+    assert len(session.ws.audio) == 1  # only the clause sent before the interrupt
+    assert pcm._tts_router.calls == 2  # and nothing was even synthesised after it
 
 
 @pytest.mark.asyncio
 async def test_a_stale_turn_is_discarded_before_any_work_is_done(pcm, session):
     pcm._tts_router = FakeTTS()
-    session.speak_epoch += 1                                 # interrupted; this turn started earlier
+    session.speak_epoch += 1  # interrupted; this turn started earlier
     total = await pcm._speak(session, "This should never be spoken.", "en")
     assert total == 0.0 and session.ws.audio == [] and pcm._tts_router.calls == 0
-    session.turn_epoch = session.speak_epoch                 # the NEXT turn syncs and speaks normally
+    session.turn_epoch = session.speak_epoch  # the NEXT turn syncs and speaks normally
     await pcm._speak(session, "This is spoken.", "en")
     assert len(session.ws.audio) == 1
 
@@ -148,10 +151,10 @@ async def test_the_manual_interrupt_message_stops_playback_and_discards_the_rest
     assert session.agent_speaking
     await pcm._handle_control(session, json.dumps({"type": "interrupt"}))
     assert not session.agent_speaking and session.speak_epoch == 1
-    assert session.ws.frames("stop_playback") == []          # the client stopped itself; it is not told again
+    assert session.ws.frames("stop_playback") == []  # the client stopped itself; it is not told again
     sent = len(session.ws.audio)
     await pcm._speak(session, "Second, which the caller already interrupted.", "en")
-    assert len(session.ws.audio) == sent                     # KCD-163: nothing more reaches the caller
+    assert len(session.ws.audio) == sent  # KCD-163: nothing more reaches the caller
 
 
 @pytest.mark.asyncio
@@ -159,16 +162,17 @@ async def test_an_interrupt_with_a_resume_point_moves_the_marker_and_cancels_the
     session.processed_until_s = 3.0
     await pcm._interrupt_playback(session, "acoustic", resume_from_s=7.5)
     assert session.processed_until_s == 7.5 and session.resync_pending is False
-    await pcm._interrupt_playback(session, "acoustic", resume_from_s=2.0)     # never backwards
+    await pcm._interrupt_playback(session, "acoustic", resume_from_s=2.0)  # never backwards
     assert session.processed_until_s == 7.5
 
 
 # ======================================================= AEC + barge-in end to end (KCD-051/052)
 
+
 def _chunks(x, n=2048):
     pcm16 = (np.clip(x, -1, 1) * 32767).astype(np.int16)
     for i in range(0, pcm16.size, n):
-        yield pcm16[i:i + n].tobytes()
+        yield pcm16[i : i + n].tobytes()
 
 
 async def _run_call(pcm, monkeypatch, with_caller):
@@ -179,10 +183,10 @@ async def _run_call(pcm, monkeypatch, with_caller):
     if with_caller:
         c = caller(3, dur=1.5, f0=118)
         mic = mic.copy()
-        mic[onset:onset + c.size] += c
+        mic[onset : onset + c.size] += c
     session = pcm.CallSession(FakeWS())
     assert session.duplex is not None
-    pcm._tts_router = FakeTTS(wav_for=lambda text: _wav(far))       # the agent speaks 15 s of "far end"
+    pcm._tts_router = FakeTTS(wav_for=lambda text: _wav(far))  # the agent speaks 15 s of "far end"
     session.turn_epoch = session.speak_epoch
     await pcm._speak(session, "Hello.", "en")
     for chunk in _chunks(mic):
@@ -209,7 +213,7 @@ async def test_the_agents_own_echo_alone_never_interrupts_it(pcm, monkeypatch):
     try:
         assert session.ws.frames("stop_playback") == []
         assert session.speak_epoch == 0 and session.agent_speaking
-        assert session.audio.duration_s > 14.0                       # the cleaned signal was buffered
+        assert session.audio.duration_s > 14.0  # the cleaned signal was buffered
     finally:
         session.cleanup()
 
@@ -232,9 +236,11 @@ async def test_without_aec_the_buffer_holds_the_raw_microphone_and_nothing_can_i
 
 # ============================================================ wake scheduling (KCD-049)
 
+
 def test_wake_delays_follow_the_detectors_own_schedule(pcm):
-    D = pcm.TurnDecision if hasattr(pcm, "TurnDecision") else None
+    pcm.TurnDecision if hasattr(pcm, "TurnDecision") else None
     from agent.endpointing import TurnDecision
+
     idle = TurnDecision(None, False, "no_speech")
     assert pcm._next_wake_delay(idle) == pcm.POLL_INTERVAL_S
     talking = TurnDecision(None, True, "waiting_silence")
@@ -244,7 +250,7 @@ def test_wake_delays_follow_the_detectors_own_schedule(pcm):
     imminent = TurnDecision(None, True, "waiting_silence", commit_after_s=0.0)
     assert pcm._next_wake_delay(imminent) == pcm.MIN_WAKE_S
     far = TurnDecision(None, True, "waiting_silence", commit_after_s=0.9)
-    assert pcm._next_wake_delay(far) == pcm.ACTIVE_POLL_INTERVAL_S    # never sleeps LONGER than the cadence
+    assert pcm._next_wake_delay(far) == pcm.ACTIVE_POLL_INTERVAL_S  # never sleeps LONGER than the cadence
 
 
 def test_the_wake_schedule_resets_to_idle_after_it_is_used(session, pcm):
@@ -258,6 +264,7 @@ def test_the_pcm_variant_trusts_exact_sample_positions_with_a_smaller_tail_guard
 
 
 # ====================================================== semantic endpointing (KCD-048)
+
 
 class FakeDetector:
     def __init__(self, spans, duration_s):
@@ -297,7 +304,7 @@ async def test_a_finished_transcript_ends_the_turn_at_the_shorter_threshold(endp
     monkeypatch.setattr(pcm, "SEMANTIC_ENDPOINTING", True)
     pcm._asr_router = FakeRouter("what is the price of a CBC test?")
     session.lang = "en"
-    d = await pcm._decide_turn(session, None, 16000)         # 0.5 s of confirmed silence: under the 1.0 s baseline
+    d = await pcm._decide_turn(session, None, 16000)  # 0.5 s of confirmed silence: under the 1.0 s baseline
     assert d.utterance_end_s == 1.0 and pcm._asr_router.calls == 1
 
 
@@ -312,7 +319,9 @@ async def test_an_unfinished_transcript_keeps_waiting(endpointing_env, session, 
 
 
 @pytest.mark.asyncio
-async def test_the_verdict_is_reused_and_not_recomputed_while_the_speech_end_has_not_moved(endpointing_env, session, monkeypatch):
+async def test_the_verdict_is_reused_and_not_recomputed_while_the_speech_end_has_not_moved(
+    endpointing_env, session, monkeypatch
+):
     pcm = endpointing_env
     monkeypatch.setattr(pcm, "SEMANTIC_ENDPOINTING", True)
     pcm._asr_router = FakeRouter("my number is nine eight and")
@@ -330,7 +339,7 @@ async def test_speculation_is_bounded_per_turn_and_a_failure_is_only_no_verdict(
     session.lang = "en"
     for _ in range(6):
         d = await pcm._decide_turn(session, None, 16000)
-        assert d.utterance_end_s is None                     # the baseline threshold still applies
+        assert d.utterance_end_s is None  # the baseline threshold still applies
     assert pcm._asr_router.calls == pcm.MAX_SPECULATIONS_PER_TURN
 
 
@@ -340,4 +349,4 @@ async def test_with_the_feature_off_no_transcription_is_ever_requested(endpointi
     monkeypatch.setattr(pcm, "SEMANTIC_ENDPOINTING", False)
     pcm._asr_router = FakeRouter("what is the price of a CBC test?")
     d = await pcm._decide_turn(session, None, 16000)
-    assert pcm._asr_router.calls == 0 and d.utterance_end_s is None      # 0.5 s < the 1.0 s baseline
+    assert pcm._asr_router.calls == 0 and d.utterance_end_s is None  # 0.5 s < the 1.0 s baseline

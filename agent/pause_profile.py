@@ -27,6 +27,7 @@ synthetic speakers with different rhythms (tests/test_pause_profile.py). Until i
 (MIN_GAPS) it returns the base configuration unchanged, so a call always starts from the safe default.
 Pure numpy/Python; the clock and audio are injected.
 """
+
 from __future__ import annotations
 
 import collections
@@ -36,16 +37,16 @@ import numpy as np
 
 from agent.endpointing import EndpointConfig
 
-MIN_GAPS = 4                           # do not adapt on fewer observed gaps than this
-MAX_GAPS_KEPT = 40                     # the most recent gaps; a caller's rhythm can change during a call
-MAX_GAP_S = 3.0                        # a longer silence inside "one utterance" is not a pause, it is the end
-MIN_GAP_S = 0.08                       # below the detector's own hangover it is not a gap
-MARGIN = 1.3                           # wait this much longer than the caller's own long pauses
+MIN_GAPS = 4  # do not adapt on fewer observed gaps than this
+MAX_GAPS_KEPT = 40  # the most recent gaps; a caller's rhythm can change during a call
+MAX_GAP_S = 3.0  # a longer silence inside "one utterance" is not a pause, it is the end
+MIN_GAP_S = 0.08  # below the detector's own hangover it is not a gap
+MARGIN = 1.3  # wait this much longer than the caller's own long pauses
 COMPLETE_MARGIN = 1.2
 SILENCE_MIN_S, SILENCE_MAX_S = 0.6, 2.6
 COMPLETE_MIN_S, COMPLETE_MAX_S = 0.35, 1.2
 INCOMPLETE_FACTOR = 1.5
-FALSE_CUT_WINDOW_S = 1.2               # speech resuming this soon after a cut means the cut was early
+FALSE_CUT_WINDOW_S = 1.2  # speech resuming this soon after a cut means the cut was early
 FALSE_CUT_STEP = 1.15
 RELAX_AFTER_CLEAN_TURNS = 5
 RELAX_STEP = 0.95
@@ -55,7 +56,7 @@ BUMP_MIN, BUMP_MAX = 1.0, 1.8
 @dataclasses.dataclass
 class PauseProfile:
     gaps: collections.deque = dataclasses.field(default_factory=lambda: collections.deque(maxlen=MAX_GAPS_KEPT))
-    bump: float = 1.0                  # raised by early cuts, relaxed by clean turns
+    bump: float = 1.0  # raised by early cuts, relaxed by clean turns
     false_cuts: int = 0
     clean_turns: int = 0
     utterances: int = 0
@@ -109,15 +110,24 @@ class PauseProfile:
         else:
             silence = _clamp(base.silence_confirm_s * self.bump, SILENCE_MIN_S, SILENCE_MAX_S)
             complete = _clamp(base.complete_confirm_s * self.bump, COMPLETE_MIN_S, COMPLETE_MAX_S)
-        complete = min(complete, silence)                                 # finished never waits longer than the baseline
+        complete = min(complete, silence)  # finished never waits longer than the baseline
         incomplete = max(silence * INCOMPLETE_FACTOR, base.incomplete_confirm_s if not self.adapted else 0.0)
-        return dataclasses.replace(base, silence_confirm_s=silence, complete_confirm_s=complete,
-                                   incomplete_confirm_s=min(incomplete, SILENCE_MAX_S * INCOMPLETE_FACTOR))
+        return dataclasses.replace(
+            base,
+            silence_confirm_s=silence,
+            complete_confirm_s=complete,
+            incomplete_confirm_s=min(incomplete, SILENCE_MAX_S * INCOMPLETE_FACTOR),
+        )
 
     def snapshot(self) -> dict:
-        return {"gaps": len(self.gaps), "p90_s": None if not self.gaps else round(self.p90(), 3),
-                "median_s": None if not self.gaps else round(self.median(), 3), "bump": round(self.bump, 3),
-                "false_cuts": self.false_cuts, "adapted": self.adapted}
+        return {
+            "gaps": len(self.gaps),
+            "p90_s": None if not self.gaps else round(self.p90(), 3),
+            "median_s": None if not self.gaps else round(self.median(), 3),
+            "bump": round(self.bump, 3),
+            "false_cuts": self.false_cuts,
+            "adapted": self.adapted,
+        }
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:

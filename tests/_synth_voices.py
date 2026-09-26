@@ -17,6 +17,7 @@ in tests/test_speaker_change.py: it shows the detector separates speakers who
 differ in pitch and tract length, and stays quiet over changes of content. It
 does not show how it behaves on two real siblings.
 """
+
 import numpy as np
 
 SR = 16000
@@ -45,8 +46,10 @@ def utterance(speaker, dur=2.0, seed=0, noise_db=-45.0, amp=0.3):
     rng = np.random.default_rng(seed)
     t = np.arange(int(dur * SR)) / SR
     # intonation + slow drift, per utterance
-    contour = 2 ** (rng.uniform(-0.25, 0.25) * np.sin(2 * np.pi * rng.uniform(0.3, 1.0) * t + rng.uniform(0, 6.28)) / 1.0
-                    + 0.04 * np.sin(2 * np.pi * 4.5 * t))
+    contour = 2 ** (
+        rng.uniform(-0.25, 0.25) * np.sin(2 * np.pi * rng.uniform(0.3, 1.0) * t + rng.uniform(0, 6.28)) / 1.0
+        + 0.04 * np.sin(2 * np.pi * 4.5 * t)
+    )
     f0_t = speaker.f0 * contour
     phase = 2 * np.pi * np.cumsum(f0_t) / SR
     n_harm = int(3800 / (speaker.f0 * 0.75))

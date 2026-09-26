@@ -5,6 +5,7 @@ offline, no database.
 
     python -m pytest tests/test_phonetic_match.py -v
 """
+
 from agent.phonetic_match import phonetic_key, phonetic_match
 
 
@@ -38,7 +39,7 @@ def test_unrelated_short_names_do_not_collide():
     # real, unrelated surname just because both are short.
     assert not phonetic_match("Xyz", "Roy")
     assert not phonetic_match("Nobody", "Roy")
-    assert not phonetic_match("Kar", "Ray")   # different consonant skeleton (K vs R start)
+    assert not phonetic_match("Kar", "Ray")  # different consonant skeleton (K vs R start)
 
 
 def test_empty_or_no_letters_never_matches_anything():
@@ -57,7 +58,7 @@ def test_bengali_flap_consonant_matches_despite_nfc_composition_exclusion():
     # Built with chr()/explicit codepoints, not typed glyphs -- a typed
     # or pasted glyph is whatever normalization form the editor happened
     # to save, which would silently defeat this exact test.
-    precomposed = "ব" + "ড়" + "ুয়া"       # BA + precomposed DDA+nukta (U+09DC)
+    precomposed = "ব" + "ড়" + "ুয়া"  # BA + precomposed DDA+nukta (U+09DC)
     decomposed = "ব" + "ড়" + "ুয়া"  # BA + DDA (U+09A1) + nukta (U+09BC)
     assert precomposed != decomposed, "test fixture must actually differ at the codepoint level"
     assert phonetic_key(precomposed) == phonetic_key(decomposed)
@@ -66,7 +67,7 @@ def test_bengali_flap_consonant_matches_despite_nfc_composition_exclusion():
 
 
 def test_devanagari_flap_consonant_matches_despite_nfc_composition_exclusion():
-    precomposed = "ब" + "ड़" + "ुआ"       # BA + precomposed DDA+nukta (U+095C)
+    precomposed = "ब" + "ड़" + "ुआ"  # BA + precomposed DDA+nukta (U+095C)
     decomposed = "ब" + "ड़" + "ुआ"  # BA + DDA (U+0921) + nukta (U+093C)
     assert precomposed != decomposed, "test fixture must actually differ at the codepoint level"
     assert phonetic_key(precomposed) == phonetic_key(decomposed)

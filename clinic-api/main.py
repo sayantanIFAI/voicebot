@@ -8,6 +8,7 @@ _find_doctor). "Who might the caller have meant" -- the suggestions read back to
 a test or a doctor -- comes from a phonetic-fold gazetteer with an index (gazetteer.py, KCD-096), built once
 per catalogue and looked up, not scanned per request. A suggestion is never a resolution.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -18,20 +19,19 @@ import os
 import secrets
 import time
 import unicodedata
-import uuid
 
+import agent_messages as am
 import booking_service as bs
 import enquiry_service as eq
-import agent_messages as am
+import gazetteer as gz
 import patient_context as pc
 import registry as reg
 from db import SessionLocal, get_db
-from idempotency import idempotent, set_key_from_header as set_idempotency_key
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from idempotency import idempotent
+from idempotency import set_key_from_header as set_idempotency_key
 from models import FAQ, Appointment, AuditLog, Department, Doctor, DoctorSchedule, LabTest
-import gazetteer as gz
-from phonetic_match import phonetic_key, phonetic_match
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -51,12 +51,13 @@ async def require_service_token(request: Request, call_next):
     and is not a substitute for verifying a patient's identity (agent/identity.py). Read per
     request so it can be rotated without a code change; compared in constant time."""
     token = os.environ.get("CLINIC_API_TOKEN", "")
-    set_idempotency_key(request.headers.get("idempotency-key"))          # for the write endpoints (idempotency.py)
+    set_idempotency_key(request.headers.get("idempotency-key"))  # for the write endpoints (idempotency.py)
     if request.url.path.startswith("/api/v1/") and (token or os.environ.get("CLINIC_API_REQUIRE_TOKEN") == "1"):
         supplied = request.headers.get("authorization", "")
         if not token or not secrets.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
     return await call_next(request)
+
 
 SLOT_STEP_MIN = 15
 
@@ -66,7 +67,8 @@ def _warn_if_open():
     if not os.environ.get("CLINIC_API_TOKEN") and os.environ.get("CLINIC_API_REQUIRE_TOKEN") != "1":
         logging.getLogger("clinic-api").warning(
             "CLINIC_API_TOKEN is not set: /api/v1/* is served WITHOUT authentication. "
-            "Acceptable only on a closed development network.")
+            "Acceptable only on a closed development network."
+        )
 
 
 @app.on_event("startup")
@@ -84,9 +86,11 @@ def _ensure_seeded():
     """
     from db import engine
     from models import Base, LabTest
+
     Base.metadata.create_all(engine)
     from seed import add_i18n_columns
-    add_i18n_columns()   # before ANY ORM query: an old database lacks the new columns
+
+    add_i18n_columns()  # before ANY ORM query: an old database lacks the new columns
 
     # Epic E26 (booking/reschedule/cancel): new columns on `appointments`
     # and `doctors`, and the department-routing seed table. MUST also run
@@ -99,6 +103,7 @@ def _ensure_seeded():
     # DraftBooking, DepartmentRoute) a moment ago; this only ALTERs what
     # already existed.
     from booking_migrate import migrate_booking_schema
+
     logging.getLogger("clinic-api").info("booking schema migration: %s", migrate_booking_schema())
 
     # Epic E27 (information and enquiry): new columns on `lab_tests`.
@@ -106,6 +111,7 @@ def _ensure_seeded():
     # class of bug if this ran after the LabTest.count() query below
     # instead of before it.
     from enquiry_migrate import add_enquiry_columns
+
     logging.getLogger("clinic-api").info("enquiry schema migration: %s", add_enquiry_columns())
 
     db = SessionLocal()
@@ -113,10 +119,12 @@ def _ensure_seeded():
         if db.query(LabTest).count() == 0:
             logging.getLogger("clinic-api").info("empty database -- seeding catalogue")
             from seed import seed
+
             seed()
         else:
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
             from seed import backfill_i18n
+
             logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
 
         # Only now do departments/doctors/tests definitely have rows --
@@ -125,17 +133,17 @@ def _ensure_seeded():
         # brand-new database, the exact bug finish_booking_schema_setup's
         # own docstring documents.
         from booking_migrate import finish_booking_schema_setup
-        logging.getLogger("clinic-api").info(
-            "booking schema setup (routes/fees): %s", finish_booking_schema_setup())
+
+        logging.getLogger("clinic-api").info("booking schema setup (routes/fees): %s", finish_booking_schema_setup())
         from patient_seed import seed_patient_context
+
         logging.getLogger("clinic-api").info("agent messages: %s inserted", am.seed_defaults(db))
         if os.environ.get("CLINIC_SEED_SAMPLE_PATIENTS", "1") == "1":
             logging.getLogger("clinic-api").info("sample patient data: %s", seed_patient_context(db))
         from enquiry_migrate import backfill_enquiry_facts, seed_enquiry_demo_data
-        logging.getLogger("clinic-api").info(
-            "enquiry facts backfill: %s", backfill_enquiry_facts(db))
-        logging.getLogger("clinic-api").info(
-            "enquiry demo data: %s", seed_enquiry_demo_data(db))
+
+        logging.getLogger("clinic-api").info("enquiry facts backfill: %s", backfill_enquiry_facts(db))
+        logging.getLogger("clinic-api").info("enquiry demo data: %s", seed_enquiry_demo_data(db))
     finally:
         db.close()
 
@@ -167,10 +175,13 @@ def _first_alias_bn(aliases_bn: str) -> str | None:
 
 def _test_reply_dict(t: LabTest) -> dict:
     return {
-        "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "found": True,
+        "test_name": t.name,
+        "test_name_bn": _first_alias_bn(t.aliases_bn),
         "test_name_hi": _first_alias_bn(t.aliases_hi),
         "rate_inr": t.rate_inr,
-        "sample_type": t.sample_type, "report_time_hours": t.report_time_hours,
+        "sample_type": t.sample_type,
+        "report_time_hours": t.report_time_hours,
     }
 
 
@@ -186,19 +197,23 @@ def catalogue(db: Session = Depends(get_db)):
     """
     return {
         "tests": [
-            {"name": t.name,
-             "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a],
-             "aliases_hi": [a for a in (t.aliases_hi or "").split("|") if a]}
+            {
+                "name": t.name,
+                "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a],
+                "aliases_hi": [a for a in (t.aliases_hi or "").split("|") if a],
+            }
             for t in db.query(LabTest).all()
         ],
         "doctors": [
-            {"name": d.name,
-             "full_name": d.full_name or d.name,
-             "full_name_bn": d.full_name_bn,
-             "full_name_hi": d.full_name_hi,
-             "surname": d.name.split()[-1],
-             "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
-             "aliases_hi": [a for a in (d.aliases_hi or "").split("|") if a]}
+            {
+                "name": d.name,
+                "full_name": d.full_name or d.name,
+                "full_name_bn": d.full_name_bn,
+                "full_name_hi": d.full_name_hi,
+                "surname": d.name.split()[-1],
+                "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
+                "aliases_hi": [a for a in (d.aliases_hi or "").split("|") if a],
+            }
             for d in db.query(Doctor).all()
         ],
         # FAQ topics + their keyword sets, for FastPath.FAQCatalogue --
@@ -208,10 +223,12 @@ def catalogue(db: Session = Depends(get_db)):
         # discipline test_rate and doctor_availability already apply, so a
         # cached routing decision can never serve a stale FAQ answer.
         "faq_topics": [
-            {"topic": f.topic,
-             "keywords_bn": [k for k in (f.keywords_bn or "").split("|") if k],
-             "keywords_hi": [k for k in (f.keywords_hi or "").split("|") if k],
-             "keywords_en": [k for k in (f.keywords_en or "").split("|") if k]}
+            {
+                "topic": f.topic,
+                "keywords_bn": [k for k in (f.keywords_bn or "").split("|") if k],
+                "keywords_hi": [k for k in (f.keywords_hi or "").split("|") if k],
+                "keywords_en": [k for k in (f.keywords_en or "").split("|") if k],
+            }
             for f in db.query(FAQ).all()
         ],
     }
@@ -220,8 +237,7 @@ def catalogue(db: Session = Depends(get_db)):
 # Words that carry no test identity when a caller wraps a test name in a
 # sentence: "lipid profile TEST" must match "Lipid Profile". Bengali/Hindi
 # spellings of "test" included.
-_GENERIC_WORDS = {"test", "tests", "the", "a", "of", "for", "price", "rate",
-                  "টেস্ট", "টেস্টের", "टेस्ट", "जांच"}
+_GENERIC_WORDS = {"test", "tests", "the", "a", "of", "for", "price", "rate", "টেস্ট", "টেস্টের", "टेस्ट", "जांच"}
 
 
 def _norm_name(s: str) -> str:
@@ -278,7 +294,7 @@ def _find_test(db: Session, name: str) -> LabTest | None:
 # a single alias shows up within this many seconds. REASONED: catalogue edits are rare and a suggestion that lags
 # an alias edit by half a minute costs nothing, whereas rebuilding on every request would be the scan again.
 GAZETTEER_TTL_S = 30.0
-_gazetteers: dict[tuple, tuple[float, tuple, "gz.Gazetteer"]] = {}
+_gazetteers: dict[tuple, tuple[float, tuple, gz.Gazetteer]] = {}
 
 
 def invalidate_gazetteers() -> None:
@@ -313,8 +329,10 @@ def _strip_title(name: str) -> str:
     return " ".join(w for w in (name or "").split() if w.strip(".,").lower() not in _TITLE_WORDS)
 
 
-def _gazetteer(db: Session, kind: str) -> "gz.Gazetteer":
-    model, forms_of, drop = (LabTest, _test_forms, _GENERIC_WORDS) if kind == "test" else (Doctor, _doctor_forms, _TITLE_WORDS)
+def _gazetteer(db: Session, kind: str) -> gz.Gazetteer:
+    model, forms_of, drop = (
+        (LabTest, _test_forms, _GENERIC_WORDS) if kind == "test" else (Doctor, _doctor_forms, _TITLE_WORDS)
+    )
     key = (kind, id(db.get_bind()))
     stamp = _catalogue_stamp(db, model)
     now = time.monotonic()
@@ -418,8 +436,11 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
     # risk quoting the price of a DIFFERENT test than the one meant.
     candidates = _find_test_candidates(db, name)
     if len(candidates) > 1:
-        return _scripted(db, {"found": False, "query": name, "ambiguous": True,
-                              "did_you_mean": [t.name for t in candidates[:3]]}, LabTest)
+        return _scripted(
+            db,
+            {"found": False, "query": name, "ambiguous": True, "did_you_mean": [t.name for t in candidates[:3]]},
+            LabTest,
+        )
 
     found = candidates[0] if candidates else _find_test(db, name)
     if found:
@@ -442,11 +463,13 @@ def _by_lang(lang: str, bn: str, hi: str, en: str) -> str:
 
 def _test_prep_reply_dict(t: LabTest, lang: str = "bn") -> dict:
     return {
-        "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "found": True,
+        "test_name": t.name,
+        "test_name_bn": _first_alias_bn(t.aliases_bn),
         "test_name_hi": _first_alias_bn(t.aliases_hi),
-        "fasting_required": t.fasting_required, "lang": lang,
-        "prep_instructions": _by_lang(lang, t.prep_instructions_bn,
-                                      t.prep_instructions_hi, t.prep_instructions_en),
+        "fasting_required": t.fasting_required,
+        "lang": lang,
+        "prep_instructions": _by_lang(lang, t.prep_instructions_bn, t.prep_instructions_hi, t.prep_instructions_en),
     }
 
 
@@ -458,10 +481,13 @@ def test_prep(name: str = Query(...), lang: str = Query("bn"), db: Session = Dep
     (Blueprint 2.2) conceptually distinct from the Tier-1 price/turnaround
     facts search_test returns, and the two may end up backed by different
     systems of record later."""
-    candidates = _find_test_candidates(db, name)   # KCD-446: see search_test's own comment
+    candidates = _find_test_candidates(db, name)  # KCD-446: see search_test's own comment
     if len(candidates) > 1:
-        return _scripted(db, {"found": False, "query": name, "ambiguous": True,
-                              "did_you_mean": [t.name for t in candidates[:3]]}, LabTest)
+        return _scripted(
+            db,
+            {"found": False, "query": name, "ambiguous": True, "did_you_mean": [t.name for t in candidates[:3]]},
+            LabTest,
+        )
 
     found = candidates[0] if candidates else _find_test(db, name)
     if found:
@@ -536,10 +562,17 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
         return said_in_full
     out = []
     for d in doctors:
-        aliases = [a for a in (d.aliases_bn + "|" + (d.aliases_hi or "") + "|" + (d.full_name_bn or "") + "|"
-                               + (d.full_name_hi or "")).split("|") if a]
+        aliases = [
+            a
+            for a in (
+                d.aliases_bn + "|" + (d.aliases_hi or "") + "|" + (d.full_name_bn or "") + "|" + (d.full_name_hi or "")
+            ).split("|")
+            if a
+        ]
         # a one- or two-letter fragment ("ry") sits inside far too many names to identify any of them
-        if (len(needle) >= MIN_SUBSTRING_CHARS and needle in d.name.lower()) or any(name in a or a in name for a in aliases):
+        if (len(needle) >= MIN_SUBSTRING_CHARS and needle in d.name.lower()) or any(
+            name in a or a in name for a in aliases
+        ):
             out.append(d)
     return out
 
@@ -562,7 +595,7 @@ def _doctor_choices(db: Session, name: str, doctors: list[Doctor], near: bool = 
     body = {"found": False, "query": name, "ambiguous": True}
     for script, key in (("en", "did_you_mean"), ("bn", "did_you_mean_bn"), ("hi", "did_you_mean_hi")):
         labels = [label(d, script) for d in ordered]
-        if len(set(labels)) < len(labels):                               # still alike: say which department
+        if len(set(labels)) < len(labels):  # still alike: say which department
             labels = [f"{lab} ({depts[d.id]})" if depts[d.id] else lab for lab, d in zip(labels, ordered)]
         body[key] = labels
     if near:
@@ -640,8 +673,7 @@ def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSc
     return db.query(DoctorSchedule).filter_by(doctor_id=doctor_id, weekday=weekday).first()
 
 
-def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date,
-                          horizon_days: int = 14) -> str | None:
+def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date, horizon_days: int = 14) -> str | None:
     for offset in range(horizon_days):
         d = from_date + datetime.timedelta(days=offset)
         if _schedule_for_weekday(db, doctor_id, d.weekday()):
@@ -650,8 +682,7 @@ def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date,
 
 
 @app.get("/api/v1/doctors/availability")
-def doctor_availability(name: str = Query(...), date: str | None = Query(None),
-                         db: Session = Depends(get_db)):
+def doctor_availability(name: str = Query(...), date: str | None = Query(None), db: Session = Depends(get_db)):
     # Doctor-side counterpart of KCD-446: two similarly-spelled doctors
     # tying on the fuzzy floor is a genuinely different outcome from
     # "nothing matched" -- silently picking one (what _find_doctor does,
@@ -665,8 +696,11 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
         near = _find_doctor_candidates(db, name)
         if len(near) > 1:
             return _doctor_choices(db, name, near, near=True)
-        return _scripted(db, {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name),
-                              "needs_confirmation": True}, Doctor)
+        return _scripted(
+            db,
+            {"found": False, "query": name, "did_you_mean": _doctor_suggestions(db, name), "needs_confirmation": True},
+            Doctor,
+        )
 
     today = datetime.date.today()
 
@@ -678,35 +712,49 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
         sched = _schedule_for_weekday(db, doctor.id, target.weekday())
         if sched:
             return {
-                "found": True, "doctor_name": _doctor_ref(db, doctor),
+                "found": True,
+                "doctor_name": _doctor_ref(db, doctor),
                 "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": target.isoformat(),
-                "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
+                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+                "date": target.isoformat(),
+                "available": True,
+                "chamber_hours": f"{sched.start_time}-{sched.end_time}",
                 "next_available_date": None,
             }
         next_date = _next_available_date(db, doctor.id, target + datetime.timedelta(days=1))
         return {
-            "found": True, "doctor_name": _doctor_ref(db, doctor),
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": target.isoformat(),
-            "available": False, "chamber_hours": None, "next_available_date": next_date,
+            "found": True,
+            "doctor_name": _doctor_ref(db, doctor),
+            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+            "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+            "date": target.isoformat(),
+            "available": False,
+            "chamber_hours": None,
+            "next_available_date": next_date,
         }
 
     # No date given -> "when is this doctor next available"
     next_date = _next_available_date(db, doctor.id, today)
     if not next_date:
         return {
-            "found": True, "doctor_name": _doctor_ref(db, doctor),
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": None,
-            "available": False, "chamber_hours": None, "next_available_date": None,
+            "found": True,
+            "doctor_name": _doctor_ref(db, doctor),
+            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+            "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+            "date": None,
+            "available": False,
+            "chamber_hours": None,
+            "next_available_date": None,
         }
     sched = _schedule_for_weekday(db, doctor.id, datetime.date.fromisoformat(next_date).weekday())
     return {
-        "found": True, "doctor_name": _doctor_ref(db, doctor),
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": next_date,
-        "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
+        "found": True,
+        "doctor_name": _doctor_ref(db, doctor),
+        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+        "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+        "date": next_date,
+        "available": True,
+        "chamber_hours": f"{sched.start_time}-{sched.end_time}",
         "next_available_date": None,
     }
 
@@ -751,11 +799,18 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
     guarantee, not two that can silently disagree."""
     amb = _ambiguous_doctor(db, req.doctor_name)
     if amb is not None:
-        return {"success": False, "reason": "doctor_ambiguous", **{k: v for k, v in amb.items() if k.startswith("did_you_mean")}}
+        return {
+            "success": False,
+            "reason": "doctor_ambiguous",
+            **{k: v for k, v in amb.items() if k.startswith("did_you_mean")},
+        }
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
-        return {"success": False, "reason": "doctor_not_found",
-                "did_you_mean": _doctor_suggestions(db, req.doctor_name)}
+        return {
+            "success": False,
+            "reason": "doctor_not_found",
+            "did_you_mean": _doctor_suggestions(db, req.doctor_name),
+        }
 
     try:
         target = datetime.date.fromisoformat(req.date)
@@ -776,22 +831,32 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
 
     hold = bs.hold_slot(db, doctor.id, req.date, req.time_slot)
     if not hold["success"]:
-        return {"success": False, "reason": "slot_taken",
-                "alternative_slots": bs.available_slots(db, doctor.id, req.date)[:3]}
+        return {
+            "success": False,
+            "reason": "slot_taken",
+            "alternative_slots": bs.available_slots(db, doctor.id, req.date)[:3],
+        }
 
     # 8 hex chars, not 4 -- see booking_service._confirmation_id's comment:
     # this ID is now also accepted by /api/v1/bookings/lookup, unauthenticated.
-    result = bs.confirm_booking(db, hold["hold_token"], doctor.id, req.date, req.time_slot,
-                                 req.patient_name, req.phone, req.phone)
+    result = bs.confirm_booking(
+        db, hold["hold_token"], doctor.id, req.date, req.time_slot, req.patient_name, req.phone, req.phone
+    )
     if not result["success"]:
-        return {"success": False, "reason": "slot_taken",
-                "alternative_slots": bs.available_slots(db, doctor.id, req.date)[:3]}
+        return {
+            "success": False,
+            "reason": "slot_taken",
+            "alternative_slots": bs.available_slots(db, doctor.id, req.date)[:3],
+        }
 
     return {
-        "success": True, "confirmation_id": result["confirmation_id"],
+        "success": True,
+        "confirmation_id": result["confirmation_id"],
         "doctor_name": _doctor_ref(db, doctor),
         "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi), "date": req.date, "time_slot": req.time_slot,
+        "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+        "date": req.date,
+        "time_slot": req.time_slot,
     }
 
 
@@ -810,8 +875,12 @@ def faq_answer(topic: str = Query(...), lang: str = Query("bn"), db: Session = D
     row = db.query(FAQ).filter_by(topic=topic).first()
     if not row:
         return {"found": False, "topic": topic}
-    return {"found": True, "topic": row.topic, "lang": lang,
-            "answer": _by_lang(lang, row.answer_bn, row.answer_hi, row.answer_en)}
+    return {
+        "found": True,
+        "topic": row.topic,
+        "lang": lang,
+        "answer": _by_lang(lang, row.answer_bn, row.answer_hi, row.answer_en),
+    }
 
 
 # =============================================================================
@@ -879,9 +948,15 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
         except ValueError:
             return {"success": False, "reason": "invalid_slot", "valid_slots": valid_slots}
         if slot_h * 60 + slot_m <= now.hour * 60 + now.minute:
-            return {"success": False, "reason": "invalid_slot",
-                    "valid_slots": [s for s in valid_slots
-                                    if int(s.split(":")[0]) * 60 + int(s.split(":")[1]) > now.hour * 60 + now.minute]}
+            return {
+                "success": False,
+                "reason": "invalid_slot",
+                "valid_slots": [
+                    s
+                    for s in valid_slots
+                    if int(s.split(":")[0]) * 60 + int(s.split(":")[1]) > now.hour * 60 + now.minute
+                ],
+            }
     return None
 
 
@@ -890,19 +965,27 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
 def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
     amb = _ambiguous_doctor(db, req.doctor_name)
     if amb is not None:
-        return {"success": False, "reason": "doctor_ambiguous", **{k: v for k, v in amb.items() if k.startswith("did_you_mean")}}
+        return {
+            "success": False,
+            "reason": "doctor_ambiguous",
+            **{k: v for k, v in amb.items() if k.startswith("did_you_mean")},
+        }
     doctor = _find_doctor(db, req.doctor_name)
     if not doctor:
-        return {"success": False, "reason": "doctor_not_found",
-                "did_you_mean": _doctor_suggestions(db, req.doctor_name)}
+        return {
+            "success": False,
+            "reason": "doctor_not_found",
+            "did_you_mean": _doctor_suggestions(db, req.doctor_name),
+        }
     err = _validate_doctor_slot(db, doctor, req.date, req.time_slot)
     if err:
         return err
 
     result = bs.hold_slot(db, doctor.id, req.date, req.time_slot)
     if not result["success"]:
-        result["alternative_slots"] = [a["time_slot"] for a in
-                                        bs.nearest_alternatives(db, doctor.id, req.date, req.time_slot)]
+        result["alternative_slots"] = [
+            a["time_slot"] for a in bs.nearest_alternatives(db, doctor.id, req.date, req.time_slot)
+        ]
     else:
         result["doctor_id"] = doctor.id
         result["doctor_name"] = _doctor_ref(db, doctor)
@@ -924,9 +1007,18 @@ class ConfirmRequest(BaseModel):
 @app.post("/api/v1/bookings/confirm")
 @idempotent("bookings.confirm")
 def confirm_booking_endpoint(req: ConfirmRequest, db: Session = Depends(get_db)):
-    return bs.confirm_booking(db, req.hold_token, req.doctor_id, req.date, req.time_slot,
-                               req.patient_name, req.phone, req.caller_phone,
-                               req.patient_age, req.relationship)
+    return bs.confirm_booking(
+        db,
+        req.hold_token,
+        req.doctor_id,
+        req.date,
+        req.time_slot,
+        req.patient_name,
+        req.phone,
+        req.caller_phone,
+        req.patient_age,
+        req.relationship,
+    )
 
 
 class RescheduleRequest(BaseModel):
@@ -960,8 +1052,12 @@ def cancel_booking(req: CancelRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/bookings/lookup")
-def lookup_booking(phone: str | None = Query(None), confirmation_id: str | None = Query(None),
-                    name: str | None = Query(None), db: Session = Depends(get_db)):
+def lookup_booking(
+    phone: str | None = Query(None),
+    confirmation_id: str | None = Query(None),
+    name: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
     if not (phone or confirmation_id):
         return {"found": False, "bookings": []}
     rows = bs.lookup_bookings(db, phone=phone, confirmation_id=confirmation_id, name=name)
@@ -984,14 +1080,14 @@ def set_patient_senior(req: SeniorModeRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/patients/senior")
-def get_patient_senior(phone: str = Query(...), caller_phone: str | None = Query(None),
-                       db: Session = Depends(get_db)):
+def get_patient_senior(phone: str = Query(...), caller_phone: str | None = Query(None), db: Session = Depends(get_db)):
     return {"senior": bs.get_patient_senior(db, phone, caller_phone)}
 
 
 @app.get("/api/v1/bookings/conflict")
-def booking_conflict(phone: str = Query(...), date: str = Query(...), time_slot: str = Query(...),
-                      db: Session = Depends(get_db)):
+def booking_conflict(
+    phone: str = Query(...), date: str = Query(...), time_slot: str = Query(...), db: Session = Depends(get_db)
+):
     conflict = bs.find_conflict(db, phone, date, time_slot)
     return {"conflict": conflict is not None, "existing": conflict}
 
@@ -1018,8 +1114,9 @@ def book_tests_endpoint(req: TestsBookingRequest, db: Session = Depends(get_db))
         (ids if t else not_found).append(t.id if t else name)
     if not ids:
         return {"success": False, "reason": "no_valid_tests", "not_found": not_found}
-    result = bs.book_tests(db, ids, req.date, req.patient_name, req.phone, req.caller_phone,
-                            req.patient_age, req.relationship)
+    result = bs.book_tests(
+        db, ids, req.date, req.patient_name, req.phone, req.caller_phone, req.patient_age, req.relationship
+    )
     result["not_found"] = not_found
     return result
 
@@ -1046,8 +1143,13 @@ def doctor_earliest(name: str = Query(...), db: Session = Depends(get_db)):
     result = bs.earliest_available(db, doctor.id, datetime.date.today())
     if not result:
         return {"found": True, "available": False, "doctor_name": _doctor_ref(db, doctor)}
-    return {"found": True, "available": True, "doctor_name": _doctor_ref(db, doctor),
-            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), **result}
+    return {
+        "found": True,
+        "available": True,
+        "doctor_name": _doctor_ref(db, doctor),
+        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+        **result,
+    }
 
 
 @app.get("/api/v1/departments/route")
@@ -1081,8 +1183,9 @@ class ResendRequest(BaseModel):
 
 @app.post("/api/v1/bookings/resend")
 @idempotent("bookings.resend")
-def resend_booking_confirmation(req: ResendRequest | None = None, confirmation_id: str | None = Query(None),
-                                db: Session = Depends(get_db)):
+def resend_booking_confirmation(
+    req: ResendRequest | None = None, confirmation_id: str | None = Query(None), db: Session = Depends(get_db)
+):
     """The confirmation id comes in the body (ResendRequest); the old `?confirmation_id=` form is still accepted."""
     cid = req.confirmation_id if req is not None else confirmation_id
     if not cid:
@@ -1112,6 +1215,7 @@ def get_draft_endpoint(phone: str = Query(...), db: Session = Depends(get_db)):
 # =============================================================================
 # Epic E27: information and enquiry
 # =============================================================================
+
 
 @app.get("/api/v1/doctors/{doctor_name}/leave")
 def doctor_leave_endpoint(doctor_name: str, date: str = Query(...), db: Session = Depends(get_db)):
@@ -1146,8 +1250,9 @@ def package_endpoint(name: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/walk-in")
-def walk_in_endpoint(department: str | None = Query(None), test_name: str | None = Query(None),
-                      db: Session = Depends(get_db)):
+def walk_in_endpoint(
+    department: str | None = Query(None), test_name: str | None = Query(None), db: Session = Depends(get_db)
+):
     dept_id = None
     if department:
         dept = db.query(Department).filter(Department.name.ilike(f"%{department}%")).first()
@@ -1165,8 +1270,7 @@ def billing_outstanding_endpoint(phone: str = Query(...), db: Session = Depends(
 
 
 @app.get("/api/v1/home-collection/eligibility")
-def home_collection_endpoint(test_name: str = Query(...), postal_code: str = Query(...),
-                              db: Session = Depends(get_db)):
+def home_collection_endpoint(test_name: str = Query(...), postal_code: str = Query(...), db: Session = Depends(get_db)):
     t = _find_test(db, test_name)
     if not t:
         return {"found": False, "query": test_name}
@@ -1174,8 +1278,9 @@ def home_collection_endpoint(test_name: str = Query(...), postal_code: str = Que
 
 
 @app.get("/api/v1/insurance/coverage")
-def insurance_coverage_endpoint(policy_number: str = Query(...), test_name: str | None = Query(None),
-                                 db: Session = Depends(get_db)):
+def insurance_coverage_endpoint(
+    policy_number: str = Query(...), test_name: str | None = Query(None), db: Session = Depends(get_db)
+):
     test_id = None
     if test_name:
         t = _find_test(db, test_name)
@@ -1256,33 +1361,42 @@ def department_hours_endpoint(department_name: str, lang: str = Query("bn"), db:
 # Epic E33: patient context and history (clinic-api/patient_context.py)
 # =============================================================================
 
+
 @app.get("/api/v1/calls/satisfaction/summary")
-def satisfaction_summary(since: str | None = Query(None, description="ISO date; calls that started on or after it"),
-                         language: str | None = Query(None, description="bn | hi | en: the call's first language"),
-                         db: Session = Depends(get_db)):
+def satisfaction_summary(
+    since: str | None = Query(None, description="ISO date; calls that started on or after it"),
+    language: str | None = Query(None, description="bn | hi | en: the call's first language"),
+    db: Session = Depends(get_db),
+):
     """How the calls went, from the implicit happiness score (agent/call_score.py): scored calls, their mean and
     median, the share in each band, the same by language, and what pulled scores down most. A PROXY built from behaviour,
     not from anything callers said; no call, phone number or text is returned."""
     from models import CallRecord
+
     q = db.query(CallRecord)
     if since:
         try:
             q = q.filter(CallRecord.started_at >= datetime.datetime.fromisoformat(since))
         except ValueError:
-            raise HTTPException(status_code=422, detail="since must be an ISO date")
+            raise HTTPException(status_code=422, detail="since must be an ISO date") from None
     rows = q.all()
     if language:
         rows = [r for r in rows if (r.languages or "").split(",")[0] == language]
 
     def block(subset):
         scored = sorted(r.satisfaction_score for r in subset if r.satisfaction_score is not None)
-        bands = {b: sum(1 for r in subset if r.satisfaction_score is not None and r.satisfaction_band == b)
-                 for b in ("happy", "neutral", "unhappy", "very_unhappy")}
-        return {"calls": len(subset), "scored": len(scored),
-                "mean": round(sum(scored) / len(scored), 1) if scored else None,
-                "median": scored[len(scored) // 2] if scored else None,
-                "bands": bands,
-                "share_unhappy": round((bands["unhappy"] + bands["very_unhappy"]) / len(scored), 3) if scored else None}
+        bands = {
+            b: sum(1 for r in subset if r.satisfaction_score is not None and r.satisfaction_band == b)
+            for b in ("happy", "neutral", "unhappy", "very_unhappy")
+        }
+        return {
+            "calls": len(subset),
+            "scored": len(scored),
+            "mean": round(sum(scored) / len(scored), 1) if scored else None,
+            "median": scored[len(scored) // 2] if scored else None,
+            "bands": bands,
+            "share_unhappy": round((bands["unhappy"] + bands["very_unhappy"]) / len(scored), 3) if scored else None,
+        }
 
     by_language: dict[str, list] = {}
     for r in rows:
@@ -1300,11 +1414,18 @@ def satisfaction_summary(since: str | None = Query(None, description="ISO date; 
         for name, pts in data.get("reasons", []):
             if pts < 0:
                 costs.setdefault(name, []).append(pts)
-    top = sorted(({"signal": n, "calls": len(v), "points_lost": -sum(v)} for n, v in costs.items()),
-                 key=lambda d: (-d["points_lost"], d["signal"]))[:8]
-    return {"basis": "behaviour", "version": "implicit-v1", "overall": block(rows),
-            "by_language": {lang: block(rs) for lang, rs in sorted(by_language.items())},
-            "top_causes": top, "unscored_reasons": unscored}
+    top = sorted(
+        ({"signal": n, "calls": len(v), "points_lost": -sum(v)} for n, v in costs.items()),
+        key=lambda d: (-d["points_lost"], d["signal"]),
+    )[:8]
+    return {
+        "basis": "behaviour",
+        "version": "implicit-v1",
+        "overall": block(rows),
+        "by_language": {lang: block(rs) for lang, rs in sorted(by_language.items())},
+        "top_causes": top,
+        "unscored_reasons": unscored,
+    }
 
 
 class CallEventRequest(BaseModel):
@@ -1344,8 +1465,9 @@ def patient_resolve(req: ResolveRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/patients/{patient_ref}/timeline")
-def patient_timeline(patient_ref: int, caller_phone: str = Query(...), call_id: str = Query("unknown"),
-                     db: Session = Depends(get_db)):
+def patient_timeline(
+    patient_ref: int, caller_phone: str = Query(...), call_id: str = Query("unknown"), db: Session = Depends(get_db)
+):
     """KCD-493/495: authorised, audited, and free of result values. Refused unless THIS CALL has
     passed the security questions for THIS patient (POST /api/v1/patients/verify): the server decides,
     not the caller."""
@@ -1374,8 +1496,13 @@ def set_patient_preferences(patient_ref: int, req: PreferencesRequest, db: Sessi
 
 
 @app.get("/api/v1/patients/{patient_ref}/test-status")
-def patient_test_status(patient_ref: int, test_name: str = Query(...), caller_phone: str = Query(...),
-                        call_id: str = Query("unknown"), db: Session = Depends(get_db)):
+def patient_test_status(
+    patient_ref: int,
+    test_name: str = Query(...),
+    caller_phone: str = Query(...),
+    call_id: str = Query("unknown"),
+    db: Session = Depends(get_db),
+):
     """KCD-498: when a test was last performed and whether it is due -- authorised and audited
     like the timeline, and carrying no result."""
     patient = db.get(pc.Patient, patient_ref)
@@ -1390,8 +1517,12 @@ def patient_test_status(patient_ref: int, test_name: str = Query(...), caller_ph
 
 
 @app.get("/api/v1/continuity")
-def continuity_endpoint(caller_phone: str = Query(...), call_id: str | None = Query(None),
-                        patient_ref: int | None = Query(None), db: Session = Depends(get_db)):
+def continuity_endpoint(
+    caller_phone: str = Query(...),
+    call_id: str | None = Query(None),
+    patient_ref: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
     """KCD-496: what was left unfinished, the last three interactions on this number, and the last
     calls cached for ONE DAY. The draft's details are for the agent to speak only after verification."""
     return pc.continuity(db, caller_phone, call_id, patient_id=patient_ref)
@@ -1399,11 +1530,12 @@ def continuity_endpoint(caller_phone: str = Query(...), call_id: str | None = Qu
 
 # ------------------------------------------------ security questions, find, messages, audit
 
+
 class VerifyRequest(BaseModel):
     call_id: str
     patient_ref: int
-    patient_id: str | None = None        # the id on the patient's card
-    dob: str | None = None               # ISO date, parsed by the agent
+    patient_id: str | None = None  # the id on the patient's card
+    dob: str | None = None  # ISO date, parsed by the agent
     name: str | None = None
     address: str | None = None
     caller_phone: str | None = None
@@ -1413,9 +1545,13 @@ class VerifyRequest(BaseModel):
 def patient_verify(req: VerifyRequest, db: Session = Depends(get_db)):
     """KCD-495: check the caller's answers against the registry. Two matching facts, one of them
     strong (patient id or date of birth). The reply never says which answer was wrong."""
-    return reg.verify(db, req.call_id, req.patient_ref,
-                      {"patient_id": req.patient_id, "dob": req.dob, "name": req.name, "address": req.address},
-                      req.caller_phone)
+    return reg.verify(
+        db,
+        req.call_id,
+        req.patient_ref,
+        {"patient_id": req.patient_id, "dob": req.dob, "name": req.name, "address": req.address},
+        req.caller_phone,
+    )
 
 
 class FindRequest(BaseModel):
@@ -1430,8 +1566,9 @@ class FindRequest(BaseModel):
 def patient_find(req: FindRequest, db: Session = Depends(get_db)):
     """KCD-497: find a patient by a patient id, or a date of birth with a name, when the phone number
     found nobody. Returns an opaque reference only; finding is not verifying."""
-    return reg.find_by_details(db, req.call_id, {"patient_id": req.patient_id, "dob": req.dob,
-                                                 "name": req.name, "address": req.address})
+    return reg.find_by_details(
+        db, req.call_id, {"patient_id": req.patient_id, "dob": req.dob, "name": req.name, "address": req.address}
+    )
 
 
 @app.get("/api/v1/agent/messages")
@@ -1456,8 +1593,13 @@ def agent_message_set(req: MessageRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/audit")
-def audit_log_read(call_id: str | None = Query(None), patient_ref: int | None = Query(None),
-                   action: str | None = Query(None), limit: int = Query(100, le=500), db: Session = Depends(get_db)):
+def audit_log_read(
+    call_id: str | None = Query(None),
+    patient_ref: int | None = Query(None),
+    action: str | None = Query(None),
+    limit: int = Query(100, le=500),
+    db: Session = Depends(get_db),
+):
     """The audit trail, newest first, filtered. Read-only."""
     q = db.query(AuditLog)
     if call_id:
@@ -1467,9 +1609,20 @@ def audit_log_read(call_id: str | None = Query(None), patient_ref: int | None = 
     if action:
         q = q.filter(AuditLog.action == action)
     rows = q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).limit(limit).all()
-    return {"entries": [{"at": r.at.isoformat(), "call_id": r.call_id, "patient_ref": r.patient_id,
-                         "actor": r.actor, "action": r.action, "outcome": r.outcome,
-                         "detail": json.loads(r.detail_json)} for r in rows]}
+    return {
+        "entries": [
+            {
+                "at": r.at.isoformat(),
+                "call_id": r.call_id,
+                "patient_ref": r.patient_id,
+                "actor": r.actor,
+                "action": r.action,
+                "outcome": r.outcome,
+                "detail": json.loads(r.detail_json),
+            }
+            for r in rows
+        ]
+    }
 
 
 class BookingSearchRequest(BaseModel):
@@ -1485,6 +1638,13 @@ class BookingSearchRequest(BaseModel):
 @app.post("/api/v1/bookings/search")
 def bookings_search(req: BookingSearchRequest, db: Session = Depends(get_db)):
     """KCD-497: several matches are returned as several, never collapsed to the likeliest."""
-    return pc.search_bookings(db, req.caller_phone, phone=req.phone, name=req.name, approx_date=req.approx_date,
-                              date_window_days=req.date_window_days, test_name=req.test_name, branch=req.branch)
-
+    return pc.search_bookings(
+        db,
+        req.caller_phone,
+        phone=req.phone,
+        name=req.name,
+        approx_date=req.approx_date,
+        date_window_days=req.date_window_days,
+        test_name=req.test_name,
+        branch=req.branch,
+    )

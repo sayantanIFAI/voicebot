@@ -1,7 +1,8 @@
 """tests/_virtual_time.py: the virtual-time loop the timing-sensitive tests run on.
 
-    python -m pytest tests/test_virtual_time.py -v
+python -m pytest tests/test_virtual_time.py -v
 """
+
 import asyncio
 import os
 import sys
@@ -33,7 +34,7 @@ async def test_machine_load_cannot_change_measured_loop_time():
     # a real-time test. The loop clock does not move while the CPU is busy.
     loop = asyncio.get_running_loop()
     t0 = loop.time()
-    time.sleep(0.3)                      # real, blocking
+    time.sleep(0.3)  # real, blocking
     assert loop.time() - t0 == pytest.approx(0.0, abs=1e-9)
 
 

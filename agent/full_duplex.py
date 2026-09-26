@@ -18,6 +18,7 @@ and adds the two policies neither should own:
 Nothing here touches a socket or a model: it is fed numpy arrays, so the whole
 of it runs and is tested off-pod.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -52,22 +53,27 @@ VOICE_CHANGE_INHIBIT_S = 2.0
 @dataclasses.dataclass
 class DuplexResult:
     cleaned: np.ndarray
-    barge_in: BargeInEvent | None      # only ever set when it is trusted and acted on
-    suppressed_barge_in: bool          # an event fired but was ignored (agent silent / not converged)
+    barge_in: BargeInEvent | None  # only ever set when it is trusted and acted on
+    suppressed_barge_in: bool  # an event fired but was ignored (agent silent / not converged)
     agent_speaking: bool
 
 
 class FullDuplexProcessor:
-    def __init__(self, sr: int = 16000, min_trusted_erle_db: float = MIN_TRUSTED_ERLE_DB,
-                 barge_config: BargeInConfig | None = None, **echo_kwargs):
+    def __init__(
+        self,
+        sr: int = 16000,
+        min_trusted_erle_db: float = MIN_TRUSTED_ERLE_DB,
+        barge_config: BargeInConfig | None = None,
+        **echo_kwargs,
+    ):
         self.sr = sr
         self.min_trusted_erle_db = min_trusted_erle_db
         self.echo = EchoPipeline(sr=sr, **echo_kwargs)
         self.detector = BargeInDetector(sr=sr, config=barge_config)
-        self._mic_pos = 0                  # samples of microphone consumed so far
-        self._ref_end = 0                  # end of the last agent clip on the mic timeline
+        self._mic_pos = 0  # samples of microphone consumed so far
+        self._ref_end = 0  # end of the last agent clip on the mic timeline
         self._voice: str | None = None
-        self._inhibit_until = 0            # mic sample before which barge-in is not acted on
+        self._inhibit_until = 0  # mic sample before which barge-in is not acted on
         self.barge_ins = 0
         self.suppressed = 0
 
@@ -104,8 +110,11 @@ class FullDuplexProcessor:
         acted = None
         suppressed = False
         if event is not None:
-            trusted = (speaking and self.echo.canceller.erle_db >= self.min_trusted_erle_db
-                       and self._mic_pos >= self._inhibit_until)
+            trusted = (
+                speaking
+                and self.echo.canceller.erle_db >= self.min_trusted_erle_db
+                and self._mic_pos >= self._inhibit_until
+            )
             if trusted:
                 acted = event
                 self.barge_ins += 1
@@ -113,7 +122,6 @@ class FullDuplexProcessor:
                 suppressed = True
                 self.suppressed += 1
         return DuplexResult(cleaned, acted, suppressed, speaking)
-
 
 
 def wav_to_pcm16k(wav_bytes: bytes, sr_out: int = 16000) -> np.ndarray:

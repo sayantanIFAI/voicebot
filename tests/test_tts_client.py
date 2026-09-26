@@ -4,6 +4,7 @@ HTTP call is monkeypatched.
 
     python -m pytest tests/test_tts_client.py -v
 """
+
 import os
 import sys
 from unittest.mock import AsyncMock
@@ -40,7 +41,7 @@ async def test_unspeakable_english_word_in_bengali_reply_blocks_instead_of_dropp
     with pytest.raises(UnspeakableTextError) as exc_info:
         await client.synthesize("রিপোর্ট Pending অবস্থায় আছে", "bn")
     assert "Pending" in exc_info.value.spans
-    client._client.post.assert_not_called()   # never reached the vocoder
+    client._client.post.assert_not_called()  # never reached the vocoder
 
 
 @pytest.mark.asyncio
@@ -68,7 +69,7 @@ async def test_slow_speed_is_sent_in_the_payload(client):
 async def test_normal_and_slow_speed_cache_separately(client):
     await client.synthesize("আপনার রেট পাঁচশো টাকা।", "bn")
     await client.synthesize("আপনার রেট পাঁচশো টাকা।", "bn", speed=FIGURE_SPEECH_SPEED)
-    assert client._client.post.call_count == 2   # no cache hit across speeds
+    assert client._client.post.call_count == 2  # no cache hit across speeds
 
     await client.synthesize("আপনার রেট পাঁচশো টাকা।", "bn", speed=FIGURE_SPEECH_SPEED)
-    assert client._client.post.call_count == 2   # second slow request DOES hit cache
+    assert client._client.post.call_count == 2  # second slow request DOES hit cache

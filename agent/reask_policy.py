@@ -26,6 +26,7 @@ sentences and lowers its escalation threshold for the rest of the call
 (agent/speech_policy.py). That is the deterministic empathy Blueprint 4.5
 asks for, driven by a rule, not by asking a model to be kind.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -40,19 +41,18 @@ _ISSUE_PHRASE = (
     ("noisy", "reask_noisy"),
     ("unvoiced_mumble", "reask_mumbled"),
 )
-_MUMBLE_TRANSCRIPT_ISSUES = frozenset(
-    {"shattered", "repetitive", "decoders_disagree", "fragment", "wrong_script"})
+_MUMBLE_TRANSCRIPT_ISSUES = frozenset({"shattered", "repetitive", "decoders_disagree", "fragment", "wrong_script"})
 
 DEFAULT_MAX_REASKS = 2
 
 
 @dataclass(frozen=True)
 class ReaskDecision:
-    action: str                       # "proceed" | "reask" | "handoff"
-    reason: str | None = None         # the issue that drove it
-    phrase_key: str | None = None     # agent.phrases key to speak first
-    mark_confused: bool = False       # feed caller_state="confused"
-    attempt: int = 0                  # consecutive failures so far
+    action: str  # "proceed" | "reask" | "handoff"
+    reason: str | None = None  # the issue that drove it
+    phrase_key: str | None = None  # agent.phrases key to speak first
+    mark_confused: bool = False  # feed caller_state="confused"
+    attempt: int = 0  # consecutive failures so far
 
 
 class ReaskTracker:
@@ -68,8 +68,14 @@ class ReaskTracker:
         self.consecutive = 0
         return ReaskDecision("proceed")
 
-    def decide(self, *, asr_empty: bool = False, audio_issues: list[str] | None = None,
-               transcript_issue: str | None = None, language_ambiguous: bool = False) -> ReaskDecision:
+    def decide(
+        self,
+        *,
+        asr_empty: bool = False,
+        audio_issues: list[str] | None = None,
+        transcript_issue: str | None = None,
+        language_ambiguous: bool = False,
+    ) -> ReaskDecision:
         failed = asr_empty or language_ambiguous or transcript_issue is not None
         if not failed:
             return self.note_success()

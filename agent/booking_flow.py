@@ -19,6 +19,7 @@ confirming a booking is exactly the kind of binary, high-stakes decision
 this project's whole architecture exists to keep deterministic (see
 CLAUDE.md's truth boundary) and fast (zero extra round trip to Qwen).
 """
+
 from __future__ import annotations
 
 import re
@@ -33,7 +34,7 @@ REQUIRED_SLOTS: dict[str, tuple[str, ...]] = {
     "reschedule_appointment": ("confirmation_id", "new_date", "new_time_slot"),
     "cancel_appointment": ("confirmation_id",),
     "add_test_booking": ("confirmation_id", "test_name"),
-    "lookup_booking": (),   # phone/confirmation_id/name -- any one is enough, checked specially
+    "lookup_booking": (),  # phone/confirmation_id/name -- any one is enough, checked specially
 }
 
 # How long an in-progress booking survives a caller going silent or
@@ -46,7 +47,7 @@ STATE_IDLE_TIMEOUT_S = 180.0
 @dataclass
 class BookingState:
     action: str
-    stage: str = "collecting"          # collecting -> confirming -> awaiting_charge_confirm -> done
+    stage: str = "collecting"  # collecting -> confirming -> awaiting_charge_confirm -> done
     slots: dict = field(default_factory=dict)
     test_names: list[str] = field(default_factory=list)
     last_updated: float = field(default_factory=time.monotonic)
@@ -55,7 +56,7 @@ class BookingState:
     # losing the slot it already holds.
     hold_token: str | None = None
     hold_doctor_id: int | None = None
-    pending_charge_inr: int | None = None   # KCD-372's "state the charge before applying it"
+    pending_charge_inr: int | None = None  # KCD-372's "state the charge before applying it"
     # How many turns in a row missing_required() has asked for each field,
     # without getting it -- drives KCD-368 (offer spelling after one failed
     # name capture) and KCD-370 (proceed without a phone number after a
@@ -83,9 +84,21 @@ def new_state(action: str) -> BookingState:
     return BookingState(action=action)
 
 
-_SLOT_FIELDS = ("doctor_name", "date", "time_slot", "patient_name", "phone", "contact_phone",
-                 "confirmation_id", "new_date", "new_time_slot", "test_name", "relationship",
-                 "patient_age", "symptom_description")
+_SLOT_FIELDS = (
+    "doctor_name",
+    "date",
+    "time_slot",
+    "patient_name",
+    "phone",
+    "contact_phone",
+    "confirmation_id",
+    "new_date",
+    "new_time_slot",
+    "test_name",
+    "relationship",
+    "patient_age",
+    "symptom_description",
+)
 
 
 def merge_slots(state: BookingState, new_slots: dict) -> list[str]:
@@ -134,9 +147,7 @@ def missing_required(state: BookingState) -> list[str]:
             continue
         if not state.slots.get(field_name):
             missing.append(field_name)
-    if state.action == "lookup_booking" and not (
-        state.slots.get("phone") or state.slots.get("confirmation_id")
-    ):
+    if state.action == "lookup_booking" and not (state.slots.get("phone") or state.slots.get("confirmation_id")):
         missing.append("phone")
     return missing
 
@@ -219,7 +230,7 @@ def _phrase_starts(tokens: list[str], phrase: str) -> list[int]:
     not a raw substring of the sentence."""
     phrase_tokens = phrase.split()
     n = len(phrase_tokens)
-    return [i for i in range(len(tokens) - n + 1) if tokens[i:i + n] == phrase_tokens]
+    return [i for i in range(len(tokens) - n + 1) if tokens[i : i + n] == phrase_tokens]
 
 
 def _has_phrase(tokens: list[str], phrase: str) -> bool:
@@ -232,14 +243,32 @@ def _has_phrase(tokens: list[str], phrase: str) -> bool:
 # booking write on an explicitly uncertain answer. English only: bn/hi
 # negators ("না", "नहीं") are standalone tokens already caught by the
 # no-words check that runs first, so they never reach this path.
-_NEGATORS_EN = frozenset({
-    "not", "don't", "dont", "doesn't", "doesnt", "isn't", "isnt", "aren't", "arent",
-    "wasn't", "wasnt", "can't", "cant", "cannot", "won't", "wont", "never", "hardly",
-})
+_NEGATORS_EN = frozenset(
+    {
+        "not",
+        "don't",
+        "dont",
+        "doesn't",
+        "doesnt",
+        "isn't",
+        "isnt",
+        "aren't",
+        "arent",
+        "wasn't",
+        "wasnt",
+        "can't",
+        "cant",
+        "cannot",
+        "won't",
+        "wont",
+        "never",
+        "hardly",
+    }
+)
 # A negated hedge is uncertainty, not refusal: re-ask instead of treating
 # it as a "no" that reopens slot collection.
 _HEDGE_WORDS_EN = frozenset({"sure"})
-_NEGATION_LOOKBACK = 2   # "not really sure", "don't think so" style gaps
+_NEGATION_LOOKBACK = 2  # "not really sure", "don't think so" style gaps
 _UNCERTAIN_WORDS_EN = frozenset({"unsure", "uncertain", "maybe", "perhaps", "dunno"})
 
 
@@ -252,7 +281,7 @@ def _expresses_uncertainty(tokens: list[str]) -> bool:
         return True
     hedges = _HEDGE_WORDS_EN | {"certain", "convinced", "confident"}
     for i, tok in enumerate(tokens):
-        if tok in _NEGATORS_EN and any(t in hedges for t in tokens[i + 1:i + 4]):
+        if tok in _NEGATORS_EN and any(t in hedges for t in tokens[i + 1 : i + 4]):
             return True
     return False
 
@@ -288,7 +317,7 @@ def classify_yes_no(transcript: str, lang: str) -> str | None:
     negated_other = False
     for w in yes_words:
         for start in _phrase_starts(tokens, w):
-            window = tokens[max(0, start - _NEGATION_LOOKBACK):start]
+            window = tokens[max(0, start - _NEGATION_LOOKBACK) : start]
             if lang in _YES_WORDS and lang != "en":
                 negated = False
             else:
@@ -337,25 +366,59 @@ def merge_spelling(state: BookingState, letters_spoken: list[str]) -> str:
 # left out because restating them verbatim would be noise, not
 # confirmation; a caller correcting one of those hears it through the
 # ordinary readback/reply instead.
-_CORRECTABLE_FIELDS = ("doctor_name", "date", "time_slot", "patient_name", "phone",
-                       "contact_phone", "confirmation_id", "new_date", "new_time_slot", "relationship")
+_CORRECTABLE_FIELDS = (
+    "doctor_name",
+    "date",
+    "time_slot",
+    "patient_name",
+    "phone",
+    "contact_phone",
+    "confirmation_id",
+    "new_date",
+    "new_time_slot",
+    "relationship",
+)
 
 # A natural CLAUSE per field, never a "label: value" pair (KCD-454 --
 # spoken punctuation artefacts are never acceptable, including ones this
 # module itself might otherwise introduce).
 _FIELD_CLAUSE = {
-    "bn": {"doctor_name": "ডাক্তার {v}", "date": "{v} তারিখে", "time_slot": "{v} সময়ে",
-           "patient_name": "নাম {v}", "phone": "ফোন নম্বর {v}", "contact_phone": "ফোন নম্বর {v}",
-           "confirmation_id": "কনফার্মেশন নম্বর {v}", "new_date": "নতুন তারিখ {v}",
-           "new_time_slot": "নতুন সময় {v}", "relationship": "সম্পর্ক {v}"},
-    "hi": {"doctor_name": "डॉक्टर {v}", "date": "{v} तारीख को", "time_slot": "{v} बजे",
-           "patient_name": "नाम {v}", "phone": "फ़ोन नंबर {v}", "contact_phone": "फ़ोन नंबर {v}",
-           "confirmation_id": "कन्फ़र्मेशन नंबर {v}", "new_date": "नई तारीख {v}",
-           "new_time_slot": "नया समय {v}", "relationship": "रिश्ता {v}"},
-    "en": {"doctor_name": "doctor {v}", "date": "{v}", "time_slot": "{v}",
-           "patient_name": "the name {v}", "phone": "the phone number {v}", "contact_phone": "the phone number {v}",
-           "confirmation_id": "confirmation number {v}", "new_date": "{v}",
-           "new_time_slot": "{v}", "relationship": "relationship {v}"},
+    "bn": {
+        "doctor_name": "ডাক্তার {v}",
+        "date": "{v} তারিখে",
+        "time_slot": "{v} সময়ে",
+        "patient_name": "নাম {v}",
+        "phone": "ফোন নম্বর {v}",
+        "contact_phone": "ফোন নম্বর {v}",
+        "confirmation_id": "কনফার্মেশন নম্বর {v}",
+        "new_date": "নতুন তারিখ {v}",
+        "new_time_slot": "নতুন সময় {v}",
+        "relationship": "সম্পর্ক {v}",
+    },
+    "hi": {
+        "doctor_name": "डॉक्टर {v}",
+        "date": "{v} तारीख को",
+        "time_slot": "{v} बजे",
+        "patient_name": "नाम {v}",
+        "phone": "फ़ोन नंबर {v}",
+        "contact_phone": "फ़ोन नंबर {v}",
+        "confirmation_id": "कन्फ़र्मेशन नंबर {v}",
+        "new_date": "नई तारीख {v}",
+        "new_time_slot": "नया समय {v}",
+        "relationship": "रिश्ता {v}",
+    },
+    "en": {
+        "doctor_name": "doctor {v}",
+        "date": "{v}",
+        "time_slot": "{v}",
+        "patient_name": "the name {v}",
+        "phone": "the phone number {v}",
+        "contact_phone": "the phone number {v}",
+        "confirmation_id": "confirmation number {v}",
+        "new_date": "{v}",
+        "new_time_slot": "{v}",
+        "relationship": "relationship {v}",
+    },
 }
 
 

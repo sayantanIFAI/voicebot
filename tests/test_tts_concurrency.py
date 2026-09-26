@@ -3,6 +3,7 @@ object. Two overlapping requests must each render at THEIR OWN speed.
 
     python -m pytest tests/test_tts_concurrency.py -v
 """
+
 import os
 import sys
 import threading
@@ -23,6 +24,7 @@ class _Model:
 class _Synth:
     """Records the speed in force at the moment of each synthesis, with a pause that lets another
     thread run in between if nothing stops it."""
+
     def __init__(self):
         self.tts_model = _Model()
         self.seen = []
@@ -35,8 +37,8 @@ class _Synth:
 
 
 def test_overlapping_requests_each_render_at_their_own_speed(tmp_path, monkeypatch):
-    monkeypatch.setenv("TTS_CHECKPOINTS_ROOT", str(tmp_path))      # the module chdir()s into it on import
-    monkeypatch.chdir(tmp_path)                                    # ...and pytest restores the directory after
+    monkeypatch.setenv("TTS_CHECKPOINTS_ROOT", str(tmp_path))  # the module chdir()s into it on import
+    monkeypatch.chdir(tmp_path)  # ...and pytest restores the directory after
     with pod_stubs(REPO_ROOT) as imp:
         ts = imp("tts_server")
         lang = next(iter(ts.SUPPORTED_LANGUAGES))
@@ -75,7 +77,7 @@ def test_the_speakers_endpoint_lists_each_languages_voices_for_choosing_one_by_e
             tts_model = _Model()
 
         class _Single:
-            tts_model = object()                                   # a single-speaker model has no speaker manager
+            tts_model = object()  # a single-speaker model has no speaker manager
 
         ts.SYNTHESIZERS["bn"], ts.SYNTHESIZERS["hi"], ts.SYNTHESIZERS["en"] = _Multi(), _Multi(), _Single()
         out = ts.speakers()

@@ -32,6 +32,7 @@ centre happens in the SBC layer, outside this repository. This module makes
 the decision and emits it (main.py sends a `handoff_human` frame on the
 socket); the telephony bridge acts on that frame.
 """
+
 from __future__ import annotations
 
 import collections
@@ -40,12 +41,12 @@ import logging
 import os
 import threading
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger("admission")
 
-DEFAULT_MAX_CALLS = 28          # ADR section 5: AI cap 28-30 for the 30-call design point
-DEFAULT_LATENCY_WINDOW = 30     # turns considered when judging p95
+DEFAULT_MAX_CALLS = 28  # ADR section 5: AI cap 28-30 for the 30-call design point
+DEFAULT_LATENCY_WINDOW = 30  # turns considered when judging p95
 DEFAULT_MIN_LATENCY_SAMPLES = 10  # too few samples -> do not shed on noise
 DEFAULT_BYPASS_FILE = "/workspace/.ai_bypass"
 
@@ -53,7 +54,7 @@ DEFAULT_BYPASS_FILE = "/workspace/.ai_bypass"
 @dataclasses.dataclass(frozen=True)
 class Admission:
     admitted: bool
-    reason: str            # "ok" on admit; otherwise bypass|backend_down:<n>|latency_shed|capacity
+    reason: str  # "ok" on admit; otherwise bypass|backend_down:<n>|latency_shed|capacity
     ticket: int | None = None
 
 
@@ -108,9 +109,11 @@ class AdmissionController:
             return "bypass"
         if self._down:
             return f"backend_down:{sorted(self._down)[0]}"
-        if (self.latency_shed_p95_s is not None
-                and len(self._latencies) >= self.min_latency_samples
-                and _percentile(self._latencies, 0.95) > self.latency_shed_p95_s):
+        if (
+            self.latency_shed_p95_s is not None
+            and len(self._latencies) >= self.min_latency_samples
+            and _percentile(self._latencies, 0.95) > self.latency_shed_p95_s
+        ):
             return "latency_shed"
         return None
 
@@ -202,8 +205,13 @@ class HealthMonitor:
     should be quick, and a flapping backend is already covered by the
     failure threshold on the way down."""
 
-    def __init__(self, controller: AdmissionController, probes: dict[str, Probe],
-                 interval_s: float = 5.0, fail_threshold: int = 3):
+    def __init__(
+        self,
+        controller: AdmissionController,
+        probes: dict[str, Probe],
+        interval_s: float = 5.0,
+        fail_threshold: int = 3,
+    ):
         self.controller = controller
         self.probes = probes
         self.interval_s = interval_s
@@ -229,6 +237,7 @@ class HealthMonitor:
 
     async def run_forever(self) -> None:
         import asyncio
+
         while True:
             await self.check_once()
             await asyncio.sleep(self.interval_s)
@@ -236,7 +245,9 @@ class HealthMonitor:
 
 def http_probe(client, url: str, timeout_s: float = 3.0) -> Probe:
     """Probe for an httpx.AsyncClient: healthy iff GET url returns 200."""
+
     async def _probe() -> bool:
         r = await client.get(url, timeout=timeout_s)
         return r.status_code == 200
+
     return _probe

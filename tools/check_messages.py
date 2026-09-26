@@ -17,6 +17,7 @@ owns that wording, and this is the check that keeps a well-meant edit from break
 Exit status 0 when every message passes, 1 otherwise. Run it after changing a message and before
 relying on it.
 """
+
 import argparse
 import os
 import sys
@@ -28,7 +29,7 @@ if ROOT not in sys.path:
 import re
 
 from agent.apology import count_apologies, ends_on_bare_apology
-from agent.persona import sentences, violations
+from agent.persona import violations
 
 AUTOMATED = {"bn": "স্বয়ংক্রিয়", "hi": "स्वचालित", "en": "automated"}
 STAFF = {"bn": "স্টাফ", "hi": "स्टाफ़", "en": "staff"}
@@ -69,6 +70,7 @@ def main(argv=None) -> int:
     ap.add_argument("--token-file")
     args = ap.parse_args(argv)
     import httpx
+
     headers = {}
     if args.token_file:
         with open(args.token_file, encoding="utf-8") as f:

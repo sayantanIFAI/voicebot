@@ -9,6 +9,7 @@ hundred real, human-annotated recordings the story asks for.
 
     python -m pytest tests/test_endpoint_calibration.py -v
 """
+
 import json
 import os
 import sys
@@ -23,8 +24,14 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, p)
 
 from _synth_speech import SR, speech
+
 from agent.endpoint_calibration import (
-    MIN_RECORDINGS, Recording, calibrate, evaluate, wilson_interval, write_report,
+    MIN_RECORDINGS,
+    Recording,
+    calibrate,
+    evaluate,
+    wilson_interval,
+    write_report,
 )
 from agent.endpointing import EndpointConfig, config_from_json
 
@@ -36,7 +43,9 @@ def _recording(seed, max_pause=0.9):
     parts, t = [np.zeros(int(0.3 * SR), np.float32)], 0.3
     for k in range(int(rng.integers(1, 4))):
         dur = float(rng.uniform(0.8, 1.6))
-        parts.append(speech(f0=float(rng.uniform(100, 200)), dur=dur, amp=0.3, syll_hz=3.0, breath=0.02, seed=int(seed * 10 + k)))
+        parts.append(
+            speech(f0=float(rng.uniform(100, 200)), dur=dur, amp=0.3, syll_hz=3.0, breath=0.02, seed=int(seed * 10 + k))
+        )
         t += dur
         end_of_last = t
         pause = float(rng.uniform(0.15, max_pause))
@@ -76,21 +85,21 @@ def test_the_chosen_threshold_is_the_shortest_that_clears_the_target(corpus):
     by = {round(r["silence_confirm_s"], 2): r for r in report["table"]}
     assert by[round(chosen, 2)]["false_cut_rate"] <= 0.05
     shorter = [r for r in report["table"] if r["silence_confirm_s"] < chosen - 1e-9]
-    assert all(r["false_cut_ci95"][1] > 0.05 for r in shorter)          # every shorter one fails at 95% confidence
+    assert all(r["false_cut_ci95"][1] > 0.05 for r in shorter)  # every shorter one fails at 95% confidence
 
 
 def test_thin_data_is_never_called_measured():
     few = [_recording(s) for s in range(30)]
     report = calibrate(few)
     assert report["status"] == "INSUFFICIENT_DATA"
-    assert report["config"] == {}                                        # nothing to load: the REASONED value stays
+    assert report["config"] == {}  # nothing to load: the REASONED value stays
     assert "Nothing was changed" in report["note"]
     assert report["required_recordings"] == MIN_RECORDINGS == 200
 
 
 def test_the_wilson_interval_is_honest_at_small_counts():
     lo, hi = wilson_interval(0, 100)
-    assert lo == 0.0 and 0.02 < hi < 0.05          # zero cuts in 100 does NOT prove a zero rate
+    assert lo == 0.0 and 0.02 < hi < 0.05  # zero cuts in 100 does NOT prove a zero rate
     lo, hi = wilson_interval(5, 100)
     assert lo < 0.05 < hi
     assert wilson_interval(0, 0) == (0.0, 1.0)
@@ -102,12 +111,13 @@ def test_a_calibration_report_round_trips_into_the_detector_config(corpus, tmp_p
     write_report(report, str(f))
     cfg = config_from_json(str(f))
     assert cfg.silence_confirm_s == report["chosen_silence_confirm_s"]
-    assert cfg.tail_guard_s == EndpointConfig().tail_guard_s             # untouched fields keep their values
+    assert cfg.tail_guard_s == EndpointConfig().tail_guard_s  # untouched fields keep their values
 
 
 def test_the_command_line_loader_reads_wav_and_json_pairs(tmp_path):
     sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
     import calibrate_endpointing as cli
+
     for i in range(3):
         rec = _recording(i)
         with wave.open(str(tmp_path / f"c{i}.wav"), "wb") as w:
@@ -117,7 +127,10 @@ def test_the_command_line_loader_reads_wav_and_json_pairs(tmp_path):
             w.writeframes((rec.samples * 32767).astype(np.int16).tobytes())
         (tmp_path / f"c{i}.json").write_text(json.dumps({"turn_end_ms": rec.turn_end_s * 1000, "language": "bn"}))
     with wave.open(str(tmp_path / "unannotated.wav"), "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(b"\x00\x00" * 100)
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes(b"\x00\x00" * 100)
     recs = cli.load_recordings(str(tmp_path), "energy")
-    assert len(recs) == 3 and recs[0].language == "bn"                   # the unannotated file was skipped
+    assert len(recs) == 3 and recs[0].language == "bn"  # the unannotated file was skipped
     assert recs[0].turn_end_s == pytest.approx(_recording(0).turn_end_s, abs=1e-3)

@@ -5,35 +5,72 @@ a Latin digit reaching an Indic FastPitch tokenizer is silently DROPPED
 (agent/bn_normalize.py has the measurement), so a wrong table entry here is
 a wrong price spoken to a caller, with no error anywhere.
 """
+
 import re
 
 import pytest
 
 from agent.speech_norm import (
-    number_to_en_words, number_to_hi_words, time_to_en_words, time_to_hi_words,
-    unspeakable_spans, verbalize,
+    number_to_en_words,
+    number_to_hi_words,
+    time_to_en_words,
+    time_to_hi_words,
+    unspeakable_spans,
+    verbalize,
 )
 
 DIGIT = re.compile(r"\d")
 
 
-@pytest.mark.parametrize("n,expected", [
-    (0, "zero"), (7, "seven"), (19, "nineteen"), (20, "twenty"), (45, "forty five"),
-    (100, "one hundred"), (250, "two hundred fifty"), (1500, "one thousand five hundred"),
-    (100000, "one lakh"), (150000, "one lakh fifty thousand"), (12345678, "one crore twenty three lakh forty five thousand six hundred seventy eight"),
-])
+@pytest.mark.parametrize(
+    "n,expected",
+    [
+        (0, "zero"),
+        (7, "seven"),
+        (19, "nineteen"),
+        (20, "twenty"),
+        (45, "forty five"),
+        (100, "one hundred"),
+        (250, "two hundred fifty"),
+        (1500, "one thousand five hundred"),
+        (100000, "one lakh"),
+        (150000, "one lakh fifty thousand"),
+        (12345678, "one crore twenty three lakh forty five thousand six hundred seventy eight"),
+    ],
+)
 def test_english_numbers(n, expected):
     assert number_to_en_words(n) == expected
 
 
-@pytest.mark.parametrize("n,expected", [
-    (0, "शून्य"), (1, "एक"), (6, "छह"), (11, "ग्यारह"), (15, "पंद्रह"), (19, "उन्नीस"),
-    (20, "बीस"), (21, "इक्कीस"), (29, "उनतीस"), (31, "इकतीस"), (39, "उनतालीस"),
-    (40, "चालीस"), (49, "उनचास"), (50, "पचास"), (59, "उनसठ"), (69, "उनहत्तर"),
-    (79, "उनासी"), (89, "नवासी"), (99, "निन्यानवे"),
-    (250, "दो सौ पचास"), (400, "चार सौ"), (1500, "एक हज़ार पाँच सौ"),
-    (100000, "एक लाख"), (2200, "दो हज़ार दो सौ"),
-])
+@pytest.mark.parametrize(
+    "n,expected",
+    [
+        (0, "शून्य"),
+        (1, "एक"),
+        (6, "छह"),
+        (11, "ग्यारह"),
+        (15, "पंद्रह"),
+        (19, "उन्नीस"),
+        (20, "बीस"),
+        (21, "इक्कीस"),
+        (29, "उनतीस"),
+        (31, "इकतीस"),
+        (39, "उनतालीस"),
+        (40, "चालीस"),
+        (49, "उनचास"),
+        (50, "पचास"),
+        (59, "उनसठ"),
+        (69, "उनहत्तर"),
+        (79, "उनासी"),
+        (89, "नवासी"),
+        (99, "निन्यानवे"),
+        (250, "दो सौ पचास"),
+        (400, "चार सौ"),
+        (1500, "एक हज़ार पाँच सौ"),
+        (100000, "एक लाख"),
+        (2200, "दो हज़ार दो सौ"),
+    ],
+)
 def test_hindi_numbers(n, expected):
     assert number_to_hi_words(n) == expected
 
@@ -44,18 +81,31 @@ def test_hindi_table_has_no_gaps_or_duplicates():
     assert len(set(words)) == 100
 
 
-@pytest.mark.parametrize("hh,mm,expected", [
-    (18, 0, "six PM"), (10, 0, "ten AM"), (17, 30, "five thirty PM"), (9, 5, "nine oh five AM"),
-])
+@pytest.mark.parametrize(
+    "hh,mm,expected",
+    [
+        (18, 0, "six PM"),
+        (10, 0, "ten AM"),
+        (17, 30, "five thirty PM"),
+        (9, 5, "nine oh five AM"),
+    ],
+)
 def test_english_times(hh, mm, expected):
     assert time_to_en_words(hh, mm) == expected
 
 
-@pytest.mark.parametrize("hh,mm,expected", [
-    (18, 0, "शाम छह बजे"), (10, 0, "सुबह दस बजे"), (17, 30, "शाम साढ़े पाँच बजे"),
-    (13, 30, "दोपहर डेढ़ बजे"), (14, 30, "दोपहर ढाई बजे"), (9, 15, "सुबह सवा नौ बजे"),
-    (8, 45, "सुबह पौने नौ बजे"),
-])
+@pytest.mark.parametrize(
+    "hh,mm,expected",
+    [
+        (18, 0, "शाम छह बजे"),
+        (10, 0, "सुबह दस बजे"),
+        (17, 30, "शाम साढ़े पाँच बजे"),
+        (13, 30, "दोपहर डेढ़ बजे"),
+        (14, 30, "दोपहर ढाई बजे"),
+        (9, 15, "सुबह सवा नौ बजे"),
+        (8, 45, "सुबह पौने नौ बजे"),
+    ],
+)
 def test_hindi_times(hh, mm, expected):
     assert time_to_hi_words(hh, mm) == expected
 
@@ -97,6 +147,7 @@ def test_hindi_maps_specimen_words_it_can_say():
 
 def test_bengali_dispatch_is_unchanged():
     from agent import bn_normalize
+
     s = "রেট 250 টাকা।"
     assert verbalize(s, "bn") == bn_normalize.verbalize(s)
     assert verbalize(s) == bn_normalize.verbalize(s)

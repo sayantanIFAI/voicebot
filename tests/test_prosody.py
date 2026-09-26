@@ -5,6 +5,7 @@ pod. Pure numpy, no GPU, no models.
 
     python -m pytest tests/test_prosody.py -v
 """
+
 import os
 import sys
 
@@ -26,17 +27,17 @@ from agent.prosody import (
     trim_silence,
 )
 
-SR = 1000   # 1 sample = 1 ms, so pause lengths are exact integers in the assertions
+SR = 1000  # 1 sample = 1 ms, so pause lengths are exact integers in the assertions
 
 
 # ------------------------------------------------------------- splitting
+
 
 def test_english_sentences_split_on_full_stops():
     # The earlier splitter had no "." at all, so an English reply of
     # several sentences was rendered as one flat pass with no pause.
     chunks = split_for_prosody("Your price is 650 rupees. The report takes one day. Thank you.")
-    assert [c for c, _ in chunks] == [
-        "Your price is 650 rupees.", "The report takes one day.", "Thank you."]
+    assert [c for c, _ in chunks] == ["Your price is 650 rupees.", "The report takes one day.", "Thank you."]
     assert all(kind == "sentence" for _, kind in chunks)
 
 
@@ -57,14 +58,16 @@ def test_a_full_stop_inside_a_token_is_not_a_sentence_end(text):
 
 
 def test_a_long_sentence_is_broken_at_clause_boundaries_with_shorter_pauses():
-    long_sentence = ("Please bring your previous reports, your prescription and your identity card, "
-                     "and arrive fifteen minutes early, because the counter closes quickly.")
+    long_sentence = (
+        "Please bring your previous reports, your prescription and your identity card, "
+        "and arrive fifteen minutes early, because the counter closes quickly."
+    )
     assert len(long_sentence) > 90
     chunks = split_for_prosody(long_sentence)
     assert len(chunks) > 1
     kinds = [k for _, k in chunks]
-    assert kinds[-1] == "sentence"            # the real sentence end
-    assert set(kinds[:-1]) == {"clause"}      # commas earn the shorter pause
+    assert kinds[-1] == "sentence"  # the real sentence end
+    assert set(kinds[:-1]) == {"clause"}  # commas earn the shorter pause
 
 
 def test_max_chunk_chars_is_honoured():
@@ -92,6 +95,7 @@ def test_empty_text_produces_no_chunks():
 
 # --------------------------------------------------------------- params
 
+
 def test_defaults_match_the_values_that_were_previously_hardcoded():
     p = ProsodyParams()
     assert (p.pause_sentence_s, p.pause_clause_s, p.pause_none_s) == (0.28, 0.14, 0.06)
@@ -100,8 +104,13 @@ def test_defaults_match_the_values_that_were_previously_hardcoded():
 
 def test_every_parameter_can_be_overridden_per_request():
     overrides = {
-        "pause_sentence_s": 0.5, "pause_clause_s": 0.2, "pause_none_s": 0.1,
-        "trim_threshold": 0.02, "target_peak": 0.7, "max_chunk_chars": 60, "lead_in_s": 0.1,
+        "pause_sentence_s": 0.5,
+        "pause_clause_s": 0.2,
+        "pause_none_s": 0.1,
+        "trim_threshold": 0.02,
+        "target_peak": 0.7,
+        "max_chunk_chars": 60,
+        "lead_in_s": 0.1,
     }
     p = resolve_params(ProsodyParams(), overrides)
     for key, value in overrides.items():
@@ -116,10 +125,17 @@ def test_none_overrides_leave_the_default_and_the_base_is_never_mutated():
     assert base.target_peak == 0.89
 
 
-@pytest.mark.parametrize("key,bad", [
-    ("pause_sentence_s", -0.1), ("pause_sentence_s", 5.0), ("target_peak", 1.5),
-    ("target_peak", 0.0), ("max_chunk_chars", 5), ("trim_threshold", 0.9),
-])
+@pytest.mark.parametrize(
+    "key,bad",
+    [
+        ("pause_sentence_s", -0.1),
+        ("pause_sentence_s", 5.0),
+        ("target_peak", 1.5),
+        ("target_peak", 0.0),
+        ("max_chunk_chars", 5),
+        ("trim_threshold", 0.9),
+    ],
+)
 def test_out_of_range_values_are_rejected_not_silently_clamped(key, bad):
     with pytest.raises(ValueError, match=key):
         resolve_params(ProsodyParams(), {key: bad})
@@ -131,6 +147,7 @@ def test_an_unknown_parameter_is_rejected():
 
 
 # ---------------------------------------------------------------- audio
+
 
 def _tone(n: int, amp: float) -> np.ndarray:
     return np.full(n, amp, dtype=np.float32)
@@ -147,8 +164,7 @@ def test_an_all_silent_chunk_trims_to_nothing():
 
 def test_pauses_are_chosen_by_the_punctuation_that_ended_each_chunk():
     params = ProsodyParams(lead_in_s=0.0)
-    out = assemble([(_tone(100, 0.5), "sentence"), (_tone(100, 0.5), "clause"),
-                    (_tone(100, 0.5), "none")], SR, params)
+    out = assemble([(_tone(100, 0.5), "sentence"), (_tone(100, 0.5), "clause"), (_tone(100, 0.5), "none")], SR, params)
     # 3 x 100 samples of speech + 280 + 140 + 60 samples of pause
     assert out.size == 300 + 280 + 140 + 60
 
@@ -181,14 +197,14 @@ def test_target_peak_is_overridable_per_request():
 
 def test_silent_chunks_are_skipped_and_an_all_silent_reply_is_a_short_silence():
     assert assemble([(np.zeros(400, dtype=np.float32), "sentence")], SR, ProsodyParams()).size == 200
-    out = assemble([(np.zeros(400), "sentence"), (_tone(100, 0.5), "none")], SR,
-                   ProsodyParams(lead_in_s=0.0))
+    out = assemble([(np.zeros(400), "sentence"), (_tone(100, 0.5), "none")], SR, ProsodyParams(lead_in_s=0.0))
     assert out.size == 100 + 60
 
 
 def test_pauses_can_be_disabled_entirely():
-    out = assemble([(_tone(100, 0.5), "sentence"), (_tone(100, 0.5), "sentence")], SR,
-                   ProsodyParams(lead_in_s=0.0), pauses=False)
+    out = assemble(
+        [(_tone(100, 0.5), "sentence"), (_tone(100, 0.5), "sentence")], SR, ProsodyParams(lead_in_s=0.0), pauses=False
+    )
     assert out.size == 200
 
 

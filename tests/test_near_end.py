@@ -10,6 +10,7 @@ REASONED (see the module) and the "room" here is arithmetic on generated voices.
 
     python -m pytest tests/test_near_end.py -v
 """
+
 import os
 import sys
 
@@ -23,10 +24,15 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 from _synth_speech import speech
 from _synth_voices import DAUGHTER, FATHER, MOTHER, SON, scaled, utterance
+
 from agent.audio_quality import assess
 from agent.golden_buckets import CHANNEL_BUCKETS, bucket_rate, channel_buckets
 from agent.near_end import (
-    BACKGROUND_DELTA_DB, NearEndProfile, dominant_span, level_and_pitch, overlap_segments,
+    BACKGROUND_DELTA_DB,
+    NearEndProfile,
+    dominant_span,
+    level_and_pitch,
+    overlap_segments,
 )
 
 SR = 16000
@@ -35,12 +41,13 @@ SR = 16000
 def _mix(a, b, offset_s=0.0):
     n = max(a.size, b.size + int(offset_s * SR))
     out = np.zeros(n, np.float32)
-    out[:a.size] += a
-    out[int(offset_s * SR):int(offset_s * SR) + b.size] += b
+    out[: a.size] += a
+    out[int(offset_s * SR) : int(offset_s * SR) + b.size] += b
     return out
 
 
 # ------------------------------------------------------------- overlap marking
+
 
 def test_a_single_voice_has_no_overlap_segments():
     for seed in range(4):
@@ -50,19 +57,22 @@ def test_a_single_voice_has_no_overlap_segments():
 def test_two_voices_talking_at_once_are_marked_where_they_overlap():
     a = speech(f0=110, dur=4.0, amp=0.3, seed=1, breath=0.0)
     b = np.zeros(4 * SR, np.float32)
-    b[int(1.5 * SR):int(3.0 * SR)] = speech(f0=185, dur=1.5, amp=0.25, seed=2, breath=0.0)   # the second voice, 1.5-3.0 s
+    b[int(1.5 * SR) : int(3.0 * SR)] = speech(
+        f0=185, dur=1.5, amp=0.25, seed=2, breath=0.0
+    )  # the second voice, 1.5-3.0 s
     segs = overlap_segments(a + b, SR)
     assert segs, "the overlapped stretch was not marked"
     covered = sum(min(e, 3.1) - max(s, 1.4) for s, e in segs if e > 1.4 and s < 3.1)
-    assert covered >= 0.5                                       # a substantial part of the true overlap
+    assert covered >= 0.5  # a substantial part of the true overlap
     outside = sum(e - s for s, e in segs if e < 1.2 or s > 3.3)
-    assert outside < 0.3                                        # and little marked where there was one voice
+    assert outside < 0.3  # and little marked where there was one voice
 
 
 def test_pitch_alternation_does_not_mark_a_single_expressive_voice():
     """The alternation evidence (two tight pitch clusters >= 1.4x apart) must not fire on one talker,
     however expressive: every synthetic voice, several seeds, and a wide high-to-low glide."""
     from agent.near_end import _alternation_mask, _voiced_track
+
     marked = []
     for voice in (FATHER, MOTHER, SON, DAUGHTER):
         for seed in range(6):
@@ -78,6 +88,7 @@ def test_pitch_alternation_does_not_mark_a_single_expressive_voice():
 
 def test_two_alternating_pitch_clusters_are_marked_even_when_no_voice_dominates():
     from agent.near_end import _alternation_mask
+
     f0 = np.tile(np.array([110.0, 110.0, 185.0, 186.0, 111.0, 184.0]), 20)
     assert _alternation_mask(f0).mean() > 0.9
     assert not _alternation_mask(np.full(120, 150.0)).any()
@@ -92,9 +103,10 @@ def test_the_overlap_verdict_and_the_segments_agree():
 
 # ------------------------------------------------------------ dominant talker
 
+
 def test_background_speech_before_and_after_the_caller_is_trimmed_away():
     caller = utterance(FATHER, dur=2.0, seed=1, amp=0.3)
-    bystander = scaled(utterance(MOTHER, dur=1.2, seed=2, amp=0.3), -22.0)          # 22 dB down
+    bystander = scaled(utterance(MOTHER, dur=1.2, seed=2, amp=0.3), -22.0)  # 22 dB down
     clip = np.concatenate([bystander, caller, bystander])
     span = dominant_span(clip, SR)
     assert span is not None
@@ -109,19 +121,20 @@ def test_a_talkers_own_syllable_gaps_are_not_mistaken_for_background():
 
 
 def test_silence_has_no_dominant_span():
-    assert dominant_span(np.zeros(SR, np.float32), SR) is None or True   # nothing to keep: must not raise
+    assert dominant_span(np.zeros(SR, np.float32), SR) is None or True  # nothing to keep: must not raise
     assert dominant_span(np.zeros(100, np.float32), SR) is None
 
 
 # ------------------------------------------------- a background utterance is no turn
 
+
 def test_a_quieter_different_voice_never_opens_a_turn():
     profile = NearEndProfile()
-    assert profile.consider(utterance(FATHER, seed=1), SR).background is False       # the caller, establishes the profile
+    assert profile.consider(utterance(FATHER, seed=1), SR).background is False  # the caller, establishes the profile
     assert profile.consider(utterance(FATHER, seed=2), SR).background is False
-    verdict = profile.consider(scaled(utterance(DAUGHTER, seed=3), -20.0), SR)       # someone else, well down in level
+    verdict = profile.consider(scaled(utterance(DAUGHTER, seed=3), -20.0), SR)  # someone else, well down in level
     assert verdict.background and verdict.reason == "quieter_and_a_different_voice"
-    assert profile.rejected == 1 and profile.accepted == 2                            # and it did not contaminate the profile
+    assert profile.rejected == 1 and profile.accepted == 2  # and it did not contaminate the profile
 
 
 def test_the_same_voice_merely_quieter_is_still_the_caller():
@@ -162,12 +175,13 @@ def test_level_and_pitch_are_measured_on_the_voice_not_the_silence():
 
 # ------------------------------------------------------------- Appendix F bucket
 
+
 def test_the_cross_talk_bucket_uses_the_appendix_f_name():
     assert "cross_talk" in CHANNEL_BUCKETS
     assert channel_buckets(["crosstalk"], "clean_16k") == ["clean_16k", "cross_talk"]
     assert channel_buckets(["noisy", "crosstalk"], "narrowband_8k") == ["narrowband_8k", "noisy", "cross_talk"]
     assert channel_buckets([], None) == []
-    assert channel_buckets(["too_quiet"], "clean_16k") == ["clean_16k"]         # not a channel bucket
+    assert channel_buckets(["too_quiet"], "clean_16k") == ["clean_16k"]  # not a channel bucket
 
 
 def test_the_bucket_rate_is_a_fraction_of_turns_seen():

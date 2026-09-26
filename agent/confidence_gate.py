@@ -33,6 +33,7 @@ locally to calibrate the boundary between "ASR was genuinely unsure" and
 FAQ_COMMIT_FLOOR already carries. Recalibrate against real call audio
 before trusting this past the pilot.
 """
+
 from __future__ import annotations
 
 # Below this, the two decoders disagreed on more than half the turn's
@@ -48,21 +49,28 @@ LOW_CONFIDENCE_FLOOR = 0.5
 # wrong answer about something else entirely. Booking actions are
 # deliberately excluded: they already require a separate confirm turn
 # regardless of confidence (see module docstring).
-GATED_FACTUAL_INTENTS = frozenset({
-    "test_rate", "doctor_availability", "test_prep", "clinic_faq",
-    # an external "no guessing" review: every fact retrieval, and every lookup that discloses a
-    # booking, is gated -- not just four intents.
-    "department_query", "lookup_booking", "resend_confirmation",
-})
+GATED_FACTUAL_INTENTS = frozenset(
+    {
+        "test_rate",
+        "doctor_availability",
+        "test_prep",
+        "clinic_faq",
+        # an external "no guessing" review: every fact retrieval, and every lookup that discloses a
+        # booking, is gated -- not just four intents.
+        "department_query",
+        "lookup_booking",
+        "resend_confirmation",
+    }
+)
 
 # --- three states, not a float convention -----------------------------------------------------
 # `decoder_agreement == 0.0` is ambiguous: agent/asr.py uses it for "only the CTC decoder produced
 # text" (nothing to compare with), and a genuine total disagreement also rounds to 0.0. A float
 # convention that reads the first as "trust it" gives one decoder the authority of two agreeing
 # ones. The decoder that actually produced the text is recorded (`decoder_used`); this uses it.
-VERIFIED = "verified"          # both decoders ran and agree
-LOW = "low"                    # both decoders ran and disagree
-UNAVAILABLE = "unavailable"    # only one decoder produced the text: nothing to check it against
+VERIFIED = "verified"  # both decoders ran and agree
+LOW = "low"  # both decoders ran and disagree
+UNAVAILABLE = "unavailable"  # only one decoder produced the text: nothing to check it against
 
 
 def confidence_state(decoder_used: str | None, decoder_agreement: float) -> str:

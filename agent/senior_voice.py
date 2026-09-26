@@ -47,6 +47,7 @@ Persistence against the patient (KCD-084's last sentence) is the
 clinic-api's job -- see clinic-api/booking_service.set_patient_senior; only
 the boolean "delivery mode" is stored, never the score or any audio.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -56,24 +57,32 @@ import unicodedata
 import numpy as np
 
 from agent.audio_quality import (
-    F0_MAX_HZ, F0_MIN_HZ, HOP_S, VOICED_HARMONICITY, _autocorr, _db, _frames, _pitch_lag, _refine_lag,
+    F0_MAX_HZ,
+    F0_MIN_HZ,
+    HOP_S,
+    VOICED_HARMONICITY,
+    _autocorr,
+    _db,
+    _frames,
+    _pitch_lag,
+    _refine_lag,
 )
 
-MIN_VOICED_SECONDS = 2.0          # below this there is not enough to judge
+MIN_VOICED_SECONDS = 2.0  # below this there is not enough to judge
 TREMOR_BAND_HZ = (4.0, 12.0)
-MAX_GAP_S = 0.25                  # unvoiced gap the pitch track is bridged across
-MIN_TREMOR_SPAN_S = 1.0           # continuous stretch needed to resolve a 4-12 Hz modulation
-PAUSE_MIN_S = 0.20                # a silence shorter than this is a syllable dip, not a pause
+MAX_GAP_S = 0.25  # unvoiced gap the pitch track is bridged across
+MIN_TREMOR_SPAN_S = 1.0  # continuous stretch needed to resolve a 4-12 Hz modulation
+PAUSE_MIN_S = 0.20  # a silence shorter than this is a syllable dip, not a pause
 FRAME_RATE_HZ = 1.0 / HOP_S
 
 # (feature, direction, low, high, weight): each feature is mapped to a
 # 0..1 "looks older" score by a linear ramp between `low` (0.0) and `high`
 # (1.0). REASONED starting points, see module docstring.
 _FEATURES = (
-    ("syllable_rate", "lower", 2.0, 4.0, 0.30),      # syll/s: <=2.0 slow, >=4.0 brisk
+    ("syllable_rate", "lower", 2.0, 4.0, 0.30),  # syll/s: <=2.0 slow, >=4.0 brisk
     ("pause_ratio", "higher", 0.15, 0.40, 0.15),
-    ("f0_instability", "higher", 0.30, 0.90, 0.20),   # semitones
-    ("tremor_st", "higher", 0.05, 0.30, 0.20),      # RMS semitones in the 4-12 Hz band
+    ("f0_instability", "higher", 0.30, 0.90, 0.20),  # semitones
+    ("tremor_st", "higher", 0.05, 0.30, 0.20),  # RMS semitones in the 4-12 Hz band
     ("harmonicity", "lower", 0.60, 0.85, 0.15),
 )
 
@@ -84,14 +93,14 @@ _FEATURES = (
 # sits in the gap and above every single-trait score, so one quirk (a slow
 # talker, a hoarse voice) never flags anyone on its own.
 SENIOR_SCORE = 0.40
-DECISION_CLIPS = 2                # clips with enough speech that must agree
-EVIDENCE_DECAY = 0.6              # weight of history vs the newest clip
+DECISION_CLIPS = 2  # clips with enough speech that must agree
+EVIDENCE_DECAY = 0.6  # weight of history vs the newest clip
 
 
 @dataclasses.dataclass
 class SeniorEstimate:
-    sufficient: bool              # enough voiced speech to judge at all
-    score: float                  # 0..1, how much this clip sounds older
+    sufficient: bool  # enough voiced speech to judge at all
+    score: float  # 0..1, how much this clip sounds older
     features: dict
     contributions: dict
 
@@ -128,7 +137,7 @@ def extract_features(samples: np.ndarray, sr: int = 16000) -> dict | None:
     if frames.shape[0] < 50:
         return None
 
-    energy = _db(np.mean(frames ** 2, axis=1))
+    energy = _db(np.mean(frames**2, axis=1))
     floor, top = float(np.percentile(energy, 10)), float(np.percentile(energy, 90))
     active = energy >= max(floor + 0.35 * (top - floor), top - 25.0)
     if active.sum() * HOP_S < MIN_VOICED_SECONDS * 0.5:
@@ -190,8 +199,9 @@ def extract_features(samples: np.ndarray, sr: int = 16000) -> dict | None:
     span = np.where(active)[0]
     lo, hi = span[0], span[-1] + 1
     seg_env = env[lo:hi]
-    peaks = (seg_env[1:-1] > seg_env[:-2]) & (seg_env[1:-1] >= seg_env[2:]) & \
-            (seg_env[1:-1] > 0.5 * float(np.max(seg_env)))
+    peaks = (
+        (seg_env[1:-1] > seg_env[:-2]) & (seg_env[1:-1] >= seg_env[2:]) & (seg_env[1:-1] > 0.5 * float(np.max(seg_env)))
+    )
     peak_idx = np.where(peaks)[0]
     # peaks closer than 100 ms are one syllable
     kept = [p for j, p in enumerate(peak_idx) if j == 0 or (p - peak_idx[j - 1]) * HOP_S >= 0.10]
@@ -235,6 +245,7 @@ def estimate(samples: np.ndarray, sr: int = 16000) -> SeniorEstimate:
 
 # ------------------------------------------------------ evidence over a call
 
+
 class SeniorEvidence:
     """One per call. A single clip never decides: the acoustic path needs
     DECISION_CLIPS separate clips (each with enough speech) that agree, and
@@ -261,8 +272,7 @@ class SeniorEvidence:
         if self.senior or not est.sufficient:
             return False
         self._clips += 1
-        self._ema = est.score if self._clips == 1 else \
-            EVIDENCE_DECAY * self._ema + (1 - EVIDENCE_DECAY) * est.score
+        self._ema = est.score if self._clips == 1 else EVIDENCE_DECAY * self._ema + (1 - EVIDENCE_DECAY) * est.score
         self._agree += 1 if est.votes_senior else 0
         if self._agree >= DECISION_CLIPS and self._ema >= SENIOR_SCORE:
             self.senior, self.reason = True, "acoustic"
@@ -279,13 +289,23 @@ class SeniorEvidence:
 SENIOR_AGE = 60
 
 _CUES = {
-    "en": [r"\bspeak (more )?slowly\b", r"\bslowly please\b", r"\bplease (go|speak) slow",
-           r"\bi(?:'m| am) (?:an? )?(?:old|elderly|senior)",
-           r"\bmy hearing is (?:not|bad|weak)", r"\bi(?:'m| am) hard of hearing\b"],
-    "hi": [r"धीरे (?:से )?बोल", r"धीमे बोल", r"मैं (?:बूढ़ा|बूढ़ी|बुज़ुर्ग|बुजुर्ग|वरिष्ठ नागरिक)",
-           r"मुझे कम सुनाई", r"मैं कम सुन(?:ता|ती)"],
-    "bn": [r"ধীরে (?:ধীরে )?বল", r"আস্তে (?:আস্তে )?বল", r"আমি (?:বৃদ্ধ|বুড়ো|বুড়ি|বয়স্ক)",
-           r"আমি প্রবীণ নাগরিক", r"আমি কম শুনি", r"আমার কম শুনতে"],
+    "en": [
+        r"\bspeak (more )?slowly\b",
+        r"\bslowly please\b",
+        r"\bplease (go|speak) slow",
+        r"\bi(?:'m| am) (?:an? )?(?:old|elderly|senior)",
+        r"\bmy hearing is (?:not|bad|weak)",
+        r"\bi(?:'m| am) hard of hearing\b",
+    ],
+    "hi": [r"धीरे (?:से )?बोल", r"धीमे बोल", r"मैं (?:बूढ़ा|बूढ़ी|बुज़ुर्ग|बुजुर्ग|वरिष्ठ नागरिक)", r"मुझे कम सुनाई", r"मैं कम सुन(?:ता|ती)"],
+    "bn": [
+        r"ধীরে (?:ধীরে )?বল",
+        r"আস্তে (?:আস্তে )?বল",
+        r"আমি (?:বৃদ্ধ|বুড়ো|বুড়ি|বয়স্ক)",
+        r"আমি প্রবীণ নাগরিক",
+        r"আমি কম শুনি",
+        r"আমার কম শুনতে",
+    ],
     # Every cue that describes the SPEAKER is first-person on purpose: "my
     # father is a senior citizen" is a caller booking for someone else, and
     # slowing that caller down would be the wrong adaptation (the same rule
@@ -328,5 +348,5 @@ def stated_age_is_senior(age: int | None, relationship: str | None = None) -> bo
         if age is None or isinstance(age, bool) or int(age) < SENIOR_AGE:
             return False
     except (TypeError, ValueError):
-        return False            # a non-numeric "age" is no evidence of anything
+        return False  # a non-numeric "age" is no evidence of anything
     return relationship in (None, "", "self")

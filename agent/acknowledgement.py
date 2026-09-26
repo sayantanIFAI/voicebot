@@ -17,6 +17,7 @@ for the release gate rather than being quietly assumed fine.
 
 No colons or brackets (agent/spoken_text_lint.py): these are spoken.
 """
+
 from __future__ import annotations
 
 from agent.speech_policy import SpeechPolicy

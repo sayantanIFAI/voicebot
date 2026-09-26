@@ -32,9 +32,7 @@ from sqlalchemy.orm import Session
 KEY_HEADER = "idempotency-key"
 MAX_KEY_CHARS = 200
 
-_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "idempotency_key", default=None
-)
+_key: contextvars.ContextVar[str | None] = contextvars.ContextVar("idempotency_key", default=None)
 
 
 def set_key_from_header(value: str | None) -> None:
@@ -53,12 +51,8 @@ def _fingerprint(kwargs: dict) -> str:
     for name, value in sorted(kwargs.items()):
         if isinstance(value, Session):
             continue
-        parts[name] = (
-            value.model_dump(mode="json") if hasattr(value, "model_dump") else value
-        )
-    return hashlib.sha256(
-        json.dumps(parts, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
+        parts[name] = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
 def idempotent(scope: str):
@@ -81,17 +75,11 @@ def idempotent(scope: str):
             except (TypeError, ValueError):
                 return result  # not JSON-shaped (a raw Response): nothing to store
             try:
-                db.add(
-                    IdempotencyRecord(
-                        key=key, scope=scope, request_hash=digest, response_json=payload
-                    )
-                )
+                db.add(IdempotencyRecord(key=key, scope=scope, request_hash=digest, response_json=payload))
                 db.commit()
             except IntegrityError:  # a concurrent twin stored first: answer as it did
                 db.rollback()
-                rec = (
-                    db.query(IdempotencyRecord).filter_by(key=key, scope=scope).first()
-                )
+                rec = db.query(IdempotencyRecord).filter_by(key=key, scope=scope).first()
                 if rec is not None:
                     return _replay(rec, digest)
             return result

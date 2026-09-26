@@ -5,6 +5,7 @@ itself.
 
     python -m pytest tests/test_doctor_matching_e29.py -v
 """
+
 import os
 import sys
 import tempfile
@@ -23,8 +24,17 @@ def clinic_client():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content", "phonetic_match"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+        "phonetic_match",
+    ):
         sys.modules.pop(mod, None)
 
     from fastapi.testclient import TestClient

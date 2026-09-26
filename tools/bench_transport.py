@@ -17,6 +17,7 @@ Two things are checked here:
 Usage:
     python tools/bench_transport.py --wav /tmp/probe16k.wav
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,9 +33,21 @@ import wave
 
 def _make_silence_webm(seconds: int, path: str):
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
-         "-i", f"anoisesrc=d={seconds}:c=pink:r=48000", "-ac", "1",
-         "-c:a", "libopus", path],
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"anoisesrc=d={seconds}:c=pink:r=48000",
+            "-ac",
+            "1",
+            "-c:a",
+            "libopus",
+            path,
+        ],
         check=True,
     )
 
@@ -55,8 +68,7 @@ def bench_decode_shape(durations=(10, 30, 60, 90)):
 
         t0 = time.perf_counter()
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", webm,
-             "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav],
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", webm, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav],
             check=True,
         )
         webm_s = time.perf_counter() - t0
@@ -71,8 +83,7 @@ def bench_decode_shape(durations=(10, 30, 60, 90)):
         pcm_s = (time.perf_counter() - t0) / 20
 
         rows.append((secs, webm_s, pcm_s))
-        print(f"{secs:>7}s  | {webm_s * 1000:>12.1f}ms | {pcm_s * 1000:>12.3f}ms | "
-              f"{webm_s / pcm_s:>6.0f}x")
+        print(f"{secs:>7}s  | {webm_s * 1000:>12.1f}ms | {pcm_s * 1000:>12.3f}ms | {webm_s / pcm_s:>6.0f}x")
 
     print()
     # Total work across a whole call, at one poll every 500ms.
@@ -80,9 +91,11 @@ def bench_decode_shape(durations=(10, 30, 60, 90)):
         polls = int(secs / 0.5)
         # Cost rises linearly with elapsed time, so the mean poll costs
         # about half the final poll -- hence polls * webm_s / 2.
-        print(f"  {secs}s call, {polls} polls: webm ~{polls * webm_s / 2:6.2f}s CPU, "
-              f"pcm ~{polls * pcm_s:.3f}s CPU  "
-              f"({(polls * webm_s / 2) / max(polls * pcm_s, 1e-9):.0f}x total)")
+        print(
+            f"  {secs}s call, {polls} polls: webm ~{polls * webm_s / 2:6.2f}s CPU, "
+            f"pcm ~{polls * pcm_s:.3f}s CPU  "
+            f"({(polls * webm_s / 2) / max(polls * pcm_s, 1e-9):.0f}x total)"
+        )
     return rows
 
 
@@ -102,8 +115,7 @@ async def bench_live_turn(url: str, wav_path: str, timeout_s: float = 120.0):
     first_reply_at = None
 
     async with websockets.connect(url, max_size=None) as ws:
-        await ws.send(json.dumps({"type": "hello", "sampleRate": rate,
-                                  "format": "pcm_s16le", "channels": 1}))
+        await ws.send(json.dumps({"type": "hello", "sampleRate": rate, "format": "pcm_s16le", "channels": 1}))
 
         async def feed():
             # Real-time pacing matters: blasting the whole file instantly
@@ -114,7 +126,7 @@ async def bench_live_turn(url: str, wav_path: str, timeout_s: float = 120.0):
             # Let the greeting play out first, exactly as a caller would.
             await asyncio.sleep(6.0)
             for i in range(0, len(pcm), block):
-                await ws.send(pcm[i:i + block])
+                await ws.send(pcm[i : i + block])
                 await asyncio.sleep((block / 2) / rate)
             # Trailing silence so the turn detector can confirm the end.
             for _ in range(int(2.5 * rate * 2 / block)):
@@ -141,7 +153,7 @@ async def bench_live_turn(url: str, wav_path: str, timeout_s: float = 120.0):
                         first_reply_at = time.perf_counter() - t_start
                 if transcripts and len(replies) > 1:
                     break
-        except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+        except (TimeoutError, Exception) as e:  # noqa: BLE001
             print(f"  stopped: {type(e).__name__}: {e}")
         finally:
             feeder.cancel()

@@ -9,6 +9,7 @@ breakdown that aggregate cannot show: whether Hindi/English turns are
 systematically slower than Bengali's, not just whether the process as a
 whole is currently over budget.
 """
+
 from __future__ import annotations
 
 import collections
@@ -28,8 +29,7 @@ def _percentile(values, q: float) -> float:
 class PerLanguageLatency:
     def __init__(self, window: int = _WINDOW):
         self._lock = threading.Lock()
-        self._by_lang: dict[str, collections.deque] = collections.defaultdict(
-            lambda: collections.deque(maxlen=window))
+        self._by_lang: dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=window))
 
     def record(self, lang: str, seconds: float) -> None:
         with self._lock:

@@ -6,15 +6,32 @@ The clinic-api modules (main, models, registry, ...) share names with nothing el
 is also the orchestrator: this loads clinic-api's copy, keeps the app object, and puts sys.path and
 sys.modules back afterwards, so it can be used next to tests/_pod_stubs.py.
 """
+
 import contextlib
 import os
 import sys
 import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_CLINIC_MODULES = ("main", "db", "models", "seed", "booking_service", "booking_migrate", "enquiry_service",
-                   "enquiry_migrate", "i18n_content", "phonetic_match", "patient_context", "disclosure",
-                   "registry", "agent_messages", "patient_seed", "gazetteer", "idempotency")
+_CLINIC_MODULES = (
+    "main",
+    "db",
+    "models",
+    "seed",
+    "booking_service",
+    "booking_migrate",
+    "enquiry_service",
+    "enquiry_migrate",
+    "i18n_content",
+    "phonetic_match",
+    "patient_context",
+    "disclosure",
+    "registry",
+    "agent_messages",
+    "patient_seed",
+    "gazetteer",
+    "idempotency",
+)
 
 
 @contextlib.contextmanager
@@ -30,7 +47,9 @@ def clinic_app(sample_patients: bool = True):
     sys.path.insert(0, os.path.join(REPO_ROOT, "clinic-api"))
     try:
         from fastapi.testclient import TestClient
+
         import main as clinic_main
+
         with TestClient(clinic_main.app) as client:
             yield clinic_main.app, client
     finally:

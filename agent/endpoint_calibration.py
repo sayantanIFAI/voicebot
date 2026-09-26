@@ -30,12 +30,13 @@ the subset this tool needs). For each `NAME.wav` a sidecar `NAME.json`:
      "channel": "handset|speaker",    # optional, for per-channel rates
      "annotator": "id"}               # optional
 """
+
 from __future__ import annotations
 
 import dataclasses
 import json
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -48,10 +49,10 @@ MIN_RECORDINGS = 200
 class Recording:
     samples: np.ndarray
     sr: int
-    turn_end_s: float            # human-marked
+    turn_end_s: float  # human-marked
     language: str = ""
     channel: str = ""
-    spans: list | None = None    # precomputed speech spans (e.g. from Silero); else energy_spans
+    spans: list | None = None  # precomputed speech spans (e.g. from Silero); else energy_spans
 
 
 @dataclasses.dataclass
@@ -92,8 +93,13 @@ def commit_time(rec: Recording, cfg: EndpointConfig, step_s: float = 0.02) -> tu
     return None, None
 
 
-def evaluate(recordings: Sequence[Recording], silence_confirm_s: float, base: EndpointConfig = EndpointConfig(),
-             cut_tolerance_s: float = 0.30, wait_budget_s: float = 1.0) -> CandidateResult:
+def evaluate(
+    recordings: Sequence[Recording],
+    silence_confirm_s: float,
+    base: EndpointConfig = EndpointConfig(),
+    cut_tolerance_s: float = 0.30,
+    wait_budget_s: float = 1.0,
+) -> CandidateResult:
     cfg = dataclasses.replace(base, silence_confirm_s=silence_confirm_s)
     cuts, waits, long_waits = 0, [], 0
     for rec in recordings:
@@ -107,16 +113,24 @@ def evaluate(recordings: Sequence[Recording], silence_confirm_s: float, base: En
         long_waits += wait > wait_budget_s
     n = len(waits)
     return CandidateResult(
-        silence_confirm_s=silence_confirm_s, n=n,
-        false_cut_rate=cuts / n if n else 0.0, false_cut_ci95=wilson_interval(cuts, n),
+        silence_confirm_s=silence_confirm_s,
+        n=n,
+        false_cut_rate=cuts / n if n else 0.0,
+        false_cut_ci95=wilson_interval(cuts, n),
         false_wait_rate=long_waits / n if n else 0.0,
         wait_p50_s=float(np.percentile(waits, 50)) if waits else 0.0,
-        wait_p95_s=float(np.percentile(waits, 95)) if waits else 0.0)
+        wait_p95_s=float(np.percentile(waits, 95)) if waits else 0.0,
+    )
 
 
-def calibrate(recordings: Sequence[Recording], candidates: Sequence[float] = tuple(np.arange(0.4, 1.6, 0.1)),
-              target_false_cut: float = 0.02, min_recordings: int = MIN_RECORDINGS,
-              base: EndpointConfig = EndpointConfig(), **kw) -> dict:
+def calibrate(
+    recordings: Sequence[Recording],
+    candidates: Sequence[float] = tuple(np.arange(0.4, 1.6, 0.1)),
+    target_false_cut: float = 0.02,
+    min_recordings: int = MIN_RECORDINGS,
+    base: EndpointConfig = EndpointConfig(),
+    **kw,
+) -> dict:
     """Pick the SHORTEST threshold whose false-cut rate (upper 95% bound) stays
     under the target -- shortest, because false wait is what it trades against.
     Returns a JSON-serialisable report; `status` is MEASURED only with enough data."""
@@ -128,7 +142,9 @@ def calibrate(recordings: Sequence[Recording], candidates: Sequence[float] = tup
         # the interval is too wide to clear the target: fall back to the point
         # estimate, and say so in the report
         under = [r for r in table if r.false_cut_rate <= target_false_cut]
-        chosen = min(under, key=lambda r: r.silence_confirm_s) if under else max(table, key=lambda r: r.silence_confirm_s)
+        chosen = (
+            min(under, key=lambda r: r.silence_confirm_s) if under else max(table, key=lambda r: r.silence_confirm_s)
+        )
         interval_cleared = False
     enough = len(recordings) >= min_recordings
     return {
@@ -141,9 +157,12 @@ def calibrate(recordings: Sequence[Recording], candidates: Sequence[float] = tup
         "baseline_silence_confirm_s": base.silence_confirm_s,
         "config": {"silence_confirm_s": chosen.silence_confirm_s} if enough else {},
         "table": [dataclasses.asdict(r) for r in table],
-        "note": ("Replaces the REASONED threshold." if enough else
-                 f"Only {len(recordings)} recordings; {min_recordings} are required before this may replace the REASONED value. "
-                 "Nothing was changed."),
+        "note": (
+            "Replaces the REASONED threshold."
+            if enough
+            else f"Only {len(recordings)} recordings; {min_recordings} are required before this may replace the REASONED value. "
+            "Nothing was changed."
+        ),
     }
 
 

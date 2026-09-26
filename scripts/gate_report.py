@@ -9,13 +9,14 @@ Usage: gate_report.py <status-file> --mode --fast|--full
 
 <status-file> is tab-separated lines: name<TAB>pass|fail|skip<TAB>detail
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def git(*args: str) -> str:
@@ -56,22 +57,19 @@ def build_report(checks: dict[str, dict[str, str]], mode: str) -> dict:
     if not changed_files:
         changed_files = git("diff", "--name-only", "--cached", "HEAD").splitlines()
 
-    high_risk_globs = ("agent/reply_templates.py", "agent/tools_client.py",
-                        "agent/llm.py", "clinic-api/", "deploy/")
+    high_risk_globs = ("agent/reply_templates.py", "agent/tools_client.py", "agent/llm.py", "clinic-api/", "deploy/")
     high_risk_files = [f for f in changed_files if f.startswith(high_risk_globs)]
 
     return {
         "commit": git("rev-parse", "HEAD"),
         "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
         "mode": mode,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "generated_by": "scripts/gate.sh",
         "checks": checks,
         "files_changed": len(changed_files),
         "high_risk_files": high_risk_files,
-        "gate_config_touched": any(
-            f.startswith("scripts/gate") or f == "pytest.ini" for f in changed_files
-        ),
+        "gate_config_touched": any(f.startswith("scripts/gate") or f == "pytest.ini" for f in changed_files),
         "tests_weakened": False,  # requires a human/AI-review judgment call; see code-reviewer.md
         "overall_status": overall,
         "note": (
@@ -94,8 +92,10 @@ def render_markdown(report: dict) -> str:
     if report["high_risk_files"]:
         lines.append(f"- **high-risk files touched:** {', '.join(report['high_risk_files'])}")
     if report["gate_config_touched"]:
-        lines.append("- ⚠️ **gate config or pytest.ini was touched in this diff -- "
-                      "requires explicit human sign-off, per CLAUDE.md section 4.4.**")
+        lines.append(
+            "- ⚠️ **gate config or pytest.ini was touched in this diff -- "
+            "requires explicit human sign-off, per CLAUDE.md section 4.4.**"
+        )
     lines += ["", "| Check | Status | Detail |", "|---|---|---|"]
     for name, info in sorted(report["checks"].items()):
         icon = {"pass": "✅", "fail": "❌", "skip": "⚪"}.get(info["status"], "?")

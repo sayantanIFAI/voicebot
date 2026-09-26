@@ -46,17 +46,11 @@ def _parenthesised(lines: list[str], node: ast.Constant) -> bool:
         line[: node.col_offset].rstrip(),
         line[node.end_col_offset :].lstrip() if node.end_lineno == node.lineno else "",
     )
-    return (
-        before.endswith("(")
-        and after.startswith(")")
-        and node.end_lineno == node.lineno
-    )
+    return before.endswith("(") and after.startswith(")") and node.end_lineno == node.lineno
 
 
 def _is_mutable_literal(node: ast.AST) -> bool:
-    if isinstance(
-        node, (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)
-    ):
+    if isinstance(node, (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)):
         return True
     return (
         isinstance(node, ast.Call)
@@ -85,8 +79,7 @@ def _decorated_dataclass(cls: ast.ClassDef) -> bool:
 
 def _is_pydantic(cls: ast.ClassDef) -> bool:
     return any(
-        (isinstance(b, ast.Name) and b.id == "BaseModel")
-        or (isinstance(b, ast.Attribute) and b.attr == "BaseModel")
+        (isinstance(b, ast.Name) and b.id == "BaseModel") or (isinstance(b, ast.Attribute) and b.attr == "BaseModel")
         for b in cls.bases
     )
 
@@ -105,9 +98,7 @@ def scan_source(source: str, path: str = "<src>") -> list[tuple[str, int, str, s
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            defaults = list(node.args.defaults) + [
-                d for d in node.args.kw_defaults if d is not None
-            ]
+            defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d is not None]
             for d in defaults:
                 if _is_mutable_literal(d):
                     add(
@@ -118,11 +109,7 @@ def scan_source(source: str, path: str = "<src>") -> list[tuple[str, int, str, s
         elif isinstance(node, ast.ClassDef):
             dc, pyd = _decorated_dataclass(node), _is_pydantic(node)
             for stmt in node.body:
-                if (
-                    isinstance(stmt, ast.AnnAssign)
-                    and stmt.value is not None
-                    and _is_mutable_literal(stmt.value)
-                ):
+                if isinstance(stmt, ast.AnnAssign) and stmt.value is not None and _is_mutable_literal(stmt.value):
                     if dc:
                         add(
                             stmt,
@@ -191,11 +178,7 @@ def scan_source(source: str, path: str = "<src>") -> list[tuple[str, int, str, s
             # fused literals: an element whose source spans two adjacent string literals (implicit concatenation) in a
             # display that otherwise separates its items with commas -- the classic missing comma.
             for el in node.elts:
-                if (
-                    isinstance(el, ast.Constant)
-                    and isinstance(el.value, str)
-                    and el.end_lineno == el.lineno
-                ):
+                if isinstance(el, ast.Constant) and isinstance(el.value, str) and el.end_lineno == el.lineno:
                     seg = ast.get_source_segment(source, el) or ""
                     if seg.count('"') >= 4 and seg.startswith('"') and '" "' in seg:
                         add(

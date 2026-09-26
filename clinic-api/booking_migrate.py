@@ -10,6 +10,7 @@ Base.metadata.create_all(engine), already called at startup, creates a
 missing table but never touches an existing one, so it is safe to call
 every boot alongside this.
 """
+
 from __future__ import annotations
 
 from db import SessionLocal, engine
@@ -132,11 +133,13 @@ def rebuild_appointments_partial_unique_index() -> bool:
     if engine.dialect.name == "postgresql":
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE appointments DROP CONSTRAINT IF EXISTS uq_doctor_slot"))
-            conn.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ux_doctor_slot_confirmed "
-                "ON appointments (doctor_id, date, time_slot) "
-                "WHERE status = 'confirmed'"
-            ))
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_doctor_slot_confirmed "
+                    "ON appointments (doctor_id, date, time_slot) "
+                    "WHERE status = 'confirmed'"
+                )
+            )
         return True
 
     # This whole function runs on ONE connection in AUTOCOMMIT mode, not
@@ -169,10 +172,9 @@ def rebuild_appointments_partial_unique_index() -> bool:
             Appointment.__table__.create(conn)
 
             columns = ", ".join(Appointment.__table__.columns.keys())
-            conn.execute(text(
-                f"INSERT INTO appointments ({columns}) "
-                f"SELECT {columns} FROM appointments_pre_partial_index"
-            ))
+            conn.execute(
+                text(f"INSERT INTO appointments ({columns}) SELECT {columns} FROM appointments_pre_partial_index")
+            )
             conn.execute(text("DROP TABLE appointments_pre_partial_index"))
             conn.execute(text("COMMIT"))
         except Exception:
@@ -236,8 +238,13 @@ def add_doctor_booking_columns() -> list[str]:
 # Department -> fictional consultation fee, clinically plausible variation
 # by specialty, same spirit as seed.py's LAB_TESTS pricing.
 DEPARTMENT_FEE_INR: dict[str, int] = {
-    "General Medicine": 500, "Cardiology": 900, "Gynaecology & Obstetrics": 700,
-    "Orthopaedics": 700, "ENT": 500, "Dermatology": 600, "Paediatrics": 500,
+    "General Medicine": 500,
+    "Cardiology": 900,
+    "Gynaecology & Obstetrics": 700,
+    "Orthopaedics": 700,
+    "ENT": 500,
+    "Dermatology": 600,
+    "Paediatrics": 500,
     "Diabetology & Endocrinology": 800,
 }
 
@@ -268,38 +275,54 @@ def backfill_doctor_fees() -> int:
 # administrative routing only, never a diagnosis (see
 # reply_templates.department_route_reply's framing).
 DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
-    ("Cardiology",
-     ["বুকে ব্যথা", "বুক ধড়ফড়", "হার্টের সমস্যা", "হৃদযন্ত্র"],
-     ["सीने में दर्द", "दिल की धड़कन", "दिल की बीमारी"],
-     ["chest pain", "heart palpitation", "heart problem"]),
-    ("Orthopaedics",
-     ["হাড়ে ব্যথা", "গাঁটে ব্যথা", "কোমরে ব্যথা", "পিঠে ব্যথা"],
-     ["हड्डी में दर्द", "जोड़ों में दर्द", "कमर दर्द", "पीठ दर्द"],
-     ["bone pain", "joint pain", "back pain", "knee pain"]),
-    ("ENT",
-     ["কানে ব্যথা", "গলা ব্যথা", "নাক বন্ধ", "শুনতে অসুবিধা"],
-     ["कान में दर्द", "गले में दर्द", "नाक बंद"],
-     ["ear pain", "throat pain", "sore throat", "blocked nose"]),
-    ("Dermatology",
-     ["চামড়ায় সমস্যা", "ত্বকের সমস্যা", "চুলকানি", "র‍্যাশ"],
-     ["त्वचा की समस्या", "खुजली", "चकत्ते"],
-     ["skin problem", "itching", "rash"]),
-    ("Paediatrics",
-     ["বাচ্চার জ্বর", "শিশুর সমস্যা", "বাচ্চার সর্দি"],
-     ["बच्चे को बुखार", "बच्चे की समस्या"],
-     ["child fever", "baby problem", "infant"]),
-    ("Gynaecology & Obstetrics",
-     ["প্রেগন্যান্সি", "গর্ভাবস্থা", "মহিলাদের সমস্যা"],
-     ["गर्भावस्था", "महिलाओं की समस्या"],
-     ["pregnancy", "women's problem", "gynaecology"]),
-    ("Diabetology & Endocrinology",
-     ["সুগারের সমস্যা", "ডায়াবেটিস", "থাইরয়েড সমস্যা"],
-     ["शुगर की समस्या", "डायबिटीज़", "थायराइड"],
-     ["diabetes", "sugar problem", "thyroid problem"]),
-    ("General Medicine",
-     ["জ্বর", "সর্দি কাশি", "দুর্বলতা", "পেট খারাপ"],
-     ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब"],
-     ["fever", "cold and cough", "weakness", "stomach upset"]),
+    (
+        "Cardiology",
+        ["বুকে ব্যথা", "বুক ধড়ফড়", "হার্টের সমস্যা", "হৃদযন্ত্র"],
+        ["सीने में दर्द", "दिल की धड़कन", "दिल की बीमारी"],
+        ["chest pain", "heart palpitation", "heart problem"],
+    ),
+    (
+        "Orthopaedics",
+        ["হাড়ে ব্যথা", "গাঁটে ব্যথা", "কোমরে ব্যথা", "পিঠে ব্যথা"],
+        ["हड्डी में दर्द", "जोड़ों में दर्द", "कमर दर्द", "पीठ दर्द"],
+        ["bone pain", "joint pain", "back pain", "knee pain"],
+    ),
+    (
+        "ENT",
+        ["কানে ব্যথা", "গলা ব্যথা", "নাক বন্ধ", "শুনতে অসুবিধা"],
+        ["कान में दर्द", "गले में दर्द", "नाक बंद"],
+        ["ear pain", "throat pain", "sore throat", "blocked nose"],
+    ),
+    (
+        "Dermatology",
+        ["চামড়ায় সমস্যা", "ত্বকের সমস্যা", "চুলকানি", "র‍্যাশ"],
+        ["त्वचा की समस्या", "खुजली", "चकत्ते"],
+        ["skin problem", "itching", "rash"],
+    ),
+    (
+        "Paediatrics",
+        ["বাচ্চার জ্বর", "শিশুর সমস্যা", "বাচ্চার সর্দি"],
+        ["बच्चे को बुखार", "बच्चे की समस्या"],
+        ["child fever", "baby problem", "infant"],
+    ),
+    (
+        "Gynaecology & Obstetrics",
+        ["প্রেগন্যান্সি", "গর্ভাবস্থা", "মহিলাদের সমস্যা"],
+        ["गर्भावस्था", "महिलाओं की समस्या"],
+        ["pregnancy", "women's problem", "gynaecology"],
+    ),
+    (
+        "Diabetology & Endocrinology",
+        ["সুগারের সমস্যা", "ডায়াবেটিস", "থাইরয়েড সমস্যা"],
+        ["शुगर की समस्या", "डायबिटीज़", "थायराइड"],
+        ["diabetes", "sugar problem", "thyroid problem"],
+    ),
+    (
+        "General Medicine",
+        ["জ্বর", "সর্দি কাশি", "দুর্বলতা", "পেট খারাপ"],
+        ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब"],
+        ["fever", "cold and cough", "weakness", "stomach upset"],
+    ),
 ]
 
 
@@ -319,10 +342,14 @@ def seed_department_routes() -> int:
             dept = by_name.get(dept_name)
             if not dept or dept.id in existing:
                 continue
-            db.add(DepartmentRoute(
-                department_id=dept.id,
-                keywords_bn="|".join(kw_bn), keywords_hi="|".join(kw_hi), keywords_en="|".join(kw_en),
-            ))
+            db.add(
+                DepartmentRoute(
+                    department_id=dept.id,
+                    keywords_bn="|".join(kw_bn),
+                    keywords_hi="|".join(kw_hi),
+                    keywords_en="|".join(kw_en),
+                )
+            )
             added += 1
         db.commit()
     finally:
@@ -345,8 +372,12 @@ def migrate_booking_schema() -> dict:
     silently seeded zero department routes on every fresh database,
     caught by tests/test_booking_endpoints.py::test_department_route_endpoint
     failing against a throwaway DB."""
-    columns_added = (add_appointment_booking_columns() + add_doctor_booking_columns()
-                     + add_patient_columns() + add_call_record_columns())
+    columns_added = (
+        add_appointment_booking_columns()
+        + add_doctor_booking_columns()
+        + add_patient_columns()
+        + add_call_record_columns()
+    )
     # Must run AFTER add_appointment_booking_columns(): see this
     # function's own docstring for why.
     rebuilt = rebuild_appointments_partial_unique_index()
@@ -368,10 +399,15 @@ def seed_default_cancellation_policy() -> bool:
     try:
         if db.query(CancellationPolicy).count() > 0:
             return False
-        db.add(CancellationPolicy(
-            version=1, effective_from="2020-01-01",
-            free_window_hours=24, charge_percent=50, refund_eligible=True,
-        ))
+        db.add(
+            CancellationPolicy(
+                version=1,
+                effective_from="2020-01-01",
+                free_window_hours=24,
+                charge_percent=50,
+                refund_eligible=True,
+            )
+        )
         db.commit()
         return True
     finally:
@@ -407,5 +443,9 @@ def finish_booking_schema_setup() -> dict:
     routes_added = seed_department_routes()
     fees_filled = backfill_doctor_fees()
     policy_seeded = seed_default_cancellation_policy()
-    return {"department_routes_added": routes_added, "doctor_fees_filled": fees_filled,
-            "cancellation_policy_seeded": policy_seeded, "doctor_full_names_filled": backfill_doctor_full_names()}
+    return {
+        "department_routes_added": routes_added,
+        "doctor_fees_filled": fees_filled,
+        "cancellation_policy_seeded": policy_seeded,
+        "doctor_full_names_filled": backfill_doctor_full_names(),
+    }

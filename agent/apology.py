@@ -26,6 +26,7 @@ being made to feel that a small problem is a crisis. Two rules, both enforced:
 Nothing here contains a fact, a number or a name. The wording is provisional and
 pending native review (agent/persona.py REVIEW_STATUS).
 """
+
 from __future__ import annotations
 
 import re
@@ -123,9 +124,9 @@ def enforce_single_apology(text: str, lang: str) -> tuple[str, int]:
             continue
         if not seen:
             seen = True
-            if n > 1:                                   # "sorry, sorry" inside the first sentence
+            if n > 1:  # "sorry, sorry" inside the first sentence
                 first = marker.search(s)
-                head, tail = s[:first.end()], s[first.end():]
+                head, tail = s[: first.end()], s[first.end() :]
                 tail, extra = marker.subn("", tail)
                 removed += extra
                 s = (head + tail).strip()

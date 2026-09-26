@@ -7,6 +7,7 @@ that it is the right wording.
 
     python -m pytest tests/test_disclosure_and_human_request.py -v
 """
+
 import importlib.util
 import os
 import sys
@@ -32,20 +33,23 @@ def _clinic_disclosure():
 
 # ------------------------------------------------------------------ spoken disclosure
 
+
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
 def test_every_greeting_says_who_the_caller_is_speaking_with(lang):
     # DELIBERATE SPEC CHANGE (owner's instruction, 2026-09-25): the greeting carries the identity sentence only; the
     # automated-assistant disclosure stays available (below, and on the text channel) but is not in the greeting.
     from agent.phrases import GREETING_IDENTITY
+
     assert GREETING_IDENTITY[lang] in phrase("greeting", lang)
 
 
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
 def test_the_greeting_still_ends_on_the_question_that_hands_over_the_floor(lang):
     from agent.phrases import GREETING_IDENTITY
+
     greeting = phrase("greeting", lang)
     assert greeting.rstrip().endswith("?")
-    assert greeting.index(GREETING_IDENTITY[lang]) < len(greeting) - 5              # the identity precedes the question
+    assert greeting.index(GREETING_IDENTITY[lang]) < len(greeting) - 5  # the identity precedes the question
 
 
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
@@ -71,11 +75,12 @@ def test_the_reverify_notice_exists_in_all_languages_and_accuses_no_one():
 
 # ------------------------------------------------------------------ text channel
 
+
 def test_the_text_channel_carries_the_notice_once():
     d = _clinic_disclosure()
     msg = d.with_notice("Your appointment (KC123) is confirmed.")
     assert d.TEXT_NOTICE in msg and msg.count(d.TEXT_NOTICE) == 1
-    assert d.with_notice(msg) == msg                                      # idempotent
+    assert d.with_notice(msg) == msg  # idempotent
 
 
 def test_the_voice_and_text_disclosures_share_a_version():
@@ -88,14 +93,25 @@ def test_every_queued_sms_says_it_is_automated(tmp_path, monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     if CLINIC_API not in sys.path:
         sys.path.insert(0, CLINIC_API)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate", "enquiry_migrate", "i18n_content", "disclosure"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+        "disclosure",
+    ):
         sys.modules.pop(mod, None)
-    import booking_migrate
-    import models
     import db as db_mod
+    import models
+
     models.Base.metadata.create_all(db_mod.engine)
     import booking_service as bs
     import disclosure as d
+
     session = db_mod.SessionLocal()
     try:
         assert bs.queue_sms(session, "9000000001", "booking_confirmed", "Your booking is confirmed.")["queued"]
@@ -107,39 +123,46 @@ def test_every_queued_sms_says_it_is_automated(tmp_path, monkeypatch):
 
 # ------------------------------------------------------------------ a request for a person
 
-@pytest.mark.parametrize("text,lang", [
-    ("I want to talk to a person", "en"),
-    ("can I speak to someone please", "en"),
-    ("connect me to your staff", "en"),
-    ("get me a human being", "en"),
-    ("I want a real person", "en"),
-    ("you are a robot, I want the operator", "en"),
-    ("আমি একজন মানুষের সাথে কথা বলতে চাই", "bn"),
-    ("কাউকে দিন", "bn"),
-    ("স্টাফের সঙ্গে কথা বলব", "bn"),
-    ("অপারেটর চাই", "bn"),
-    ("मुझे किसी इंसान से बात करनी है", "hi"),
-    ("स्टाफ से बात कराइए", "hi"),
-    ("किसी को दीजिए", "hi"),
-    ("मुझे असली इंसान चाहिए", "hi"),
-])
+
+@pytest.mark.parametrize(
+    "text,lang",
+    [
+        ("I want to talk to a person", "en"),
+        ("can I speak to someone please", "en"),
+        ("connect me to your staff", "en"),
+        ("get me a human being", "en"),
+        ("I want a real person", "en"),
+        ("you are a robot, I want the operator", "en"),
+        ("আমি একজন মানুষের সাথে কথা বলতে চাই", "bn"),
+        ("কাউকে দিন", "bn"),
+        ("স্টাফের সঙ্গে কথা বলব", "bn"),
+        ("অপারেটর চাই", "bn"),
+        ("मुझे किसी इंसान से बात करनी है", "hi"),
+        ("स्टाफ से बात कराइए", "hi"),
+        ("किसी को दीजिए", "hi"),
+        ("मुझे असली इंसान चाहिए", "hi"),
+    ],
+)
 def test_a_request_for_a_person_is_recognised_in_every_language(text, lang):
     assert asks_for_a_person(text, lang), text
 
 
-@pytest.mark.parametrize("text,lang", [
-    ("I want to book an appointment with the doctor", "en"),
-    ("what is the price of a CBC test", "en"),
-    ("I need a test at the counter", "en"),
-    ("I want to know about your staff timings", "en"),
-    ("I don't need to talk to a person, just tell me the price", "en"),
-    ("আমি ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট চাই", "bn"),
-    ("সিবিসি টেস্টের দাম কত", "bn"),
-    ("মানুষের সাথে কথা বলতে চাই না", "bn"),
-    ("मुझे डॉक्टर के साथ अपॉइंटमेंट चाहिए", "hi"),
-    ("सीबीसी टेस्ट की कीमत क्या है", "hi"),
-    ("", "en"),
-])
+@pytest.mark.parametrize(
+    "text,lang",
+    [
+        ("I want to book an appointment with the doctor", "en"),
+        ("what is the price of a CBC test", "en"),
+        ("I need a test at the counter", "en"),
+        ("I want to know about your staff timings", "en"),
+        ("I don't need to talk to a person, just tell me the price", "en"),
+        ("আমি ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট চাই", "bn"),
+        ("সিবিসি টেস্টের দাম কত", "bn"),
+        ("মানুষের সাথে কথা বলতে চাই না", "bn"),
+        ("मुझे डॉक्टर के साथ अपॉइंटमेंट चाहिए", "hi"),
+        ("सीबीसी टेस्ट की कीमत क्या है", "hi"),
+        ("", "en"),
+    ],
+)
 def test_ordinary_requests_and_explicit_refusals_are_not_taken_for_one(text, lang):
     assert not asks_for_a_person(text, lang), text
 

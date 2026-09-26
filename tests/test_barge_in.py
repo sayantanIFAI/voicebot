@@ -15,6 +15,7 @@ echo alone or on street, clinic and fan noise.
 
     python -m pytest tests/test_barge_in.py -v
 """
+
 import os
 import sys
 
@@ -28,10 +29,11 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 from _synth_echo import SR, caller, echo_scene, voice_segments
 from _synth_noise import noise_profile
+
 from agent.barge_in import BargeInConfig, BargeInDetector
 from agent.full_duplex import FullDuplexProcessor
 
-WARM_S = 6.0        # the canceller needs a few seconds of agent speech before events are trusted
+WARM_S = 6.0  # the canceller needs a few seconds of agent speech before events are trusted
 
 
 def _run(mic, far, chunk=1600, dur_each=None, **kw):
@@ -46,7 +48,7 @@ def _run(mic, far, chunk=1600, dur_each=None, **kw):
         fd.place_reference(far)
     events, suppressed = [], 0
     for i in range(0, mic.size, chunk):
-        r = fd.process(mic[i:i + chunk])
+        r = fd.process(mic[i : i + chunk])
         if r.barge_in is not None:
             events.append((fd._mic_pos, r.barge_in))
         suppressed += int(r.suppressed_barge_in)
@@ -61,7 +63,7 @@ def caller_runs():
         c = caller(s, dur=1.5, f0=105 + 14 * s)
         on = int((8.0 + 0.31 * s) * SR)
         m = mic.copy()
-        m[on:on + c.size] += c
+        m[on : on + c.size] += c
         _, events, _ = _run(m, far)
         runs.append((on, c.size, events))
     return runs
@@ -133,7 +135,7 @@ def test_events_before_the_canceller_has_converged_are_ignored_not_acted_on():
     far, mic, _ = echo_scene(0, dur_each=5.0, same_voice=True)
     c = caller(0, dur=1.0)
     m = mic.copy()
-    m[int(0.5 * SR):int(0.5 * SR) + c.size] += c           # a caller in the first second, before any convergence
+    m[int(0.5 * SR) : int(0.5 * SR) + c.size] += c  # a caller in the first second, before any convergence
     _, events, _ = _run(m, far)
     assert not any(ev.detected_at_sample < WARM_S * SR for _, ev in events)
 
@@ -143,20 +145,20 @@ def test_nothing_is_acted_on_when_the_agent_is_silent():
     # does not report a BARGE-IN -- there was nothing to barge in on.
     c = caller(0, dur=1.5)
     mic = np.zeros(6 * SR, np.float32)
-    mic[2 * SR:2 * SR + c.size] += c
+    mic[2 * SR : 2 * SR + c.size] += c
     fd = FullDuplexProcessor()
     acted = 0
     for i in range(0, mic.size, 1600):
-        acted += int(fd.process(mic[i:i + 1600]).barge_in is not None)
+        acted += int(fd.process(mic[i : i + 1600]).barge_in is not None)
     assert acted == 0
-    assert fd.suppressed >= 1                                # it fired, and was recorded as suppressed
+    assert fd.suppressed >= 1  # it fired, and was recorded as suppressed
 
 
 def test_an_isolated_click_or_pop_does_not_accumulate_into_a_trigger():
     d = BargeInDetector()
     x = np.zeros(SR, np.float32)
     for k in (2000, 6000, 10000, 14000):
-        x[k:k + 40] = 0.6
+        x[k : k + 40] = 0.6
     assert d.process(x, np.zeros_like(x)) is None
 
 
@@ -173,7 +175,7 @@ def test_placing_reference_follows_the_clients_back_to_back_playback():
     fd = FullDuplexProcessor()
     a = fd.place_reference(np.zeros(SR, np.float32))
     b = fd.place_reference(np.zeros(SR // 2, np.float32))
-    assert a == 0 and b == SR                 # the second clip starts when the first ends
+    assert a == 0 and b == SR  # the second clip starts when the first ends
     assert fd.agent_speaking()
 
 
@@ -191,12 +193,13 @@ def test_barge_in_is_held_off_for_two_seconds_after_the_agents_voice_changes():
     The server knows the voice changed, so it does not act on barge-in until the
     filter has re-learned; the caller keeps the manual interrupt."""
     from agent.full_duplex import VOICE_CHANGE_INHIBIT_S
+
     far, mic, _ = echo_scene(3, dur_each=6.0, voices=3)
     clips = voice_segments(far, 6.0)
     fd = FullDuplexProcessor()
     starts = [fd.place_reference(c, voice=f"v{i}") for i, c in enumerate(clips)]
     assert starts[1] == 6 * SR
-    assert fd._inhibit_until == starts[2] + int(VOICE_CHANGE_INHIBIT_S * SR)     # set by the LAST change so far
+    assert fd._inhibit_until == starts[2] + int(VOICE_CHANGE_INHIBIT_S * SR)  # set by the LAST change so far
     # the same voice again does not extend the hold
     before = fd._inhibit_until
     fd.place_reference(clips[0][:SR], voice="v2")
@@ -204,16 +207,16 @@ def test_barge_in_is_held_off_for_two_seconds_after_the_agents_voice_changes():
 
 
 def test_a_caller_is_still_heard_once_the_hold_has_passed():
-    far, mic, _ = echo_scene(2, dur_each=5.0)                 # the agent's voice changes at 5 s and 10 s
+    far, mic, _ = echo_scene(2, dur_each=5.0)  # the agent's voice changes at 5 s and 10 s
     c = caller(2, dur=1.5, f0=118)
     hold_ends = int((10.0 + 2.0) * SR)
-    on = int(10.3 * SR)                                       # talking right after the change
+    on = int(10.3 * SR)  # talking right after the change
     m1 = mic.copy()
-    m1[on:on + c.size] += c
+    m1[on : on + c.size] += c
     _, held, _ = _run(m1, far, dur_each=5.0)
-    assert not any(10 * SR <= ev.detected_at_sample < hold_ends for _, ev in held)     # nothing acted on inside the hold
-    on2 = int(13.0 * SR)                                      # 3 s after the change: heard
+    assert not any(10 * SR <= ev.detected_at_sample < hold_ends for _, ev in held)  # nothing acted on inside the hold
+    on2 = int(13.0 * SR)  # 3 s after the change: heard
     m2 = mic.copy()
-    m2[on2:on2 + c.size] += c
+    m2[on2 : on2 + c.size] += c
     _, heard, _ = _run(m2, far, dur_each=5.0)
     assert any(on2 <= ev.detected_at_sample < on2 + c.size for _, ev in heard)

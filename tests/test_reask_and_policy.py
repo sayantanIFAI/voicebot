@@ -5,6 +5,7 @@ speech policy (agent/speech_policy.py, KCD-149), acknowledgement templates
 
     python -m pytest tests/test_reask_and_policy.py -v
 """
+
 import os
 import sys
 
@@ -15,17 +16,25 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from agent.acknowledgement import (
-    REVIEW_STATUS, acknowledgement_for, pending_review_count, select_acknowledgement,
+    REVIEW_STATUS,
+    acknowledgement_for,
+    pending_review_count,
+    select_acknowledgement,
 )
 from agent.call_state import apply_caller_state, new_call_state
 from agent.figures import id_groups, phone_groups, speak_grouped
 from agent.phrases import PHRASES, phrase
 from agent.reask_policy import ReaskTracker
 from agent.speech_policy import (
-    check_reply, count_questions, derive_policy, effective_rate, limit_questions,
+    check_reply,
+    count_questions,
+    derive_policy,
+    effective_rate,
+    limit_questions,
 )
 
 # ================================================================ re-ask
+
 
 def test_a_usable_turn_proceeds_and_resets_the_count():
     t = ReaskTracker()
@@ -42,15 +51,18 @@ def test_acoustic_trouble_alone_never_triggers_a_reask():
     assert d.action == "proceed"
 
 
-@pytest.mark.parametrize("issues,expected_key", [
-    (["too_quiet"], "reask_low_volume"),
-    (["crosstalk"], "reask_crosstalk"),
-    (["noisy"], "reask_noisy"),
-    (["unvoiced_mumble"], "reask_mumbled"),
-    (["noisy", "too_quiet"], "reask_low_volume"),        # speaking up fixes the faint voice first
-    (["noisy", "crosstalk"], "reask_crosstalk"),
-    ([], "reask_generic"),
-])
+@pytest.mark.parametrize(
+    "issues,expected_key",
+    [
+        (["too_quiet"], "reask_low_volume"),
+        (["crosstalk"], "reask_crosstalk"),
+        (["noisy"], "reask_noisy"),
+        (["unvoiced_mumble"], "reask_mumbled"),
+        (["noisy", "too_quiet"], "reask_low_volume"),  # speaking up fixes the faint voice first
+        (["noisy", "crosstalk"], "reask_crosstalk"),
+        ([], "reask_generic"),
+    ],
+)
 def test_the_reask_names_the_actual_problem(issues, expected_key):
     d = ReaskTracker().decide(asr_empty=True, audio_issues=issues)
     assert d.action == "reask" and d.phrase_key == expected_key
@@ -78,7 +90,7 @@ def test_success_between_failures_starts_the_count_over():
     t = ReaskTracker(max_reasks=2)
     t.decide(asr_empty=True)
     t.decide(asr_empty=True)
-    t.decide()                                    # understood
+    t.decide()  # understood
     assert t.decide(asr_empty=True).action == "reask"
 
 
@@ -89,8 +101,7 @@ def test_a_second_failure_marks_the_caller_confused_so_the_policy_slows_down():
 
 
 def test_every_reask_phrase_exists_in_every_language():
-    keys = {"reask_low_volume", "reask_noisy", "reask_crosstalk", "reask_mumbled",
-            "reask_generic", "reask_final"}
+    keys = {"reask_low_volume", "reask_noisy", "reask_crosstalk", "reask_mumbled", "reask_generic", "reask_final"}
     for lang in ("bn", "hi", "en"):
         assert keys <= set(PHRASES[lang]), lang
 
@@ -106,17 +117,21 @@ def test_reask_wording_never_blames_the_caller_and_asks_one_question(lang):
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
 def test_reask_phrases_satisfy_the_senior_policy(lang):
     senior = derive_policy("neutral", senior=True)
-    for key in ("reask_low_volume", "reask_noisy", "reask_crosstalk", "reask_mumbled",
-                "reask_generic", "reask_final"):
+    for key in ("reask_low_volume", "reask_noisy", "reask_crosstalk", "reask_mumbled", "reask_generic", "reask_final"):
         assert check_reply(phrase(key, lang), senior) == [], (lang, key, phrase(key, lang))
 
 
 # ============================================================ speech policy
 
+
 def test_appendix_c_rows_are_encoded_exactly():
     normal = derive_policy("neutral")
-    assert (normal.speech_rate, normal.sentence_length, normal.questions_per_turn,
-            normal.confirmation) == (1.0, "default", 2, "implicit")
+    assert (normal.speech_rate, normal.sentence_length, normal.questions_per_turn, normal.confirmation) == (
+        1.0,
+        "default",
+        2,
+        "implicit",
+    )
 
     senior = derive_policy("neutral", senior=True)
     assert senior.speech_rate < 1.0 and senior.sentence_length == "short"
@@ -138,7 +153,7 @@ def test_appendix_c_rows_are_encoded_exactly():
 def test_emergency_stops_the_normal_flow():
     p = derive_policy("emergency")
     assert p.emergency and p.questions_per_turn == 0
-    assert check_reply("Any reply at all?", p) == []      # the protocol owns the words
+    assert check_reply("Any reply at all?", p) == []  # the protocol owns the words
 
 
 def test_an_unknown_caller_state_falls_back_to_normal_never_raises():
@@ -149,7 +164,7 @@ def test_states_combine_to_the_most_conservative_value_of_every_field():
     p = derive_policy("distressed", senior=True)
     assert p.speech_rate == min(derive_policy("distressed").speech_rate, derive_policy("neutral", True).speech_rate)
     assert p.questions_per_turn == 1
-    assert p.interruption_tolerance == "very_high"        # distress's, stronger than senior's
+    assert p.interruption_tolerance == "very_high"  # distress's, stronger than senior's
     assert p.escalation_threshold == "low"
     assert p.acknowledge_first
 
@@ -201,6 +216,7 @@ def test_apply_caller_state_drives_every_call_state_delivery_field_from_the_tabl
 
 # ========================================================= acknowledgement
 
+
 @pytest.mark.parametrize("state", ["distressed", "angry", "confused"])
 @pytest.mark.parametrize("lang", ["bn", "hi", "en"])
 def test_every_acknowledgement_state_exists_in_every_language(state, lang):
@@ -235,13 +251,17 @@ def test_wording_is_marked_pending_clinical_review_not_silently_approved():
 
 # ================================================================ figures
 
-@pytest.mark.parametrize("digits,expected", [
-    ("9876543210", ["98765", "43210"]),      # a mobile number is dictated 5 + 5
-    ("12345678", ["1234", "5678"]),
-    ("123456789", ["1234", "56789"]),        # remainder folded in, never a lone digit
-    ("123", ["123"]),
-    ("12345", ["12345"]),                    # a lone trailing digit is folded in
-])
+
+@pytest.mark.parametrize(
+    "digits,expected",
+    [
+        ("9876543210", ["98765", "43210"]),  # a mobile number is dictated 5 + 5
+        ("12345678", ["1234", "5678"]),
+        ("123456789", ["1234", "56789"]),  # remainder folded in, never a lone digit
+        ("123", ["123"]),
+        ("12345", ["12345"]),  # a lone trailing digit is folded in
+    ],
+)
 def test_phone_grouping(digits, expected):
     got = phone_groups(digits)
     assert "".join(got) == digits

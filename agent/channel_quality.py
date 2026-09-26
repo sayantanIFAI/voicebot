@@ -25,6 +25,7 @@ already carries on agent/fast_path.py's FAQ_COMMIT_FLOOR and
 agent/confidence_gate.py's threshold -- recalibrate against real call
 audio before trusting it past the pilot.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -38,7 +39,7 @@ CHANNEL_CROSSTALK = "cross_talk"
 # (the classic PSTN cutoff); a wideband 16kHz-capable signal does. The
 # ratio of energy above vs below this line is the bandwidth test.
 _TELEPHONY_CUTOFF_HZ = 3400
-_NARROWBAND_HIGH_ENERGY_RATIO = 0.02   # below this fraction above cutoff -> narrowband
+_NARROWBAND_HIGH_ENERGY_RATIO = 0.02  # below this fraction above cutoff -> narrowband
 
 # Coarse SNR proxy: energy of the quietest 10th percentile of frames
 # (presumed near-silence/noise floor) vs the loudest 10th percentile
@@ -57,17 +58,17 @@ def _frame_energies(samples: np.ndarray, sample_rate: int, frame_ms: int = _FRAM
         return np.array([np.mean(samples.astype(np.float64) ** 2)]) if len(samples) else np.array([0.0])
     trimmed = samples[: n_frames * frame_len].astype(np.float64)
     frames = trimmed.reshape(n_frames, frame_len)
-    return np.mean(frames ** 2, axis=1)
+    return np.mean(frames**2, axis=1)
 
 
 def _is_narrowband(samples: np.ndarray, sample_rate: int) -> bool:
     if sample_rate <= 8000:
-        return True   # the container itself cannot carry content above 4kHz
+        return True  # the container itself cannot carry content above 4kHz
     if len(samples) < 32:
         return False
     spectrum = np.abs(np.fft.rfft(samples.astype(np.float64)))
     freqs = np.fft.rfftfreq(len(samples), d=1.0 / sample_rate)
-    total_energy = float(np.sum(spectrum ** 2))
+    total_energy = float(np.sum(spectrum**2))
     if total_energy <= 0:
         return False
     high_energy = float(np.sum(spectrum[freqs > _TELEPHONY_CUTOFF_HZ] ** 2))
@@ -128,7 +129,7 @@ def _is_crosstalk(samples: np.ndarray, sample_rate: int) -> bool:
         return False
     quiet_frame_fraction = float(np.mean(energies < 0.05 * peak))
     if quiet_frame_fraction >= 0.05:
-        return False   # has real quiet stretches -- not continuous
+        return False  # has real quiet stretches -- not continuous
     return _spectral_flatness(samples) < _CROSSTALK_MAX_SPECTRAL_FLATNESS
 
 

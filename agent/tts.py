@@ -30,6 +30,7 @@ Two things happen here before a single byte is synthesized:
    the hit rate on greetings, apologies and repeat questions is high. This
    is the cheapest latency win in the whole pipeline.
 """
+
 from __future__ import annotations
 
 import collections
@@ -60,6 +61,7 @@ class UnspeakableTextError(Exception):
         self.spans = spans
         super().__init__(f"unspeakable spans: {spans}")
 
+
 TTS_URL = os.environ.get("TTS_URL", "http://localhost:8002/synthesize")
 TTS_TIMEOUT_S = float(os.environ.get("TTS_TIMEOUT_S", "20"))
 
@@ -79,10 +81,10 @@ FALLBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "fallback
 # service is what's broken, asking it to synthesize its own apology is
 # exactly the failure this exists to route around.
 FALLBACK_FILES = {
-    "asr_empty": "sorry_repeat.wav",         # "দুঃখিত, শুনতে পাইনি, আবার বলুন"
-    "llm_failure": "system_busy.wav",         # "একটু সমস্যা হচ্ছে, একটু ধরুন"
-    "tool_failure": "check_failed.wav",       # "এখনই দেখতে পারছি না, স্টাফের কাছে দিচ্ছি"
-    "tts_failure": "system_busy.wav",         # reused -- see note below
+    "asr_empty": "sorry_repeat.wav",  # "দুঃখিত, শুনতে পাইনি, আবার বলুন"
+    "llm_failure": "system_busy.wav",  # "একটু সমস্যা হচ্ছে, একটু ধরুন"
+    "tool_failure": "check_failed.wav",  # "এখনই দেখতে পারছি না, স্টাফের কাছে দিচ্ছি"
+    "tts_failure": "system_busy.wav",  # reused -- see note below
 }
 
 # Sentences the agent says on fixed paths, synthesized once at startup so
@@ -155,8 +157,9 @@ class TTSClient:
                 self._audio_cache[key] = self._pinned.pop(key)
             return len(self._pinned)
 
-    async def synthesize(self, text: str, lang: str = "bn", speed: float = 1.0,
-                         prosody: dict | None = None, pin: set[str] | None = None) -> bytes:
+    async def synthesize(
+        self, text: str, lang: str = "bn", speed: float = 1.0, prosody: dict | None = None, pin: set[str] | None = None
+    ) -> bytes:
         """Returns WAV bytes, or raises. Callers should catch ToolCallError-
         shaped infra failures and UnspeakableTextError separately (see
         main.py's _speak()) and fall back to `fallback_audio()`.
@@ -260,7 +263,7 @@ class TTSClient:
             self.prewarmed_clips = len(self._audio_cache)
         logger.info("TTS prewarm complete (%d clips cached)", self.prewarmed_clips)
 
-    def for_language(self, lang: str) -> "LanguageVoice":
+    def for_language(self, lang: str) -> LanguageVoice:
         """The TTSEngine (agent/tts_router.py) for one language."""
         return LanguageVoice(self, lang)
 
@@ -300,8 +303,8 @@ class TTSClient:
                 return f.read()
         except FileNotFoundError:
             logger.error(
-                "Fallback audio %s missing -- call will go silent on this "
-                "failure path. Record it: see README.md.", path,
+                "Fallback audio %s missing -- call will go silent on this failure path. Record it: see README.md.",
+                path,
             )
             return b""
 

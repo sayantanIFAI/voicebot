@@ -7,6 +7,7 @@ and the i18n reply-template tests.
 
     python -m pytest tests/test_booking_service.py -v
 """
+
 import datetime
 import os
 import sys
@@ -26,13 +27,23 @@ def clinic_modules():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+    ):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod
+
     seed_mod.seed()
     import booking_migrate
+
     booking_migrate.migrate_booking_schema()
     booking_migrate.finish_booking_schema_setup()
     import booking_service as bs
@@ -63,7 +74,7 @@ def _next_weekday(target_weekday: int) -> str:
 def _doctor(db, m, weekday: int = 0):
     """A doctor who actually sits on `weekday`, so booking calls don't
     depend on which SHIFT_TEMPLATES rotation seed.py happened to assign."""
-    row = (db.query(m.DoctorSchedule).filter_by(weekday=weekday).first())
+    row = db.query(m.DoctorSchedule).filter_by(weekday=weekday).first()
     return db.get(m.Doctor, row.doctor_id)
 
 
@@ -77,8 +88,7 @@ def test_confirm_books_and_creates_a_patient_and_a_self_proxy(clinic_modules):
         hold = bs.hold_slot(db, doc.id, date, slot)
         assert hold["success"]
 
-        result = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot,
-                                     "Ravi Das", "9800000001", "9800000001")
+        result = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "Ravi Das", "9800000001", "9800000001")
         assert result["success"] and result["confirmation_id"].startswith("KCD-")
 
         patient = db.query(m.Patient).filter_by(name="Ravi Das", phone="9800000001").one()
@@ -86,7 +96,7 @@ def test_confirm_books_and_creates_a_patient_and_a_self_proxy(clinic_modules):
         assert proxy.verified_by == "self"
 
         sms = db.query(m.SmsOutbox).filter_by(related_confirmation_id=result["confirmation_id"]).one()
-        assert sms.status == "queued"          # never claims "sent"
+        assert sms.status == "queued"  # never claims "sent"
     finally:
         db.close()
 
@@ -99,9 +109,18 @@ def test_confirm_with_a_different_caller_phone_records_a_proxy(clinic_modules):
         date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
         slot = bs.available_slots(db, doc.id, date)[0]
         hold = bs.hold_slot(db, doc.id, date, slot)
-        result = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot,
-                                     "Anita Sen", "9800000002", caller_phone="9800000099",
-                                     patient_age=62, relationship_label="son")
+        result = bs.confirm_booking(
+            db,
+            hold["hold_token"],
+            doc.id,
+            date,
+            slot,
+            "Anita Sen",
+            "9800000002",
+            caller_phone="9800000099",
+            patient_age=62,
+            relationship_label="son",
+        )
         assert result["success"]
         patient = db.query(m.Patient).filter_by(name="Anita Sen", phone="9800000002").one()
         proxy = db.query(m.PatientProxy).filter_by(patient_id=patient.id, caller_phone="9800000099").one()
@@ -143,7 +162,7 @@ def test_cancel_outside_the_charging_window_is_free(clinic_modules):
         doc = _doctor(db, m)
         date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
         # Force a date well outside the 24h window regardless of "today".
-        far = (datetime.date.today() + datetime.timedelta(days=10))
+        far = datetime.date.today() + datetime.timedelta(days=10)
         while far.weekday() != (doc.schedule[0].weekday if doc.schedule else 0):
             far += datetime.timedelta(days=1)
         date = far.isoformat()
@@ -187,7 +206,7 @@ def test_a_cancelled_slot_can_actually_be_rebooked_by_a_second_caller(clinic_mod
         hold2 = bs.hold_slot(db, doc.id, date, slot)
         assert hold2["success"]
         second = bs.confirm_booking(db, hold2["hold_token"], doc.id, date, slot, "Second Patient", "222", "222")
-        assert second["success"], second   # used to raise IntegrityError here
+        assert second["success"], second  # used to raise IntegrityError here
         assert second["confirmation_id"] != first["confirmation_id"]
     finally:
         db.close()
@@ -232,8 +251,7 @@ def test_available_slots_excludes_already_passed_times_today(clinic_modules):
         # chamber hours relative to whenever it happens to run.
         sched = db.query(m.DoctorSchedule).filter_by(doctor_id=doc.id, weekday=today.weekday()).first()
         if not sched:
-            sched = m.DoctorSchedule(doctor_id=doc.id, weekday=today.weekday(),
-                                     start_time="00:00", end_time="23:45")
+            sched = m.DoctorSchedule(doctor_id=doc.id, weekday=today.weekday(), start_time="00:00", end_time="23:45")
             db.add(sched)
         else:
             sched.start_time, sched.end_time = "00:00", "23:45"
@@ -241,6 +259,7 @@ def test_available_slots_excludes_already_passed_times_today(clinic_modules):
 
         now = datetime.datetime.now()
         now_minutes = now.hour * 60 + now.minute
+
         # Slots are on 15-minute boundaries (SLOT_STEP_MIN) starting at
         # 00:00 -- round to one to guarantee it is actually IN the
         # generated list, not just near a real clock time.
@@ -314,6 +333,7 @@ def test_reschedule_onto_a_taken_slot_leaves_the_original_intact(clinic_modules)
 # own docstring for why this matters more once a real system of record is
 # behind this function than it does against this prototype's SQLite today.
 
+
 def test_write_is_verified_before_a_confirmation_number_is_returned(clinic_modules):
     # The ordinary path: verification passes, success looks exactly as it
     # always did -- this is a regression guard that adding the check did
@@ -356,7 +376,7 @@ def test_an_unverifiable_booking_write_holds_instead_of_confirming(clinic_module
 
         assert result["success"] is False
         assert result["reason"] == "write_unverified"
-        assert result["confirmation_id"].startswith("KCD-")   # logged, never spoken as confirmed
+        assert result["confirmation_id"].startswith("KCD-")  # logged, never spoken as confirmed
     finally:
         db.close()
 
@@ -395,12 +415,13 @@ def test_an_unverifiable_reschedule_write_holds_instead_of_confirming(clinic_mod
 # when something goes wrong that the code did not anticipate, not just
 # when it correctly detects an expected condition.
 
+
 def test_a_fault_during_reschedule_leaves_the_original_appointment_untouched(clinic_modules):
     bs, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
     try:
         doc = _doctor(db, m)
-        doctor_id = doc.id   # captured now: `doc` is detached once this session closes below
+        doctor_id = doc.id  # captured now: `doc` is detached once this session closes below
         date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
         slots = bs.available_slots(db, doc.id, date)
         old_slot, new_slot = slots[0], slots[1]
@@ -439,13 +460,13 @@ def test_a_fault_during_reschedule_leaves_the_original_appointment_untouched(cli
         assert appt.status == "confirmed"
         assert appt.time_slot == old_slot, "the original appointment must be untouched by the failed swap"
 
-        leaked = verify.query(m.Appointment).filter_by(
-            doctor_id=doctor_id, date=date, time_slot=new_slot).all()
+        leaked = verify.query(m.Appointment).filter_by(doctor_id=doctor_id, date=date, time_slot=new_slot).all()
         assert leaked == [], "no new appointment row may exist for a swap that never committed"
 
         old_lock = verify.get(m.SlotLock, (doctor_id, date, old_slot))
-        assert old_lock is not None and old_lock.status == "confirmed", \
+        assert old_lock is not None and old_lock.status == "confirmed", (
             "the original slot lock must still be held, never deleted by the failed swap"
+        )
 
 
 def test_earliest_available_finds_the_soonest_free_slot(clinic_modules):
@@ -462,8 +483,9 @@ def test_earliest_available_finds_the_soonest_free_slot(clinic_modules):
 
         # once that exact slot is taken, the search must skip past it
         hold = bs.hold_slot(db, doc.id, result["date"], result["time_slot"])
-        bs.confirm_booking(db, hold["hold_token"], doc.id, result["date"], result["time_slot"],
-                            "Earliest Taker", "666", "666")
+        bs.confirm_booking(
+            db, hold["hold_token"], doc.id, result["date"], result["time_slot"], "Earliest Taker", "666", "666"
+        )
         second = bs.earliest_available(db, doc.id, datetime.date.today())
         assert second is not None
         assert not (second["date"] == result["date"] and second["time_slot"] == result["time_slot"])
@@ -494,8 +516,7 @@ def test_lookup_bookings_finds_by_phone_and_by_confirmation_id(clinic_modules):
         date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
         slot = bs.available_slots(db, doc.id, date)[0]
         hold = bs.hold_slot(db, doc.id, date, slot)
-        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot,
-                                     "Lookup Patient", "777", "777")
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "Lookup Patient", "777", "777")
 
         by_phone = bs.lookup_bookings(db, phone="777")
         assert len(by_phone) == 1 and by_phone[0]["confirmation_id"] == booked["confirmation_id"]
@@ -543,9 +564,16 @@ def test_multi_test_booking_and_add_test(clinic_modules):
         added = bs.add_test_to_booking(db, result["confirmation_id"], third.name)
         assert added["success"]
 
-        group_rows = db.query(m.TestBooking).filter_by(
-            booking_group_id=db.query(m.TestBooking).filter_by(
-                confirmation_id=result["confirmation_id"]).first().booking_group_id).all()
+        group_rows = (
+            db.query(m.TestBooking)
+            .filter_by(
+                booking_group_id=db.query(m.TestBooking)
+                .filter_by(confirmation_id=result["confirmation_id"])
+                .first()
+                .booking_group_id
+            )
+            .all()
+        )
         assert len(group_rows) == 3
 
         dup = bs.add_test_to_booking(db, result["confirmation_id"], third.name)
@@ -573,6 +601,7 @@ def test_resend_confirmation_is_rate_limited(clinic_modules):
 
 
 # ============================== CodeRabbit-flagged: "not_provided" sentinel
+
 
 def test_two_different_patients_who_both_decline_a_phone_are_never_merged(clinic_modules):
     # Real bug: find_or_create_patient looked up by (name, phone), and
@@ -609,8 +638,9 @@ def test_resend_confirmation_on_a_declined_phone_gives_an_honest_reason_not_a_no
         date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
         slot = bs.available_slots(db, doc.id, date)[0]
         hold = bs.hold_slot(db, doc.id, date, slot)
-        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot,
-                                     "X", bs.NOT_PROVIDED_PHONE, bs.NOT_PROVIDED_PHONE)
+        booked = bs.confirm_booking(
+            db, hold["hold_token"], doc.id, date, slot, "X", bs.NOT_PROVIDED_PHONE, bs.NOT_PROVIDED_PHONE
+        )
         result = bs.resend_confirmation(db, booked["confirmation_id"])
         assert result == {"success": False, "reason": "no_phone_on_file"}
     finally:
@@ -622,7 +652,7 @@ def test_department_routing_matches_and_flags_ambiguity(clinic_modules):
     db = db_mod.SessionLocal()
     try:
         result = bs.route_department(db, "amar buke khub betha hocche", "en")
-        assert result == {"matched": False}   # no English keyword hit -- transliteration is out of scope here
+        assert result == {"matched": False}  # no English keyword hit -- transliteration is out of scope here
 
         result = bs.route_department(db, "I have chest pain", "en")
         assert result["matched"] and result["department_name"] == "Cardiology"

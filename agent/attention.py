@@ -27,17 +27,18 @@ on real audio is measured by tools/conditioning_eval.py on a pod.
 
 Pure numpy.
 """
+
 from __future__ import annotations
 
 import dataclasses
 
 import numpy as np
 
-from agent.audio_quality import FRAME_S, HOP_S, VOICED_HARMONICITY, _autocorr, _db, _frames, _pitch_lag, _refine_lag
-from agent.near_end import BACKGROUND_DELTA_DB, DIFFERENT_VOICE_F0_RATIO, NearEndProfile
+from agent.audio_quality import HOP_S, VOICED_HARMONICITY, _autocorr, _db, _frames, _pitch_lag, _refine_lag
+from agent.near_end import BACKGROUND_DELTA_DB, DIFFERENT_VOICE_F0_RATIO
 
-NOISE_DELTA_DB = 20.0                # an unvoiced frame this far below the caller's level is noise
-PROTECT_HOPS = 8                     # ...unless it is within 80 ms of the caller's voiced speech (a consonant)
+NOISE_DELTA_DB = 20.0  # an unvoiced frame this far below the caller's level is noise
+PROTECT_HOPS = 8  # ...unless it is within 80 ms of the caller's voiced speech (a consonant)
 ATTENUATION_DB = 18.0
 RAMP_S = 0.03
 MAX_FRACTION = 0.6
@@ -57,8 +58,12 @@ class AttentionReport:
         return (self.background + self.noise) / self.frames if self.frames else 0.0
 
 
-def attend(samples: np.ndarray, level_dbfs: float | None, f0_hz: float | None, sr: int = 16000,
-           ) -> tuple[np.ndarray, AttentionReport]:
+def attend(
+    samples: np.ndarray,
+    level_dbfs: float | None,
+    f0_hz: float | None,
+    sr: int = 16000,
+) -> tuple[np.ndarray, AttentionReport]:
     """(samples with the room attenuated, what was done). `level_dbfs` and `f0_hz` are the caller's
     profile (active-speech RMS in dBFS, median pitch); with None the clip is returned unchanged."""
     x = np.asarray(samples, dtype=np.float32)
@@ -69,7 +74,7 @@ def attend(samples: np.ndarray, level_dbfs: float | None, f0_hz: float | None, s
     n = frames.shape[0]
     if n < MIN_FRAMES:
         return x, AttentionReport(False, "too_short", n)
-    energy = _db(np.mean(frames ** 2, axis=1))                       # per-frame level, dB
+    energy = _db(np.mean(frames**2, axis=1))  # per-frame level, dB
     # dBFS of a frame vs the profile's active-speech RMS (same dB scale: mean-square in dB)
     idx = np.where(energy >= level_dbfs - NOISE_DELTA_DB - 25.0)[0]  # frames worth pitch-tracking
     f0 = np.zeros(n)
@@ -107,15 +112,15 @@ def attend(samples: np.ndarray, level_dbfs: float | None, f0_hz: float | None, s
     ramp = max(1, int(round(RAMP_S / HOP_S)))
     dist = np.zeros(n)
     run = 0
-    for i in range(n):                                   # hops since the last frame that is kept
+    for i in range(n):  # hops since the last frame that is kept
         run = run + 1 if cut[i] else 0
         dist[i] = run
     run = 0
-    for i in range(n - 1, -1, -1):                       # ... and until the next one
+    for i in range(n - 1, -1, -1):  # ... and until the next one
         run = run + 1 if cut[i] else 0
         dist[i] = min(dist[i], run) if cut[i] else 0
     gain_hops = np.where(cut, 1.0 - (1.0 - floor) * np.minimum(1.0, dist / ramp), 1.0)
     gain = np.repeat(gain_hops, hop)
     if gain.size < x.size:
         gain = np.concatenate([gain, np.full(x.size - gain.size, gain_hops[-1])])
-    return (x * gain[:x.size]).astype(np.float32), report
+    return (x * gain[: x.size]).astype(np.float32), report

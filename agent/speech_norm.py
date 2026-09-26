@@ -15,6 +15,7 @@ phone numbers and confirmation IDs are read character by character.
 The Hindi number table is the irregular 0-99 list; it cannot be generated
 by rule. tests/test_speech_norm.py pins spot values across the range.
 """
+
 from __future__ import annotations
 
 import re
@@ -41,16 +42,106 @@ def _finish(text: str) -> str:
 # ------------------------------------------------------------------ hindi
 
 _HI_0_99 = [
-    "शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ",
-    "दस", "ग्यारह", "बारह", "तेरह", "चौदह", "पंद्रह", "सोलह", "सत्रह", "अठारह", "उन्नीस",
-    "बीस", "इक्कीस", "बाईस", "तेईस", "चौबीस", "पच्चीस", "छब्बीस", "सत्ताईस", "अट्ठाईस", "उनतीस",
-    "तीस", "इकतीस", "बत्तीस", "तैंतीस", "चौंतीस", "पैंतीस", "छत्तीस", "सैंतीस", "अड़तीस", "उनतालीस",
-    "चालीस", "इकतालीस", "बयालीस", "तैंतालीस", "चवालीस", "पैंतालीस", "छियालीस", "सैंतालीस", "अड़तालीस", "उनचास",
-    "पचास", "इक्यावन", "बावन", "तिरपन", "चौवन", "पचपन", "छप्पन", "सत्तावन", "अट्ठावन", "उनसठ",
-    "साठ", "इकसठ", "बासठ", "तिरसठ", "चौंसठ", "पैंसठ", "छियासठ", "सड़सठ", "अड़सठ", "उनहत्तर",
-    "सत्तर", "इकहत्तर", "बहत्तर", "तिहत्तर", "चौहत्तर", "पचहत्तर", "छिहत्तर", "सतहत्तर", "अठहत्तर", "उनासी",
-    "अस्सी", "इक्यासी", "बयासी", "तिरासी", "चौरासी", "पचासी", "छियासी", "सत्तासी", "अट्ठासी", "नवासी",
-    "नब्बे", "इक्यानवे", "बानवे", "तिरानवे", "चौरानवे", "पंचानवे", "छियानवे", "सत्तानवे", "अट्ठानवे", "निन्यानवे",
+    "शून्य",
+    "एक",
+    "दो",
+    "तीन",
+    "चार",
+    "पाँच",
+    "छह",
+    "सात",
+    "आठ",
+    "नौ",
+    "दस",
+    "ग्यारह",
+    "बारह",
+    "तेरह",
+    "चौदह",
+    "पंद्रह",
+    "सोलह",
+    "सत्रह",
+    "अठारह",
+    "उन्नीस",
+    "बीस",
+    "इक्कीस",
+    "बाईस",
+    "तेईस",
+    "चौबीस",
+    "पच्चीस",
+    "छब्बीस",
+    "सत्ताईस",
+    "अट्ठाईस",
+    "उनतीस",
+    "तीस",
+    "इकतीस",
+    "बत्तीस",
+    "तैंतीस",
+    "चौंतीस",
+    "पैंतीस",
+    "छत्तीस",
+    "सैंतीस",
+    "अड़तीस",
+    "उनतालीस",
+    "चालीस",
+    "इकतालीस",
+    "बयालीस",
+    "तैंतालीस",
+    "चवालीस",
+    "पैंतालीस",
+    "छियालीस",
+    "सैंतालीस",
+    "अड़तालीस",
+    "उनचास",
+    "पचास",
+    "इक्यावन",
+    "बावन",
+    "तिरपन",
+    "चौवन",
+    "पचपन",
+    "छप्पन",
+    "सत्तावन",
+    "अट्ठावन",
+    "उनसठ",
+    "साठ",
+    "इकसठ",
+    "बासठ",
+    "तिरसठ",
+    "चौंसठ",
+    "पैंसठ",
+    "छियासठ",
+    "सड़सठ",
+    "अड़सठ",
+    "उनहत्तर",
+    "सत्तर",
+    "इकहत्तर",
+    "बहत्तर",
+    "तिहत्तर",
+    "चौहत्तर",
+    "पचहत्तर",
+    "छिहत्तर",
+    "सतहत्तर",
+    "अठहत्तर",
+    "उनासी",
+    "अस्सी",
+    "इक्यासी",
+    "बयासी",
+    "तिरासी",
+    "चौरासी",
+    "पचासी",
+    "छियासी",
+    "सत्तासी",
+    "अट्ठासी",
+    "नवासी",
+    "नब्बे",
+    "इक्यानवे",
+    "बानवे",
+    "तिरानवे",
+    "चौरानवे",
+    "पंचानवे",
+    "छियानवे",
+    "सत्तानवे",
+    "अट्ठानवे",
+    "निन्यानवे",
 ]
 
 
@@ -72,15 +163,35 @@ def number_to_hi_words(n: int) -> str:
 
 
 _HI_LETTER = {
-    "a": "ए", "b": "बी", "c": "सी", "d": "डी", "e": "ई", "f": "एफ", "g": "जी",
-    "h": "एच", "i": "आई", "j": "जे", "k": "के", "l": "एल", "m": "एम",
-    "n": "एन", "o": "ओ", "p": "पी", "q": "क्यू", "r": "आर", "s": "एस",
-    "t": "टी", "u": "यू", "v": "वी", "w": "डब्ल्यू", "x": "एक्स", "y": "वाई", "z": "ज़ेड",
+    "a": "ए",
+    "b": "बी",
+    "c": "सी",
+    "d": "डी",
+    "e": "ई",
+    "f": "एफ",
+    "g": "जी",
+    "h": "एच",
+    "i": "आई",
+    "j": "जे",
+    "k": "के",
+    "l": "एल",
+    "m": "एम",
+    "n": "एन",
+    "o": "ओ",
+    "p": "पी",
+    "q": "क्यू",
+    "r": "आर",
+    "s": "एस",
+    "t": "टी",
+    "u": "यू",
+    "v": "वी",
+    "w": "डब्ल्यू",
+    "x": "एक्स",
+    "y": "वाई",
+    "z": "ज़ेड",
 }
 
-_HI_MONTHS = ["जनवरी", "फ़रवरी", "मार्च", "अप्रैल", "मई", "जून",
-              "जुलाई", "अगस्त", "सितंबर", "अक्टूबर", "नवंबर", "दिसंबर"]
-
+_HI_MONTHS = ["जनवरी", "फ़रवरी", "मार्च", "अप्रैल", "मई", "जून", "जुलाई", "अगस्त", "सितंबर", "अक्टूबर", "नवंबर", "दिसंबर"]
 
 
 def _hi_day_part(hour24: int) -> str:
@@ -135,17 +246,24 @@ def verbalize_hi(text: str) -> str:
     text = text.translate(_DEVANAGARI_DIGITS)
     text = text.replace("₹", " रुपये ").replace("%", " प्रतिशत ")
     text = _RE_DATE.sub(
-        lambda m: (f"{_HI_MONTHS[int(m.group(2)) - 1]} की {number_to_hi_words(int(m.group(3)))} तारीख"
-                   if 1 <= int(m.group(2)) <= 12 else f"{number_to_hi_words(int(m.group(3)))} तारीख"),
-        text)
+        lambda m: (
+            f"{_HI_MONTHS[int(m.group(2)) - 1]} की {number_to_hi_words(int(m.group(3)))} तारीख"
+            if 1 <= int(m.group(2)) <= 12
+            else f"{number_to_hi_words(int(m.group(3)))} तारीख"
+        ),
+        text,
+    )
     text = _RE_TIME_RANGE.sub(
-        lambda m: (f"{time_to_hi_words(int(m.group(1)), int(m.group(2)))} से "
-                   f"{time_to_hi_words(int(m.group(3)), int(m.group(4)))} तक"), text)
+        lambda m: (
+            f"{time_to_hi_words(int(m.group(1)), int(m.group(2)))} से "
+            f"{time_to_hi_words(int(m.group(3)), int(m.group(4)))} तक"
+        ),
+        text,
+    )
     text = _RE_TIME.sub(lambda m: time_to_hi_words(int(m.group(1)), int(m.group(2))), text)
     text = _RE_CONF_ID.sub(lambda m: speak_grouped(id_groups(m.group(1)), _hi_spell), text)
     text = _RE_PHONE.sub(lambda m: speak_grouped(phone_groups(m.group(1)), _hi_digits), text)
-    text = _RE_DECIMAL.sub(
-        lambda m: f"{number_to_hi_words(int(m.group(1)))} दशमलव {_hi_digits(m.group(2))}", text)
+    text = _RE_DECIMAL.sub(lambda m: f"{number_to_hi_words(int(m.group(1)))} दशमलव {_hi_digits(m.group(2))}", text)
     text = _RE_INT.sub(lambda m: number_to_hi_words(int(m.group(0))), text)
     # KCD-159: the explicit pronunciation path (agent/pronunciation.py): a curated
     # spoken form, an unlisted acronym spelled out, and anything else left Latin
@@ -156,9 +274,28 @@ def verbalize_hi(text: str) -> str:
 
 # ---------------------------------------------------------------- english
 
-_EN_0_19 = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-            "seventeen", "eighteen", "nineteen"]
+_EN_0_19 = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+]
 _EN_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
 
 
@@ -185,21 +322,79 @@ def number_to_en_words(n: int) -> str:
 
 
 _EN_ORDINAL = {
-    1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth", 7: "seventh",
-    8: "eighth", 9: "ninth", 10: "tenth", 11: "eleventh", 12: "twelfth", 13: "thirteenth",
-    14: "fourteenth", 15: "fifteenth", 16: "sixteenth", 17: "seventeenth", 18: "eighteenth",
-    19: "nineteenth", 20: "twentieth", 21: "twenty first", 22: "twenty second",
-    23: "twenty third", 24: "twenty fourth", 25: "twenty fifth", 26: "twenty sixth",
-    27: "twenty seventh", 28: "twenty eighth", 29: "twenty ninth", 30: "thirtieth",
+    1: "first",
+    2: "second",
+    3: "third",
+    4: "fourth",
+    5: "fifth",
+    6: "sixth",
+    7: "seventh",
+    8: "eighth",
+    9: "ninth",
+    10: "tenth",
+    11: "eleventh",
+    12: "twelfth",
+    13: "thirteenth",
+    14: "fourteenth",
+    15: "fifteenth",
+    16: "sixteenth",
+    17: "seventeenth",
+    18: "eighteenth",
+    19: "nineteenth",
+    20: "twentieth",
+    21: "twenty first",
+    22: "twenty second",
+    23: "twenty third",
+    24: "twenty fourth",
+    25: "twenty fifth",
+    26: "twenty sixth",
+    27: "twenty seventh",
+    28: "twenty eighth",
+    29: "twenty ninth",
+    30: "thirtieth",
     31: "thirty first",
 }
-_EN_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
-              "September", "October", "November", "December"]
+_EN_MONTHS = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+]
 _EN_LETTER = {
-    "a": "ay", "b": "bee", "c": "see", "d": "dee", "e": "ee", "f": "eff", "g": "jee",
-    "h": "aitch", "i": "eye", "j": "jay", "k": "kay", "l": "el", "m": "em", "n": "en",
-    "o": "oh", "p": "pee", "q": "queue", "r": "ar", "s": "ess", "t": "tee", "u": "you",
-    "v": "vee", "w": "double you", "x": "ex", "y": "why", "z": "zee",
+    "a": "ay",
+    "b": "bee",
+    "c": "see",
+    "d": "dee",
+    "e": "ee",
+    "f": "eff",
+    "g": "jee",
+    "h": "aitch",
+    "i": "eye",
+    "j": "jay",
+    "k": "kay",
+    "l": "el",
+    "m": "em",
+    "n": "en",
+    "o": "oh",
+    "p": "pee",
+    "q": "queue",
+    "r": "ar",
+    "s": "ess",
+    "t": "tee",
+    "u": "you",
+    "v": "vee",
+    "w": "double you",
+    "x": "ex",
+    "y": "why",
+    "z": "zee",
 }
 
 
@@ -231,16 +426,24 @@ def verbalize_en(text: str) -> str:
         return text
     text = text.replace("₹", " rupees ").replace("%", " percent ")
     text = _RE_DATE.sub(
-        lambda m: (f"{_EN_MONTHS[int(m.group(2)) - 1]} {_EN_ORDINAL.get(int(m.group(3)), m.group(3))}"
-                   if 1 <= int(m.group(2)) <= 12 else m.group(0)), text)
+        lambda m: (
+            f"{_EN_MONTHS[int(m.group(2)) - 1]} {_EN_ORDINAL.get(int(m.group(3)), m.group(3))}"
+            if 1 <= int(m.group(2)) <= 12
+            else m.group(0)
+        ),
+        text,
+    )
     text = _RE_TIME_RANGE.sub(
-        lambda m: (f"{time_to_en_words(int(m.group(1)), int(m.group(2)))} to "
-                   f"{time_to_en_words(int(m.group(3)), int(m.group(4)))}"), text)
+        lambda m: (
+            f"{time_to_en_words(int(m.group(1)), int(m.group(2)))} to "
+            f"{time_to_en_words(int(m.group(3)), int(m.group(4)))}"
+        ),
+        text,
+    )
     text = _RE_TIME.sub(lambda m: time_to_en_words(int(m.group(1)), int(m.group(2))), text)
     text = _RE_CONF_ID.sub(lambda m: speak_grouped(id_groups(m.group(1)), _en_spell), text)
     text = _RE_PHONE.sub(lambda m: speak_grouped(phone_groups(m.group(1)), _en_digits), text)
-    text = _RE_DECIMAL.sub(
-        lambda m: f"{number_to_en_words(int(m.group(1)))} point {_en_digits(m.group(2))}", text)
+    text = _RE_DECIMAL.sub(lambda m: f"{number_to_en_words(int(m.group(1)))} point {_en_digits(m.group(2))}", text)
     text = _RE_INT.sub(lambda m: number_to_en_words(int(m.group(0))), text)
     return _finish(text)
 

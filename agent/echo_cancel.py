@@ -53,6 +53,7 @@ non-linearity will cancel less than the linear model predicts; agent/barge_in.py
 and agent/full_duplex.py are built not to trust the canceller before it has
 measurably converged.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -73,8 +74,8 @@ def erle_db(mic: np.ndarray, out: np.ndarray, skip: int = 0) -> float:
 
 # ------------------------------------------------------------------- delay
 
-def estimate_delay(mic: np.ndarray, ref: np.ndarray, sr: int = 16000,
-                   max_delay_s: float = 0.6) -> tuple[int, float]:
+
+def estimate_delay(mic: np.ndarray, ref: np.ndarray, sr: int = 16000, max_delay_s: float = 0.6) -> tuple[int, float]:
     """(delay in samples, confidence). GCC-PHAT: the whitened cross-spectrum
     makes the correlation peak sharp on speech, whose energy is concentrated
     in a few harmonics. Confidence is peak height over the mean of the search
@@ -83,25 +84,32 @@ def estimate_delay(mic: np.ndarray, ref: np.ndarray, sr: int = 16000,
     if n < int(0.2 * sr):
         return 0, 0.0
     m, r = np.asarray(mic[-n:], np.float64), np.asarray(ref[-n:], np.float64)
-    if np.sum(r ** 2) < 1e-8 or np.sum(m ** 2) < 1e-10:
+    if np.sum(r**2) < 1e-8 or np.sum(m**2) < 1e-10:
         return 0, 0.0
     nfft = 1 << int(np.ceil(np.log2(2 * n)))
     cps = np.fft.rfft(m, nfft) * np.conj(np.fft.rfft(r, nfft))
     cps /= np.abs(cps) + 1e-9
     cc = np.abs(np.fft.irfft(cps, nfft))
-    window = cc[:int(max_delay_s * sr) + 1]
+    window = cc[: int(max_delay_s * sr) + 1]
     k = int(np.argmax(window))
     return k, float(window[k] / (np.mean(window) + 1e-12))
 
 
 # ------------------------------------------------------------------ filter
 
+
 class MDFCanceller:
     """One channel, fixed block size, fed aligned (mic block, ref block)."""
 
-    def __init__(self, block: int = BLOCK, partitions: int = 8, mu: float = 0.5,
-                 geigel: float = 1.0, dt_hold_blocks: int = 8,
-                 dt_mu_fraction: float = 0.02):
+    def __init__(
+        self,
+        block: int = BLOCK,
+        partitions: int = 8,
+        mu: float = 0.5,
+        geigel: float = 1.0,
+        dt_hold_blocks: int = 8,
+        dt_mu_fraction: float = 0.02,
+    ):
         self.B, self.P, self.mu = block, partitions, mu
         self.geigel, self.dt_hold = geigel, dt_hold_blocks
         self.dt_mu_fraction = dt_mu_fraction
@@ -140,7 +148,7 @@ class MDFCanceller:
 
     def process_block(self, mic: np.ndarray, ref: np.ndarray) -> np.ndarray:
         B = self.B
-        self._peaks = (self._peaks + [float(np.max(np.abs(ref)))])[-self.P:]
+        self._peaks = (self._peaks + [float(np.max(np.abs(ref)))])[-self.P :]
         ref_peak = max(self._peaks)
         self.X = np.roll(self.X, 1, axis=0)
         self.X[0] = np.fft.rfft(np.concatenate([self._xprev, ref]))
@@ -152,8 +160,8 @@ class MDFCanceller:
         e = mic - y
         e_lin = e
 
-        pm, pe = float(np.mean(mic ** 2)) + 1e-12, float(np.mean(e ** 2)) + 1e-12
-        ref_active = ref_peak > 1e-4 and float(np.mean(ref ** 2)) > 1e-8
+        pm, pe = float(np.mean(mic**2)) + 1e-12, float(np.mean(e**2)) + 1e-12
+        ref_active = ref_peak > 1e-4 and float(np.mean(ref**2)) > 1e-8
 
         # Double-talk detection, two independent tests.
         #  1. Geigel, loosened: the microphone is louder than the WHOLE
@@ -174,7 +182,7 @@ class MDFCanceller:
         # Compared against the BEST cancellation seen recently (decaying), not
         # the running figure: the running figure is dragged down by the caller
         # it is meant to detect, after which "collapse" could never fire again.
-        margin = min(10.0, 0.7 * self._erle_best)        # a filter at 8 dB can only collapse so far
+        margin = min(10.0, 0.7 * self._erle_best)  # a filter at 8 dB can only collapse so far
         collapse = self._erle_best > 3.0 and block_erle < self._erle_best - margin
         if ref_active and (geigel_hit or collapse):
             self._dt_left = self.dt_hold
@@ -217,7 +225,13 @@ class MDFCanceller:
             leak = float(np.clip(1.0 / (10 ** (max(self.erle_db, 0.0) / 10.0)), 0.01, 0.6))
             cap = self.dt_mu_fraction if self.double_talk else 1.0
             ratio = np.clip(leak * inst / (np.maximum(self._err_power, np.abs(E) ** 2) + 1e-12), 0.0, cap)
-            G = self.mu * ratio * np.conj(self.X) * E / (np.maximum(self._power, inst) + self.reg * float(np.mean(self._power)) + 1e-9)
+            G = (
+                self.mu
+                * ratio
+                * np.conj(self.X)
+                * E
+                / (np.maximum(self._power, inst) + self.reg * float(np.mean(self._power)) + 1e-9)
+            )
             self.W += G
             # gradient constraint: the true filter is causal and B taps long
             # per partition; zero the wrap-around half.
@@ -252,6 +266,7 @@ class MDFCanceller:
 
 # ---------------------------------------------------------------- pipeline
 
+
 @dataclasses.dataclass
 class EchoStats:
     delay_ms: float
@@ -275,10 +290,19 @@ class EchoPipeline:
     tail that does not fill a block is held for the next call.
     """
 
-    def __init__(self, sr: int = 16000, block: int = BLOCK, partitions: int = 8,
-                 max_delay_s: float = 0.6, lead_s: float = 0.032, history_s: float = 4.0,
-                 delay_update_s: float = 0.5, min_confidence: float = 6.0,
-                 mu: float = 1.0, suppress: bool = True):
+    def __init__(
+        self,
+        sr: int = 16000,
+        block: int = BLOCK,
+        partitions: int = 8,
+        max_delay_s: float = 0.6,
+        lead_s: float = 0.032,
+        history_s: float = 4.0,
+        delay_update_s: float = 0.5,
+        min_confidence: float = 6.0,
+        mu: float = 1.0,
+        suppress: bool = True,
+    ):
         self.sr, self.block = sr, block
         self.canceller = MDFCanceller(block, partitions, mu=mu)
         self.canceller.suppress = suppress
@@ -286,12 +310,12 @@ class EchoPipeline:
         self.delay_update = int(delay_update_s * sr)
         self.min_confidence = min_confidence
         self._hist = int(history_s * sr)
-        self._ref = np.zeros(0, np.float32)     # far-end timeline [_ref0, _ref0+len)
+        self._ref = np.zeros(0, np.float32)  # far-end timeline [_ref0, _ref0+len)
         self._ref0 = 0
-        self._mic = np.zeros(0, np.float32)     # raw mic timeline, same indexing
+        self._mic = np.zeros(0, np.float32)  # raw mic timeline, same indexing
         self._mic0 = 0
         self._pending = np.zeros(0, np.float32)
-        self._pos = 0                           # absolute index of the next unprocessed mic sample
+        self._pos = 0  # absolute index of the next unprocessed mic sample
         self._since_delay = 0
         self.delay = 0
         self._delay_candidate: int | None = None
@@ -306,9 +330,9 @@ class EchoPipeline:
             pad = end - (self._ref0 + self._ref.size)
             self._ref = np.concatenate([self._ref, np.zeros(pad, np.float32)])
         lo = at_sample - self._ref0
-        if lo < 0:                 # placed before what we still keep: drop the stale head
+        if lo < 0:  # placed before what we still keep: drop the stale head
             pcm, lo = pcm[-lo:], 0
-        self._ref[lo:lo + pcm.size] += pcm
+        self._ref[lo : lo + pcm.size] += pcm
 
     def reference_end(self) -> int:
         """Absolute sample index just past the last far-end audio placed."""
@@ -318,7 +342,7 @@ class EchoPipeline:
         out = np.zeros(b - a, np.float32)
         lo, hi = max(a, self._ref0), min(b, self._ref0 + self._ref.size)
         if hi > lo:
-            out[lo - a:hi - a] = self._ref[lo - self._ref0:hi - self._ref0]
+            out[lo - a : hi - a] = self._ref[lo - self._ref0 : hi - self._ref0]
         return out
 
     # -- processing ------------------------------------------------------
@@ -357,7 +381,7 @@ class EchoPipeline:
         win = int(1.5 * self.sr)
         end = self._pos
         start = max(self._mic0, end - win)
-        mic = self._mic[start - self._mic0:end - self._mic0]
+        mic = self._mic[start - self._mic0 : end - self._mic0]
         # The reference has to have been active for the estimate to mean anything.
         if float(np.mean(self._ref_slice(start, end) ** 2)) < 1e-7:
             return
@@ -369,7 +393,7 @@ class EchoPipeline:
         if conf >= self.min_confidence:
             new = max(0, k - self.lead)
             if abs(new - self.delay) <= 2 * self.block:
-                self._delay_candidate = None       # agrees with what we use: nothing to change
+                self._delay_candidate = None  # agrees with what we use: nothing to change
             elif self._delay_candidate is not None and abs(new - self._delay_candidate) <= 2 * self.block:
                 # seen twice in a row: a real change of path, not one odd window
                 self.delay, self._delay_candidate = new, None
@@ -387,8 +411,9 @@ class EchoPipeline:
             self._ref, self._ref0 = self._ref[cut:], self._ref0 + cut
 
     def stats(self) -> EchoStats:
-        return EchoStats(self.delay / self.sr * 1000.0, self.delay_confidence, self.canceller.erle_db,
-                         self._dt_blocks, self._blocks)
+        return EchoStats(
+            self.delay / self.sr * 1000.0, self.delay_confidence, self.canceller.erle_db, self._dt_blocks, self._blocks
+        )
 
 
 def estimate_delay_long(mic: np.ndarray, ref_long: np.ndarray, max_delay: int) -> tuple[int, float]:
@@ -398,18 +423,18 @@ def estimate_delay_long(mic: np.ndarray, ref_long: np.ndarray, max_delay: int) -
     n = mic.size
     if n < 3200 or ref_long.size < n:
         return 0, 0.0
-    if np.sum(ref_long ** 2) < 1e-8 or np.sum(mic ** 2) < 1e-10:
+    if np.sum(ref_long**2) < 1e-8 or np.sum(mic**2) < 1e-10:
         return 0, 0.0
     nfft = 1 << int(np.ceil(np.log2(ref_long.size + n)))
     M = np.fft.rfft(np.asarray(mic, np.float64), nfft)
     R = np.fft.rfft(np.asarray(ref_long, np.float64), nfft)
-    cps = R * np.conj(M)                  # correlation of ref against mic
+    cps = R * np.conj(M)  # correlation of ref against mic
     cps /= np.abs(cps) + 1e-9
     cc = np.abs(np.fft.irfft(cps, nfft))
     # cc[j]: ref_long delayed by -j relative to mic; mic sample t sits at
     # ref_long index t + max_delay, so lag k corresponds to j = max_delay - k
     # (mod nfft). Read j in [0, max_delay].
-    window = cc[:max_delay + 1][::-1]     # window[k] for k = 0..max_delay
+    window = cc[: max_delay + 1][::-1]  # window[k] for k = 0..max_delay
     peak = float(np.max(window))
     # The EARLIEST strong peak, not the tallest: an echo path's later
     # reflections can outrank the direct path, and the filter can only model

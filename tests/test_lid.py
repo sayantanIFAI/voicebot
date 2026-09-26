@@ -7,6 +7,7 @@ anywhere with plain pytest:
 (from the repository root; unlike tests/test_smoke.py this has no
 /workspace path dependency and no live services to reach.)
 """
+
 import os
 import sys
 
@@ -53,7 +54,7 @@ def test_ambiguous_streak_without_prior_hands_off_to_human():
 def test_committing_resets_the_ambiguous_streak():
     router = ASRLanguageRouter(max_ambiguous_streak=1)
     router.route(LIDResult(language="unknown", confidence=0.10))  # streak = 1, dual_asr
-    router.route(LIDResult(language="bn", confidence=0.9))         # commits on its own confidence
+    router.route(LIDResult(language="bn", confidence=0.9))  # commits on its own confidence
     assert router._ambiguous_streak == 0, "a high-confidence commit must reset the streak counter"
     # A later low-confidence turn now has "bn" as a prior, so it commits
     # via the prior rather than re-entering the ambiguous-streak path --
@@ -65,7 +66,8 @@ def test_committing_resets_the_ambiguous_streak():
 def test_dual_asr_prefers_scored_top_two_when_available():
     router = ASRLanguageRouter()
     lid = LIDResult(
-        language="unknown", confidence=0.20,
+        language="unknown",
+        confidence=0.20,
         scores={"bn": 0.20, "hi": 0.55, "en": 0.15},
     )
     decision = router.route(lid)

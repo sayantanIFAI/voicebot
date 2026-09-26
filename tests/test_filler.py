@@ -8,6 +8,7 @@ threshold was exposed to the same stalls. The intent of every test is unchanged
 
     python -m pytest tests/test_filler.py -v
 """
+
 import asyncio
 import os
 import sys
@@ -20,6 +21,7 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, p)
 
 from _virtual_time import virtual_time
+
 from agent.filler import await_with_filler
 
 
@@ -42,7 +44,7 @@ async def test_filler_is_suppressed_when_the_result_arrives_first():
 
     result = await await_with_filler(_fast_lookup(), threshold_s=0.1, on_timeout=on_timeout)
     assert result == "the real answer"
-    assert filler_calls == []   # never spoken
+    assert filler_calls == []  # never spoken
 
 
 @virtual_time
@@ -54,7 +56,7 @@ async def test_filler_fires_exactly_once_when_the_stage_exceeds_the_threshold():
 
     result = await await_with_filler(_slow_lookup(), threshold_s=0.05, on_timeout=on_timeout)
     assert result == "the real answer, eventually"
-    assert filler_calls == [1]   # exactly once, not repeated while still waiting
+    assert filler_calls == [1]  # exactly once, not repeated while still waiting
 
 
 @virtual_time

@@ -17,6 +17,7 @@ person -- the check is never softened.
 The wording is short and warm: one question at a time, one simple sentence each, and it says why it
 asks. Provisional and pending native review (agent/persona.py).
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -111,7 +112,7 @@ def find_by_details_text(lang: str) -> str:
 
 
 MAX_PARSE_FAILURES = 2
-MAX_EVALUATIONS = 3                    # the server's own limit (registry.MAX_ATTEMPTS_PER_CALL)
+MAX_EVALUATIONS = 3  # the server's own limit (registry.MAX_ATTEMPTS_PER_CALL)
 
 
 @dataclasses.dataclass
@@ -119,13 +120,14 @@ class SecurityCheck:
     """One per attempt to verify one patient on one call. `patient_ref` is None while the record is
     still being FOUND (the phone number found nobody): the caller's details then locate it
     (`find_patient`), and the same answers are submitted for verification."""
+
     patient_ref: str | None
-    answers: dict = dataclasses.field(default_factory=dict)      # factor -> the value to submit
-    expecting: list[str] = dataclasses.field(default_factory=list)   # the factors the last question asked for
+    answers: dict = dataclasses.field(default_factory=dict)  # factor -> the value to submit
+    expecting: list[str] = dataclasses.field(default_factory=list)  # the factors the last question asked for
     parse_failures: int = 0
     evaluations: int = 0
     introduced: bool = False
-    finds: int = 0                       # find attempts that located nobody
+    finds: int = 0  # find attempts that located nobody
     finished: bool = False
     verified: bool = False
     age_years: int | None = None
@@ -149,7 +151,7 @@ class SecurityCheck:
             self.expecting, key = ["dob"], "dob"
         elif "patient_id" not in have:
             self.expecting, key = ["patient_id"], "patient_id"
-        else:                                    # everything was given and did not match: one repeat
+        else:  # everything was given and did not match: one repeat
             self.expecting, key = ["dob"], "dob"
             self.answers.pop("dob", None)
         text = _t(QUESTION[key], lang)
@@ -170,12 +172,16 @@ class SecurityCheck:
                     self.answers["dob"], got = d.isoformat(), True
             elif factor == "patient_id":
                 # a date read out ("12 May 1980") is a date, never also an id
-                pid = None if "dob" in self.answers and si.parse_dob(text, today) is not None else si.parse_patient_id(text)
+                pid = (
+                    None
+                    if "dob" in self.answers and si.parse_dob(text, today) is not None
+                    else si.parse_patient_id(text)
+                )
                 if pid is not None:
                     self.answers["patient_id"], got = pid, True
             elif factor == "name":
                 name = si.clean_name(text)
-                if len(name.split()) >= 2:                         # a full name, not one word
+                if len(name.split()) >= 2:  # a full name, not one word
                     self.answers["name"], got = name, True
             elif factor == "address":
                 addr = si.address_text(text)

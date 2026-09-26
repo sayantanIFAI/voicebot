@@ -17,6 +17,7 @@ Dates are ISO strings the speech normaliser turns into words (agent/bn_normalize
 Wording is provisional and pending native review (agent/persona.py). No colons or
 brackets, one apology at most, no hedging -- the persona checks scan this file too.
 """
+
 from __future__ import annotations
 
 import re
@@ -84,6 +85,7 @@ def ok_anything_else(lang: str) -> tuple[str, str]:
 
 def _msg(key: str, table: dict, lang: str) -> str:
     from agent import messages
+
     return messages.text(key, lang if lang in table else "bn", _pick(table, lang))
 
 
@@ -109,6 +111,7 @@ def no_record(lang: str) -> tuple[str, str]:
 
 # ---- statements rendered from retrieved fields ---------------------------------------
 
+
 def _name(f: dict, field: str, lang: str) -> str:
     """A name in the language's own script when the record carries one (a Latin name inside Bengali
     text is dropped by the Bengali voice), else the canonical name."""
@@ -121,13 +124,22 @@ def appointment_statement(event: dict, lang: str, today_iso: str) -> tuple[str, 
     sid = f"appointment:{event['id'].split(':')[1]}"
     doc, date, time = _name(f, "doctor_name", lang), f["date"], f.get("time_slot") or ""
     if lang == "hi":
-        return sid, (f"आपकी {doc} डॉक्टर के साथ {date} को {time} बजे अपॉइंटमेंट है।" if upcoming
-                     else f"आपकी {doc} डॉक्टर के साथ {date} को अपॉइंटमेंट थी।")
+        return sid, (
+            f"आपकी {doc} डॉक्टर के साथ {date} को {time} बजे अपॉइंटमेंट है।"
+            if upcoming
+            else f"आपकी {doc} डॉक्टर के साथ {date} को अपॉइंटमेंट थी।"
+        )
     if lang == "en":
-        return sid, (f"You have an appointment with {doc} on {date} at {time}." if upcoming
-                     else f"You had an appointment with {doc} on {date}.")
-    return sid, (f"আপনার {doc} ডাক্তারের সঙ্গে {date} তারিখে {time}-এ একটা অ্যাপয়েন্টমেন্ট আছে।" if upcoming
-                 else f"আপনার {doc} ডাক্তারের সঙ্গে {date} তারিখে একটা অ্যাপয়েন্টমেন্ট ছিল।")
+        return sid, (
+            f"You have an appointment with {doc} on {date} at {time}."
+            if upcoming
+            else f"You had an appointment with {doc} on {date}."
+        )
+    return sid, (
+        f"আপনার {doc} ডাক্তারের সঙ্গে {date} তারিখে {time}-এ একটা অ্যাপয়েন্টমেন্ট আছে।"
+        if upcoming
+        else f"আপনার {doc} ডাক্তারের সঙ্গে {date} তারিখে একটা অ্যাপয়েন্টমেন্ট ছিল।"
+    )
 
 
 def test_performed_statement(event: dict, lang: str) -> tuple[str, str]:
@@ -159,13 +171,17 @@ def due_statement(status: dict, lang: str) -> tuple[str, str] | None:
     if status.get("due") is None:
         return None
     if status["due"]:
-        table = {"bn": "ক্লিনিকের নির্ধারিত সময় পেরিয়ে গেছে, তাই এটা এখন করানোর সময় হয়েছে।",
-                 "hi": "क्लिनिक का तय किया हुआ समय बीत चुका है, इसलिए यह अब दोबारा कराने का समय है।",
-                 "en": "The interval our clinicians have approved for it has passed, so it is due."}
+        table = {
+            "bn": "ক্লিনিকের নির্ধারিত সময় পেরিয়ে গেছে, তাই এটা এখন করানোর সময় হয়েছে।",
+            "hi": "क्लिनिक का तय किया हुआ समय बीत चुका है, इसलिए यह अब दोबारा कराने का समय है।",
+            "en": "The interval our clinicians have approved for it has passed, so it is due.",
+        }
         return "due:yes", _pick(table, lang)
-    table = {"bn": "ক্লিনিকের নির্ধারিত সময় এখনও পেরোয়নি, তাই এটা এখন করানোর সময় হয়নি।",
-             "hi": "क्लिनिक का तय किया हुआ समय अभी नहीं बीता है, इसलिए यह अभी कराने का समय नहीं है।",
-             "en": "The interval our clinicians have approved for it has not passed yet, so it is not due."}
+    table = {
+        "bn": "ক্লিনিকের নির্ধারিত সময় এখনও পেরোয়নি, তাই এটা এখন করানোর সময় হয়নি।",
+        "hi": "क्लिनिक का तय किया हुआ समय अभी नहीं बीता है, इसलिए यह अभी कराने का समय नहीं है।",
+        "en": "The interval our clinicians have approved for it has not passed yet, so it is not due.",
+    }
     return "due:no", _pick(table, lang)
 
 
@@ -182,9 +198,12 @@ def report_ready_statement(event: dict, lang: str) -> tuple[str, str]:
 
 # ---- detecting a model-composed history claim (the guard for the one text the model writes) ----
 _HISTORY_CLAIM = {
-    "en": re.compile(r"\b(you (had|have had|visited|were (here|tested|seen)|last (came|visited))|your (last|previous|earlier|most recent)( [\w-]+){0,3} "
-                     r"(test|visit|appointment|report|booking|result|check)|last time you|previous(ly)? (visit|appointment|test)|"
-                     r"you'?ve (been|had|done))\b", re.I),
+    "en": re.compile(
+        r"\b(you (had|have had|visited|were (here|tested|seen)|last (came|visited))|your (last|previous|earlier|most recent)( [\w-]+){0,3} "
+        r"(test|visit|appointment|report|booking|result|check)|last time you|previous(ly)? (visit|appointment|test)|"
+        r"you'?ve (been|had|done))\b",
+        re.I,
+    ),
     "bn": re.compile(r"(আপনার (শেষ|আগের|পূর্বের)|আপনি (আগে|গতবার|শেষবার)|গতবার আপনি|আগেরবার আপনি|শেষবার আপনি)"),
     "hi": re.compile(r"(आपका (पिछला|आख़िरी|आखिरी|पहले का)|आप (पिछली बार|पहले|आख़िरी बार|आखिरी बार)|पिछली बार आप)"),
 }

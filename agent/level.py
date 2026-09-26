@@ -27,6 +27,7 @@ tools/conditioning_eval.py measure per band. Off-pod the measurement is of LEVEL
 and of speech-feature preservation (proxies); recognition ACCURACY needs the ASR
 and real recordings, which tools/conditioning_eval.py provides on a pod.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -47,7 +48,7 @@ MAX_GAIN_DB = 30.0
 MAX_CUT_DB = 15.0
 CEILING_DBFS = -1.0
 LIMITER_THRESHOLD_DBFS = -6.0
-CLIPPED_FRACTION = 0.005            # above this the input is treated as already clipped
+CLIPPED_FRACTION = 0.005  # above this the input is treated as already clipped
 
 
 @dataclasses.dataclass
@@ -56,7 +57,7 @@ class LevelReport:
     speech_rms_before_dbfs: float
     speech_rms_after_dbfs: float
     gain_db: float
-    limiter_fraction: float          # share of samples the soft knee touched
+    limiter_fraction: float  # share of samples the soft knee touched
     clipped_input: bool
 
 
@@ -67,7 +68,7 @@ def speech_rms_dbfs(x: np.ndarray, sr: int = 16000) -> float:
     frames = _frames(x - (float(np.mean(x)) if x.size else 0.0), sr)
     if frames.shape[0] < 5:
         return -120.0
-    e = _db(np.mean(frames ** 2, axis=1))
+    e = _db(np.mean(frames**2, axis=1))
     floor, top = float(np.percentile(e, 10)), float(np.percentile(e, 90))
     active = e >= max(floor + 0.35 * (top - floor), top - 25.0)
     return float(_db(np.mean(frames[active] ** 2))) if active.any() else -120.0
@@ -80,8 +81,9 @@ def level_band(rms_dbfs: float) -> str:
     return LEVEL_BANDS[-1][0] if rms_dbfs >= 0 else LEVEL_BANDS[0][0]
 
 
-def soft_limit(x: np.ndarray, ceiling_dbfs: float = CEILING_DBFS,
-               threshold_dbfs: float = LIMITER_THRESHOLD_DBFS) -> tuple[np.ndarray, float]:
+def soft_limit(
+    x: np.ndarray, ceiling_dbfs: float = CEILING_DBFS, threshold_dbfs: float = LIMITER_THRESHOLD_DBFS
+) -> tuple[np.ndarray, float]:
     """Soft-knee limiter: identity below the threshold, tanh-compressed above it,
     asymptotically approaching the ceiling and never exceeding it."""
     c, t = 10 ** (ceiling_dbfs / 20.0), 10 ** (threshold_dbfs / 20.0)
@@ -100,7 +102,9 @@ def normalise(x: np.ndarray, sr: int = 16000, target_dbfs: float = TARGET_RMS_DB
     before = speech_rms_dbfs(x, sr)
     clipped = bool(x.size and float(np.mean(np.abs(x) >= 0.99)) >= CLIPPED_FRACTION)
     if before <= -100.0:
-        return x.copy(), LevelReport(level_band(before), before, before, 0.0, 0.0, clipped)     # no speech: nothing to scale
+        return x.copy(), LevelReport(
+            level_band(before), before, before, 0.0, 0.0, clipped
+        )  # no speech: nothing to scale
     gain_db = float(np.clip(target_dbfs - before, -MAX_CUT_DB, MAX_GAIN_DB))
     if clipped:
         gain_db = min(gain_db, 0.0)

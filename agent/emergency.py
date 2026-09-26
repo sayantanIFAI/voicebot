@@ -23,6 +23,7 @@ the audio itself (an external review's recommendation; not built here). The phra
 written by a non-native speaker; the project owner has approved the lists and the notice wording
 (`REVIEW_STATUS` below), and a clinician or native reviewer may still ask for changes.
 """
+
 from __future__ import annotations
 
 import re
@@ -48,7 +49,9 @@ _EN = re.compile(
     r"serious accident|met with an accident|road accident|accident happened|badly (hurt|injured)|"
     r"suicid\w*|kill (myself|himself|herself)|want to die|end my life|"
     r"call (an )?ambulance|need (an )?ambulance|ambulance|"
-    r"(this|it) is an emergency|it'?s an emergency|medical emergency|emergency case)\b", re.I)
+    r"(this|it) is an emergency|it'?s an emergency|medical emergency|emergency case)\b",
+    re.I,
+)
 
 _BN = re.compile(
     r"(বুকে ব্যথা|বুকে যন্ত্রণা|বুকে চাপ|শ্বাস(কষ্ট| নিতে (পারছ|পারছি|কষ্ট))|নিঃশ্বাস (নিতে|বন্ধ)|দম (বন্ধ|আটকে)|"
@@ -59,7 +62,8 @@ _BN = re.compile(
     r"হার্ট অ্যাটাক|হার্টঅ্যাটাক|স্ট্রোক|সাপে কামড়|"
     r"দুর্ঘটনা|অ্যাক্সিডেন্ট|অ্যাকসিডেন্ট|"
     r"আত্মহত্যা|মরে যেতে চাই|"
-    r"অ্যাম্বুলেন্স|এম্বুলেন্স|জরুরি (অবস্থা|অবস্থা|ভিত্তিতে)|ইমার্জেন্সি|এমারজেন্সি)")
+    r"অ্যাম্বুলেন্স|এম্বুলেন্স|জরুরি (অবস্থা|অবস্থা|ভিত্তিতে)|ইমার্জেন্সি|এমারজেন্সি)"
+)
 
 _HI = re.compile(
     r"(सीने में (दर्द|जलन|भारीपन)|छाती में दर्द|सांस (नहीं|लेने में (तकलीफ|दिक्कत|परेशानी))|साँस (नहीं|लेने में)|दम घुट|"
@@ -70,7 +74,8 @@ _HI = re.compile(
     r"दिल का दौरा|हार्ट अटैक|स्ट्रोक|साँप ने काट|सांप ने काट|"
     r"दुर्घटना|एक्सीडेंट|"
     r"आत्महत्या|मर जाना चाहता|मर जाना चाहती|"
-    r"एम्बुलेंस|एंबुलेंस|आपातकाल|इमरजेंसी)")
+    r"एम्बुलेंस|एंबुलेंस|आपातकाल|इमरजेंसी)"
+)
 
 _PATTERNS = (_EN, _BN, _HI)
 

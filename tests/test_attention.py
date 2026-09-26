@@ -4,6 +4,7 @@ scenes, not a real room.
 
     python -m pytest tests/test_attention.py -v
 """
+
 import os
 import sys
 
@@ -16,6 +17,7 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, p)
 
 from _synth_voices import FATHER, MOTHER, scaled, utterance
+
 from agent import speaker_change as sc
 from agent.attention import ATTENUATION_DB, MAX_FRACTION, attend
 from agent.near_end import level_and_pitch
@@ -43,9 +45,9 @@ def test_nothing_happens_before_the_call_has_a_profile(caller):
 def test_a_clip_that_is_only_the_caller_is_not_changed_where_they_speak(caller):
     x, level, f0 = caller
     y, rep = attend(x, level, f0, SR)
-    loud = np.abs(x) > 0.05                                   # sample positions where the caller is speaking
-    assert np.array_equal(x[loud], y[loud])                   # bit-for-bit: the caller is never touched
-    assert np.max(np.abs(y)) <= np.max(np.abs(x)) + 1e-9      # and nothing is ever amplified
+    loud = np.abs(x) > 0.05  # sample positions where the caller is speaking
+    assert np.array_equal(x[loud], y[loud])  # bit-for-bit: the caller is never touched
+    assert np.max(np.abs(y)) <= np.max(np.abs(x)) + 1e-9  # and nothing is ever amplified
 
 
 def test_a_bystander_before_and_after_the_caller_is_attenuated_and_the_caller_is_exact(caller):
@@ -56,25 +58,27 @@ def test_a_bystander_before_and_after_the_caller_is_attenuated_and_the_caller_is
     n = bystander.size
     assert rep.applied and rep.background > 20
     before, after = rms_db(clip[:n]), rms_db(y[:n])
-    assert before - after >= 10.0                                            # the bystander is well down
+    assert before - after >= 10.0  # the bystander is well down
     span = slice(n, n + x.size)
-    speaking = np.abs(clip[span]) > 0.05                     # where the CALLER is speaking (the quiet tail of their
-    assert np.array_equal(clip[span][speaking], y[span][speaking])   # own clip is a pause, and may be gated like any pause)
+    speaking = np.abs(clip[span]) > 0.05  # where the CALLER is speaking (the quiet tail of their
+    assert np.array_equal(
+        clip[span][speaking], y[span][speaking]
+    )  # own clip is a pause, and may be gated like any pause)
 
 
 def test_hiss_in_the_pauses_between_phrases_is_gated_but_speech_and_its_edges_are_not(caller):
     x, level, f0 = caller
     rng = np.random.default_rng(0)
-    pause = np.zeros(SR, dtype=np.float32)                    # one second of quiet
+    pause = np.zeros(SR, dtype=np.float32)  # one second of quiet
     clip = np.concatenate([x, pause, x])
     hiss = (rng.standard_normal(clip.size) * 10 ** (-52 / 20)).astype(np.float32)
     noisy = clip + hiss
     y, rep = attend(noisy, level, f0, SR)
-    mid = slice(x.size + int(0.35 * SR), x.size + int(0.65 * SR))          # the middle of the pause, far from speech
+    mid = slice(x.size + int(0.35 * SR), x.size + int(0.65 * SR))  # the middle of the pause, far from speech
     assert rep.noise > 10
     assert rms_db(noisy[mid]) - rms_db(y[mid]) >= ATTENUATION_DB - 3.0
     speech = np.abs(x) > 0.05
-    assert np.array_equal(noisy[:x.size][speech], y[:x.size][speech])
+    assert np.array_equal(noisy[: x.size][speech], y[: x.size][speech])
 
 
 def test_the_edge_of_a_word_is_protected_from_the_noise_gate(caller):
@@ -92,7 +96,7 @@ def test_the_edge_of_a_word_is_protected_from_the_noise_gate(caller):
 def test_a_clip_that_would_be_mostly_removed_is_returned_whole(caller):
     _, level, f0 = caller
     quiet = utterance(MOTHER, dur=2.0, seed=4, amp=0.3)
-    quiet = scaled(quiet, -40.0)                              # the whole clip is far below the caller's profile
+    quiet = scaled(quiet, -40.0)  # the whole clip is far below the caller's profile
     y, rep = attend(quiet, level, f0, SR)
     assert (not rep.applied) and rep.fraction <= 1.0 and np.array_equal(quiet, y)
     assert MAX_FRACTION < 1.0
@@ -105,6 +109,7 @@ def test_the_output_is_the_same_length_and_finite(caller):
 
 
 # ======================================================================== KCD-054: pitch and level as a second cue
+
 
 def emb(ltas_offset=0.0, octaves=0.0):
     base = np.linspace(-6, 6, sc.N_BANDS)
@@ -130,14 +135,16 @@ def test_a_different_pitch_plus_a_different_level_at_moderate_distance_is_a_chan
     quiet_change = emb(1.5, 0.15)
     assert sc.distance(quiet_change, emb()) >= sc.CHANGE_LOW and sc.distance(quiet_change, emb()) < sc.CHANGE_HIGH
     slow = detector()
-    assert slow.observe_embedding(quiet_change).verdict == "same"                       # one turn: still "same"
+    assert slow.observe_embedding(quiet_change).verdict == "same"  # one turn: still "same"
     fast = detector()
-    assert fast.observe_embedding(quiet_change, level_dbfs=-30.0).verdict == "changed"  # 10 dB different level: change now
+    assert (
+        fast.observe_embedding(quiet_change, level_dbfs=-30.0).verdict == "changed"
+    )  # 10 dB different level: change now
 
 
 def test_the_cue_does_not_fire_without_a_pitch_difference():
     d = detector()
-    same_pitch = emb(3.9, 0.0)                                                          # distance 3.9, same pitch
+    same_pitch = emb(3.9, 0.0)  # distance 3.9, same pitch
     assert d.observe_embedding(same_pitch, level_dbfs=-32.0).verdict == "same"
 
 
@@ -148,4 +155,4 @@ def test_a_pitch_jump_of_the_size_the_cue_names_already_exceeds_the_hard_thresho
 def test_existing_behaviour_without_a_level_is_unchanged():
     d = detector()
     assert d.observe_embedding(emb(1.5, 0.15)).verdict == "same"
-    assert d.observe_embedding(emb(1.5, 0.15)).verdict == "changed"                    # two consecutive turns, as before
+    assert d.observe_embedding(emb(1.5, 0.15)).verdict == "changed"  # two consecutive turns, as before

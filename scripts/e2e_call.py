@@ -17,11 +17,11 @@ The input WAVs are usually synthesized by tts_server.py, so this proves the
 plumbing, NOT recognition quality on real callers: clean synthetic speech is
 not 8 kHz telephony audio from a Kolkata mobile.
 """
+
 from __future__ import annotations
 
 import argparse
 import asyncio
-import io
 import json
 import time
 
@@ -30,7 +30,7 @@ import soundfile as sf
 
 RATE = 16000
 CHUNK_S = 0.1
-TAIL_SILENCE_S = 1.8      # enough for the turn detector to call the utterance finished
+TAIL_SILENCE_S = 1.8  # enough for the turn detector to call the utterance finished
 
 
 def load_16k_mono(path: str) -> np.ndarray:
@@ -39,6 +39,7 @@ def load_16k_mono(path: str) -> np.ndarray:
     if sr != RATE:
         import torch
         import torchaudio
+
         mono = torchaudio.functional.resample(torch.from_numpy(mono), sr, RATE).numpy()
     return mono
 
@@ -52,7 +53,7 @@ async def stream(ws, samples: np.ndarray, speed: float) -> float:
     last sample was sent (= end of speech, before the tail silence)."""
     step = int(CHUNK_S * RATE)
     for i in range(0, len(samples), step):
-        await ws.send(to_pcm16(samples[i:i + step]))
+        await ws.send(to_pcm16(samples[i : i + step]))
         await asyncio.sleep(CHUNK_S / speed)
     t_end = time.monotonic()
     silence = np.zeros(step, dtype=np.float32)
@@ -69,13 +70,13 @@ async def collect_turn(ws, timeout_s: float) -> dict:
     while time.monotonic() < deadline:
         try:
             msg = await asyncio.wait_for(ws.recv(), timeout=max(0.1, deadline - time.monotonic()))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             break
         if isinstance(msg, bytes):
             if turn["first_audio_at"] is None:
                 turn["first_audio_at"] = time.monotonic()
             turn["audio_bytes"] += len(msg)
-            return turn                    # one reply clip per turn is what we asked for
+            return turn  # one reply clip per turn is what we asked for
         data = json.loads(msg)
         if data.get("type") == "handoff_human":
             turn["handoff"] = data.get("reason")
@@ -92,7 +93,7 @@ async def run(args) -> list[dict]:
     results = []
     async with websockets.connect(f"ws://{args.host}:{args.port}/ws/audio", max_size=None) as ws:
         await ws.send(json.dumps({"type": "hello", "sampleRate": RATE, "format": "pcm_s16le"}))
-        greeting = await collect_turn(ws, 30)          # greeting text + audio
+        greeting = await collect_turn(ws, 30)  # greeting text + audio
         await ws.send(json.dumps({"type": "playback_done"}))
         results.append({"turn": "greeting", **{k: greeting[k] for k in ("ai", "audio_bytes", "handoff")}})
         if greeting["handoff"]:
@@ -110,11 +111,16 @@ async def run(args) -> list[dict]:
             # the reply is spoken back to the caller; tell the server it finished playing
             await ws.send(json.dumps({"type": "playback_done"}))
             latency = (turn["first_audio_at"] - t_end) if turn["first_audio_at"] else None
-            results.append({
-                "turn": path, "heard": turn["user"], "reply": " | ".join(turn["ai"]),
-                "latency_s": round(latency, 2) if latency is not None else None,
-                "reply_audio_bytes": turn["audio_bytes"], "handoff": turn["handoff"],
-            })
+            results.append(
+                {
+                    "turn": path,
+                    "heard": turn["user"],
+                    "reply": " | ".join(turn["ai"]),
+                    "latency_s": round(latency, 2) if latency is not None else None,
+                    "reply_audio_bytes": turn["audio_bytes"],
+                    "handoff": turn["handoff"],
+                }
+            )
             if turn["handoff"]:
                 break
     return results
@@ -131,8 +137,7 @@ def main() -> None:
     args = ap.parse_args()
     out = asyncio.run(run(args))
     for r in out:
-        print(json.dumps(r, ensure_ascii=False) if args.json else
-              "\n".join(f"{k}: {v}" for k, v in r.items()) + "\n")
+        print(json.dumps(r, ensure_ascii=False) if args.json else "\n".join(f"{k}: {v}" for k, v in r.items()) + "\n")
 
 
 if __name__ == "__main__":

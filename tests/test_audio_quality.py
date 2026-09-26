@@ -7,6 +7,7 @@ its thresholds are right for Kolkata handsets. See the module docstring.
 
     python -m pytest tests/test_audio_quality.py -v
 """
+
 import os
 import sys
 
@@ -53,7 +54,7 @@ def whisper(dur=3.0, amp=0.15, seed=2, syll_hz=3.5):
 def add_noise_at_snr(clean, snr_db, seed=3):
     p_sig = float(np.mean(clean[np.abs(clean) > 0.05 * np.max(np.abs(clean))] ** 2))
     n = np.random.default_rng(seed).standard_normal(clean.size).astype(np.float32)
-    n *= np.sqrt(p_sig / (10 ** (snr_db / 10)) / np.mean(n ** 2))
+    n *= np.sqrt(p_sig / (10 ** (snr_db / 10)) / np.mean(n**2))
     return clean + n
 
 
@@ -64,6 +65,7 @@ def corr(a, b):
 
 
 # ---------------------------------------------------------------- assess
+
 
 def test_clean_speech_has_no_issues():
     a = assess(voice(), SR)
@@ -144,6 +146,7 @@ def test_intelligibility_orders_clean_above_noisy_above_faint_noisy():
 
 # --------------------------------------------------------------- enhance
 
+
 def test_enhance_makes_noisy_speech_closer_to_the_clean_signal():
     clean = voice()
     noisy = add_noise_at_snr(clean, 3)
@@ -185,18 +188,22 @@ def test_enhance_of_too_short_audio_is_a_safe_copy():
 
 # ---------------------------------------------------- transcript-side
 
-@pytest.mark.parametrize("text,lang,dur,expected", [
-    ("", "bn", 3.0, "empty"),
-    ("   ", "en", 1.0, "empty"),
-    ("ও", "bn", 4.0, "fragment"),
-    ("hello there how are you", "bn", 2.0, "wrong_script"),
-    ("a b c d e f g", "en", 3.0, "shattered"),
-    ("the the the the the the", "en", 3.0, "repetitive"),
-    ("I want to book an appointment", "en", 3.0, None),
-    ("আমি কালকে ডাক্তার সেনের অ্যাপয়েন্টমেন্ট চাই", "bn", 3.0, None),
-    ("হ্যাঁ", "bn", 1.0, None),
-    ("ok", "en", 1.0, None),
-])
+
+@pytest.mark.parametrize(
+    "text,lang,dur,expected",
+    [
+        ("", "bn", 3.0, "empty"),
+        ("   ", "en", 1.0, "empty"),
+        ("ও", "bn", 4.0, "fragment"),
+        ("hello there how are you", "bn", 2.0, "wrong_script"),
+        ("a b c d e f g", "en", 3.0, "shattered"),
+        ("the the the the the the", "en", 3.0, "repetitive"),
+        ("I want to book an appointment", "en", 3.0, None),
+        ("আমি কালকে ডাক্তার সেনের অ্যাপয়েন্টমেন্ট চাই", "bn", 3.0, None),
+        ("হ্যাঁ", "bn", 1.0, None),
+        ("ok", "en", 1.0, None),
+    ],
+)
 def test_transcript_problem(text, lang, dur, expected):
     assert transcript_problem(text, lang, dur) == expected
 

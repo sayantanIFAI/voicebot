@@ -11,6 +11,7 @@ instead of one call for the whole reply, so the first clause reaches the
 caller's ear as soon as ITS OWN (much shorter) synthesis finishes,
 instead of waiting for the entire reply to render first.
 """
+
 from __future__ import annotations
 
 import re

@@ -8,6 +8,7 @@ last ordering bug.
 
     python -m pytest tests/test_enquiry_migration.py -v
 """
+
 import importlib
 import os
 import sqlite3
@@ -22,8 +23,17 @@ def test_fresh_database_boots_and_seeds_enquiry_facts(tmp_path, monkeypatch):
     path = tmp_path / "fresh.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
     monkeypatch.syspath_prepend(CLINIC_API)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content", "phonetic_match"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+        "phonetic_match",
+    ):
         sys.modules.pop(mod, None)
 
     from fastapi.testclient import TestClient
@@ -45,8 +55,16 @@ def old_db(tmp_path, monkeypatch):
     path = tmp_path / "pre_e27.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
     monkeypatch.syspath_prepend(CLINIC_API)
-    for mod in ("db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content", "main"):
+    for mod in (
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+        "main",
+    ):
         sys.modules.pop(mod, None)
 
     con = sqlite3.connect(path)
@@ -78,8 +96,16 @@ def old_db(tmp_path, monkeypatch):
     con.commit()
     con.close()
     yield path
-    for mod in ("db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content", "main"):
+    for mod in (
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+        "main",
+    ):
         sys.modules.pop(mod, None)
 
 
@@ -89,7 +115,7 @@ def test_old_database_gains_enquiry_columns_without_losing_the_existing_row(old_
     clinic_main = importlib.import_module("main")
     with TestClient(clinic_main.app) as c:
         health = c.get("/api/health").json()
-        assert health["lab_tests"] == 1   # the pre-existing row, not reseeded
+        assert health["lab_tests"] == 1  # the pre-existing row, not reseeded
 
         prep = c.get("/api/v1/tests/prep", params={"name": "Lipid Profile", "lang": "en"}).json()
         assert prep["found"]

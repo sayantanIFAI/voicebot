@@ -13,6 +13,7 @@ mocked.
 
     python -m pytest tests/test_tts_cache.py -v
 """
+
 import os
 import sys
 from unittest.mock import AsyncMock
@@ -59,10 +60,11 @@ async def test_prewarm_warms_exactly_the_clauses_speak_will_ask_for(client):
     await client.prewarm({"en": [greeting]})
     posts_after_warmup = client._client.post.call_count
 
-    for clause in clauses:                       # what main.py's _speak does
+    for clause in clauses:  # what main.py's _speak does
         await client.synthesize(clause, "en")
-    assert client._client.post.call_count == posts_after_warmup, \
+    assert client._client.post.call_count == posts_after_warmup, (
         "every clause of the warmed greeting must be a cache hit"
+    )
 
 
 @pytest.mark.asyncio
@@ -87,10 +89,12 @@ async def test_a_cache_hit_makes_no_synthesis_call(client):
 
 @pytest.mark.asyncio
 async def test_the_greeting_of_every_language_is_warmed_before_any_second_line(client):
-    await client.prewarm({
-        "en": ["English greeting.", "English second."],
-        "hi": ["नमस्ते।", "दूसरा।"],
-    })
+    await client.prewarm(
+        {
+            "en": ["English greeting.", "English second."],
+            "hi": ["नमस्ते।", "दूसरा।"],
+        }
+    )
     langs_in_order = [call.kwargs["json"]["lang"] for call in client._client.post.call_args_list]
     assert langs_in_order == ["en", "hi", "en", "hi"]
     assert _posted_texts(client)[0] == "English greeting."
@@ -105,8 +109,8 @@ async def test_a_language_that_fails_to_warm_does_not_block_the_others(client):
 
     client._client.post = AsyncMock(side_effect=post)
     await client.prewarm({"hi": ["नमस्ते।"], "en": ["Hello there."]})
-    assert client.snapshot()["cached_clips"] == 1          # English still warmed
-    assert client._client.post.call_count == 2             # hi tried once, then skipped
+    assert client.snapshot()["cached_clips"] == 1  # English still warmed
+    assert client._client.post.call_count == 2  # hi tried once, then skipped
 
 
 @pytest.mark.asyncio
@@ -116,16 +120,16 @@ async def test_warmup_misses_do_not_pollute_the_exported_hit_rate(client):
     assert snap["hits"] == 0 and snap["misses"] == 0 and snap["hit_rate"] == 0.0
     assert snap["prewarmed_clips"] == 2
 
-    await client.synthesize("First line.", "en")            # first real request is a hit
+    await client.synthesize("First line.", "en")  # first real request is a hit
     assert client.snapshot()["hit_rate"] == 1.0
 
 
 @pytest.mark.asyncio
 async def test_hit_rate_is_exported_per_the_story(client):
-    await client.synthesize("Alpha.", "en")                 # miss
-    await client.synthesize("Alpha.", "en")                 # hit
-    await client.synthesize("Beta.", "en")                  # miss
-    await client.synthesize("Alpha.", "en")                 # hit
+    await client.synthesize("Alpha.", "en")  # miss
+    await client.synthesize("Alpha.", "en")  # hit
+    await client.synthesize("Beta.", "en")  # miss
+    await client.synthesize("Alpha.", "en")  # hit
     snap = client.snapshot()
     assert (snap["hits"], snap["misses"]) == (2, 2)
     assert snap["hit_rate"] == 0.5
@@ -137,18 +141,18 @@ async def test_the_cache_is_bounded_and_evicts_least_recently_used(client, monke
     monkeypatch.setattr(tts_module, "AUDIO_CACHE_MAX", 3)
     for word in ("One.", "Two.", "Three."):
         await client.synthesize(word, "en")
-    await client.synthesize("One.", "en")                   # touch: One is now most recent
-    await client.synthesize("Four.", "en")                  # evicts Two, the least recently used
-    await client.synthesize("Five.", "en")                  # evicts Three
+    await client.synthesize("One.", "en")  # touch: One is now most recent
+    await client.synthesize("Four.", "en")  # evicts Two, the least recently used
+    await client.synthesize("Five.", "en")  # evicts Three
 
     snap = client.snapshot()
     assert snap["cached_clips"] == 3
     assert snap["evictions"] == 2
 
     calls_before = client._client.post.call_count
-    await client.synthesize("One.", "en")                   # survived
+    await client.synthesize("One.", "en")  # survived
     assert client._client.post.call_count == calls_before
-    await client.synthesize("Two.", "en")                   # was evicted -> re-synthesized
+    await client.synthesize("Two.", "en")  # was evicted -> re-synthesized
     assert client._client.post.call_count == calls_before + 1
 
 
@@ -162,10 +166,12 @@ async def test_the_same_text_in_another_language_or_speed_is_a_different_clip(cl
 
 # ------------------------------------------------ KCD-162 per-request tuning
 
+
 @pytest.mark.asyncio
 async def test_prosody_overrides_are_forwarded_to_the_tts_server(client):
-    await client.synthesize("Hello there.", "en",
-                            prosody={"pause_sentence_s": 0.5, "target_peak": 0.7, "trim_threshold": None})
+    await client.synthesize(
+        "Hello there.", "en", prosody={"pause_sentence_s": 0.5, "target_peak": 0.7, "trim_threshold": None}
+    )
     payload = client._client.post.call_args.kwargs["json"]
     assert payload["pause_sentence_s"] == 0.5 and payload["target_peak"] == 0.7
     assert "trim_threshold" not in payload, "an unset override must not be sent"

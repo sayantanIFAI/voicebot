@@ -25,11 +25,12 @@ external to this module and to this repository; it plugs in by calling verify().
 
 Pure Python, no I/O, clock injected -- testable off-pod.
 """
+
 from __future__ import annotations
 
 import dataclasses
 import time
-from typing import Callable
+from collections.abc import Callable
 
 NONE = "none"
 CLAIMED = "claimed"
@@ -44,9 +45,9 @@ VERIFICATION_TTL_S = 15 * 60
 class IdentityState:
     clock: Callable[[], float] = time.time
     level: str = NONE
-    method: str | None = None             # "otp" | "dob_confirmed" | ... (whatever verify() was told)
-    patient_ref: str | None = None        # an opaque reference, never a phone number or a name
-    phone: str | None = None              # the registered number the record was found by; never logged
+    method: str | None = None  # "otp" | "dob_confirmed" | ... (whatever verify() was told)
+    patient_ref: str | None = None  # an opaque reference, never a phone number or a name
+    phone: str | None = None  # the registered number the record was found by; never logged
     verified_at: float | None = None
     revocations: list[str] = dataclasses.field(default_factory=list)
     ttl_s: float = VERIFICATION_TTL_S

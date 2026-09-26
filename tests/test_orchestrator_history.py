@@ -8,6 +8,7 @@ provenance id, and that the call's record is written.
 
     python -m pytest tests/test_orchestrator_history.py -v
 """
+
 import io
 import json
 import os
@@ -24,11 +25,12 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 from _pod_stubs import pod_stubs
 from _synth_voices import FATHER, utterance
+
 from agent import history_templates as ht
 from agent.tools_client import ToolCallError
 
 SR = 16000
-TODAY = None      # the real clock: the fake timeline is dated relative to it
+TODAY = None  # the real clock: the fake timeline is dated relative to it
 
 
 class FakeWS:
@@ -73,7 +75,7 @@ class ASRResult:
 
 
 class FakeCatalogue:
-    def match(self, text, kind, lang="bn", floor=0.0):   # follows agent.fast_path.Catalogue.match (KCD-095)
+    def match(self, text, kind, lang="bn", floor=0.0):  # follows agent.fast_path.Catalogue.match (KCD-095)
         t = (text or "").lower()
         if "cbc" in t:
             return "CBC", "cbc", 1.0
@@ -89,12 +91,19 @@ class FakeTools:
 
     def __init__(self):
         import datetime
+
         self.calls, self.events = [], []
         self.mode = "single"
-        self.timeline_events = [{
-            "id": "test_performed:11", "kind": "test_performed",
-            "fields": {"test_name": "CBC", "performed_on": (datetime.date.today() - datetime.timedelta(days=40)).isoformat()},
-        }]
+        self.timeline_events = [
+            {
+                "id": "test_performed:11",
+                "kind": "test_performed",
+                "fields": {
+                    "test_name": "CBC",
+                    "performed_on": (datetime.date.today() - datetime.timedelta(days=40)).isoformat(),
+                },
+            }
+        ]
         self.as_of = datetime.datetime.now().isoformat()
         self.fail_timeline = False
 
@@ -189,6 +198,7 @@ def env(m, monkeypatch, tmp_path):
         state["slots"] = slots
         session.turn_epoch = session.speak_epoch
         await m._dispatch_turn(session, _wav(tmp_path, voice, f"u{len(session.ws.texts)}.wav"))
+
     d.turn = turn
     yield d
     session.cleanup()
@@ -206,12 +216,13 @@ def _no_personal_data(said: list[str]) -> bool:
 
 # ============================================================ KCD-494 / 495: the gate
 
+
 @pytest.mark.asyncio
 async def test_a_history_question_first_asks_for_the_registered_number(m, env):
     await env.turn()
     assert env.session.ws.spoken() == [ht.ASK_PHONE["en"]]
     assert env.session.history_state == "need_phone"
-    assert env.tools.calls == []                                          # nothing looked up yet
+    assert env.tools.calls == []  # nothing looked up yet
 
 
 @pytest.mark.asyncio
@@ -220,7 +231,7 @@ async def test_an_unverified_caller_is_told_nothing_from_the_record_and_offered_
     await env.turn(text="nine eight seven six five four three two one zero", phone="9876543210")
     said = env.session.ws.spoken()
     assert said[-1] == ht.NEEDS_VERIFICATION["en"]
-    assert ("timeline", 7) not in env.tools.calls                         # the record was never even fetched
+    assert ("timeline", 7) not in env.tools.calls  # the record was never even fetched
     assert _no_personal_data(said[1:]) and "CBC" not in " ".join(said[1:])
     assert env.session.awaiting_handoff_offer
 
@@ -252,6 +263,7 @@ async def test_a_number_with_no_record_says_so_and_nothing_more(m, env):
 
 
 # ============================================================ verified: answered from fields
+
 
 @pytest.mark.asyncio
 async def test_a_verified_caller_gets_the_last_test_date_from_the_timeline_and_no_result(m, env):
@@ -290,6 +302,7 @@ async def test_a_lookup_failure_is_a_failure_not_a_guess(m, env):
 
 
 # ============================================================ KCD-494: a shared number
+
 
 @pytest.mark.asyncio
 async def test_a_shared_number_is_settled_by_an_open_question_that_lists_no_names(m, env):
@@ -342,11 +355,17 @@ async def test_an_unclear_number_twice_goes_to_a_person(m, env):
 
 # ============================================================ KCD-500: model text cannot claim history
 
+
 @pytest.mark.asyncio
 async def test_smalltalk_that_claims_the_callers_past_is_replaced(m, env, monkeypatch):
     async def resolve(session, text, lang):
-        return {"intent": "smalltalk", "slots": {}, "secondary_intent": None,
-                "direct_reply_bn": "Good to hear from you again. You had a blood test last month."}
+        return {
+            "intent": "smalltalk",
+            "slots": {},
+            "secondary_intent": None,
+            "direct_reply_bn": "Good to hear from you again. You had a blood test last month.",
+        }
+
     monkeypatch.setattr(m, "_resolve_intent", resolve)
     await env.turn(text="hello there")
     said = env.session.ws.spoken()
@@ -354,6 +373,7 @@ async def test_smalltalk_that_claims_the_callers_past_is_replaced(m, env, monkey
 
 
 # ============================================================ KCD-501: the call record
+
 
 @pytest.mark.asyncio
 async def test_history_statements_are_recorded_with_their_provenance_ids(m, env):
@@ -373,8 +393,9 @@ async def test_history_statements_are_recorded_with_their_provenance_ids(m, env)
 async def test_a_recorder_that_cannot_write_never_slows_or_breaks_a_turn(m, env, monkeypatch):
     async def down(*a, **k):
         raise ToolCallError("clinic down")
+
     monkeypatch.setattr(m, "_tools", type("T", (FakeTools,), {"write_call_event": down})())
     env.session.recorder = m.CallRecorder("c2", m._write_call_event)
     await env.turn()
-    assert env.session.ws.spoken() == [ht.ASK_PHONE["en"]]                # the caller heard the reply regardless
+    assert env.session.ws.spoken() == [ht.ASK_PHONE["en"]]  # the caller heard the reply regardless
     assert env.session.recorder.pending >= 1

@@ -20,6 +20,7 @@ rate, shortest sentences, fewest questions, the strongest confirmation,
 the lowest escalation threshold. Emergency overrides everything and stops
 the normal flow.
 """
+
 from __future__ import annotations
 
 import re
@@ -44,20 +45,20 @@ _CONFIRMATION_ORDER = (
     "explicit_repeat_back",
 )
 _LEVEL_ORDER = ("normal", "high", "very_high")
-_ESCALATION_ORDER = ("normal", "lowered", "low")   # "low" threshold = escalate soonest
+_ESCALATION_ORDER = ("normal", "lowered", "low")  # "low" threshold = escalate soonest
 
 
 @dataclass(frozen=True)
 class SpeechPolicy:
     speech_rate: float = 1.0
-    sentence_length: str = "default"          # default | short | very_short
-    questions_per_turn: int = 2               # Appendix C: "up to 2" for normal
+    sentence_length: str = "default"  # default | short | very_short
+    questions_per_turn: int = 2  # Appendix C: "up to 2" for normal
     confirmation: str = "implicit"
-    interruption_tolerance: str = "normal"    # normal | high | very_high
-    escalation_threshold: str = "normal"      # normal | lowered | low
-    acknowledge_first: bool = False           # acknowledge the feeling before anything else
+    interruption_tolerance: str = "normal"  # normal | high | very_high
+    escalation_threshold: str = "normal"  # normal | lowered | low
+    acknowledge_first: bool = False  # acknowledge the feeling before anything else
     offer_human: bool = False
-    emergency: bool = False                   # stop the normal flow entirely
+    emergency: bool = False  # stop the normal flow entirely
 
     @property
     def max_sentence_words(self) -> int | None:
@@ -87,23 +88,41 @@ class SpeechPolicy:
 _ROWS: dict[str, SpeechPolicy] = {
     "normal": SpeechPolicy(),
     "senior": SpeechPolicy(
-        speech_rate=_RATE["slow"], sentence_length="short", questions_per_turn=1,
-        confirmation="explicit_high_frequency", interruption_tolerance="high",
-        escalation_threshold="lowered"),
+        speech_rate=_RATE["slow"],
+        sentence_length="short",
+        questions_per_turn=1,
+        confirmation="explicit_high_frequency",
+        interruption_tolerance="high",
+        escalation_threshold="lowered",
+    ),
     "distressed": SpeechPolicy(
-        speech_rate=_RATE["slow"], sentence_length="short", questions_per_turn=1,
-        confirmation="explicit_acknowledge", interruption_tolerance="very_high",
-        escalation_threshold="low", acknowledge_first=True),
+        speech_rate=_RATE["slow"],
+        sentence_length="short",
+        questions_per_turn=1,
+        confirmation="explicit_acknowledge",
+        interruption_tolerance="very_high",
+        escalation_threshold="low",
+        acknowledge_first=True,
+    ),
     "angry": SpeechPolicy(
-        speech_rate=_RATE["slow-normal"], sentence_length="short", questions_per_turn=1,
-        confirmation="explicit_offer_human", interruption_tolerance="high",
-        escalation_threshold="low", acknowledge_first=True, offer_human=True),
+        speech_rate=_RATE["slow-normal"],
+        sentence_length="short",
+        questions_per_turn=1,
+        confirmation="explicit_offer_human",
+        interruption_tolerance="high",
+        escalation_threshold="low",
+        acknowledge_first=True,
+        offer_human=True,
+    ),
     "confused": SpeechPolicy(
-        speech_rate=_RATE["slow"], sentence_length="very_short", questions_per_turn=1,
-        confirmation="explicit_repeat_back", interruption_tolerance="high",
-        escalation_threshold="lowered"),
-    "emergency": SpeechPolicy(emergency=True, questions_per_turn=0, acknowledge_first=True,
-                              escalation_threshold="low"),
+        speech_rate=_RATE["slow"],
+        sentence_length="very_short",
+        questions_per_turn=1,
+        confirmation="explicit_repeat_back",
+        interruption_tolerance="high",
+        escalation_threshold="lowered",
+    ),
+    "emergency": SpeechPolicy(emergency=True, questions_per_turn=0, acknowledge_first=True, escalation_threshold="low"),
 }
 
 _SENTENCE_RANK = ("default", "short", "very_short")

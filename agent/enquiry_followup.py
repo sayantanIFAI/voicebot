@@ -17,6 +17,7 @@ short substring that misfired in classify_yes_no's own "cancel" bug
 (agent/booking_flow.py), so this module accepts a narrower recall for a
 much lower false-positive rate.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -39,12 +40,9 @@ PRIMARY_SLOT = {
 ENQUIRY_INTENTS = frozenset(PRIMARY_SLOT) | {"department_query"}
 
 _PRONOUN_MARKERS: dict[str, tuple[str, ...]] = {
-    "bn": ("ওটা", "ওটার", "সেটা", "সেটার", "এটার", "তার জন্য", "সেটার জন্য",
-           "ওটার জন্য", "এর জন্য", "একই টেস্ট", "একই জিনিস"),
-    "hi": ("उसका", "उसकी", "उसके", "उसके लिए", "इसका", "इसकी", "इसके लिए",
-           "वही टेस्ट", "वही चीज़", "उसी के लिए"),
-    "en": ("it", "that one", "the same test", "the same one", "for that",
-           "about that", "its ", " its"),
+    "bn": ("ওটা", "ওটার", "সেটা", "সেটার", "এটার", "তার জন্য", "সেটার জন্য", "ওটার জন্য", "এর জন্য", "একই টেস্ট", "একই জিনিস"),
+    "hi": ("उसका", "उसकी", "उसके", "उसके लिए", "इसका", "इसकी", "इसके लिए", "वही टेस्ट", "वही चीज़", "उसी के लिए"),
+    "en": ("it", "that one", "the same test", "the same one", "for that", "about that", "its ", " its"),
 }
 
 
@@ -57,20 +55,86 @@ FOLLOWUP_MAX_GAP = 3
 # Bengali attaches to them, and the ASR's spellings of them (the recogniser wrote "same" as "সমে"). A slot value made of
 # nothing but these (plus the words for "test" / "doctor") is a reference, not a name -- it must never be sent to the
 # clinic lookup as if it were one ("'সমে টেস্ট' নামে কোনো টেস্ট নেই", heard on the live pod).
-_POINTER_WORDS = frozenset({
-    # Bengali
-    "এই", "ওই", "ঐ", "সেই", "এটা", "ওটা", "সেটা", "এটি", "ওটি", "সেটি", "এটার", "ওটার", "সেটার", "এইটা", "এইটার",
-    "ওইটা", "একই", "সেম", "সমে", "সেমে", "সেইম", "টা", "টি", "টাই", "টাও", "ই", "ওই", "তো",
-    # Hindi
-    "यह", "वह", "यही", "वही", "इस", "उस", "इसी", "उसी", "ये", "वो", "सेम", "समे", "ही",
-    # English
-    "same", "this", "that", "the", "one", "it", "ones", "these", "those", "such",
-})
-_NOUN_WORDS = frozenset({
-    "টেস্ট", "টেস্টের", "টেস্টটা", "টেস্টটি", "টেস্টগুলো", "ডাক্তার", "ডাক্তারের", "ডাঃ", "ডক্টর",
-    "टेस्ट", "जांच", "जाँच", "डॉक्टर", "डॉ",
-    "test", "tests", "doctor", "dr", "doc",
-})
+_POINTER_WORDS = frozenset(
+    {
+        # Bengali
+        "এই",
+        "ওই",
+        "ঐ",
+        "সেই",
+        "এটা",
+        "ওটা",
+        "সেটা",
+        "এটি",
+        "ওটি",
+        "সেটি",
+        "এটার",
+        "ওটার",
+        "সেটার",
+        "এইটা",
+        "এইটার",
+        "ওইটা",
+        "একই",
+        "সেম",
+        "সমে",
+        "সেমে",
+        "সেইম",
+        "টা",
+        "টি",
+        "টাই",
+        "টাও",
+        "ই",
+        "তো",
+        # Hindi
+        "यह",
+        "वह",
+        "यही",
+        "वही",
+        "इस",
+        "उस",
+        "इसी",
+        "उसी",
+        "ये",
+        "वो",
+        "सेम",
+        "समे",
+        "ही",
+        # English
+        "same",
+        "this",
+        "that",
+        "the",
+        "one",
+        "it",
+        "ones",
+        "these",
+        "those",
+        "such",
+    }
+)
+_NOUN_WORDS = frozenset(
+    {
+        "টেস্ট",
+        "টেস্টের",
+        "টেস্টটা",
+        "টেস্টটি",
+        "টেস্টগুলো",
+        "ডাক্তার",
+        "ডাক্তারের",
+        "ডাঃ",
+        "ডক্টর",
+        "टेस्ट",
+        "जांच",
+        "जाँच",
+        "डॉक्टर",
+        "डॉ",
+        "test",
+        "tests",
+        "doctor",
+        "dr",
+        "doc",
+    }
+)
 
 
 def recent_unique(last_entities: list, kind: str, turns_since_last: int | None) -> str | None:
@@ -97,13 +161,18 @@ def has_pronoun_reference(text: str, lang: str) -> bool:
 
 @dataclass(frozen=True)
 class EnquiryEntity:
-    kind: str    # one of PRIMARY_SLOT's values: "test_name" | "doctor_name" | "faq_topic"
+    kind: str  # one of PRIMARY_SLOT's values: "test_name" | "doctor_name" | "faq_topic"
     value: str
 
 
-def resolve_followup_slot(intent: str, slots: dict, text: str, lang: str,
-                          last_entities: list[EnquiryEntity],
-                          turns_since_last: int | None = None) -> tuple[dict, bool]:
+def resolve_followup_slot(
+    intent: str,
+    slots: dict,
+    text: str,
+    lang: str,
+    last_entities: list[EnquiryEntity],
+    turns_since_last: int | None = None,
+) -> tuple[dict, bool]:
     """If `intent`'s primary slot is empty, the caller's turn reads as a
     pronoun/elliptical follow-up, and exactly ONE remembered entity of
     the right kind exists, fill the slot from it. Returns (slots,
@@ -118,9 +187,9 @@ def resolve_followup_slot(intent: str, slots: dict, text: str, lang: str,
     if needed_kind is None:
         return slots, False
     value = slots.get(needed_kind)
-    pointed = bool(value) and is_reference_only(value, lang)          # "the same test": a reference, not a name
+    pointed = bool(value) and is_reference_only(value, lang)  # "the same test": a reference, not a name
     if value and not pointed:
-        return slots, False                                           # the caller named something: use it
+        return slots, False  # the caller named something: use it
     if not last_entities:
         return slots, False
     # When is an empty (or pointing-only) slot filled from what we were just talking about?
@@ -129,8 +198,11 @@ def resolve_followup_slot(intent: str, slots: dict, text: str, lang: str,
     #     ("do I need to fast?" straight after a price for one test). Only for tests and doctors: a FAQ question with
     #     no topic is not a follow-up, it is a question we did not understand. The reply always NAMES what it answers
     #     about, so a wrong assumption is heard and can be corrected.
-    recent = (needed_kind in ("test_name", "doctor_name") and turns_since_last is not None
-              and turns_since_last <= FOLLOWUP_MAX_GAP)
+    recent = (
+        needed_kind in ("test_name", "doctor_name")
+        and turns_since_last is not None
+        and turns_since_last <= FOLLOWUP_MAX_GAP
+    )
     if not (pointed or has_pronoun_reference(text, lang) or recent):
         return slots, False
 

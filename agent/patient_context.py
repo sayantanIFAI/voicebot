@@ -21,6 +21,7 @@ The read model is clinic-api/patient_context.py. This module is the POLICY in fr
 
 Pure Python over already-fetched dicts: no I/O, clock passed in, testable off-pod.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -37,15 +38,17 @@ MAX_APPOINTMENTS_SPOKEN = 3
 
 # ================================================================ KCD-495: the gate
 
+
 @dataclasses.dataclass
 class GateDecision:
     allowed: bool
     reason: str
-    statement: tuple[str, str] | None = None     # what to say if not allowed
+    statement: tuple[str, str] | None = None  # what to say if not allowed
 
 
-def history_gate(identity: IdentityState, patient_ref: str | int | None, lang: str,
-                 record_exists: bool | None = None) -> GateDecision:
+def history_gate(
+    identity: IdentityState, patient_ref: str | int | None, lang: str, record_exists: bool | None = None
+) -> GateDecision:
     """May anything personal about `patient_ref` be spoken? Only after a verification for
     THAT patient. Before it, the one thing that may be said is that a record exists (or
     does not), and only when the caller has already given the number it is on."""
@@ -92,8 +95,9 @@ CONTINUITY_GENERIC = {
 }
 
 
-def continuity_offer(context: dict, identity: IdentityState, patient_ref, lang: str,
-                     draft_text: str | None = None) -> tuple[str, str] | None:
+def continuity_offer(
+    context: dict, identity: IdentityState, patient_ref, lang: str, draft_text: str | None = None
+) -> tuple[str, str] | None:
     """(id, text) for what the agent believes was unfinished, or None. It STATES the belief
     and lets the caller correct it -- never assumes it. Before verification the offer is
     generic (that something was left, not what); the specifics (`draft_text`, rendered by the
@@ -106,6 +110,7 @@ def continuity_offer(context: dict, identity: IdentityState, patient_ref, lang: 
 
 
 # ============================================================ KCD-499: preferences
+
 
 def effective_language(spoken: str | None, bias: str | None, default: str = "bn") -> str:
     """The language for this turn. What the caller ACTUALLY SAID always wins; a stored
@@ -126,7 +131,7 @@ _PREF_LABEL = {
 @dataclasses.dataclass
 class PreferenceOffer:
     text: str
-    fields: dict                     # what WOULD be applied if the caller says yes
+    fields: dict  # what WOULD be applied if the caller says yes
 
     def apply(self, slots: dict, confirmed: bool) -> dict:
         """Slots with the preferences merged in -- only when the caller confirmed."""
@@ -157,9 +162,10 @@ def preference_offer(prefs: dict, identity: IdentityState, patient_ref, lang: st
 
 # ====================================================== KCD-498/500: answering from fields
 
+
 @dataclasses.dataclass
 class HistoryAnswer:
-    statements: list[tuple[str, str]]              # (provenance id, text)
+    statements: list[tuple[str, str]]  # (provenance id, text)
 
     @property
     def text(self) -> str:
@@ -181,9 +187,16 @@ def _is_stale(as_of: str | None, now: datetime.datetime) -> bool:
 
 def _matching_tests(events: list[dict], spoken: str) -> list[dict]:
     spoken_l = (spoken or "").strip().lower()
-    return [e for e in events if e["kind"] == "test_performed"
-            and spoken_l and (spoken_l == (e["fields"].get("test_name") or "").lower()
-                              or spoken_l in (e["fields"].get("test_name") or "").lower())]
+    return [
+        e
+        for e in events
+        if e["kind"] == "test_performed"
+        and spoken_l
+        and (
+            spoken_l == (e["fields"].get("test_name") or "").lower()
+            or spoken_l in (e["fields"].get("test_name") or "").lower()
+        )
+    ]
 
 
 def answer_appointments(timeline: dict | None, lang: str, now: datetime.datetime) -> HistoryAnswer:
@@ -192,16 +205,22 @@ def answer_appointments(timeline: dict | None, lang: str, now: datetime.datetime
     if _is_stale(timeline.get("as_of"), now):
         return HistoryAnswer([ht.cannot_confirm(lang)])
     today = now.date().isoformat()
-    upcoming = sorted((e for e in timeline["events"] if e["kind"] == "appointment"
-                       and e["fields"].get("status") == "confirmed" and e["fields"]["date"] >= today),
-                      key=lambda e: (e["fields"]["date"], e["fields"].get("time_slot") or ""))
+    upcoming = sorted(
+        (
+            e
+            for e in timeline["events"]
+            if e["kind"] == "appointment" and e["fields"].get("status") == "confirmed" and e["fields"]["date"] >= today
+        ),
+        key=lambda e: (e["fields"]["date"], e["fields"].get("time_slot") or ""),
+    )
     if not upcoming:
         return HistoryAnswer([ht.cannot_see(lang)])
     return HistoryAnswer([ht.appointment_statement(e, lang, today) for e in upcoming[:MAX_APPOINTMENTS_SPOKEN]])
 
 
-def answer_last_test(timeline: dict | None, test_name: str, status: dict | None, lang: str,
-                     now: datetime.datetime) -> HistoryAnswer:
+def answer_last_test(
+    timeline: dict | None, test_name: str, status: dict | None, lang: str, now: datetime.datetime
+) -> HistoryAnswer:
     """When was this test last done, and is it due. Never what it showed."""
     if not timeline or not timeline.get("success"):
         return HistoryAnswer([ht.cannot_see(lang)])
@@ -211,7 +230,7 @@ def answer_last_test(timeline: dict | None, test_name: str, status: dict | None,
     if not hits:
         return HistoryAnswer([ht.cannot_see(lang)])
     if len({(e["fields"].get("test_name") or "").lower() for e in hits}) > 1:
-        return HistoryAnswer([ht.ambiguous(lang)])                # "lipid" fits two tests: ask, never pick
+        return HistoryAnswer([ht.ambiguous(lang)])  # "lipid" fits two tests: ask, never pick
     latest = max(hits, key=lambda e: e["fields"]["performed_on"])
     out = [ht.test_performed_statement(latest, lang)]
     due = ht.due_statement(status or {}, lang) if status and status.get("known") else None

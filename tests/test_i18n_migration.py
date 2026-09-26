@@ -5,6 +5,7 @@ first, and SQLAlchemy selects every mapped column, so the pod's existing
 clinic.db raised "no such column: lab_tests.aliases_hi" and the service never
 came up. Uses the old schema built by raw SQL, not the current models, so the
 test cannot pass by accident."""
+
 import importlib
 import os
 import sys
@@ -19,9 +20,19 @@ def old_db(tmp_path, monkeypatch):
     path = tmp_path / "old.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
     monkeypatch.syspath_prepend(CLINIC_API)
-    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate", "enquiry_migrate", "main"):
+    for mod in (
+        "db",
+        "models",
+        "seed",
+        "i18n_content",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "main",
+    ):
         sys.modules.pop(mod, None)
     import sqlite3
+
     con = sqlite3.connect(path)
     con.executescript("""
         CREATE TABLE departments (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL UNIQUE);
@@ -42,7 +53,16 @@ def old_db(tmp_path, monkeypatch):
     con.commit()
     con.close()
     yield path
-    for mod in ("db", "models", "seed", "i18n_content", "booking_service", "booking_migrate", "enquiry_migrate", "main"):
+    for mod in (
+        "db",
+        "models",
+        "seed",
+        "i18n_content",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "main",
+    ):
         sys.modules.pop(mod, None)
 
 
@@ -52,11 +72,18 @@ def test_old_database_gains_columns_and_translations_without_losing_rows(old_db)
     db_mod = importlib.import_module("db")
 
     added = seed.add_i18n_columns()
-    assert set(added) == {"doctors.aliases_hi", "lab_tests.aliases_hi", "lab_tests.prep_instructions_hi",
-                          "lab_tests.prep_instructions_en", "faqs.answer_hi", "faqs.answer_en",
-                          # DELIBERATE SPEC CHANGE (KCD-095): the FAQ keyword phrases in Hindi and English, so the
-                          # fast path serves those callers. An old database must gain them; nothing else changed.
-                          "faqs.keywords_hi", "faqs.keywords_en"}
+    assert set(added) == {
+        "doctors.aliases_hi",
+        "lab_tests.aliases_hi",
+        "lab_tests.prep_instructions_hi",
+        "lab_tests.prep_instructions_en",
+        "faqs.answer_hi",
+        "faqs.answer_en",
+        # DELIBERATE SPEC CHANGE (KCD-095): the FAQ keyword phrases in Hindi and English, so the
+        # fast path serves those callers. An old database must gain them; nothing else changed.
+        "faqs.keywords_hi",
+        "faqs.keywords_en",
+    }
 
     # Epic E26 and Epic E27 each added their own mapped columns (see
     # clinic-api/booking_migrate.py and clinic-api/enquiry_migrate.py).
@@ -76,12 +103,12 @@ def test_old_database_gains_columns_and_translations_without_losing_rows(old_db)
 
     db = db_mod.SessionLocal()
     try:
-        assert db.query(models.LabTest).count() == 2      # the query that used to crash at boot
+        assert db.query(models.LabTest).count() == 2  # the query that used to crash at boot
         result = seed.backfill_i18n(db)
-        assert result["columns_added"] == []               # already added; idempotent
+        assert result["columns_added"] == []  # already added; idempotent
         uric = db.query(models.LabTest).filter_by(name="Uric Acid").one()
         assert uric.aliases_hi == "यूरिक एसिड"
-        assert uric.prep_instructions_bn == "বাংলা"        # existing Bengali untouched
+        assert uric.prep_instructions_bn == "বাংলা"  # existing Bengali untouched
         assert "No special preparation" in uric.prep_instructions_en
         sugar = db.query(models.LabTest).filter_by(name="Blood Sugar Fasting").one()
         assert "आठ घंटे" in sugar.prep_instructions_hi
@@ -106,7 +133,7 @@ def test_the_real_app_startup_boots_an_old_database_end_to_end(old_db):
     fixture, so a future reordering mistake fails here first."""
     from fastapi.testclient import TestClient
 
-    sys.modules.pop("main", None)   # the repo-root voice orchestrator, not clinic-api's -- must not shadow it
+    sys.modules.pop("main", None)  # the repo-root voice orchestrator, not clinic-api's -- must not shadow it
     clinic_main = importlib.import_module("main")
 
     with TestClient(clinic_main.app) as c:

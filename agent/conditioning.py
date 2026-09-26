@@ -30,26 +30,27 @@ MEASUREMENT (bench())
 All thresholds are REASONED and validated on SYNTHETIC speech and noise
 (tests/test_conditioning.py); recalibrate on real narrowband recordings.
 """
+
 from __future__ import annotations
 
 import dataclasses
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
 from agent.audio_quality import VOICED_HARMONICITY, _autocorr, _db, _frames, _pitch_lag, _refine_lag, assess, enhance
 from agent.level import LevelReport, normalise
 
-NOISY_BELOW_DB = 18.0            # apply suppression only under this frame-energy SNR (REASONED)
-MIN_RETENTION = 0.90             # share of the original's voiced frames still voiced (REASONED)
-MAX_F0_ERROR = 0.03              # median relative pitch error allowed (REASONED)
-F0_MATCH = 0.05                  # a pitch counts as the same within 5%
+NOISY_BELOW_DB = 18.0  # apply suppression only under this frame-energy SNR (REASONED)
+MIN_RETENTION = 0.90  # share of the original's voiced frames still voiced (REASONED)
+MAX_F0_ERROR = 0.03  # median relative pitch error allowed (REASONED)
+F0_MATCH = 0.05  # a pitch counts as the same within 5%
 
 
 @dataclasses.dataclass
 class ConditioningReport:
     suppressed: bool
-    reason: str                  # why suppression was or was not applied
+    reason: str  # why suppression was or was not applied
     snr_before_db: float
     voiced_retention: float | None
     f0_error: float | None
@@ -63,7 +64,7 @@ def _voiced_f0(x: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
     mask, f0 = np.zeros(n, bool), np.zeros(n)
     if n < 5:
         return mask, f0
-    e = _db(np.mean(frames ** 2, axis=1))
+    e = _db(np.mean(frames**2, axis=1))
     floor, top = float(np.percentile(e, 10)), float(np.percentile(e, 90))
     active = np.where(e >= max(floor + 0.35 * (top - floor), top - 25.0))[0]
     if active.size == 0:
@@ -97,7 +98,7 @@ def snr_vs_clean_db(clean: np.ndarray, test: np.ndarray) -> float:
     c, o = clean[:n].astype(np.float64), test[:n].astype(np.float64)
     g = float(np.dot(o, c) / max(np.dot(c, c), 1e-12))
     err = o - g * c
-    return float(10 * np.log10((np.sum((g * c) ** 2) + 1e-12) / (np.sum(err ** 2) + 1e-12)))
+    return float(10 * np.log10((np.sum((g * c) ** 2) + 1e-12) / (np.sum(err**2) + 1e-12)))
 
 
 def preservation(before: np.ndarray, after: np.ndarray, sr: int = 16000) -> tuple[float, float]:
@@ -127,7 +128,7 @@ def condition(x: np.ndarray, sr: int = 16000, suppress: str = "auto", normalise_
         if suppress == "auto" and a.snr_db >= NOISY_BELOW_DB:
             reason = "clean_enough"
         else:
-            cand = enhance(x, sr, target_rms_dbfs=-200.0)         # suppression only; level is handled below
+            cand = enhance(x, sr, target_rms_dbfs=-200.0)  # suppression only; level is handled below
             retention, f0err = preservation(x, cand, sr)
             if retention >= MIN_RETENTION and f0err <= MAX_F0_ERROR:
                 y, suppressed, reason = cand, True, "applied"
@@ -140,6 +141,7 @@ def condition(x: np.ndarray, sr: int = 16000, suppress: str = "auto", normalise_
 
 
 # ------------------------------------------------------------------- bench
+
 
 @dataclasses.dataclass
 class BucketRow:
@@ -162,13 +164,18 @@ class BucketRow:
 
 def mix_at_snr(clean: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:
     active = clean[np.abs(clean) > 0.05 * np.max(np.abs(clean))]
-    ps, pn = float(np.mean(active ** 2)), float(np.mean(noise ** 2)) + 1e-12
+    ps, pn = float(np.mean(active**2)), float(np.mean(noise**2)) + 1e-12
     return (clean + noise * np.sqrt(ps / (pn * 10 ** (snr_db / 10.0)))).astype(np.float32)
 
 
-def bench(clean_clips: Sequence[np.ndarray], noise_for: Callable[[str, int, int], np.ndarray],
-          profiles: Sequence[str], snrs: Sequence[float], sr: int = 16000,
-          conditioner: Callable[[np.ndarray], np.ndarray] | None = None) -> dict:
+def bench(
+    clean_clips: Sequence[np.ndarray],
+    noise_for: Callable[[str, int, int], np.ndarray],
+    profiles: Sequence[str],
+    snrs: Sequence[float],
+    sr: int = 16000,
+    conditioner: Callable[[np.ndarray], np.ndarray] | None = None,
+) -> dict:
     """Run every (profile, SNR) bucket before and after conditioning. `noise_for(profile, n, seed)`
     supplies noise. Returns the rows and the summary the story asks to be stated."""
     rows: list[BucketRow] = []
@@ -187,8 +194,17 @@ def bench(clean_clips: Sequence[np.ndarray], noise_for: Callable[[str, int, int]
                 sa.append(snr_vs_clean_db(clean, out))
                 ab.append(speech_frame_accuracy(clean, noisy, sr))
                 aa.append(speech_frame_accuracy(clean, out, sr))
-            rows.append(BucketRow(prof, float(snr), float(np.mean(sb)), float(np.mean(sa)),
-                                  float(np.mean(ab)), float(np.mean(aa)), float(np.mean(sup))))
+            rows.append(
+                BucketRow(
+                    prof,
+                    float(snr),
+                    float(np.mean(sb)),
+                    float(np.mean(sa)),
+                    float(np.mean(ab)),
+                    float(np.mean(aa)),
+                    float(np.mean(sup)),
+                )
+            )
     worst_before = min(rows, key=lambda r: r.accuracy_before)
     worst_after = min(rows, key=lambda r: r.accuracy_after)
     best_after = max(rows, key=lambda r: r.accuracy_after)
@@ -198,5 +214,7 @@ def bench(clean_clips: Sequence[np.ndarray], noise_for: Callable[[str, int, int]
         "worst_bucket_before": (worst_before.profile, worst_before.snr_db, worst_before.accuracy_before),
         "worst_bucket_after": (worst_after.profile, worst_after.snr_db, worst_after.accuracy_after),
         "worst_bucket_degradation_vs_best": best_after.accuracy_after - worst_after.accuracy_after,
-        "buckets_that_got_worse": [(r.profile, r.snr_db, round(r.accuracy_change, 3)) for r in rows if r.accuracy_change < -0.02],
+        "buckets_that_got_worse": [
+            (r.profile, r.snr_db, round(r.accuracy_change, 3)) for r in rows if r.accuracy_change < -0.02
+        ],
     }

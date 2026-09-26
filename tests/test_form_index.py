@@ -7,6 +7,7 @@ The two mechanisms are tested separately because one is exact and one is not: pr
 at or above the commit floor (a property test, not an example); the shortlist may only ever turn "answer" into
 "abstain", never into a different answer.
 """
+
 import difflib
 import os
 import random
@@ -14,15 +15,14 @@ import sys
 import time
 from collections import Counter
 
-import pytest
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tools")):
     if _p not in sys.path:
         sys.path.append(_p)
 
-import gazetteer_eval as ev                                              # noqa: E402
-from agent.form_index import FormTable, _bag_bound, SHORT_FORM_CHARS     # noqa: E402
+import gazetteer_eval as ev  # noqa: E402
+
+from agent.form_index import SHORT_FORM_CHARS, FormTable, _bag_bound  # noqa: E402
 
 FLOOR = 0.72
 _ALPHABETS = ["abcdefghij ", "abc ", "সেনমুখার্জীচৌধুরী ", "सेनमुखर्जीचौधरी ", "ab12 "]
@@ -33,6 +33,7 @@ def _random_string(rng, alphabet, lo=1, hi=18):
 
 
 # ================================================================================= the bound is a real bound
+
 
 def test_the_letter_bag_bound_never_falls_below_the_real_ratio():
     """The whole exactness argument rests on this: bound >= ratio for every pair. Tried on 6,000 random pairs over
@@ -47,6 +48,7 @@ def test_the_letter_bag_bound_never_falls_below_the_real_ratio():
 
 
 # ================================================================================ pruning changes no decision
+
 
 def _table_and_utterances():
     rng = random.Random(2)
@@ -68,7 +70,7 @@ def _table_and_utterances():
 
 def test_pruning_returns_the_same_answer_at_or_above_the_floor_and_nothing_below_it():
     rows, utterances = _table_and_utterances()
-    table = FormTable(rows, index_min_forms=10 ** 9)          # scan only: isolates the pruning
+    table = FormTable(rows, index_min_forms=10**9)  # scan only: isolates the pruning
     checked = above = 0
     for u in utterances:
         words = u.split()
@@ -86,7 +88,7 @@ def test_pruning_returns_the_same_answer_at_or_above_the_floor_and_nothing_below
 def test_floor_zero_is_the_original_scan_including_a_low_best_score():
     table = FormTable([("Lipid Profile", ["lipid profile"]), ("Uric Acid", ["uric acid"])])
     name, form, score = table.best(["something", "entirely", "different"], floor=0.0)
-    assert 0.0 <= score < FLOOR            # reported, not hidden, when no threshold was asked for
+    assert 0.0 <= score < FLOOR  # reported, not hidden, when no threshold was asked for
     assert table.best(["something", "entirely", "different"], floor=FLOOR) == (None, None, 0.0)
 
 
@@ -97,10 +99,11 @@ def test_a_tie_between_two_forms_goes_to_the_earlier_row_as_it_always_did():
 
 # ================================================================================ the shortlist only loses answers
 
+
 def test_the_shortlist_never_changes_an_answer_it_only_ever_drops_one():
     rows, utterances = _table_and_utterances()
-    scan = FormTable(rows, index_min_forms=10 ** 9)
-    fast = FormTable(rows, index_min_forms=0)                  # force the shortlist on
+    scan = FormTable(rows, index_min_forms=10**9)
+    fast = FormTable(rows, index_min_forms=0)  # force the shortlist on
     assert fast.indexed and not scan.indexed
     dropped = same = 0
     for u in utterances:
@@ -135,15 +138,17 @@ def test_a_long_form_with_two_letters_wrong_survives_the_shortlist():
 
 # ============================================================================================ exact-only short forms
 
+
 def test_a_short_form_must_match_exactly_when_the_language_asks_for_it():
     lenient = FormTable([("Dr. Das", ["das"])], exact_below_chars=0)
     strict = FormTable([("Dr. Das", ["das"])], exact_below_chars=5)
-    assert lenient.best(["in", "two", "days"], floor=FLOOR)[0] == "Dr. Das"      # 'days' ~ 'das': the old behaviour
-    assert strict.best(["in", "two", "days"], floor=FLOOR) == (None, None, 0.0)   # what English and Hindi use
+    assert lenient.best(["in", "two", "days"], floor=FLOOR)[0] == "Dr. Das"  # 'days' ~ 'das': the old behaviour
+    assert strict.best(["in", "two", "days"], floor=FLOOR) == (None, None, 0.0)  # what English and Hindi use
     assert strict.best(["doctor", "das", "today"], floor=FLOOR)[0] == "Dr. Das"
 
 
 # ========================================================================================= scale and edge cases
+
 
 def test_a_five_thousand_form_table_answers_well_inside_the_fast_path_budget():
     """Measured: about 4,900 ms per turn before (Bengali, 5,000 forms). Asserted at a small fraction of the 150 ms

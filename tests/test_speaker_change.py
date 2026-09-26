@@ -15,11 +15,11 @@ which is the honest limit, not a bug to hide. Thresholds are REASONED.
 
     python -m pytest tests/test_speaker_change.py -v
 """
+
 import os
 import sys
 
 import numpy as np
-import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
@@ -27,16 +27,26 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, p)
 
 from _synth_voices import DAUGHTER, FATHER, GRANDFATHER, MOTHER, POPULATION, SON, scaled, utterance
+
 from agent.speaker_change import (
-    CHANGE_HIGH, CHANGE_LOW, MIN_VOICED_S, SpeakerChangeDetector, distance, voice_embedding,
+    CHANGE_HIGH,
+    CHANGE_LOW,
+    MIN_VOICED_S,
+    SpeakerChangeDetector,
+    distance,
+    voice_embedding,
 )
 
 SR = 16000
 
 
 def _utt(sp, seed, rng, dur=None):
-    return scaled(utterance(sp, dur=dur or float(rng.uniform(1.8, 3.2)), seed=seed,
-                            noise_db=float(rng.uniform(-45, -32)), amp=0.3), float(rng.uniform(-8, 8)))
+    return scaled(
+        utterance(
+            sp, dur=dur or float(rng.uniform(1.8, 3.2)), seed=seed, noise_db=float(rng.uniform(-45, -32)), amp=0.3
+        ),
+        float(rng.uniform(-8, 8)),
+    )
 
 
 def _enrolled(speaker, rng, seed0=100):
@@ -92,8 +102,8 @@ def test_the_measured_separation_leaves_a_gap_between_the_two_populations():
         for other in POPULATION:
             if other is not sp:
                 diff.append(distance(voice_embedding(_utt(other, 500, rng), SR), ref))
-    assert np.percentile(same, 95) < CHANGE_HIGH                     # measured p95 3.8
-    assert np.median(diff) > 2 * CHANGE_HIGH                          # measured median 16
+    assert np.percentile(same, 95) < CHANGE_HIGH  # measured p95 3.8
+    assert np.median(diff) > 2 * CHANGE_HIGH  # measured median 16
 
 
 def test_two_consecutive_middling_turns_are_a_change_but_one_is_not():
@@ -122,7 +132,7 @@ def test_a_turn_with_too_little_voiced_speech_abstains_and_never_guesses():
     cough[4000:4400] = 0.5 * np.hanning(400) * np.sin(2 * np.pi * 300 * np.arange(400) / SR)
     assert det.observe(cough, SR).verdict == "insufficient"
     assert det.observe(np.zeros(SR, np.float32), SR).verdict == "insufficient"
-    short = utterance(MOTHER, dur=MIN_VOICED_S * 0.5, seed=1)                  # a different speaker, but too brief
+    short = utterance(MOTHER, dur=MIN_VOICED_S * 0.5, seed=1)  # a different speaker, but too brief
     assert det.observe(short, SR).verdict == "insufficient"
     assert det.changes == 0
 

@@ -10,8 +10,8 @@ medicines and appointments (rendered by the same templates the agent uses, from 
 what the agent says when nothing is found; a refused read before verification; and a wrong-answer
 attempt. Nothing here is a real person: see clinic-api/patient_seed.py.
 """
+
 import argparse
-import contextlib
 import datetime
 import os
 import sys
@@ -70,20 +70,34 @@ def run(api: Api) -> int:
         tl = api.get(f"/api/v1/patients/{ref}/timeline", caller_phone="-", call_id=call)
         for lang, lab in (("en", "English"), ("bn", "Bengali"), ("hi", "Hindi")):
             print(f"  [{lab}]")
-            for fn, what in ((lambda: pc.answer_recent_tests(tl, lang, NOW), "tests done"),
-                             (lambda: pc.answer_medicines(tl, lang, NOW), "medicines"),
-                             (lambda: pc.answer_appointments(tl, lang, NOW), "next appointment")):
+            for fn, what in (
+                (lambda: pc.answer_recent_tests(tl, lang, NOW), "tests done"),
+                (lambda: pc.answer_medicines(tl, lang, NOW), "medicines"),
+                (lambda: pc.answer_appointments(tl, lang, NOW), "next appointment"),
+            ):
                 print(f"    {what:17s} {fn().text}")
         st = api.get(f"/api/v1/patients/{ref}/test-status", test_name="HbA1c", caller_phone="-", call_id=call)
         if st.get("known"):
             due = ht.due_statement(st, "en")
-            print(f"  HbA1c last done {st['last_performed_on']}; "
-                  f"{due[1] if due else 'no clinician-approved interval, so nothing is said about need'}")
-        for i, ev in enumerate([("start", {}), ("patient", {"patient_ref": ref}), ("intent", {"intent": "book_test"}),
-                                ("action", {"name": "tests_booked", "ref": "KCD-DEMO"}), ("end", {"outcome": "completed"})], 1):
+            print(
+                f"  HbA1c last done {st['last_performed_on']}; "
+                f"{due[1] if due else 'no clinician-approved interval, so nothing is said about need'}"
+            )
+        for i, ev in enumerate(
+            [
+                ("start", {}),
+                ("patient", {"patient_ref": ref}),
+                ("intent", {"intent": "book_test"}),
+                ("action", {"name": "tests_booked", "ref": "KCD-DEMO"}),
+                ("end", {"outcome": "completed"}),
+            ],
+            1,
+        ):
             api.post(f"/api/v1/calls/{call}/events", seq=i, kind=ev[0], payload=ev[1])
         ctx = api.get("/api/v1/continuity", caller_phone="0", patient_ref=ref)
-        print(f"  next call's context (kept one day) -> {ctx['cached'][0]['actions']} outcome={ctx['cached'][0]['outcome']}")
+        print(
+            f"  next call's context (kept one day) -> {ctx['cached'][0]['actions']} outcome={ctx['cached'][0]['outcome']}"
+        )
     show("nothing found")
     print("  ", ht.CANNOT_FIND["en"])
     print("  ", ht.CANNOT_FIND["bn"])
@@ -102,6 +116,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     if args.url:
         import httpx
+
         headers = {}
         if args.token_file:
             with open(args.token_file, encoding="utf-8") as f:
@@ -109,6 +124,7 @@ def main(argv=None) -> int:
         with httpx.Client(base_url=args.url, headers=headers, timeout=30.0) as client:
             return run(Api(client))
     from _clinic_app import clinic_app
+
     with clinic_app() as (_app, client):
         return run(Api(client))
 

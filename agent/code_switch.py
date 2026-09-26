@@ -19,6 +19,7 @@ verbalise a span). No LID model call, no LLM call: this is a per-turn
 signal that has to be cheap enough to sit inside KCD-076's latency
 budget alongside the other call-intelligence detectors.
 """
+
 from __future__ import annotations
 
 import re
@@ -33,8 +34,8 @@ _SCRIPT_PATTERNS = (("bn", _BENGALI), ("hi", _DEVANAGARI), ("en", _LATIN))
 
 @dataclass(frozen=True)
 class ScriptSpan:
-    script: str          # "bn" | "hi" | "en"
-    start: int            # character offset into the original text
+    script: str  # "bn" | "hi" | "en"
+    start: int  # character offset into the original text
     end: int
     text: str
 

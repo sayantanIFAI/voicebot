@@ -9,6 +9,7 @@ for the schema. The report says MEASURED only with at least 200 recordings; the
 `config` block is what agent.endpointing.config_from_json() loads. Both error
 rates are printed for every candidate so they can be published.
 """
+
 import argparse
 import glob
 import json
@@ -19,7 +20,7 @@ import wave
 import numpy as np
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT not in sys.path:      # appended: importing this must not shadow clinic-api/main.py
+if _ROOT not in sys.path:  # appended: importing this must not shadow clinic-api/main.py
     sys.path.append(_ROOT)
 
 from agent.endpoint_calibration import Recording, calibrate, write_report
@@ -37,7 +38,8 @@ def _load_wav(path):
 def load_recordings(directory, vad):
     silero = None
     if vad == "silero":
-        from agent.vad_stream import TurnDetector      # needs torch + the Silero repo (a pod)
+        from agent.vad_stream import TurnDetector  # needs torch + the Silero repo (a pod)
+
         silero = TurnDetector()
     recs = []
     for wav_path in sorted(glob.glob(os.path.join(directory, "*.wav"))):
@@ -54,9 +56,11 @@ def load_recordings(directory, vad):
         spans = None
         if silero is not None:
             import torch
+
             spans, _ = silero.spans(torch.from_numpy(x), sr)
-        recs.append(Recording(x, sr, meta["turn_end_ms"] / 1000.0, meta.get("language", ""),
-                              meta.get("channel", ""), spans))
+        recs.append(
+            Recording(x, sr, meta["turn_end_ms"] / 1000.0, meta.get("language", ""), meta.get("channel", ""), spans)
+        )
     return recs
 
 
@@ -74,8 +78,10 @@ def main():
     print(f"{'silence_s':>9} {'false-cut':>10} {'95% CI':>16} {'false-wait':>11} {'wait p50':>9} {'wait p95':>9}")
     for r in report["table"]:
         lo, hi = r["false_cut_ci95"]
-        print(f"{r['silence_confirm_s']:>9.2f} {r['false_cut_rate']:>10.1%} {lo:>7.1%}-{hi:<7.1%} "
-              f"{r['false_wait_rate']:>11.1%} {r['wait_p50_s']:>8.2f}s {r['wait_p95_s']:>8.2f}s")
+        print(
+            f"{r['silence_confirm_s']:>9.2f} {r['false_cut_rate']:>10.1%} {lo:>7.1%}-{hi:<7.1%} "
+            f"{r['false_wait_rate']:>11.1%} {r['wait_p50_s']:>8.2f}s {r['wait_p95_s']:>8.2f}s"
+        )
     print(report["note"])
     return 0 if report["status"] == "MEASURED" else 2
 

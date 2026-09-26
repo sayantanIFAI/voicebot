@@ -3,6 +3,7 @@ caller signals. Pure, offline.
 
     python -m pytest tests/test_call_state.py -v
 """
+
 import os
 import sys
 
@@ -34,7 +35,7 @@ def test_apply_language_updates_only_language():
     st = new_call_state()
     apply_language(st, "hi")
     assert st.language == "hi"
-    assert st.caller_state == CALLER_STATE_NEUTRAL   # nothing else touched
+    assert st.caller_state == CALLER_STATE_NEUTRAL  # nothing else touched
 
 
 def test_apply_confidence_sets_confirmation_required():

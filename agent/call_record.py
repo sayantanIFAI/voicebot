@@ -29,12 +29,13 @@ How each part is met:
 Pure asyncio around an injected writer: tests use a fake that fails, duplicates and
 drops on demand.
 """
+
 from __future__ import annotations
 
 import asyncio
 import dataclasses
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 FINISH_DEADLINE_S = 25.0
 RETRY_BACKOFF_S = (0.2, 0.5, 1.0, 2.0)
@@ -50,8 +51,14 @@ class _Event:
 
 
 class CallRecorder:
-    def __init__(self, call_id: str, writer: Writer, caller_phone: str | None = None,
-                 clock: Callable[[], float] = time.monotonic, sleep=asyncio.sleep):
+    def __init__(
+        self,
+        call_id: str,
+        writer: Writer,
+        caller_phone: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep=asyncio.sleep,
+    ):
         self.call_id, self.caller_phone = call_id, caller_phone
         self._writer, self._clock, self._sleep = writer, clock, sleep
         self._seq = 0

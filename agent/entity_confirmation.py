@@ -17,6 +17,7 @@ but it is not the same guarantee.
 
 Wording is provisional and pending native review (agent/persona.py).
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -51,10 +52,11 @@ REASK = {
 @dataclasses.dataclass
 class PendingEntity:
     """A lookup held back until the caller confirms what was heard."""
+
     intent: str
     slot: str
     value: str
-    data: dict                      # the whole intent-extraction result, replayed on a yes
+    data: dict  # the whole intent-extraction result, replayed on a yes
 
 
 def entity_to_confirm(intent: str, slots: dict) -> tuple[str, str] | None:

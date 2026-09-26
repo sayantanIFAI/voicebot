@@ -12,6 +12,7 @@ test cannot pass by accident.
 
     python -m pytest tests/test_booking_migration.py -v
 """
+
 import importlib
 import os
 import sqlite3
@@ -86,12 +87,12 @@ def test_old_appointments_table_gains_columns_without_losing_the_existing_row(ol
     db = db_mod.SessionLocal()
     try:
         appt = db.query(models.Appointment).filter_by(confirmation_id="KCD-OLD-0001").one()
-        assert appt.patient_name == "Existing Patient"      # nothing lost
-        assert appt.status == "confirmed"                    # ALTER TABLE default applied
-        assert appt.patient_id is None                       # not retroactively linked -- honest, not guessed
+        assert appt.patient_name == "Existing Patient"  # nothing lost
+        assert appt.status == "confirmed"  # ALTER TABLE default applied
+        assert appt.patient_id is None  # not retroactively linked -- honest, not guessed
 
         doc = db.get(models.Doctor, 1)
-        assert doc.consultation_fee_inr == 500                # raw ALTER default before backfill
+        assert doc.consultation_fee_inr == 500  # raw ALTER default before backfill
 
         # And the new tables this old DB never had are now queryable too.
         assert db.query(models.SlotLock).count() == 0
@@ -100,7 +101,7 @@ def test_old_appointments_table_gains_columns_without_losing_the_existing_row(ol
         db.close()
 
     finish = booking_migrate.finish_booking_schema_setup()
-    assert finish["department_routes_added"] == 1   # the fixture's one department
+    assert finish["department_routes_added"] == 1  # the fixture's one department
 
 
 def test_old_blanket_unique_constraint_is_rebuilt_into_a_partial_index(old_db):
@@ -138,8 +139,9 @@ def test_old_blanket_unique_constraint_is_rebuilt_into_a_partial_index(old_db):
         hold = booking_service.hold_slot(db, 1, "2026-01-05", "10:15")
         assert hold["success"]
         rebooked = booking_service.confirm_booking(
-            db, hold["hold_token"], 1, "2026-01-05", "10:15", "New Patient", "9111111111", "9111111111")
-        assert rebooked["success"], rebooked   # used to raise IntegrityError here
+            db, hold["hold_token"], 1, "2026-01-05", "10:15", "New Patient", "9111111111", "9111111111"
+        )
+        assert rebooked["success"], rebooked  # used to raise IntegrityError here
     finally:
         db.close()
 
@@ -162,15 +164,15 @@ def test_migration_is_idempotent_and_never_overwrites_a_hand_edited_fee(old_db):
     db = db_mod.SessionLocal()
     try:
         doc = db.get(models.Doctor, 1)
-        doc.consultation_fee_inr = 999   # a clinician's manual edit
+        doc.consultation_fee_inr = 999  # a clinician's manual edit
         db.commit()
     finally:
         db.close()
 
     second_columns = booking_migrate.migrate_booking_schema()
     second = booking_migrate.finish_booking_schema_setup()
-    assert second_columns["columns_added"] == []   # already added
-    assert second["doctor_fees_filled"] == 0       # 999 != 500, so the backfill left it alone
+    assert second_columns["columns_added"] == []  # already added
+    assert second["doctor_fees_filled"] == 0  # 999 != 500, so the backfill left it alone
 
     db = db_mod.SessionLocal()
     try:

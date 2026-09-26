@@ -4,6 +4,7 @@ itself was made in. Pure and offline.
 
     python -m pytest tests/test_language_switch.py -v
 """
+
 from agent.language_switch import detect_language_switch_request
 
 

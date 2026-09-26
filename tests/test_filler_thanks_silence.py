@@ -14,6 +14,7 @@
 Real dispatch and helpers from main_pcm.py with fakes for the pod-only parts (same harness as
 tests/test_orchestrator_booking_flow.py). Timing tests use small REAL waits.
 """
+
 import asyncio
 import datetime
 import os
@@ -27,17 +28,19 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from test_orchestrator_booking_flow import PRICE, book, env, m, text_of  # noqa: F401  (the harness)
+
 from agent import fast_path_cues as cues
 from agent.enquiry_followup import EnquiryEntity, recent_unique
 from agent.fast_path import Catalogue, FastPath
 from agent.phrases import phrase
 from agent.turn_ack import THANKS, thanks_for, validate_thanks
-from test_orchestrator_booking_flow import PRICE, book, env, m, text_of       # noqa: F401  (the harness)
 
 TODAY = datetime.date(2026, 9, 25)
 
 
 # ==================================================================================================== 1. the filler
+
 
 async def _finishes_after(seconds, value="answer"):
     await asyncio.sleep(seconds)
@@ -66,7 +69,7 @@ async def test_time_already_spent_on_recognition_counts_towards_the_700_ms(m, en
     t0 = time.monotonic()
     await m._await_with_filler(env.session, _finishes_after(0.6), "en", threshold_s=0.7)
     assert env.session.ws.spoken() == [phrase("please_wait", "en")]
-    assert time.monotonic() - t0 < 0.7                                   # it finished, having spoken the filler at ~0.25 s
+    assert time.monotonic() - t0 < 0.7  # it finished, having spoken the filler at ~0.25 s
 
 
 @pytest.mark.asyncio
@@ -79,6 +82,7 @@ async def test_a_turn_already_slow_still_gives_a_cache_hit_its_moment(m, env):
 
 # ================================================================================================== 2. the thank-you
 
+
 def test_the_thanks_is_one_word_in_every_language():
     assert THANKS == {"bn": "ধন্যবাদ।", "hi": "धन्यवाद।", "en": "Thank you."}
     assert validate_thanks() == []
@@ -88,7 +92,7 @@ def test_the_thanks_is_one_word_in_every_language():
 @pytest.mark.asyncio
 async def test_an_answer_to_the_callers_own_question_is_not_thanked(m, env):
     said = await env.say("how much is the CBC", "test_rate", {"test_name": "CBC"})
-    assert said == [PRICE]                                             # the answer, and nothing before it
+    assert said == [PRICE]  # the answer, and nothing before it
     said = await env.say("do I need to fast", "test_prep", {"test_name": "CBC"})
     assert "Thank you" not in text_of(said)
 
@@ -96,7 +100,7 @@ async def test_an_answer_to_the_callers_own_question_is_not_thanked(m, env):
 @pytest.mark.asyncio
 async def test_a_detail_the_caller_was_asked_for_is_thanked_once_and_only_then(m, env):
     said = await book(env, doctor_name="Sen")
-    assert "Thank you" not in text_of(said)                            # the first request answers "how can I help"
+    assert "Thank you" not in text_of(said)  # the first request answers "how can I help"
     said = await env.say("tomorrow at ten", "book_appointment", {"date": "2026-10-01", "time_slot": "10:00"})
     assert said[0] == "Thank you." and text_of(said).count("Thank you") == 1
     said = await env.say("Ravi Das 9876543210", "book_appointment", {"patient_name": "Ravi Das", "phone": "9876543210"})
@@ -122,6 +126,7 @@ async def test_no_thanks_when_nothing_was_asked(m, env):
 
 # ============================================================================================ 3. five seconds of silence
 
+
 @pytest.mark.asyncio
 async def test_silence_starts_a_timer_and_speech_or_a_busy_turn_cancels_it(m, env):
     s = env.session
@@ -129,7 +134,7 @@ async def test_silence_starts_a_timer_and_speech_or_a_busy_turn_cancels_it(m, en
     await m._handle_silence(s, False)
     assert s.silence_since is None
     await m._handle_silence(s, True)
-    async with s.dispatch_lock:                                        # the agent is mid-turn: not the caller's silence
+    async with s.dispatch_lock:  # the agent is mid-turn: not the caller's silence
         await m._handle_silence(s, True)
     assert s.silence_since is None and s.ws.spoken() == []
 
@@ -189,14 +194,16 @@ async def test_a_real_question_after_the_prompt_is_simply_answered(m, env):
 def test_the_silence_wording_is_one_question_per_language():
     for lang in ("bn", "hi", "en"):
         line = phrase("silence_prompt", lang)
-        assert line.count("?") == 1                                   # the policy may drop a second question
+        assert line.count("?") == 1  # the policy may drop a second question
 
 
 # ================================================================== 4. the follow-up that no longer needs the model
 
+
 @pytest.fixture(scope="module")
 def fp():
     from _clinic_app import clinic_app
+
     with clinic_app(sample_patients=False) as (_app, client):
         return FastPath(Catalogue(client.get("/api/v1/catalogue").json()), today=TODAY)
 
@@ -215,7 +222,7 @@ def test_a_cue_word_alone_never_picks_a_test_by_its_own_spelling(fp):
     was answered for a blood-sugar test, with no topic and no model. Nothing is named, so nothing is looked up."""
     assert fp.resolve("क्या फास्टिंग करना पड़ेगा", "hi") is None
     assert fp.resolve("do I need to fast", "en") is None
-    hit = fp.resolve("शुगर फास्टिंग के लिए क्या तैयारी", "hi")               # a test IS named: served as before
+    hit = fp.resolve("शुगर फास्टिंग के लिए क्या तैयारी", "hi")  # a test IS named: served as before
     assert hit is not None and hit.slots["test_name"] == "शुगर फास्टिंग"
 
 
@@ -231,12 +238,15 @@ def test_without_a_recent_topic_it_abstains_as_before(fp):
     assert fp.resolve("do I need to fast", "en", topic_test=None) is None
 
 
-@pytest.mark.parametrize("text,lang", [
-    ("ফাস্টিং করতে হবে ব্লাড সুগারের জন্য", "bn"),          # names something else: the model / the lookup decides, not the topic
-    ("do I need to fast for the lipid profile", "en"),
-    ("क्या लिपिड प्रोफाइल के लिए फास्टिंग करना पड़ेगा", "hi"),
-    ("ডাক্তার সেন কবে বসবেন ফাস্টিং", "bn"),                  # two things at once
-])
+@pytest.mark.parametrize(
+    "text,lang",
+    [
+        ("ফাস্টিং করতে হবে ব্লাড সুগারের জন্য", "bn"),  # names something else: the model / the lookup decides, not the topic
+        ("do I need to fast for the lipid profile", "en"),
+        ("क्या लिपिड प्रोफाइल के लिए फास्टिंग करना पड़ेगा", "hi"),
+        ("ডাক্তার সেন কবে বসবেন ফাস্টিং", "bn"),  # two things at once
+    ],
+)
 def test_a_word_that_could_be_a_name_is_never_read_as_the_topic(fp, text, lang):
     hit = fp.resolve(text, lang, topic_test="Uric Acid")
     assert hit is None or hit.slots["test_name"] != "Uric Acid"

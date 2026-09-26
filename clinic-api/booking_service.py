@@ -18,6 +18,7 @@ availability come from this module's own deterministic policy constants
 and the database, the same discipline agent/reply_templates.py already
 applies to test prices and doctor schedules.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -86,6 +87,7 @@ def _alias(aliases: str | None) -> str | None:
 
 # ============================================================= holds
 
+
 def _release_expired_hold(db: Session, doctor_id: int, date: str, time_slot: str) -> None:
     # CodeRabbit-flagged, real race: sqlite3's legacy transaction mode
     # (db.py does not override it) does not BEGIN on a plain SELECT, so
@@ -118,8 +120,16 @@ def hold_slot(db: Session, doctor_id: int, date: str, time_slot: str) -> dict:
     _release_expired_hold(db, doctor_id, date, time_slot)
     token = uuid.uuid4().hex
     expires = _now() + datetime.timedelta(seconds=HOLD_TTL_SECONDS)
-    db.add(SlotLock(doctor_id=doctor_id, date=date, time_slot=time_slot,
-                     status="held", hold_token=token, hold_expires_at=expires))
+    db.add(
+        SlotLock(
+            doctor_id=doctor_id,
+            date=date,
+            time_slot=time_slot,
+            status="held",
+            hold_token=token,
+            hold_expires_at=expires,
+        )
+    )
     try:
         db.commit()
     except IntegrityError:
@@ -131,7 +141,8 @@ def hold_slot(db: Session, doctor_id: int, date: str, time_slot: str) -> dict:
 def _taken_slots(db: Session, doctor_id: int, date: str) -> set[str]:
     now = _now()
     return {
-        r.time_slot for r in db.query(SlotLock).filter_by(doctor_id=doctor_id, date=date).all()
+        r.time_slot
+        for r in db.query(SlotLock).filter_by(doctor_id=doctor_id, date=date).all()
         if r.status == "confirmed" or (r.status == "held" and r.hold_expires_at and r.hold_expires_at >= now)
     }
 
@@ -155,8 +166,7 @@ def available_slots(db: Session, doctor_id: int, date: str) -> list[str]:
     return free
 
 
-def earliest_available(db: Session, doctor_id: int, from_date: datetime.date,
-                        horizon_days: int = 14) -> dict | None:
+def earliest_available(db: Session, doctor_id: int, from_date: datetime.date, horizon_days: int = 14) -> dict | None:
     for i in range(horizon_days):
         d = (from_date + datetime.timedelta(days=i)).isoformat()
         free = available_slots(db, doctor_id, d)
@@ -238,8 +248,7 @@ def set_patient_senior(db: Session, phone: str, senior: bool, caller_phone: str 
     if not phone or phone == NOT_PROVIDED_PHONE:
         return 0
     asking_as = caller_phone or phone
-    rows = [p for p in db.query(Patient).filter(Patient.phone == phone).all()
-            if authorize_disclosure(db, p, asking_as)]
+    rows = [p for p in db.query(Patient).filter(Patient.phone == phone).all() if authorize_disclosure(db, p, asking_as)]
     changed = 0
     for p in rows:
         if bool(p.senior_mode) != bool(senior):
@@ -254,22 +263,28 @@ def get_patient_senior(db: Session, phone: str, caller_phone: str | None = None)
     if not phone or phone == NOT_PROVIDED_PHONE:
         return False
     asking_as = caller_phone or phone
-    return any(authorize_disclosure(db, p, asking_as)
-               for p in db.query(Patient).filter(Patient.phone == phone, Patient.senior_mode.is_(True)).all())
+    return any(
+        authorize_disclosure(db, p, asking_as)
+        for p in db.query(Patient).filter(Patient.phone == phone, Patient.senior_mode.is_(True)).all()
+    )
 
 
-def record_proxy(db: Session, patient: Patient, caller_phone: str,
-                  relationship_label: str, verified_by: str) -> None:
+def record_proxy(db: Session, patient: Patient, caller_phone: str, relationship_label: str, verified_by: str) -> None:
     existing = db.query(PatientProxy).filter_by(patient_id=patient.id, caller_phone=caller_phone).first()
     if existing:
         return
-    db.add(PatientProxy(patient_id=patient.id, caller_phone=caller_phone,
-                         relationship_label=relationship_label, verified_by=verified_by,
-                         created_at=_now()))
+    db.add(
+        PatientProxy(
+            patient_id=patient.id,
+            caller_phone=caller_phone,
+            relationship_label=relationship_label,
+            verified_by=verified_by,
+            created_at=_now(),
+        )
+    )
 
 
-def authorize_disclosure(db: Session, patient: Patient, caller_phone: str,
-                          confirmed_age: int | None = None) -> bool:
+def authorize_disclosure(db: Session, patient: Patient, caller_phone: str, confirmed_age: int | None = None) -> bool:
     """Whether an EXISTING record may be read out to this caller (KCD-373,
     KCD-378) or modified by them. Booking a brand-new appointment never
     needs this check -- only looking up or changing one that was not made
@@ -289,6 +304,7 @@ def authorize_disclosure(db: Session, patient: Patient, caller_phone: str,
 
 
 # ======================================================== appointments
+
 
 def _verify_appointment_persisted(db: Session, appointment_id: int, expected: dict) -> bool:
     """KCD-486: "the write is verified in the system of record with the
@@ -313,9 +329,18 @@ def _verify_appointment_persisted(db: Session, appointment_id: int, expected: di
     return all(getattr(row, field) == value for field, value in expected.items())
 
 
-def confirm_booking(db: Session, hold_token: str, doctor_id: int, date: str, time_slot: str,
-                     patient_name: str, phone: str, caller_phone: str,
-                     patient_age: int | None = None, relationship_label: str = "self") -> dict:
+def confirm_booking(
+    db: Session,
+    hold_token: str,
+    doctor_id: int,
+    date: str,
+    time_slot: str,
+    patient_name: str,
+    phone: str,
+    caller_phone: str,
+    patient_age: int | None = None,
+    relationship_label: str = "self",
+) -> dict:
     lock = db.get(SlotLock, (doctor_id, date, time_slot))
     # IDEMPOTENT on the hold token: a retried request (a dropped connection, a repeated "yes") for a
     # slot this SAME hold already confirmed returns the booking that exists -- the same confirmation
@@ -325,9 +350,14 @@ def confirm_booking(db: Session, hold_token: str, doctor_id: int, date: str, tim
         if appt is not None and appt.status == "confirmed" and appt.phone == phone:
             doctor = db.get(Doctor, doctor_id)
             return {
-                "success": True, "confirmation_id": appt.confirmation_id, "doctor_name": doctor.name,
-                "doctor_name_bn": _alias(doctor.aliases_bn), "doctor_name_hi": _alias(doctor.aliases_hi),
-                "date": date, "time_slot": time_slot, "replayed": True,
+                "success": True,
+                "confirmation_id": appt.confirmation_id,
+                "doctor_name": doctor.name,
+                "doctor_name_bn": _alias(doctor.aliases_bn),
+                "doctor_name_hi": _alias(doctor.aliases_hi),
+                "date": date,
+                "time_slot": time_slot,
+                "replayed": True,
             }
     if not lock or lock.status != "held" or lock.hold_token != hold_token:
         return {"success": False, "reason": "hold_expired"}
@@ -343,9 +373,16 @@ def confirm_booking(db: Session, hold_token: str, doctor_id: int, date: str, tim
 
     confirmation_id = _confirmation_id(date)
     appt = Appointment(
-        confirmation_id=confirmation_id, doctor_id=doctor_id, date=date, time_slot=time_slot,
-        patient_name=patient_name, phone=phone, created_at=_now(),
-        patient_id=patient.id, caller_phone=caller_phone, status="confirmed",
+        confirmation_id=confirmation_id,
+        doctor_id=doctor_id,
+        date=date,
+        time_slot=time_slot,
+        patient_name=patient_name,
+        phone=phone,
+        created_at=_now(),
+        patient_id=patient.id,
+        caller_phone=caller_phone,
+        status="confirmed",
     )
     db.add(appt)
     db.flush()
@@ -359,20 +396,37 @@ def confirm_booking(db: Session, hold_token: str, doctor_id: int, date: str, tim
     # a false "success", and never the ordinary tool_failure apology
     # either) so main.py can put the caller on hold and escalate instead
     # of reading out a reference that may not be real.
-    if not _verify_appointment_persisted(db, appt.id, {
-        "confirmation_id": confirmation_id, "doctor_id": doctor_id, "date": date,
-        "time_slot": time_slot, "patient_name": patient_name, "phone": phone, "status": "confirmed",
-    }):
+    if not _verify_appointment_persisted(
+        db,
+        appt.id,
+        {
+            "confirmation_id": confirmation_id,
+            "doctor_id": doctor_id,
+            "date": date,
+            "time_slot": time_slot,
+            "patient_name": patient_name,
+            "phone": phone,
+            "status": "confirmed",
+        },
+    ):
         return {"success": False, "reason": "write_unverified", "confirmation_id": confirmation_id}
 
-    queue_sms(db, phone, "booking_confirmed",
-              f"Your appointment with {doctor.name} on {date} at {time_slot} is confirmed. "
-              f"Ref: {confirmation_id}.", confirmation_id)
+    queue_sms(
+        db,
+        phone,
+        "booking_confirmed",
+        f"Your appointment with {doctor.name} on {date} at {time_slot} is confirmed. Ref: {confirmation_id}.",
+        confirmation_id,
+    )
 
     return {
-        "success": True, "confirmation_id": confirmation_id, "doctor_name": doctor.name,
-        "doctor_name_bn": _alias(doctor.aliases_bn), "doctor_name_hi": _alias(doctor.aliases_hi),
-        "date": date, "time_slot": time_slot,
+        "success": True,
+        "confirmation_id": confirmation_id,
+        "doctor_name": doctor.name,
+        "doctor_name_bn": _alias(doctor.aliases_bn),
+        "doctor_name_hi": _alias(doctor.aliases_hi),
+        "date": date,
+        "time_slot": time_slot,
     }
 
 
@@ -381,13 +435,18 @@ def find_conflict(db: Session, patient_phone: str, date: str, time_slot: str) ->
     this date and time. Checked against the hospital system (this table),
     never a local cache, so it is current at the moment of the new
     booking."""
-    existing = db.query(Appointment).filter_by(
-        phone=patient_phone, date=date, time_slot=time_slot, status="confirmed").first()
+    existing = (
+        db.query(Appointment).filter_by(phone=patient_phone, date=date, time_slot=time_slot, status="confirmed").first()
+    )
     if not existing:
         return None
     doctor = db.get(Doctor, existing.doctor_id)
-    return {"confirmation_id": existing.confirmation_id, "doctor_name": doctor.name if doctor else None,
-            "date": existing.date, "time_slot": existing.time_slot}
+    return {
+        "confirmation_id": existing.confirmation_id,
+        "doctor_name": doctor.name if doctor else None,
+        "date": existing.date,
+        "time_slot": existing.time_slot,
+    }
 
 
 def active_cancellation_policy(db: Session, as_of: datetime.date | None = None) -> CancellationPolicy | None:
@@ -398,10 +457,12 @@ def active_cancellation_policy(db: Session, as_of: datetime.date | None = None) 
     new version with a future effective_from schedules a change without
     touching any row already applied to a past cancellation."""
     as_of_iso = (as_of or _now().date()).isoformat()
-    return (db.query(CancellationPolicy)
-            .filter(CancellationPolicy.effective_from <= as_of_iso)
-            .order_by(CancellationPolicy.effective_from.desc(), CancellationPolicy.version.desc())
-            .first())
+    return (
+        db.query(CancellationPolicy)
+        .filter(CancellationPolicy.effective_from <= as_of_iso)
+        .order_by(CancellationPolicy.effective_from.desc(), CancellationPolicy.version.desc())
+        .first()
+    )
 
 
 def cancellation_charge(db: Session, appt: Appointment) -> tuple[int, CancellationPolicy | None]:
@@ -461,9 +522,14 @@ def cancel_appointment(db: Session, confirmation_id: str, confirm_charge: bool =
     appt.cancellation_policy_version = policy.version if policy else None
     db.commit()
 
-    queue_sms(db, appt.phone, "booking_cancelled",
-              f"Your appointment ({confirmation_id}) has been cancelled."
-              + (f" A charge of Rs.{charge} applies." if charge else ""), confirmation_id)
+    queue_sms(
+        db,
+        appt.phone,
+        "booking_cancelled",
+        f"Your appointment ({confirmation_id}) has been cancelled."
+        + (f" A charge of Rs.{charge} applies." if charge else ""),
+        confirmation_id,
+    )
     return {"success": True, "confirmation_id": confirmation_id, "charge_inr": charge}
 
 
@@ -478,16 +544,26 @@ def reschedule_appointment(db: Session, confirmation_id: str, new_date: str, new
 
     hold = hold_slot(db, appt.doctor_id, new_date, new_time_slot)
     if not hold["success"]:
-        return {"success": False, "reason": "slot_taken",
-                "alternative_slots": available_slots(db, appt.doctor_id, new_date)[:3]}
+        return {
+            "success": False,
+            "reason": "slot_taken",
+            "alternative_slots": available_slots(db, appt.doctor_id, new_date)[:3],
+        }
 
     doctor = db.get(Doctor, appt.doctor_id)
     new_confirmation_id = _confirmation_id(new_date)
     new_appt = Appointment(
-        confirmation_id=new_confirmation_id, doctor_id=appt.doctor_id, date=new_date,
-        time_slot=new_time_slot, patient_name=appt.patient_name, phone=appt.phone,
-        created_at=_now(), patient_id=appt.patient_id, caller_phone=appt.caller_phone,
-        status="confirmed", rescheduled_from_id=appt.id,
+        confirmation_id=new_confirmation_id,
+        doctor_id=appt.doctor_id,
+        date=new_date,
+        time_slot=new_time_slot,
+        patient_name=appt.patient_name,
+        phone=appt.phone,
+        created_at=_now(),
+        patient_id=appt.patient_id,
+        caller_phone=appt.caller_phone,
+        status="confirmed",
+        rescheduled_from_id=appt.id,
     )
     db.add(new_appt)
     db.flush()
@@ -503,23 +579,45 @@ def reschedule_appointment(db: Session, confirmation_id: str, new_date: str, new
 
     # KCD-486, same discipline as confirm_booking: verify before speaking
     # the new reference number.
-    if not _verify_appointment_persisted(db, new_appt.id, {
-        "confirmation_id": new_confirmation_id, "doctor_id": appt.doctor_id, "date": new_date,
-        "time_slot": new_time_slot, "status": "confirmed",
-    }):
+    if not _verify_appointment_persisted(
+        db,
+        new_appt.id,
+        {
+            "confirmation_id": new_confirmation_id,
+            "doctor_id": appt.doctor_id,
+            "date": new_date,
+            "time_slot": new_time_slot,
+            "status": "confirmed",
+        },
+    ):
         return {"success": False, "reason": "write_unverified", "confirmation_id": new_confirmation_id}
 
-    queue_sms(db, appt.phone, "booking_rescheduled",
-              f"Your appointment with {doctor.name} has been moved to {new_date} at {new_time_slot}. "
-              f"New ref: {new_confirmation_id}.", new_confirmation_id)
+    queue_sms(
+        db,
+        appt.phone,
+        "booking_rescheduled",
+        f"Your appointment with {doctor.name} has been moved to {new_date} at {new_time_slot}. "
+        f"New ref: {new_confirmation_id}.",
+        new_confirmation_id,
+    )
 
-    return {"success": True, "confirmation_id": new_confirmation_id, "doctor_name": doctor.name,
-            "date": new_date, "time_slot": new_time_slot}
+    return {
+        "success": True,
+        "confirmation_id": new_confirmation_id,
+        "doctor_name": doctor.name,
+        "date": new_date,
+        "time_slot": new_time_slot,
+    }
 
 
-def lookup_bookings(db: Session, phone: str | None = None, confirmation_id: str | None = None,
-                     name: str | None = None, upcoming_only: bool = True,
-                     caller_phone: str | None = None) -> list[dict]:
+def lookup_bookings(
+    db: Session,
+    phone: str | None = None,
+    confirmation_id: str | None = None,
+    name: str | None = None,
+    upcoming_only: bool = True,
+    caller_phone: str | None = None,
+) -> list[dict]:
     """SECURITY (CWE-639/IDOR, CodeRabbit-flagged): every row this used to
     return on a bare phone/name search, unauthenticated -- anyone who
     spoke a phone number, guessed or overheard, could hear a stranger's
@@ -562,16 +660,31 @@ def lookup_bookings(db: Session, phone: str | None = None, confirmation_id: str 
             if not patient or not asking_as or not authorize_disclosure(db, patient, asking_as):
                 continue
         doctor = db.get(Doctor, a.doctor_id)
-        out.append({"confirmation_id": a.confirmation_id, "doctor_name": doctor.name if doctor else None,
-                     "date": a.date, "time_slot": a.time_slot, "patient_name": a.patient_name})
+        out.append(
+            {
+                "confirmation_id": a.confirmation_id,
+                "doctor_name": doctor.name if doctor else None,
+                "date": a.date,
+                "time_slot": a.time_slot,
+                "patient_name": a.patient_name,
+            }
+        )
     return out
 
 
 # ============================================================ tests
 
-def book_tests(db: Session, test_ids: list[int], date: str, patient_name: str, phone: str,
-                caller_phone: str, patient_age: int | None = None,
-                relationship_label: str = "self") -> dict:
+
+def book_tests(
+    db: Session,
+    test_ids: list[int],
+    date: str,
+    patient_name: str,
+    phone: str,
+    caller_phone: str,
+    patient_age: int | None = None,
+    relationship_label: str = "self",
+) -> dict:
     patient = find_or_create_patient(db, patient_name, phone, patient_age)
     verified_by = "self" if caller_phone == phone else "relationship_stated"
     record_proxy(db, patient, caller_phone, relationship_label, verified_by)
@@ -583,11 +696,20 @@ def book_tests(db: Session, test_ids: list[int], date: str, patient_name: str, p
         t = db.get(LabTest, tid)
         if not t:
             continue
-        db.add(TestBooking(
-            booking_group_id=group_id, confirmation_id=confirmation_id, lab_test_id=t.id,
-            patient_id=patient.id, patient_name=patient_name, date=date, phone=phone,
-            caller_phone=caller_phone, status="confirmed", created_at=_now(),
-        ))
+        db.add(
+            TestBooking(
+                booking_group_id=group_id,
+                confirmation_id=confirmation_id,
+                lab_test_id=t.id,
+                patient_id=patient.id,
+                patient_name=patient_name,
+                date=date,
+                phone=phone,
+                caller_phone=caller_phone,
+                status="confirmed",
+                created_at=_now(),
+            )
+        )
         booked.append(t.name)
         total += t.rate_inr
         if t.prep_instructions_bn:
@@ -596,12 +718,22 @@ def book_tests(db: Session, test_ids: list[int], date: str, patient_name: str, p
         return {"success": False, "reason": "no_valid_tests"}
     db.commit()
 
-    queue_sms(db, phone, "tests_confirmed",
-              f"Your tests ({', '.join(booked)}) on {date} are confirmed. Total Rs.{total}. "
-              f"Ref: {confirmation_id}.", confirmation_id)
+    queue_sms(
+        db,
+        phone,
+        "tests_confirmed",
+        f"Your tests ({', '.join(booked)}) on {date} are confirmed. Total Rs.{total}. Ref: {confirmation_id}.",
+        confirmation_id,
+    )
 
-    return {"success": True, "confirmation_id": confirmation_id, "test_names": booked,
-            "total_rate_inr": total, "date": date, "combined_prep": " ".join(combined_prep)}
+    return {
+        "success": True,
+        "confirmation_id": confirmation_id,
+        "test_names": booked,
+        "total_rate_inr": total,
+        "date": date,
+        "combined_prep": " ".join(combined_prep),
+    }
 
 
 def add_test_to_booking(db: Session, confirmation_id: str, test_name: str) -> dict:
@@ -611,24 +743,36 @@ def add_test_to_booking(db: Session, confirmation_id: str, test_name: str) -> di
     test = db.query(LabTest).filter(func.lower(LabTest.name) == test_name.lower()).first()
     if not test:
         return {"success": False, "reason": "test_not_found"}
-    already = {tb.lab_test_id for tb in db.query(TestBooking).filter_by(
-        booking_group_id=existing.booking_group_id, status="confirmed").all()}
+    already = {
+        tb.lab_test_id
+        for tb in db.query(TestBooking).filter_by(booking_group_id=existing.booking_group_id, status="confirmed").all()
+    }
     if test.id in already:
         return {"success": False, "reason": "already_booked"}
-    db.add(TestBooking(
-        booking_group_id=existing.booking_group_id, confirmation_id=confirmation_id,
-        lab_test_id=test.id, patient_id=existing.patient_id, patient_name=existing.patient_name,
-        date=existing.date, phone=existing.phone, caller_phone=existing.caller_phone,
-        status="confirmed", created_at=_now(),
-    ))
+    db.add(
+        TestBooking(
+            booking_group_id=existing.booking_group_id,
+            confirmation_id=confirmation_id,
+            lab_test_id=test.id,
+            patient_id=existing.patient_id,
+            patient_name=existing.patient_name,
+            date=existing.date,
+            phone=existing.phone,
+            caller_phone=existing.caller_phone,
+            status="confirmed",
+            created_at=_now(),
+        )
+    )
     db.commit()
     return {"success": True, "confirmation_id": confirmation_id, "test_name": test.name, "date": existing.date}
 
 
 # ========================================================= notifications
 
-def queue_sms(db: Session, to_phone: str, template_key: str, message: str,
-              related_confirmation_id: str | None = None) -> dict:
+
+def queue_sms(
+    db: Session, to_phone: str, template_key: str, message: str, related_confirmation_id: str | None = None
+) -> dict:
     """The open integration placeholder. Logs exactly what WOULD be sent,
     in the shape a real provider needs, and returns status="queued" --
     never "sent". Wiring a real SMS/WhatsApp provider means implementing
@@ -646,13 +790,27 @@ def queue_sms(db: Session, to_phone: str, template_key: str, message: str,
     # KCD-353: a text channel states it is automated, every time (idempotent).
     message = _with_disclosure_notice(message)
     # The same notice to the same number for the same booking inside the window is a retry, not a second message.
-    twin = (db.query(SmsOutbox).filter_by(to_phone=to_phone, template_key=template_key, message=message,
-                                          related_confirmation_id=related_confirmation_id)
-            .order_by(SmsOutbox.created_at.desc()).first())
+    twin = (
+        db.query(SmsOutbox)
+        .filter_by(
+            to_phone=to_phone,
+            template_key=template_key,
+            message=message,
+            related_confirmation_id=related_confirmation_id,
+        )
+        .order_by(SmsOutbox.created_at.desc())
+        .first()
+    )
     if twin is not None and (_now() - twin.created_at).total_seconds() < SMS_DEDUP_WINDOW_S:
         return {"queued": True, "id": twin.id, "duplicate": True}
-    row = SmsOutbox(to_phone=to_phone, template_key=template_key, message=message,
-                     status="queued", related_confirmation_id=related_confirmation_id, created_at=_now())
+    row = SmsOutbox(
+        to_phone=to_phone,
+        template_key=template_key,
+        message=message,
+        status="queued",
+        related_confirmation_id=related_confirmation_id,
+        created_at=_now(),
+    )
     db.add(row)
     db.commit()
     return {"queued": True, "id": row.id}
@@ -678,8 +836,12 @@ def resend_confirmation(db: Session, confirmation_id: str) -> dict:
         # confusing at best, and could read as a real (wrong) number.
         return {"success": False, "reason": "no_phone_on_file"}
 
-    last = (db.query(SmsOutbox).filter_by(related_confirmation_id=confirmation_id, template_key="resend")
-            .order_by(SmsOutbox.created_at.desc()).first())
+    last = (
+        db.query(SmsOutbox)
+        .filter_by(related_confirmation_id=confirmation_id, template_key="resend")
+        .order_by(SmsOutbox.created_at.desc())
+        .first()
+    )
     if last and (_now() - last.created_at).total_seconds() < SMS_RESEND_MIN_INTERVAL_S:
         return {"success": False, "reason": "rate_limited"}
 
@@ -688,6 +850,7 @@ def resend_confirmation(db: Session, confirmation_id: str) -> dict:
 
 
 # ========================================================== department routing
+
 
 def route_department(db: Session, query_text: str, lang: str) -> dict:
     q = query_text.lower()
@@ -708,6 +871,7 @@ def route_department(db: Session, query_text: str, lang: str) -> dict:
 
 # ============================================================= drafts
 
+
 def save_draft(db: Session, caller_phone: str, call_id: str, slots_json: str) -> None:
     existing = db.query(DraftBooking).filter_by(caller_phone=caller_phone).first()
     expires = _now() + datetime.timedelta(minutes=DRAFT_BOOKING_TTL_MINUTES)
@@ -715,8 +879,11 @@ def save_draft(db: Session, caller_phone: str, call_id: str, slots_json: str) ->
         existing.call_id, existing.slots_json = call_id, slots_json
         existing.updated_at, existing.expires_at = _now(), expires
     else:
-        db.add(DraftBooking(caller_phone=caller_phone, call_id=call_id, slots_json=slots_json,
-                             updated_at=_now(), expires_at=expires))
+        db.add(
+            DraftBooking(
+                caller_phone=caller_phone, call_id=call_id, slots_json=slots_json, updated_at=_now(), expires_at=expires
+            )
+        )
     db.commit()
 
 

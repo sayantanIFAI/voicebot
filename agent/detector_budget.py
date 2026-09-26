@@ -24,13 +24,15 @@ theoretical concern here, not an operational one -- this module exists
 so that stays true by measurement (see the histogram export) instead of
 by assumption.
 """
+
 from __future__ import annotations
 
 import asyncio
 import collections
 import logging
 import time
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 logger = logging.getLogger("detector_budget")
 
@@ -42,8 +44,9 @@ _TIMINGS: dict[str, collections.deque] = collections.defaultdict(lambda: collect
 _OVER_BUDGET_COUNTS: dict[str, int] = collections.defaultdict(int)
 
 
-async def run_within_budget(name: str, budget_s: float, fn: Callable[..., T],
-                            *args, previous_value: T | None = None, **kwargs) -> T | None:
+async def run_within_budget(
+    name: str, budget_s: float, fn: Callable[..., T], *args, previous_value: T | None = None, **kwargs
+) -> T | None:
     """Runs fn(*args, **kwargs) in a worker thread. Returns its result if
     it completes within budget_s; otherwise returns `previous_value`
     immediately when the deadline passes, without waiting further for
@@ -52,11 +55,15 @@ async def run_within_budget(name: str, budget_s: float, fn: Callable[..., T],
     t0 = time.monotonic()
     try:
         result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=budget_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - t0
         _OVER_BUDGET_COUNTS[name] += 1
-        logger.warning("detector %s exceeded its %.3fs budget (still running after %.3fs) "
-                       "-- degrading to previous value", name, budget_s, elapsed)
+        logger.warning(
+            "detector %s exceeded its %.3fs budget (still running after %.3fs) -- degrading to previous value",
+            name,
+            budget_s,
+            elapsed,
+        )
         return previous_value
     _TIMINGS[name].append(time.monotonic() - t0)
     return result

@@ -12,10 +12,14 @@ A turn can fall in several buckets at once (a noisy narrowband turn is both), so
 the counters are per bucket and a rate is bucket-count / turns-seen, not a
 partition.
 """
+
 from __future__ import annotations
 
 from agent.channel_quality import (
-    CHANNEL_CLEAN_16K, CHANNEL_CROSSTALK, CHANNEL_NARROWBAND_8K, CHANNEL_NOISY,
+    CHANNEL_CLEAN_16K,
+    CHANNEL_CROSSTALK,
+    CHANNEL_NARROWBAND_8K,
+    CHANNEL_NOISY,
 )
 
 CHANNEL_BUCKETS = (CHANNEL_CLEAN_16K, CHANNEL_NARROWBAND_8K, CHANNEL_NOISY, CHANNEL_CROSSTALK)

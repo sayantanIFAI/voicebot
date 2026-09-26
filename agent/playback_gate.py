@@ -27,18 +27,20 @@ PLAYBACK_GUARD_S is REASONED: enough for a network hop plus the client's own
 output latency; it is the price of the backstop, paid only when
 `playback_done` goes missing.
 """
+
 from __future__ import annotations
 
 import time
-from typing import Callable
+from collections.abc import Callable
 
 PLAYBACK_GUARD_S = 3.0
 RESYNC_REWIND_S = 0.25
 
 
 class PlaybackGate:
-    def __init__(self, guard_s: float = PLAYBACK_GUARD_S, clock: Callable[[], float] = time.time,
-                 start_closed: bool = True):
+    def __init__(
+        self, guard_s: float = PLAYBACK_GUARD_S, clock: Callable[[], float] = time.time, start_closed: bool = True
+    ):
         self.guard_s = guard_s
         self._clock = clock
         # Starts closed: the greeting goes out before the caller has said

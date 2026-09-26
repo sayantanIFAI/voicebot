@@ -6,6 +6,7 @@ predicts age for real callers. See the module docstring.
 
     python -m pytest tests/test_senior_voice.py -v
 """
+
 import os
 import sys
 
@@ -17,9 +18,15 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, p)
 
 from _synth_speech import SR, older, speech, young
+
 from agent.senior_voice import (
-    SENIOR_SCORE, SeniorEstimate, SeniorEvidence, estimate, explicit_senior_cue,
-    extract_features, stated_age_is_senior,
+    SENIOR_SCORE,
+    SeniorEstimate,
+    SeniorEvidence,
+    estimate,
+    explicit_senior_cue,
+    extract_features,
+    stated_age_is_senior,
 )
 
 
@@ -28,6 +35,7 @@ def _scores(gen, f0s=(130, 190, 230), seeds=(0, 1)):
 
 
 # ------------------------------------------------------------- acoustics
+
 
 def test_brisk_steady_speech_does_not_sound_older():
     ests = [e for e in _scores(young) if e.sufficient]
@@ -51,11 +59,14 @@ def test_pitch_alone_decides_nothing():
     assert abs(lo.score - hi.score) < 0.1
 
 
-@pytest.mark.parametrize("label,kwargs", [
-    ("slow only", dict(syll_hz=2.3)),
-    ("tremor only", dict(tremor_hz=6.0, tremor_st=0.5)),
-    ("breathy and unsteady only", dict(breath=0.10, jitter_st=0.30)),
-])
+@pytest.mark.parametrize(
+    "label,kwargs",
+    [
+        ("slow only", dict(syll_hz=2.3)),
+        ("tremor only", dict(tremor_hz=6.0, tremor_st=0.5)),
+        ("breathy and unsteady only", dict(breath=0.10, jitter_st=0.30)),
+    ],
+)
 def test_a_single_trait_never_flags_a_caller_on_its_own(label, kwargs):
     base = dict(syll_hz=4.8, jitter_st=0.05, breath=0.02)
     e = estimate(speech(seed=3, **{**base, **kwargs}), SR)
@@ -92,6 +103,7 @@ def test_too_little_speech_is_not_judged_at_all():
 
 def test_silence_is_not_judged():
     import numpy as np
+
     assert not estimate(np.zeros(SR * 5, dtype=np.float32), SR).sufficient
 
 
@@ -102,6 +114,7 @@ def test_contributions_explain_the_score():
 
 
 # --------------------------------------------------- evidence over a call
+
 
 def _est(score, sufficient=True):
     return SeniorEstimate(sufficient, score, {}, {})
@@ -149,8 +162,7 @@ def test_an_explicit_request_decides_immediately_and_reports_the_change():
     assert ev.note_explicit("self_described") is False
 
 
-_SINGLE_TRAITS = (dict(syll_hz=2.3), dict(tremor_hz=6.0, tremor_st=0.5),
-                  dict(breath=0.10, jitter_st=0.30))
+_SINGLE_TRAITS = (dict(syll_hz=2.3), dict(tremor_hz=6.0, tremor_st=0.5), dict(breath=0.10, jitter_st=0.30))
 
 
 def test_the_decision_threshold_is_above_every_single_trait_score():
@@ -158,8 +170,12 @@ def test_the_decision_threshold_is_above_every_single_trait_score():
     # voice, and the decision threshold must clear the highest score any of
     # them earns -- a single trait alone must never make a caller "senior".
     base = dict(syll_hz=4.8, jitter_st=0.05, breath=0.02)
-    scores = [estimate(speech(seed=sd, f0=f0, **{**base, **kw}), SR).score
-              for kw in _SINGLE_TRAITS for sd in (0, 1, 3) for f0 in (130, 190, 230)]
+    scores = [
+        estimate(speech(seed=sd, f0=f0, **{**base, **kw}), SR).score
+        for kw in _SINGLE_TRAITS
+        for sd in (0, 1, 3)
+        for f0 in (130, 190, 230)
+    ]
     assert SENIOR_SCORE > max(scores), max(scores)
 
 
@@ -178,20 +194,24 @@ def test_a_non_numeric_stated_age_is_ignored_not_a_crash():
 
 # ------------------------------------------------------ explicit cues
 
-@pytest.mark.parametrize("text,lang,expected", [
-    ("could you please speak slowly", "en", "requested_slower"),
-    ("slowly please, I can't follow", "en", "requested_slower"),
-    ("I am an old man", "en", "self_described"),
-    ("I'm a senior citizen", "en", "self_described"),
-    ("my hearing is not good", "en", "self_described"),
-    ("ধীরে বলুন", "bn", "requested_slower"),
-    ("আমি বয়স্ক মানুষ", "bn", "self_described"),
-    ("धीरे बोलिए", "hi", "requested_slower"),
-    ("मैं बुज़ुर्ग हूँ", "hi", "self_described"),
-    ("what is the price of a blood test", "en", None),
-    ("I want to book for tomorrow", "en", None),
-    ("", "en", None),
-])
+
+@pytest.mark.parametrize(
+    "text,lang,expected",
+    [
+        ("could you please speak slowly", "en", "requested_slower"),
+        ("slowly please, I can't follow", "en", "requested_slower"),
+        ("I am an old man", "en", "self_described"),
+        ("I'm a senior citizen", "en", "self_described"),
+        ("my hearing is not good", "en", "self_described"),
+        ("ধীরে বলুন", "bn", "requested_slower"),
+        ("আমি বয়স্ক মানুষ", "bn", "self_described"),
+        ("धीरे बोलिए", "hi", "requested_slower"),
+        ("मैं बुज़ुर्ग हूँ", "hi", "self_described"),
+        ("what is the price of a blood test", "en", None),
+        ("I want to book for tomorrow", "en", None),
+        ("", "en", None),
+    ],
+)
 def test_explicit_cues_in_all_three_languages(text, lang, expected):
     assert explicit_senior_cue(text, lang) == expected
 
@@ -201,9 +221,17 @@ def test_a_cue_in_another_language_than_the_current_one_still_counts():
     assert explicit_senior_cue("please speak slowly", "bn") == "requested_slower"
 
 
-@pytest.mark.parametrize("age,relationship,expected", [
-    (72, None, True), (60, "self", True), (59, "self", False), (80, "father", False),
-    (80, "mother", False), (None, None, False), (65, "", True),
-])
+@pytest.mark.parametrize(
+    "age,relationship,expected",
+    [
+        (72, None, True),
+        (60, "self", True),
+        (59, "self", False),
+        (80, "father", False),
+        (80, "mother", False),
+        (None, None, False),
+        (65, "", True),
+    ],
+)
 def test_only_the_callers_own_stated_age_counts(age, relationship, expected):
     assert stated_age_is_senior(age, relationship) is expected

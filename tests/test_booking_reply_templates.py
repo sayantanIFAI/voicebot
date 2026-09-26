@@ -6,6 +6,7 @@ in the reply comes from the `result` dict passed in, not invented.
 
     python -m pytest tests/test_booking_reply_templates.py -v
 """
+
 import re
 
 import agent.reply_templates as rt
@@ -23,12 +24,17 @@ def _script(text: str) -> str:
 
 
 def test_booking_confirmation_readback_all_languages():
-    slots = {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-              "patient_name": "Ravi", "phone": "9800000001"}
+    slots = {
+        "doctor_name": "Sen",
+        "date": "2026-10-01",
+        "time_slot": "18:15",
+        "patient_name": "Ravi",
+        "phone": "9800000001",
+    }
     for lang in ("bn", "hi", "en"):
         reply = rt.booking_confirmation_readback(slots, "book_appointment", lang)
         assert "2026-10-01" in reply and "18:15" in reply and "9800000001" in reply
-        assert _script(reply) == lang or lang == "en"   # english readback embeds a latin doctor name either way
+        assert _script(reply) == lang or lang == "en"  # english readback embeds a latin doctor name either way
 
 
 def test_reschedule_reply_success_and_failure_all_languages():
@@ -39,7 +45,7 @@ def test_reschedule_reply_success_and_failure_all_languages():
         r = rt.reschedule_reply(success, lang)
         assert "KCD-999" in r and "2026-10-05" in r and "18:30" in r
         r2 = rt.reschedule_reply(not_found, lang)
-        assert r2   # non-empty, doesn't crash
+        assert r2  # non-empty, doesn't crash
         r3 = rt.reschedule_reply(slot_taken, lang)
         assert "18:00" in r3 and "18:15" in r3
 
@@ -59,8 +65,7 @@ def test_cancel_reply_states_the_charge_before_it_is_applied():
 
 
 def test_lookup_reply_states_the_real_confirmation_number():
-    bookings = [{"doctor_name": "Dr. A. Sen", "date": "2026-10-01", "time_slot": "18:15",
-                 "confirmation_id": "KCD-777"}]
+    bookings = [{"doctor_name": "Dr. A. Sen", "date": "2026-10-01", "time_slot": "18:15", "confirmation_id": "KCD-777"}]
     for lang in ("bn", "hi", "en"):
         r = rt.lookup_reply(bookings, lang)
         assert "KCD-777" in r and "2026-10-01" in r
@@ -70,8 +75,14 @@ def test_lookup_reply_states_the_real_confirmation_number():
 
 
 def test_multi_test_reply_states_the_real_total():
-    result = {"success": True, "test_names": ["Uric Acid", "Lipid Profile"], "date": "2026-10-02",
-              "total_rate_inr": 900, "confirmation_id": "KCD-555", "combined_prep": "Fast for 10 hours."}
+    result = {
+        "success": True,
+        "test_names": ["Uric Acid", "Lipid Profile"],
+        "date": "2026-10-02",
+        "total_rate_inr": 900,
+        "confirmation_id": "KCD-555",
+        "combined_prep": "Fast for 10 hours.",
+    }
     for lang in ("bn", "hi", "en"):
         r = rt.multi_test_reply(result, lang)
         assert "900" in r and "KCD-555" in r and "Uric Acid" in r and "Lipid Profile" in r
@@ -106,8 +117,13 @@ def test_conflict_reply_states_the_existing_booking():
 
 
 def test_earliest_available_reply_all_languages():
-    found = {"found": True, "available": True, "date": "2026-10-04", "time_slot": "10:00",
-             "alternatives": ["10:15", "10:30"]}
+    found = {
+        "found": True,
+        "available": True,
+        "date": "2026-10-04",
+        "time_slot": "10:00",
+        "alternatives": ["10:15", "10:30"],
+    }
     unavailable = {"found": True, "available": False, "doctor_name": "Dr. X"}
     not_found = {"found": False, "query": "Nobody"}
     for lang in ("bn", "hi", "en"):
@@ -123,7 +139,7 @@ def test_resend_reply_never_reads_the_full_number_aloud():
     for lang in ("bn", "hi", "en"):
         r = rt.resend_reply(ok, lang)
         assert "6780" in r
-        assert "9123456780" not in r   # never the full number
+        assert "9123456780" not in r  # never the full number
 
 
 def test_booking_reply_states_a_past_date_plainly_and_never_rolls_it_forward():
@@ -132,7 +148,7 @@ def test_booking_reply_states_a_past_date_plainly_and_never_rolls_it_forward():
     result = {"success": False, "reason": "date_in_past"}
     for lang in ("bn", "hi", "en"):
         r = rt.booking_reply(slots, result, lang)
-        assert "2020-01-01" not in r          # never states a booked date that never happened
+        assert "2020-01-01" not in r  # never states a booked date that never happened
         assert r
 
 
@@ -145,8 +161,10 @@ def test_booking_reply_hold_expired_offers_a_retry_not_a_dead_end():
 
 def test_missing_slot_prompt_new_intents_all_languages():
     for intent, field in (
-        ("book_test", "test_names"), ("reschedule_appointment", "new_date"),
-        ("cancel_appointment", "confirmation_id"), ("add_test_booking", "test_name"),
+        ("book_test", "test_names"),
+        ("reschedule_appointment", "new_date"),
+        ("cancel_appointment", "confirmation_id"),
+        ("add_test_booking", "test_name"),
         ("lookup_booking", "phone"),
     ):
         for lang in ("bn", "hi", "en"):

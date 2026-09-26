@@ -6,6 +6,7 @@ artefact", not a particular implementation. Kept separate from
 reply_templates.py itself so the same check can run over EVERY reply a
 template function can produce, from a test, without needing a parser.
 """
+
 from __future__ import annotations
 
 import ast
@@ -31,12 +32,17 @@ def _docstring_line_numbers(tree: ast.Module) -> set[int]:
     spoken to a caller -- excluded so a colon in an explanatory comment
     ("KCD-454: ...") is not mistaken for a spoken artefact."""
     lines = set()
-    candidates = [tree] + [n for n in ast.walk(tree)
-                           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    candidates = [tree] + [
+        n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
     for node in candidates:
         body = getattr(node, "body", None)
-        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
-                and isinstance(body[0].value.value, str):
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
             lines.add(body[0].value.lineno)
     return lines
 
@@ -70,8 +76,12 @@ def scan_source_for_artifacts(source: str) -> list[tuple[int, str, str]]:
     skip_ids = _regex_argument_ids(tree)
     hits = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
-                and node.lineno not in skip_lines and id(node) not in skip_ids:
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.lineno not in skip_lines
+            and id(node) not in skip_ids
+        ):
             artifacts = find_artifacts(node.value)
             if artifacts:
                 hits.append((node.lineno, "".join(artifacts), node.value))

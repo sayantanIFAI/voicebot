@@ -23,12 +23,13 @@ measured ones; tools/calibrate_endpointing.py is the instrument, and
 THRESHOLD_STATUS is flipped to "MEASURED" only by loading a calibration file it
 wrote (load_calibrated_config). Until then any report must say REASONED.
 """
+
 from __future__ import annotations
 
 import dataclasses
 import json
 import re
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 
@@ -67,18 +68,23 @@ class EndpointConfig:
 
 @dataclasses.dataclass
 class TurnDecision:
-    utterance_end_s: float | None       # relative to the slice; None => not yet
+    utterance_end_s: float | None  # relative to the slice; None => not yet
     had_any_speech: bool
     reason: str
     commit_after_s: float | None = None  # buffer seconds until this could flip, if silence continues
-    speculate: bool = False              # ask for a partial transcript now (KCD-048)
+    speculate: bool = False  # ask for a partial transcript now (KCD-048)
     trailing_silence_s: float = 0.0
     confirm_s: float = 0.0
-    speech_end_s: float | None = None   # where the last speech ended, slice-relative
+    speech_end_s: float | None = None  # where the last speech ended, slice-relative
 
 
-def decide(spans: Sequence[dict], duration_s: float, cfg: EndpointConfig = EndpointConfig(),
-           completeness: str | None = None, semantic: bool = True) -> TurnDecision:
+def decide(
+    spans: Sequence[dict],
+    duration_s: float,
+    cfg: EndpointConfig = EndpointConfig(),
+    completeness: str | None = None,
+    semantic: bool = True,
+) -> TurnDecision:
     """spans: [{"start": s, "end": s}] in seconds from the start of the slice."""
     if duration_s < 0.2:
         return TurnDecision(None, False, "too_little_audio")
@@ -102,18 +108,26 @@ def decide(spans: Sequence[dict], duration_s: float, cfg: EndpointConfig = Endpo
     confirm = cfg.confirm_for(completeness if semantic else None)
 
     if trailing >= confirm:
-        return TurnDecision(last_end, True, "silence_confirmed",
-                            trailing_silence_s=trailing, confirm_s=confirm, speech_end_s=last_end)
+        return TurnDecision(
+            last_end, True, "silence_confirmed", trailing_silence_s=trailing, confirm_s=confirm, speech_end_s=last_end
+        )
 
     # Not yet. Say when it could flip, and whether a transcript would help.
     wait = confirm - trailing
-    speculate = (semantic and completeness is None and trailing >= cfg.speculate_after_s)
+    speculate = semantic and completeness is None and trailing >= cfg.speculate_after_s
     # Before the speculation point the next interesting moment is reaching it.
     if semantic and completeness is None and trailing < cfg.speculate_after_s:
         wait = min(wait, cfg.speculate_after_s - trailing)
-    return TurnDecision(None, True, "waiting_silence", commit_after_s=max(wait, 0.0),
-                        speculate=speculate, trailing_silence_s=trailing, confirm_s=confirm,
-                        speech_end_s=last_end)
+    return TurnDecision(
+        None,
+        True,
+        "waiting_silence",
+        commit_after_s=max(wait, 0.0),
+        speculate=speculate,
+        trailing_silence_s=trailing,
+        confirm_s=confirm,
+        speech_end_s=last_end,
+    )
 
 
 # --------------------------------------------------------------- completeness
@@ -131,25 +145,182 @@ _HINDI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 # "incomplete" verdict costs a little latency, a wrongly "complete" one cuts a
 # caller off.
 _INCOMPLETE_TAIL = {
-    "en": {"and", "or", "but", "the", "a", "an", "to", "for", "with", "of", "in", "on", "at", "my",
-           "is", "are", "was", "that", "because", "if", "so", "um", "uh", "er", "hmm", "like",
-           "want", "need", "would", "can", "could", "i", "it", "this", "about", "from"},
-    "hi": {"और", "या", "लेकिन", "कि", "अगर", "तो", "का", "की", "के", "में", "से", "को", "पर", "मेरा",
-           "मेरी", "मुझे", "क्योंकि", "मतलब", "वो", "यह", "ये", "एक", "उस", "इस", "अं", "उम्म"},
-    "bn": {"এবং", "আর", "কিন্তু", "বা", "অথবা", "যদি", "যে", "কারণ", "মানে", "আমার", "আমি", "একটা",
-           "ওই", "এই", "সেই", "তো", "মানে", "অ্যাঁ", "উম"},
+    "en": {
+        "and",
+        "or",
+        "but",
+        "the",
+        "a",
+        "an",
+        "to",
+        "for",
+        "with",
+        "of",
+        "in",
+        "on",
+        "at",
+        "my",
+        "is",
+        "are",
+        "was",
+        "that",
+        "because",
+        "if",
+        "so",
+        "um",
+        "uh",
+        "er",
+        "hmm",
+        "like",
+        "want",
+        "need",
+        "would",
+        "can",
+        "could",
+        "i",
+        "it",
+        "this",
+        "about",
+        "from",
+    },
+    "hi": {
+        "और",
+        "या",
+        "लेकिन",
+        "कि",
+        "अगर",
+        "तो",
+        "का",
+        "की",
+        "के",
+        "में",
+        "से",
+        "को",
+        "पर",
+        "मेरा",
+        "मेरी",
+        "मुझे",
+        "क्योंकि",
+        "मतलब",
+        "वो",
+        "यह",
+        "ये",
+        "एक",
+        "उस",
+        "इस",
+        "अं",
+        "उम्म",
+    },
+    "bn": {
+        "এবং",
+        "আর",
+        "কিন্তু",
+        "বা",
+        "অথবা",
+        "যদি",
+        "যে",
+        "কারণ",
+        "মানে",
+        "আমার",
+        "আমি",
+        "একটা",
+        "ওই",
+        "এই",
+        "সেই",
+        "তো",
+        "অ্যাঁ",
+        "উম",
+    },
 }
 # A finished utterance ends here. Verb-final Bengali/Hindi make this list the
 # strongest positive signal available without a parser.
 _COMPLETE_TAIL = {
-    "en": {"please", "thanks", "thank", "you", "today", "tomorrow", "yes", "no", "okay", "ok", "done",
-           "morning", "evening", "afternoon", "available", "there", "tests", "test", "doctor", "hello"},
-    "hi": {"है", "हैं", "हूँ", "हूं", "था", "थी", "हो", "चाहिए", "चाहता", "चाहती", "करें", "कीजिए", "दीजिए",
-           "बताइए", "बताएँ", "बताईए", "नहीं", "हाँ", "जी", "ठीक", "धन्यवाद", "शुक्रिया", "सकता", "सकती",
-           "सकते", "है।", "कल", "आज", "परसों"},
-    "bn": {"আছে", "আছেন", "নেই", "চাই", "করুন", "দিন", "বলুন", "হবে", "হয়", "পারি", "পারেন", "পারবেন",
-           "যাবে", "হ্যাঁ", "না", "ঠিক", "ধন্যবাদ", "কি", "কী", "কখন", "কোথায়", "কত", "আজ", "কাল", "পরশু",
-           "চাইছি", "করব", "করছি", "দেখাতে", "হলো", "হল"},
+    "en": {
+        "please",
+        "thanks",
+        "thank",
+        "you",
+        "today",
+        "tomorrow",
+        "yes",
+        "no",
+        "okay",
+        "ok",
+        "done",
+        "morning",
+        "evening",
+        "afternoon",
+        "available",
+        "there",
+        "tests",
+        "test",
+        "doctor",
+        "hello",
+    },
+    "hi": {
+        "है",
+        "हैं",
+        "हूँ",
+        "हूं",
+        "था",
+        "थी",
+        "हो",
+        "चाहिए",
+        "चाहता",
+        "चाहती",
+        "करें",
+        "कीजिए",
+        "दीजिए",
+        "बताइए",
+        "बताएँ",
+        "बताईए",
+        "नहीं",
+        "हाँ",
+        "जी",
+        "ठीक",
+        "धन्यवाद",
+        "शुक्रिया",
+        "सकता",
+        "सकती",
+        "सकते",
+        "है।",
+        "कल",
+        "आज",
+        "परसों",
+    },
+    "bn": {
+        "আছে",
+        "আছেন",
+        "নেই",
+        "চাই",
+        "করুন",
+        "দিন",
+        "বলুন",
+        "হবে",
+        "হয়",
+        "পারি",
+        "পারেন",
+        "পারবেন",
+        "যাবে",
+        "হ্যাঁ",
+        "না",
+        "ঠিক",
+        "ধন্যবাদ",
+        "কি",
+        "কী",
+        "কখন",
+        "কোথায়",
+        "কত",
+        "আজ",
+        "কাল",
+        "পরশু",
+        "চাইছি",
+        "করব",
+        "করছি",
+        "দেখাতে",
+        "হলো",
+        "হল",
+    },
 }
 _YES_NO = {"yes", "no", "ok", "okay", "হ্যাঁ", "না", "ঠিক আছে", "हाँ", "नहीं", "जी", "ठीक है", "जी हाँ", "जी नहीं"}
 
@@ -211,8 +382,10 @@ def classify_completeness(text: str, lang: str = "en") -> str:
 
 # ------------------------------------------------------------- energy spans
 
-def energy_spans(samples: np.ndarray, sr: int = 16000, frame_s: float = 0.02,
-                 margin_db: float = 12.0, hang_s: float = 0.12) -> list[dict]:
+
+def energy_spans(
+    samples: np.ndarray, sr: int = 16000, frame_s: float = 0.02, margin_db: float = 12.0, hang_s: float = 0.12
+) -> list[dict]:
     """A dependency-free stand-in for Silero, for tests and for the calibration
     tool when torch is absent. Speech = frames within `margin_db` of the loud
     end, with a short hangover so a stop consonant is not a gap. It is NOT what
@@ -222,7 +395,7 @@ def energy_spans(samples: np.ndarray, sr: int = 16000, frame_s: float = 0.02,
     if x.size < n:
         return []
     count = x.size // n
-    e = 10 * np.log10(np.maximum(np.mean(x[:count * n].reshape(count, n) ** 2, axis=1), 1e-12))
+    e = 10 * np.log10(np.maximum(np.mean(x[: count * n].reshape(count, n) ** 2, axis=1), 1e-12))
     thresh = max(float(np.percentile(e, 95)) - margin_db, -70.0)
     active = e >= thresh
     hang = int(hang_s / frame_s)
@@ -243,6 +416,7 @@ def energy_spans(samples: np.ndarray, sr: int = 16000, frame_s: float = 0.02,
 
 
 # ------------------------------------------------------------- calibration
+
 
 def config_from_json(path: str, base: EndpointConfig = EndpointConfig()) -> EndpointConfig:
     """Load a calibration file written by tools/calibrate_endpointing.py. Only

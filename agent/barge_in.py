@@ -48,6 +48,7 @@ calls before trusting them (KCD-407 measures speakerphone separately). agent/ful
 additionally refuses to act on an event until the canceller has measurably converged, which
 is what keeps the agent from triggering on its own audio.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -62,12 +63,14 @@ HOP_S = 0.010
 
 @dataclasses.dataclass
 class BargeInConfig:
-    min_speech_s: float = 0.11          # evidence (in hops) needed; see the grid in test_barge_in (REASONED)
-    above_floor_db: float = 9.0         # over the tracked noise floor (REASONED)
-    above_echo_db: float = -6.0         # cleaned power vs echo estimate; below this => residual echo (swept -13..+3 on synthetic scenes)
+    min_speech_s: float = 0.11  # evidence (in hops) needed; see the grid in test_barge_in (REASONED)
+    above_floor_db: float = 9.0  # over the tracked noise floor (REASONED)
+    above_echo_db: float = (
+        -6.0
+    )  # cleaned power vs echo estimate; below this => residual echo (swept -13..+3 on synthetic scenes)
     voiced_harmonicity: float = VOICED_HARMONICITY
-    miss_penalty: float = 0.4           # evidence lost per non-speech hop (REASONED)
-    min_floor_dbfs: float = -70.0       # never treat digital silence as the floor
+    miss_penalty: float = 0.4  # evidence lost per non-speech hop (REASONED)
+    min_floor_dbfs: float = -70.0  # never treat digital silence as the floor
     absolute_floor_dbfs: float = -50.0  # nothing quieter than this is a caller
     # MEASURED on synthetic scenes (echo-only frames: median similarity 0.89, 25th
     # percentile 0.75; caller frames: median 0.54, 75th percentile 0.72): a frame
@@ -86,7 +89,7 @@ class BargeInConfig:
 
 @dataclasses.dataclass
 class BargeInEvent:
-    at_sample: int          # where the evidence began
+    at_sample: int  # where the evidence began
     detected_at_sample: int  # where it was enough
     latency_ms: float
 
@@ -100,7 +103,7 @@ class BargeInDetector:
         self._frame, self._hop = int(FRAME_S * sr), int(HOP_S * sr)
         self._buf = np.zeros(0, np.float32)
         self._echo = np.zeros(0, np.float32)
-        self._pos = 0                      # absolute index of _buf[0]
+        self._pos = 0  # absolute index of _buf[0]
         self._floor_db = None
         self._streak_start: int | None = None
         self._score = 0.0
@@ -113,7 +116,7 @@ class BargeInDetector:
 
     def _frame_hit(self, cleaned: np.ndarray, echo: np.ndarray) -> float:
         """Evidence weight of this frame: 0 (not a caller), 1 (a hit), or strong_weight."""
-        p = float(np.mean(cleaned ** 2)) + 1e-12
+        p = float(np.mean(cleaned**2)) + 1e-12
         db = 10 * np.log10(p)
         # Noise floor: a running minimum that creeps upward (5 dB/s), so a
         # line that gets noisier raises the bar instead of tripping it.
@@ -121,21 +124,24 @@ class BargeInDetector:
         self._floor_db = max(floor, self.cfg.min_floor_dbfs)
         if db < self.cfg.absolute_floor_dbfs or db < self._floor_db + self.cfg.above_floor_db:
             return 0.0
-        pe = float(np.mean(echo ** 2)) + 1e-12
+        pe = float(np.mean(echo**2)) + 1e-12
         rel = 10 * np.log10(p / pe) if pe > 1e-8 else float("inf")
         if rel < self.cfg.above_echo_db:
-            return 0.0                     # quieter than any plausible residual
+            return 0.0  # quieter than any plausible residual
         # Residual echo has the SPECTRAL SHAPE of the echo estimate (same pitch,
         # same harmonics); a caller's voice does not. So a frame that looks like
         # the echo and is not clearly louder than it is residual.
-        if rel < self.cfg.echo_like_below_db and self._spectral_similarity(cleaned, echo) >= self.cfg.echo_like_similarity:
+        if (
+            rel < self.cfg.echo_like_below_db
+            and self._spectral_similarity(cleaned, echo) >= self.cfg.echo_like_similarity
+        ):
             return 0.0
         acf = _autocorr(cleaned[None, :].astype(np.float32))
         _, harm = _pitch_lag(acf, self.sr)
         if float(harm[0]) < self.cfg.voiced_harmonicity:
             return 0.0
         if self._pure_tone(cleaned):
-            return 0.0                     # a horn or beep is periodic but it is not a voice
+            return 0.0  # a horn or beep is periodic but it is not a voice
         return self.cfg.strong_weight if rel >= self.cfg.strong_above_echo_db else 1.0
 
     def _pure_tone(self, frame: np.ndarray) -> bool:
@@ -144,12 +150,12 @@ class BargeInDetector:
         puts it in one line. Periodic, so the voicing test alone cannot tell them apart."""
         spec = np.abs(np.fft.rfft(frame * np.hanning(frame.size), 1024)) ** 2
         k = int(np.argmax(spec))
-        peak = float(spec[max(0, k - 2):k + 3].sum())
+        peak = float(spec[max(0, k - 2) : k + 3].sum())
         return peak / (float(spec.sum()) + 1e-12) >= self.cfg.pure_tone_fraction
 
     def _spectral_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         win = np.hanning(a.size)
-        A = np.abs(np.fft.rfft(a * win, 1024))[6:224]         # ~100-3500 Hz at 16 kHz
+        A = np.abs(np.fft.rfft(a * win, 1024))[6:224]  # ~100-3500 Hz at 16 kHz
         B = np.abs(np.fft.rfft(b * win, 1024))[6:224]
         return float(np.dot(A, B) / (np.linalg.norm(A) * np.linalg.norm(B) + 1e-12))
 
@@ -160,7 +166,7 @@ class BargeInDetector:
         self._echo = np.concatenate([self._echo, echo])
         need = self.cfg.min_speech_s / HOP_S
         while self._buf.size >= self._frame:
-            weight = self._frame_hit(self._buf[:self._frame], self._echo[:self._frame])
+            weight = self._frame_hit(self._buf[: self._frame], self._echo[: self._frame])
             hit = weight > 0.0
             self.frames += 1
             event = None
@@ -179,9 +185,12 @@ class BargeInDetector:
                     self._streak_start = None
             if self._score >= need:
                 end = self._pos + self._frame
-                event = BargeInEvent(self._streak_start if self._streak_start is not None else self._pos,
-                                     end, (end - (self._streak_start or self._pos)) / self.sr * 1000.0)
-            self._buf, self._echo = self._buf[self._hop:], self._echo[self._hop:]
+                event = BargeInEvent(
+                    self._streak_start if self._streak_start is not None else self._pos,
+                    end,
+                    (end - (self._streak_start or self._pos)) / self.sr * 1000.0,
+                )
+            self._buf, self._echo = self._buf[self._hop :], self._echo[self._hop :]
             self._pos += self._hop
             if event is not None:
                 self._score, self._streak_start = 0.0, None

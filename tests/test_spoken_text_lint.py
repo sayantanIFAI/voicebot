@@ -21,6 +21,7 @@ still does its job either way:
 
     python -m pytest tests/test_spoken_text_lint.py -v
 """
+
 import os
 import sys
 
@@ -36,7 +37,7 @@ from agent.spoken_text_lint import find_artifacts, has_spoken_artifact, scan_sou
 # this (never raise it) as reply_templates.py/reply_templates_i18n.py
 # get reworded to natural clauses.
 _KNOWN_BACKLOG = {
-    "agent/reply_templates.py": 13,     # lowered from 14: the "sample: value" phrasing became a sentence (sample_wording.py)
+    "agent/reply_templates.py": 13,  # lowered from 14: the "sample: value" phrasing became a sentence (sample_wording.py)
     "agent/reply_templates_i18n.py": 26,  # lowered from 28: Hindi and English "sample: value" became sentences
 }
 

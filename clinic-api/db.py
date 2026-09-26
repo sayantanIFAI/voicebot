@@ -26,6 +26,7 @@ journalling costs write throughput this workload does not need.
 DATABASE_URL still overrides everything, so pointing this back at a real
 Postgres for production is a one-line environment change.
 """
+
 from __future__ import annotations
 
 import os
@@ -47,6 +48,7 @@ engine = create_engine(
 )
 
 if _is_sqlite:
+
     @event.listens_for(engine, "connect")
     def _sqlite_pragmas(dbapi_conn, _record):
         cur = dbapi_conn.cursor()
@@ -56,6 +58,7 @@ if _is_sqlite:
         cur.execute("PRAGMA busy_timeout=30000")
         cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
+
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 

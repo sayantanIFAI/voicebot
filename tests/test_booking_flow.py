@@ -4,6 +4,7 @@ Pure and offline -- no network, no database, no GPU.
 
     python -m pytest tests/test_booking_flow.py -v
 """
+
 import time
 
 import pytest
@@ -26,10 +27,16 @@ from agent.booking_flow import (
 def test_one_sentence_booking_fills_every_slot_at_once():
     # KCD-357: caller gives doctor, date, time, name, phone all in one turn.
     state = new_state("book_appointment")
-    changed = merge_slots(state, {
-        "doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-        "patient_name": "Ravi", "phone": "9800000001",
-    })
+    changed = merge_slots(
+        state,
+        {
+            "doctor_name": "Sen",
+            "date": "2026-10-01",
+            "time_slot": "18:15",
+            "patient_name": "Ravi",
+            "phone": "9800000001",
+        },
+    )
     assert set(changed) == {"doctor_name", "date", "time_slot", "patient_name", "phone"}
     assert missing_required(state) == []
     assert is_ready_to_confirm(state)
@@ -42,7 +49,7 @@ def test_guided_flow_fills_one_slot_per_turn_without_forgetting_earlier_ones():
     assert missing_required(state) == ["date", "time_slot", "patient_name", "phone"]
 
     merge_slots(state, {"date": "2026-10-01", "time_slot": "18:15"})
-    assert state.slots["doctor_name"] == "Sen"          # not forgotten
+    assert state.slots["doctor_name"] == "Sen"  # not forgotten
     assert missing_required(state) == ["patient_name", "phone"]
 
     merge_slots(state, {"patient_name": "Ravi", "phone": "9800000001"})
@@ -59,31 +66,39 @@ def test_changing_mind_mid_booking_updates_only_that_slot():
     mark_confirming(state)
     changed = merge_slots(state, {"doctor_name": "Ghosh"})
     assert changed == ["doctor_name"]
-    assert state.slots["date"] == "2026-10-01"           # everything else kept
+    assert state.slots["date"] == "2026-10-01"  # everything else kept
     assert state.slots["patient_name"] == "Ravi"
-    assert state.stage == "collecting"                    # re-opened, not committed blind
+    assert state.stage == "collecting"  # re-opened, not committed blind
 
 
 def test_correction_after_confirmation_reopens_collection_and_keeps_the_rest():
     # KCD-367: caller spots a mistake between "shall I confirm" and commit.
     state = new_state("book_appointment")
-    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-                         "patient_name": "Ravi", "phone": "9800000001"})
+    merge_slots(
+        state,
+        {
+            "doctor_name": "Sen",
+            "date": "2026-10-01",
+            "time_slot": "18:15",
+            "patient_name": "Ravi",
+            "phone": "9800000001",
+        },
+    )
     mark_confirming(state)
     assert state.stage == "confirming"
 
     reopen_for_correction(state, "phone", "9800000099")
     assert state.stage == "collecting"
     assert state.slots["phone"] == "9800000099"
-    assert state.slots["doctor_name"] == "Sen"            # nothing else lost
-    assert is_ready_to_confirm(state)                      # ready again immediately
+    assert state.slots["doctor_name"] == "Sen"  # nothing else lost
+    assert is_ready_to_confirm(state)  # ready again immediately
 
 
 def test_multi_test_booking_accumulates_across_turns_without_duplicates():
     # KCD-365: several tests named across turns.
     state = new_state("book_test")
     merge_slots(state, {"test_names": ["Uric Acid", "Lipid Profile"]})
-    merge_slots(state, {"test_names": ["Lipid Profile", "CBC"]})   # a repeat + a new one
+    merge_slots(state, {"test_names": ["Lipid Profile", "CBC"]})  # a repeat + a new one
     assert state.test_names == ["Uric Acid", "Lipid Profile", "CBC"]
 
 
@@ -175,8 +190,7 @@ def test_spelling_merges_across_turns():
 def test_a_declined_phone_number_stops_blocking_the_booking():
     # KCD-370: refusal still completes the booking, never blocks forever.
     state = new_state("book_appointment")
-    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-                         "patient_name": "Ravi"})
+    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15", "patient_name": "Ravi"})
     assert missing_required(state) == ["phone"]
     state.phone_declined = True
     assert missing_required(state) == []
@@ -194,6 +208,7 @@ def test_effective_phone_prefers_contact_phone_then_falls_back_to_sentinel():
 
 # ------------------------------------------------------------- KCD-453
 
+
 def test_first_time_slot_fill_is_not_a_correction():
     state = new_state("book_appointment")
     prior = dict(state.slots)
@@ -209,7 +224,7 @@ def test_changing_an_already_given_value_is_a_correction():
     ack = correction_acknowledgement(changed, prior, state.slots, "en")
     assert ack is not None
     assert "Roy" in ack
-    assert "Sen" not in ack   # the agent restates the new value, never defends the old one
+    assert "Sen" not in ack  # the agent restates the new value, never defends the old one
 
 
 def test_correction_acknowledgement_never_speaks_a_label_colon():
@@ -251,10 +266,19 @@ def test_uncorrectable_internal_fields_are_never_acknowledged():
 # depends on: the state machine never reaches a committed stage on its
 # own, and the classifier never reads an uncertain/negated answer as yes.
 
+
 def test_a_fully_filled_booking_is_ready_to_confirm_but_never_committed():
     state = new_state("book_appointment")
-    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-                         "patient_name": "Ravi", "phone": "9800000001"})
+    merge_slots(
+        state,
+        {
+            "doctor_name": "Sen",
+            "date": "2026-10-01",
+            "time_slot": "18:15",
+            "patient_name": "Ravi",
+            "phone": "9800000001",
+        },
+    )
     assert is_ready_to_confirm(state)
     assert state.stage == "collecting", "filling every slot must not, by itself, reach a write stage"
     mark_confirming(state)
@@ -264,33 +288,63 @@ def test_a_fully_filled_booking_is_ready_to_confirm_but_never_committed():
 
 def test_changing_a_value_while_confirming_reopens_collection():
     state = new_state("book_appointment")
-    merge_slots(state, {"doctor_name": "Sen", "date": "2026-10-01", "time_slot": "18:15",
-                         "patient_name": "Ravi", "phone": "9800000001"})
+    merge_slots(
+        state,
+        {
+            "doctor_name": "Sen",
+            "date": "2026-10-01",
+            "time_slot": "18:15",
+            "patient_name": "Ravi",
+            "phone": "9800000001",
+        },
+    )
     mark_confirming(state)
     merge_slots(state, {"time_slot": "18:30"})
     assert state.stage == "collecting"
     assert state.slots["time_slot"] == "18:30" and state.slots["doctor_name"] == "Sen"
 
 
-@pytest.mark.parametrize("utterance", [
-    "not sure", "I'm not sure", "not really sure", "don't confirm", "not okay",
-    "no wait", "hmm", "wait a moment", "9800000001", "what", "nope",
-])
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "not sure",
+        "I'm not sure",
+        "not really sure",
+        "don't confirm",
+        "not okay",
+        "no wait",
+        "hmm",
+        "wait a moment",
+        "9800000001",
+        "what",
+        "nope",
+    ],
+)
 def test_an_uncertain_or_negated_answer_is_never_yes(utterance):
     assert classify_yes_no(utterance, "en") != "yes"
 
 
-@pytest.mark.parametrize("utterance,expected", [
-    ("yes", "yes"), ("yeah okay", "yes"), ("I am sure", "yes"), ("yes I'm sure", "yes"),
-    ("okay confirm", "yes"), ("no", "no"), ("not correct", "no"), ("not okay", "no"),
-    ("not sure", None), ("hmm", None),
-])
+@pytest.mark.parametrize(
+    "utterance,expected",
+    [
+        ("yes", "yes"),
+        ("yeah okay", "yes"),
+        ("I am sure", "yes"),
+        ("yes I'm sure", "yes"),
+        ("okay confirm", "yes"),
+        ("no", "no"),
+        ("not correct", "no"),
+        ("not okay", "no"),
+        ("not sure", None),
+        ("hmm", None),
+    ],
+)
 def test_english_yes_no_classification_including_negation(utterance, expected):
     assert classify_yes_no(utterance, "en") == expected
 
 
 def test_bengali_and_hindi_negations_are_never_yes():
-    assert classify_yes_no("না", "bn") == "no"                       # na
+    assert classify_yes_no("না", "bn") == "no"  # na
     assert classify_yes_no("হাঁ না", "bn") == "no"  # "yes no" -> refusal wins
-    assert classify_yes_no("नहीं", "hi") == "no"          # nahin
+    assert classify_yes_no("नहीं", "hi") == "no"  # nahin
     assert classify_yes_no("ठीक नहीं है", "hi") == "no"  # "theek nahin hai"

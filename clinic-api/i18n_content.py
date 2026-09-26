@@ -10,6 +10,7 @@ Aliases are what a caller's ASR output actually looks like: Hindi ASR
 emits Devanagari, including for English loan words ("यूरिक एसिड"), so the
 Devanagari spelling is the lookup key, exactly as aliases_bn is for Bengali.
 """
+
 from __future__ import annotations
 
 TEST_ALIASES_HI: dict[str, list[str]] = {
@@ -50,30 +51,50 @@ TEST_ALIASES_HI: dict[str, list[str]] = {
 }
 
 SURNAME_HI: dict[str, list[str]] = {
-    "Mukherjee": ["मुखर्जी"], "Sen": ["सेन"], "Ghosh": ["घोष"], "Chowdhury": ["चौधरी"],
-    "Bhattacharya": ["भट्टाचार्य"], "Roy": ["रॉय", "राय"], "Banerjee": ["बनर्जी"],
-    "Dutta": ["दत्ता"], "Chatterjee": ["चटर्जी"], "Basu": ["बसु"], "Mitra": ["मित्रा"],
-    "Sengupta": ["सेनगुप्ता"], "Das": ["दास"], "Bose": ["बोस"], "Kar": ["कर"],
-    "Nandi": ["नंदी"], "Pal": ["पाल"], "Halder": ["हालदार"], "Guha": ["गुहा"],
-    "Chanda": ["चंदा"], "Saha": ["साहा"], "Dey": ["डे"], "Adhikari": ["अधिकारी"],
-    "Bagchi": ["बागची"], "Biswas": ["बिस्वास"], "Majumder": ["मजूमदार"], "Mondal": ["मंडल"],
-    "Ganguly": ["गांगुली"], "Sinha": ["सिन्हा"], "Ray": ["रे", "राय"], "Sarkar": ["सरकार"],
+    "Mukherjee": ["मुखर्जी"],
+    "Sen": ["सेन"],
+    "Ghosh": ["घोष"],
+    "Chowdhury": ["चौधरी"],
+    "Bhattacharya": ["भट्टाचार्य"],
+    "Roy": ["रॉय", "राय"],
+    "Banerjee": ["बनर्जी"],
+    "Dutta": ["दत्ता"],
+    "Chatterjee": ["चटर्जी"],
+    "Basu": ["बसु"],
+    "Mitra": ["मित्रा"],
+    "Sengupta": ["सेनगुप्ता"],
+    "Das": ["दास"],
+    "Bose": ["बोस"],
+    "Kar": ["कर"],
+    "Nandi": ["नंदी"],
+    "Pal": ["पाल"],
+    "Halder": ["हालदार"],
+    "Guha": ["गुहा"],
+    "Chanda": ["चंदा"],
+    "Saha": ["साहा"],
+    "Dey": ["डे"],
+    "Adhikari": ["अधिकारी"],
+    "Bagchi": ["बागची"],
+    "Biswas": ["बिस्वास"],
+    "Majumder": ["मजूमदार"],
+    "Mondal": ["मंडल"],
+    "Ganguly": ["गांगुली"],
+    "Sinha": ["सिन्हा"],
+    "Ray": ["रे", "राय"],
+    "Sarkar": ["सरकार"],
     "Chakraborty": ["चक्रवर्ती"],
 }
 
 # test name -> (Hindi, English). Tests not listed get the default below.
 PREP_I18N: dict[str, tuple[str, str]] = {
     "Blood Sugar Fasting": (
-        "इस टेस्ट से पहले कम से कम आठ घंटे कुछ न खाएँ, सिर्फ़ पानी पी सकते हैं। "
-        "सुबह खाली पेट आकर टेस्ट कराना बेहतर है।",
+        "इस टेस्ट से पहले कम से कम आठ घंटे कुछ न खाएँ, सिर्फ़ पानी पी सकते हैं। सुबह खाली पेट आकर टेस्ट कराना बेहतर है।",
         "Do not eat anything for at least eight hours before this test; you may drink water. "
         "It is best to come in the morning on an empty stomach.",
     ),
     "Lipid Profile": (
-        "इस टेस्ट से पहले दस से बारह घंटे उपवास रखना होगा, पानी के अलावा कुछ न लें। "
-        "पिछली रात हल्का खाना खाना अच्छा रहता है।",
-        "Fast for ten to twelve hours before this test, nothing except water. "
-        "A light meal the night before is best.",
+        "इस टेस्ट से पहले दस से बारह घंटे उपवास रखना होगा, पानी के अलावा कुछ न लें। पिछली रात हल्का खाना खाना अच्छा रहता है।",
+        "Fast for ten to twelve hours before this test, nothing except water. A light meal the night before is best.",
     ),
     "HbA1c": (
         "इस टेस्ट के लिए उपवास की ज़रूरत नहीं है, सामान्य खाने के बाद भी करा सकते हैं।",
@@ -89,14 +110,11 @@ PREP_I18N: dict[str, tuple[str, str]] = {
     ),
     "USG Whole Abdomen": (
         "इस टेस्ट से पहले छह घंटे कुछ न खाएँ और पेशाब रोककर रखें, मूत्राशय भरा होना ज़रूरी है।",
-        "Do not eat anything for six hours before this test, and hold your urine; "
-        "the bladder needs to be full.",
+        "Do not eat anything for six hours before this test, and hold your urine; the bladder needs to be full.",
     ),
     "USG Pregnancy Profile": (
-        "इस टेस्ट से पहले ज़्यादा पानी पिएँ ताकि मूत्राशय भरा रहे, "
-        "और टेस्ट से ठीक पहले पेशाब न करें।",
-        "Drink plenty of water before this test to keep your bladder full, "
-        "and do not urinate just before the test.",
+        "इस टेस्ट से पहले ज़्यादा पानी पिएँ ताकि मूत्राशय भरा रहे, और टेस्ट से ठीक पहले पेशाब न करें।",
+        "Drink plenty of water before this test to keep your bladder full, and do not urinate just before the test.",
     ),
     "TMT (Treadmill Test)": (
         "हल्के, आरामदायक कपड़े और जूते पहनकर आएँ। टेस्ट से दो घंटे पहले भारी खाना न खाना बेहतर है।",
@@ -111,8 +129,7 @@ DEFAULT_PREP_EN = "No special preparation is needed for this test; you can come 
 # topic -> (Hindi, English)
 FAQ_I18N: dict[str, tuple[str, str]] = {
     "hours": (
-        "हमारा क्लिनिक हर दिन सुबह आठ बजे से रात आठ बजे तक खुला रहता है, "
-        "और रविवार को सुबह आठ बजे से दोपहर दो बजे तक।",
+        "हमारा क्लिनिक हर दिन सुबह आठ बजे से रात आठ बजे तक खुला रहता है, और रविवार को सुबह आठ बजे से दोपहर दो बजे तक।",
         "Our clinic is open every day from 8 AM to 8 PM, and on Sundays from 8 AM to 2 PM.",
     ),
     "location": (
@@ -124,8 +141,7 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
         "We accept cash, all kinds of cards, and UPI.",
     ),
     "insurance": (
-        "प्रमुख बीमा कंपनियों की कैशलेस सुविधा उपलब्ध है। "
-        "अपने कार्ड का नाम बताइए, काउंटर से पुष्टि कर दी जाएगी।",
+        "प्रमुख बीमा कंपनियों की कैशलेस सुविधा उपलब्ध है। अपने कार्ड का नाम बताइए, काउंटर से पुष्टि कर दी जाएगी।",
         "Cashless facility is available with major insurance companies. "
         "Tell us your card's name and the counter will confirm it for you.",
     ),
@@ -135,14 +151,11 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
     ),
     "report_collection": (
         "रिपोर्ट सीधे काउंटर से ले सकते हैं, या हम इसे व्हाट्सऐप और ईमेल पर भी भेजते हैं।",
-        "You can collect your report directly from the counter, "
-        "or we can also send it on WhatsApp and email.",
+        "You can collect your report directly from the counter, or we can also send it on WhatsApp and email.",
     ),
     "contact_number": (
-        "आप हमारे हेल्पडेस्क नंबर पर फ़ोन करके सीधे बात कर सकते हैं, "
-        "इस कॉल के बाद नंबर एसएमएस से भी भेज दिया जाएगा।",
-        "You can call our helpdesk number and speak to us directly. "
-        "We will also SMS you the number after this call.",
+        "आप हमारे हेल्पडेस्क नंबर पर फ़ोन करके सीधे बात कर सकते हैं, इस कॉल के बाद नंबर एसएमएस से भी भेज दिया जाएगा।",
+        "You can call our helpdesk number and speak to us directly. We will also SMS you the number after this call.",
     ),
     "home_collection": (
         "ज़्यादातर ब्लड टेस्ट के लिए घर आकर सैंपल लेने की सुविधा है। बुकिंग के समय बता दीजिए।",
@@ -158,19 +171,40 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
 FAQ_KEYWORDS_I18N: dict[str, tuple[list[str], list[str]]] = {
     "hours": (
         ["क्लिनिक कब खुलता है", "क्लिनिक कब बंद होता है", "खुलने का समय", "बंद होने का समय", "क्लिनिक का समय"],
-        ["opening hours", "opening time", "closing time", "what time do you open", "what time do you close",
-         "clinic timings", "clinic hours", "are you open"],
+        [
+            "opening hours",
+            "opening time",
+            "closing time",
+            "what time do you open",
+            "what time do you close",
+            "clinic timings",
+            "clinic hours",
+            "are you open",
+        ],
     ),
     "location": (
-        ["आप कहाँ हैं", "आप कहां हैं", "क्लिनिक कहाँ है", "क्लिनिक कहां है", "आपका पता", "पता क्या है", "कैसे पहुँचें",
-         "कैसे पहुंचें"],
-        ["where are you", "where is the clinic", "clinic address", "your address", "how do i get there",
-         "how to reach", "where are you located"],
+        ["आप कहाँ हैं", "आप कहां हैं", "क्लिनिक कहाँ है", "क्लिनिक कहां है", "आपका पता", "पता क्या है", "कैसे पहुँचें", "कैसे पहुंचें"],
+        [
+            "where are you",
+            "where is the clinic",
+            "clinic address",
+            "your address",
+            "how do i get there",
+            "how to reach",
+            "where are you located",
+        ],
     ),
     "payment_methods": (
         ["पेमेंट कैसे", "भुगतान कैसे", "कार्ड चलता है", "यूपीआई", "नकद"],
-        ["payment methods", "pay by card", "do you take cards", "do you accept upi", "can i pay in cash",
-         "how can i pay", "payment options"],
+        [
+            "payment methods",
+            "pay by card",
+            "do you take cards",
+            "do you accept upi",
+            "can i pay in cash",
+            "how can i pay",
+            "payment options",
+        ],
     ),
     "insurance": (
         ["इंश्योरेंस", "बीमा", "कैशलेस", "मेडिक्लेम"],
@@ -182,8 +216,13 @@ FAQ_KEYWORDS_I18N: dict[str, tuple[list[str], list[str]]] = {
     ),
     "report_collection": (
         ["रिपोर्ट कैसे मिलेगी", "रिपोर्ट कहाँ से", "रिपोर्ट कहां से", "रिपोर्ट लेने"],
-        ["collect my report", "report collection", "how do i get my report", "where to collect the report",
-         "get the report"],
+        [
+            "collect my report",
+            "report collection",
+            "how do i get my report",
+            "where to collect the report",
+            "get the report",
+        ],
     ),
     "contact_number": (
         ["फोन नंबर", "संपर्क नंबर", "हेल्पलाइन नंबर", "नंबर क्या है"],

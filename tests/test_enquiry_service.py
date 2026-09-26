@@ -3,6 +3,7 @@ seeded database, same fixture pattern as test_booking_service.py.
 
     python -m pytest tests/test_enquiry_service.py -v
 """
+
 import datetime
 import os
 import sys
@@ -22,16 +23,29 @@ def clinic_modules():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_service", "enquiry_migrate", "i18n_content", "phonetic_match"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_service",
+        "enquiry_migrate",
+        "i18n_content",
+        "phonetic_match",
+    ):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod
+
     seed_mod.seed()
     import booking_migrate
+
     booking_migrate.migrate_booking_schema()
     booking_migrate.finish_booking_schema_setup()
     import enquiry_migrate
+
     enquiry_migrate.add_enquiry_columns()
     enquiry_migrate.backfill_enquiry_facts()
     enquiry_migrate.seed_enquiry_demo_data()
@@ -66,10 +80,10 @@ def test_merge_prep_instructions_takes_the_strictest_fasting_window(clinic_modul
     es, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
     try:
-        sugar = db.query(m.LabTest).filter_by(name="Blood Sugar Fasting").one()   # 8h
-        lipid = db.query(m.LabTest).filter_by(name="Lipid Profile").one()          # 11h
+        sugar = db.query(m.LabTest).filter_by(name="Blood Sugar Fasting").one()  # 8h
+        lipid = db.query(m.LabTest).filter_by(name="Lipid Profile").one()  # 11h
         result = es.merge_prep_instructions(db, [sugar.id, lipid.id])
-        assert result["found"] and result["fasting_hours"] == 11   # the strictest of the two
+        assert result["found"] and result["fasting_hours"] == 11  # the strictest of the two
         assert result["escalate_to_human"] is False
 
         # A test with no fasting requirement at all does not lower the merge.
@@ -100,7 +114,9 @@ def test_package_comparison_computes_real_savings(clinic_modules):
         assert len(result["test_names"]) == 5
 
         assert es.compare_package_vs_separate(db, "Nonexistent Package") == {
-            "found": False, "query": "Nonexistent Package"}
+            "found": False,
+            "query": "Nonexistent Package",
+        }
     finally:
         db.close()
 
@@ -134,7 +150,7 @@ def test_home_collection_eligibility_by_postal_code_and_sample_type(clinic_modul
         not_covered = es.home_collection_eligibility(db, uric.id, "700001")
         assert not_covered["eligible"] is False and not_covered["reason"] == "area_not_covered"
 
-        ecg = db.query(m.LabTest).filter_by(name="ECG").one()   # ineligible sample type
+        ecg = db.query(m.LabTest).filter_by(name="ECG").one()  # ineligible sample type
         ineligible = es.home_collection_eligibility(db, ecg.id, "700091")
         assert ineligible["eligible"] is False and ineligible["reason"] == "sample_type"
     finally:
@@ -189,7 +205,7 @@ def test_callback_request_is_recorded_never_claims_a_call_was_placed(clinic_modu
         result = es.request_callback(db, "9999999999", "call-1", "this evening 6-8pm", "billing question")
         assert result["success"]
         row = db.query(m.CallbackRequest).filter_by(id=result["id"]).one()
-        assert row.status == "scheduled"   # never "completed" or "called"
+        assert row.status == "scheduled"  # never "completed" or "called"
     finally:
         db.close()
 
@@ -198,15 +214,18 @@ def test_report_status_and_otp_delivery_flow(clinic_modules):
     es, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
     try:
-        report = m.LabReport(confirmation_id="KCD-TEST-0001", patient_phone="9888888888",
-                             status="pending", created_at=datetime.datetime.now())
+        report = m.LabReport(
+            confirmation_id="KCD-TEST-0001",
+            patient_phone="9888888888",
+            status="pending",
+            created_at=datetime.datetime.now(),
+        )
         db.add(report)
         db.commit()
 
         assert es.report_status(db, "KCD-TEST-0001")["status"] == "pending"
         # Not ready yet -- OTP request must be refused, never a guessed status.
-        assert es.request_report_otp(db, "KCD-TEST-0001", "9888888888") == {
-            "success": False, "reason": "not_ready"}
+        assert es.request_report_otp(db, "KCD-TEST-0001", "9888888888") == {"success": False, "reason": "not_ready"}
 
         report.status = "ready"
         report.ready_at = datetime.datetime.now()
@@ -240,6 +259,6 @@ def test_department_hours_override(clinic_modules):
         assert result and "10am" in result["hours"]
 
         derm = db.query(m.Department).filter_by(name="Dermatology").one()
-        assert es.department_hours(db, derm.id) is None   # no override -- falls back to clinic-wide FAQ
+        assert es.department_hours(db, derm.id) is None  # no override -- falls back to clinic-wide FAQ
     finally:
         db.close()

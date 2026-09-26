@@ -450,13 +450,9 @@ class CueTable:
     greeting: tuple[str, ...]
     thanks: tuple[str, ...]
     complexity: tuple[str, ...]
-    relative_days: dict = field(
-        default_factory=dict
-    )  # word -> days from today; checked in this order
+    relative_days: dict = field(default_factory=dict)  # word -> days from today; checked in this order
     date_words: tuple[str, ...] = ()  # a date-ish word the fast path will not parse
-    function_words: tuple[
-        str, ...
-    ] = ()  # words that name nothing (see _BN_FUNCTION_WORDS)
+    function_words: tuple[str, ...] = ()  # words that name nothing (see _BN_FUNCTION_WORDS)
     greeting_reply: str = ""  # spoken for a bare greeting; empty = do not serve one
     thanks_reply: str = ""
     # "substring": a cue may sit inside an inflected word (Bengali "রেট" inside "রেটটা"); "word": whole words only.
@@ -506,9 +502,7 @@ def _table(**kw) -> CueTable:
         if key in kw:
             kw[key] = _norm_all(kw[key])
     if "relative_days" in kw:
-        kw["relative_days"] = {
-            normalise_cue(k): v for k, v in kw["relative_days"].items()
-        }
+        kw["relative_days"] = {normalise_cue(k): v for k, v in kw["relative_days"].items()}
     return CueTable(**kw)
 
 

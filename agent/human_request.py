@@ -16,6 +16,7 @@ request for a person -- only a request to SPEAK to someone does.
 Phrase lists are provisional and were written by a non-native speaker
 (agent/persona.py REVIEW_STATUS): expect a native reviewer to add more.
 """
+
 from __future__ import annotations
 
 import re
@@ -25,16 +26,27 @@ import unicodedata
 _EN_PERSON = r"(a |an |the |some |your |any )?(real |live |actual )?(person|human|man|woman|someone|somebody|agent|operator|representative|receptionist|staff|staff member|executive|manager|counter)"
 # "I want a person" needs a narrower list than "let me talk to <X>": "I need a test at the
 # counter" and "I want to know about your staff" are not requests to speak to anyone.
-_EN_PERSON_ONLY = r"(a |an |the |some )?(real |live |actual )?(person|human|someone|somebody|operator|representative|receptionist)"
+_EN_PERSON_ONLY = (
+    r"(a |an |the |some )?(real |live |actual )?(person|human|someone|somebody|operator|representative|receptionist)"
+)
 _EN = [
-    re.compile(rf"\b(talk|speak|connect|transfer|put me|get me|give me|pass me)\b.{{0,25}}\b(to|with|through to)\b\s*{_EN_PERSON}\b", re.I),
-    re.compile(rf"\b(i (want|need|would like|wish)|can i (get|have)|let me (talk|speak)).{{0,25}}{_EN_PERSON_ONLY}\b", re.I),
-    re.compile(r"\b(human being|real person|live agent|customer (care|service|support)|call ?center|call centre)\b", re.I),
+    re.compile(
+        rf"\b(talk|speak|connect|transfer|put me|get me|give me|pass me)\b.{{0,25}}\b(to|with|through to)\b\s*{_EN_PERSON}\b",
+        re.I,
+    ),
+    re.compile(
+        rf"\b(i (want|need|would like|wish)|can i (get|have)|let me (talk|speak)).{{0,25}}{_EN_PERSON_ONLY}\b", re.I
+    ),
+    re.compile(
+        r"\b(human being|real person|live agent|customer (care|service|support)|call ?center|call centre)\b", re.I
+    ),
     re.compile(r"\bnot (a )?(robot|bot|machine)\b", re.I),
 ]
 # ---- Bengali -------------------------------------------------------------
 _BN = [
-    re.compile(r"(মানুষের|লোকের|কারও|কারো|কাউকে|কোনো একজনের|স্টাফের|কর্মীর|অপারেটরের|রিসেপশনের|কাউন্টারের|ম্যানেজারের)\s*(সাথে|সঙ্গে|সাথে|কাছে)?\s*(কথা|কথা বলতে|কথা বলব|কথা বলতে চাই|কথা বলি)"),
+    re.compile(
+        r"(মানুষের|লোকের|কারও|কারো|কাউকে|কোনো একজনের|স্টাফের|কর্মীর|অপারেটরের|রিসেপশনের|কাউন্টারের|ম্যানেজারের)\s*(সাথে|সঙ্গে|সাথে|কাছে)?\s*(কথা|কথা বলতে|কথা বলব|কথা বলতে চাই|কথা বলি)"
+    ),
     re.compile(r"(কাউকে|কোনো মানুষকে|স্টাফকে|অপারেটরকে|রিসেপশনকে)\s*(দিন|ধরিয়ে দিন|লাইনে দিন|দেবেন|ধরিয়ে দেবেন)"),
     re.compile(r"(আসল|সত্যিকারের|জ্যান্ত)\s*(মানুষ|লোক)"),
     re.compile(r"(অপারেটর|রিসেপশনিস্ট|কাস্টমার কেয়ার)"),
@@ -49,7 +61,9 @@ _HI = [
     re.compile(r"(मशीन|रोबोट|बॉट)\s*(नहीं|से नहीं)"),
 ]
 
-_NEGATED_EN = re.compile(r"\b(don'?t|do not|no need|not need|never|without)\b.{0,20}(talk|speak|person|human|agent|staff|operator)", re.I)
+_NEGATED_EN = re.compile(
+    r"\b(don'?t|do not|no need|not need|never|without)\b.{0,20}(talk|speak|person|human|agent|staff|operator)", re.I
+)
 _NEGATED_BN = re.compile(r"(লাগবে না|চাই না|দরকার নেই|দরকার নাই)")
 _NEGATED_HI = re.compile(r"(नहीं चाहिए|नहीं चाहिये|ज़रूरत नहीं|जरूरत नहीं)")
 

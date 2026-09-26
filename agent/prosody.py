@@ -17,10 +17,10 @@ Every value in ProsodyParams is overridable per request (see
 resolve_params) and range-checked, so delivery can be A/B tested against a
 real handset without a redeploy -- the story's own requirement.
 """
+
 from __future__ import annotations
 
 import dataclasses
-import re
 
 import numpy as np
 
@@ -45,10 +45,10 @@ class ProsodyParams:
     # REASONED, not measured: both were chosen from how synthetic and studio
     # speech behaves, not from handset playback. Treat as starting points until
     # measured on real phone speakers.
-    trim_threshold: float = 0.012     # amplitude below which a sample is treated as padding
-    target_peak: float = 0.89         # ~-1 dBFS peak target
-    max_chunk_chars: int = 90         # a long single clause still gets a breath
-    lead_in_s: float = 0.04           # stops the first phoneme clipping on stream start
+    trim_threshold: float = 0.012  # amplitude below which a sample is treated as padding
+    target_peak: float = 0.89  # ~-1 dBFS peak target
+    max_chunk_chars: int = 90  # a long single clause still gets a breath
+    lead_in_s: float = 0.04  # stops the first phoneme clipping on stream start
 
 
 # (min, max) for each overridable field. A request outside these is
@@ -92,11 +92,11 @@ def _is_sentence_boundary(text: str, i: int) -> bool:
         return False
     nxt = text[i + 1] if i + 1 < len(text) else ""
     if nxt and not nxt.isspace():
-        return False                      # "2.5", "a.b", "e.g.x"
+        return False  # "2.5", "a.b", "e.g.x"
     j = i - 1
     while j >= 0 and text[j].isalpha():
         j -= 1
-    return text[j + 1:i].lower() not in _ABBREVIATIONS
+    return text[j + 1 : i].lower() not in _ABBREVIATIONS
 
 
 def _split_sentences_marked(text: str) -> list[tuple[str, bool]]:
@@ -106,7 +106,7 @@ def _split_sentences_marked(text: str) -> list[tuple[str, bool]]:
     sentences, start = [], 0
     for i in range(len(text)):
         if _is_sentence_boundary(text, i):
-            sentences.append((text[start:i + 1], text[i] == chr(10)))
+            sentences.append((text[start : i + 1], text[i] == chr(10)))
             start = i + 1
     if start < len(text):
         sentences.append((text[start:], False))
@@ -136,7 +136,7 @@ def _split_clauses(sentence: str) -> list[str]:
     clauses, start = [], 0
     for i, ch in enumerate(sentence):
         if ch in _CLAUSE_END:
-            clauses.append(sentence[start:i + 1])
+            clauses.append(sentence[start : i + 1])
             start = i + 1
     if start < len(sentence):
         clauses.append(sentence[start:])
@@ -162,7 +162,8 @@ def split_for_prosody(text: str, max_chunk_chars: int = ProsodyParams.max_chunk_
     breath where a person would take one."""
     out: list[tuple[str, str]] = []
     for sentence, at_newline in _split_sentences_marked(text):
-        def kind(chunk: str, last_of_sentence: bool) -> str:
+
+        def kind(chunk: str, last_of_sentence: bool, at_newline: bool = at_newline) -> str:
             k = pause_kind_for(chunk)
             return "sentence" if (at_newline and last_of_sentence and k == "none") else k
 
@@ -193,7 +194,7 @@ def trim_silence(wav: np.ndarray, threshold: float) -> np.ndarray:
     loud = np.where(np.abs(wav) > threshold)[0]
     if loud.size == 0:
         return wav[:0]
-    return wav[loud[0]:loud[-1] + 1]
+    return wav[loud[0] : loud[-1] + 1]
 
 
 def normalize_peak(wav: np.ndarray, target: float) -> np.ndarray:
@@ -201,13 +202,13 @@ def normalize_peak(wav: np.ndarray, target: float) -> np.ndarray:
     return wav * (target / peak) if peak > 1e-6 else wav
 
 
-def assemble(chunk_wavs: list[tuple[np.ndarray, str]], sample_rate: int, params: ProsodyParams,
-             pauses: bool = True) -> np.ndarray:
+def assemble(
+    chunk_wavs: list[tuple[np.ndarray, str]], sample_rate: int, params: ProsodyParams, pauses: bool = True
+) -> np.ndarray:
     """Trim each rendered chunk, pad it by the punctuation that ended it,
     join, add the lead-in and normalise the whole to one peak. `chunk_wavs`
     is [(raw_waveform, pause_kind)] in speaking order."""
-    pause_s = {"sentence": params.pause_sentence_s, "clause": params.pause_clause_s,
-               "none": params.pause_none_s}
+    pause_s = {"sentence": params.pause_sentence_s, "clause": params.pause_clause_s, "none": params.pause_none_s}
     pieces: list[np.ndarray] = []
     for raw, kind in chunk_wavs:
         wav = trim_silence(np.asarray(raw, dtype=np.float32), params.trim_threshold)
@@ -228,8 +229,9 @@ RATE_BOUNDS = (0.5, 2.0)
 LENGTH_SCALE_BOUNDS = (0.5, 2.5)
 
 
-def resolve_length_scale(default_length_scale: float, rate: float | None = None,
-                         length_scale: float | None = None) -> float:
+def resolve_length_scale(
+    default_length_scale: float, rate: float | None = None, length_scale: float | None = None
+) -> float:
     """Coqui's FastPitch `length_scale` is a DURATION multiplier: above 1
     is SLOWER. The agent side speaks in RATES (agent/tts.py's
     FIGURE_SPEECH_SPEED = 0.8 is documented as "a fifth slower", and

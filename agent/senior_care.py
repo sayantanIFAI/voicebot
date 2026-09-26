@@ -19,6 +19,7 @@ being smothering: the opening once, the closing on every second substantive repl
 on a re-ask, and nothing on a one-word reply. It adds no fact and no advice, and every line is a
 fixed string with no digit or name. Wording is provisional and pending native review.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -47,7 +48,7 @@ WARM_ACK = {
     "en": "Yes, thank you for telling me.",
 }
 MIN_WORDS_FOR_CLOSING = 4
-CLOSING_EVERY = 2                        # a closing on every second substantive reply
+CLOSING_EVERY = 2  # a closing on every second substantive reply
 
 
 def is_senior(age_years: int | None) -> bool:
@@ -61,6 +62,7 @@ def _t(table: dict, lang: str) -> str:
 @dataclasses.dataclass
 class KindnessPlanner:
     """One per call. Inactive until the registry says the caller is a senior."""
+
     active: bool = False
     opened: bool = False
     substantive_replies: int = 0

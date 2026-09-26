@@ -1,7 +1,8 @@
 """KCD-019: the sizing model's arithmetic, and its refusal to invent numbers.
 
-    python -m pytest tests/test_capacity_model.py -v
+python -m pytest tests/test_capacity_model.py -v
 """
+
 import json
 import math
 import os
@@ -42,7 +43,7 @@ def test_with_nothing_measured_no_gpu_count_is_stated():
     assert "asr_rtf" in out["undetermined"] and "tts_x_realtime" in out["undetermined"]
     text = cm.report(out)
     assert "UNDETERMINED" in text and "GPU per data centre" not in text
-    assert "INDICATIVE" in text                                     # Appendix H shown, labelled as such
+    assert "INDICATIVE" in text  # Appendix H shown, labelled as such
 
 
 def _measured(**kw):
@@ -61,7 +62,7 @@ def test_a_measured_sizing_is_arithmetic_on_the_inputs():
     target = out["target_concurrency"]
     per_dc = math.ceil(target * 0.5 / (0.70 / 0.0425)) + 1
     assert out["gpus_per_dc"] == per_dc and out["gpus_total"] == 2 * per_dc
-    assert out["headroom_calls"] >= 0                               # sized to carry the target, plus spares
+    assert out["headroom_calls"] >= 0  # sized to carry the target, plus spares
 
 
 def test_a_slower_recogniser_needs_more_gpus_never_fewer():

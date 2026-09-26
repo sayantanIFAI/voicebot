@@ -6,6 +6,7 @@ a production clinic management system. Swap in the real hospital DB later
 without touching main.py's turn loop -- only this service's queries
 change, because it speaks the exact contract voice-agent already expects.
 """
+
 from __future__ import annotations
 
 from sqlalchemy import (
@@ -38,7 +39,7 @@ class Department(Base):
 class Doctor(Base):
     __tablename__ = "doctors"
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)              # "Dr. S. Mukherjee" -- the short form every lookup keys on
+    name = Column(String, nullable=False)  # "Dr. S. Mukherjee" -- the short form every lookup keys on
     # The whole name ("Dr. Sourav Mukherjee"). Added by booking_migrate.add_doctor_booking_columns() on an existing DB
     # and filled by booking_migrate.backfill_doctor_full_names(); empty means "not recorded", and callers fall back to
     # `name`. The seeded given names are FICTIONAL placeholders, like every other seeded row.
@@ -47,7 +48,7 @@ class Doctor(Base):
     # surname alone ("সেন") cannot tell two doctors named Sen apart when the agent must ask "which one?".
     full_name_bn = Column(String, nullable=False, default="", server_default="")
     full_name_hi = Column(String, nullable=False, default="", server_default="")
-    qualifications = Column(String, nullable=False)     # "MBBS, MD (Gen. Med.)"
+    qualifications = Column(String, nullable=False)  # "MBBS, MD (Gen. Med.)"
     # Bengali-script spellings of the surname, "|"-joined. Real callers say
     # "ডক্টর সেন", not "Dr. Sen" -- matching only the Latin name against
     # Bengali ASR output silently fails 100% of the time, not just on
@@ -69,12 +70,13 @@ class DoctorSchedule(Base):
     """One row per weekday a doctor sits. A doctor with 3 chamber days has
     3 rows here, not a serialized list -- keeps the "is Dr. X in on
     Wednesday" query a plain WHERE clause."""
+
     __tablename__ = "doctor_schedule"
     id = Column(Integer, primary_key=True)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
-    weekday = Column(Integer, nullable=False)   # 0=Monday ... 6=Sunday (Python's convention)
+    weekday = Column(Integer, nullable=False)  # 0=Monday ... 6=Sunday (Python's convention)
     start_time = Column(String, nullable=False)  # "18:00"
-    end_time = Column(String, nullable=False)    # "20:00"
+    end_time = Column(String, nullable=False)  # "20:00"
 
     doctor = relationship("Doctor", back_populates="schedule")
 
@@ -90,7 +92,7 @@ class LabTest(Base):
     aliases_bn = Column(String, nullable=False, default="")
     aliases_hi = Column(String, nullable=False, default="")
     rate_inr = Column(Integer, nullable=False)
-    sample_type = Column(String, nullable=False)         # "Blood" / "Urine" / "Imaging" / "Cardiac"
+    sample_type = Column(String, nullable=False)  # "Blood" / "Urine" / "Imaging" / "Cardiac"
     report_time_hours = Column(Integer, nullable=False)
     fasting_required = Column(Boolean, nullable=False, default=False)
     # Spoken-ready Bengali, same reasoning as aliases_bn: composed by
@@ -107,7 +109,7 @@ class LabTest(Base):
     # full spoken description) specifically so KCD-382's "merge to the
     # strictest constraint across several tests" is a real MAX() over
     # numbers, not string surgery on prose.
-    fasting_hours = Column(Integer, nullable=True)          # null = no fasting requirement
+    fasting_hours = Column(Integer, nullable=True)  # null = no fasting requirement
     water_allowed_while_fasting = Column(Boolean, nullable=False, default=True)
     home_collection_eligible = Column(Boolean, nullable=False, default=True)
     prescription_required = Column(Boolean, nullable=False, default=False)
@@ -126,9 +128,10 @@ class FAQ(Base):
     never composed by the model. Grows into a real retrieval store only
     when the topic count outgrows a flat table -- see fast_path.py's
     FAQCatalogue docstring for what that threshold looks like."""
+
     __tablename__ = "faqs"
     id = Column(Integer, primary_key=True)
-    topic = Column(String, nullable=False, unique=True)   # stable key, e.g. "hours"
+    topic = Column(String, nullable=False, unique=True)  # stable key, e.g. "hours"
     # "|"-joined Bengali keyword/phrase set fast_path matches against.
     keywords_bn = Column(String, nullable=False, default="")
     # KCD-095: the same cue phrases for Hindi and English callers, so the fast path is not Bengali-only.
@@ -155,12 +158,13 @@ class Appointment(Base):
     database from the old blanket constraint to this one (SQLite cannot
     narrow an existing UNIQUE constraint via ALTER TABLE, only by
     rebuilding the table) -- see that function's docstring."""
+
     __tablename__ = "appointments"
     id = Column(Integer, primary_key=True)
     confirmation_id = Column(String, nullable=False, unique=True)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
-    date = Column(String, nullable=False)        # ISO yyyy-mm-dd
-    time_slot = Column(String, nullable=False)   # "18:15"
+    date = Column(String, nullable=False)  # ISO yyyy-mm-dd
+    time_slot = Column(String, nullable=False)  # "18:15"
     patient_name = Column(String, nullable=False)
     phone = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False)
@@ -168,7 +172,7 @@ class Appointment(Base):
     # --- booking-lifecycle columns (Epic E26) -- added by
     # booking_migrate.add_appointment_booking_columns() on an existing DB.
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
-    caller_phone = Column(String, nullable=True)   # who called; `phone` is the contact-for-SMS number
+    caller_phone = Column(String, nullable=True)  # who called; `phone` is the contact-for-SMS number
     status = Column(String, nullable=False, default="confirmed")  # confirmed | cancelled | rescheduled
     cancelled_at = Column(DateTime, nullable=True)
     cancellation_charge_inr = Column(Integer, nullable=True)
@@ -192,10 +196,15 @@ class Appointment(Base):
         # database gets; an EXISTING Postgres database still needs
         # booking_migrate.py's own dialect branch to convert its already-
         # created index (see rebuild_appointments_partial_unique_index).
-        Index("ux_doctor_slot_confirmed", "doctor_id", "date", "time_slot",
-              unique=True,
-              sqlite_where=text("status = 'confirmed'"),
-              postgresql_where=text("status = 'confirmed'")),
+        Index(
+            "ux_doctor_slot_confirmed",
+            "doctor_id",
+            "date",
+            "time_slot",
+            unique=True,
+            sqlite_where=text("status = 'confirmed'"),
+            postgresql_where=text("status = 'confirmed'"),
+        ),
     )
 
 
@@ -215,11 +224,12 @@ class SlotLock(Base):
     from `appointments`, specifically so a cancelled appointment's slot
     does not stay blocked by `appointments`' own historical UNIQUE
     constraint forever."""
+
     __tablename__ = "slot_locks"
     doctor_id = Column(Integer, ForeignKey("doctors.id"), primary_key=True)
     date = Column(String, primary_key=True)
     time_slot = Column(String, primary_key=True)
-    status = Column(String, nullable=False)          # held | confirmed
+    status = Column(String, nullable=False)  # held | confirmed
     hold_token = Column(String, nullable=False)
     hold_expires_at = Column(DateTime, nullable=True)  # null once confirmed
     appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
@@ -230,6 +240,7 @@ class Patient(Base):
     caller, who books it (KCD-364: a son booking for his mother). One
     patient can be found again across calls by phone, so a returning
     caller does not create a duplicate record every time."""
+
     __tablename__ = "patients"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
@@ -256,11 +267,14 @@ class PatientProxy(Base):
     patient's date of birth -- required before disclosing an EXISTING
     booking to a non-matching phone, see booking_service.authorize_access).
     """
+
     __tablename__ = "patient_proxies"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     caller_phone = Column(String, nullable=False, index=True)
-    relationship_label = Column(String, nullable=False)   # "self" | "son" | "daughter" | "spouse" | "parent" | "guardian" | "other"
+    relationship_label = Column(
+        String, nullable=False
+    )  # "self" | "son" | "daughter" | "spouse" | "parent" | "guardian" | "other"
     verified_by = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False)
 
@@ -270,6 +284,7 @@ class TestBooking(Base):
     call as several rows sharing one `booking_group_id` and one
     `confirmation_id`, so they are confirmed, prepped and read back
     together; KCD-374 adds a row to an existing group."""
+
     __tablename__ = "test_bookings"
     id = Column(Integer, primary_key=True)
     booking_group_id = Column(String, nullable=False, index=True)
@@ -288,11 +303,12 @@ class TestBooking(Base):
 
 class IdempotencyRecord(Base):
     """The stored answer to a write that carried an Idempotency-Key (clinic-api/idempotency.py)."""
+
     __tablename__ = "idempotency_records"
     id = Column(Integer, primary_key=True)
     key = Column(String, nullable=False)
-    scope = Column(String, nullable=False)                 # which endpoint: the same key on two endpoints is two keys
-    request_hash = Column(String, nullable=False)          # of the body, to refuse a key reused for a different request
+    scope = Column(String, nullable=False)  # which endpoint: the same key on two endpoints is two keys
+    request_hash = Column(String, nullable=False)  # of the body, to refuse a key reused for a different request
     response_json = Column(Text, nullable=False)
     __table_args__ = (UniqueConstraint("key", "scope", name="uq_idempotency_key_scope"),)
 
@@ -305,6 +321,7 @@ class SmsOutbox(Base):
     until a provider is actually wired into
     clinic-api/notifications.py:send(). Logging here rather than silently
     no-op-ing means nothing pretends to have reached a caller's phone."""
+
     __tablename__ = "sms_outbox"
     id = Column(Integer, primary_key=True)
     to_phone = Column(String, nullable=False)
@@ -321,6 +338,7 @@ class DraftBooking(Base):
     whatever the in-progress agent.booking_flow.BookingState had captured.
     Expired drafts are simply not returned by lookup, never surfaced or
     applied without the caller re-confirming each value."""
+
     __tablename__ = "draft_bookings"
     id = Column(Integer, primary_key=True)
     caller_phone = Column(String, nullable=False, index=True)
@@ -335,6 +353,7 @@ class DepartmentRoute(Base):
     description to a department -- never the model's own judgement, and
     never framed as a diagnosis (see reply_templates.department_route_reply).
     """
+
     __tablename__ = "department_routes"
     id = Column(Integer, primary_key=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
@@ -349,16 +368,18 @@ class DepartmentRoute(Base):
 # Epic E27: Information and Enquiry
 # =============================================================================
 
+
 class LabReport(Base):
     """KCD-383/384: whether a report is ready, and delivering it. No
     clinical VALUE is ever stored here -- the story is explicit that
     nothing clinical is read aloud under it -- only the fact of
     readiness, which is the only thing this file is allowed to state."""
+
     __tablename__ = "lab_reports"
     id = Column(Integer, primary_key=True)
-    confirmation_id = Column(String, nullable=False, index=True)   # the booking this report is for
+    confirmation_id = Column(String, nullable=False, index=True)  # the booking this report is for
     patient_phone = Column(String, nullable=False)
-    status = Column(String, nullable=False, default="pending")     # pending | ready
+    status = Column(String, nullable=False, default="pending")  # pending | ready
     ready_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False)
 
@@ -369,6 +390,7 @@ class ReportDeliveryOTP(Base):
     logged here, never actually sent by this prototype -- see
     booking_service.queue_sms's docstring for the real send-path
     integration point this would go through."""
+
     __tablename__ = "report_delivery_otps"
     id = Column(Integer, primary_key=True)
     report_id = Column(Integer, ForeignKey("lab_reports.id"), nullable=False)
@@ -382,11 +404,12 @@ class ReportDeliveryOTP(Base):
 class ReportDeliveryAudit(Base):
     """Every delivery, with recipient and verification path -- KCD-384's
     explicit audit requirement."""
+
     __tablename__ = "report_delivery_audit"
     id = Column(Integer, primary_key=True)
     report_id = Column(Integer, ForeignKey("lab_reports.id"), nullable=False)
     recipient_phone = Column(String, nullable=False)
-    verification_method = Column(String, nullable=False)   # "otp"
+    verification_method = Column(String, nullable=False)  # "otp"
     link_token = Column(String, nullable=False)
     link_expires_at = Column(DateTime, nullable=False)
     delivered_at = Column(DateTime, nullable=False)
@@ -396,12 +419,13 @@ class DoctorLeave(Base):
     """KCD-385: a doctor not sitting on an otherwise-scheduled day, with
     a return date if known -- distinct from simply not having a
     DoctorSchedule row for that weekday at all."""
+
     __tablename__ = "doctor_leaves"
     id = Column(Integer, primary_key=True)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
-    start_date = Column(String, nullable=False)     # ISO yyyy-mm-dd
+    start_date = Column(String, nullable=False)  # ISO yyyy-mm-dd
     end_date = Column(String, nullable=False)
-    return_date = Column(String, nullable=True)      # may be unknown
+    return_date = Column(String, nullable=True)  # may be unknown
 
     doctor = relationship("Doctor")
 
@@ -411,6 +435,7 @@ class Package(Base):
     price, so the comparison against booking them separately is a live
     arithmetic computation (rate_inr sum from LabTest), never a number
     the model states on its own."""
+
     __tablename__ = "packages"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, unique=True)
@@ -440,10 +465,11 @@ class CancellationPolicy(Base):
     ALTER TABLE migration needed), unlike Appointment.cancellation_
     policy_version, which records which version applied and DOES need one
     -- see booking_migrate.APPOINTMENT_BOOKING_COLUMNS."""
+
     __tablename__ = "cancellation_policies"
     id = Column(Integer, primary_key=True)
     version = Column(Integer, nullable=False, unique=True)
-    effective_from = Column(String, nullable=False)   # ISO yyyy-mm-dd, policy in force ON and AFTER this date
+    effective_from = Column(String, nullable=False)  # ISO yyyy-mm-dd, policy in force ON and AFTER this date
     free_window_hours = Column(Integer, nullable=False)
     # Integer percent (0-100), not a float fraction -- avoids SQLite
     # storing/round-tripping a binary float for what is always a round
@@ -459,6 +485,7 @@ class WalkInPolicy(Base):
     string -- the story is explicit that the agent must never promise a
     wait time it cannot verify, so this is deliberately NOT a live queue
     count."""
+
     __tablename__ = "walk_in_policies"
     id = Column(Integer, primary_key=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
@@ -475,19 +502,21 @@ class BillingLineItem(Base):
     rest of the hospital backend (unlike SMS or insurance, this is not a
     third-party integration) -- see clinic-api/main.py's module
     docstring for that framing."""
+
     __tablename__ = "billing_line_items"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     confirmation_id = Column(String, nullable=True)
     description = Column(String, nullable=False)
     amount_inr = Column(Integer, nullable=False)
-    status = Column(String, nullable=False, default="outstanding")   # outstanding | paid
+    status = Column(String, nullable=False, default="outstanding")  # outstanding | paid
     created_at = Column(DateTime, nullable=False)
 
 
 class HomeCollectionCoverage(Base):
     """KCD-387: postal-code serviceability for home sample collection,
     a real coverage table rather than an estimate."""
+
     __tablename__ = "home_collection_coverage"
     id = Column(Integer, primary_key=True)
     postal_code = Column(String, nullable=False, unique=True)
@@ -505,6 +534,7 @@ class InsurancePolicy(Base):
     booking_service.queue_sms, and insurance_service.check_coverage()'s
     docstring says so explicitly at the point a real integration would
     replace this table with an HTTP call."""
+
     __tablename__ = "insurance_policies"
     id = Column(Integer, primary_key=True)
     policy_number = Column(String, nullable=False, unique=True)
@@ -517,7 +547,7 @@ class InsuranceCoverageRule(Base):
     __tablename__ = "insurance_coverage_rules"
     id = Column(Integer, primary_key=True)
     insurer_name = Column(String, nullable=False)
-    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=True)   # null = applies to all tests
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=True)  # null = applies to all tests
     coverage_percent = Column(Integer, nullable=False)
     co_payment_inr = Column(Integer, nullable=False, default=0)
 
@@ -525,6 +555,7 @@ class InsuranceCoverageRule(Base):
 class CallOutcome(Base):
     """KCD-394: an out-of-scope question, captured rather than dropped --
     feeds the coverage backlog by reason code."""
+
     __tablename__ = "call_outcomes"
     id = Column(Integer, primary_key=True)
     call_id = Column(String, nullable=False)
@@ -541,13 +572,14 @@ class DepartmentHours(Base):
     anywhere else in the schema, so adding one here alone, for one
     story, would be schema surgery the rest of the system does not
     support or need yet."""
+
     __tablename__ = "department_hours"
     id = Column(Integer, primary_key=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, unique=True)
     hours_bn = Column(String, nullable=False)
     hours_hi = Column(String, nullable=False, default="")
     hours_en = Column(String, nullable=False, default="")
-    effective_from = Column(String, nullable=True)   # ISO date, null = always in effect
+    effective_from = Column(String, nullable=True)  # ISO date, null = always in effect
 
 
 class CallbackRequest(Base):
@@ -555,13 +587,14 @@ class CallbackRequest(Base):
     exists (Epic E22/telephony infra) -- this records the promise and
     its fulfilment status, the placeholder half of the same discipline
     as SMS: never claim a call was placed that was not."""
+
     __tablename__ = "callback_requests"
     id = Column(Integer, primary_key=True)
     phone = Column(String, nullable=False)
     call_id = Column(String, nullable=False)
     requested_window = Column(String, nullable=False)
     reason = Column(String, nullable=False, default="")
-    status = Column(String, nullable=False, default="scheduled")   # scheduled | fulfilled | cancelled
+    status = Column(String, nullable=False, default="scheduled")  # scheduled | fulfilled | cancelled
     created_at = Column(DateTime, nullable=False)
 
 
@@ -574,44 +607,49 @@ class CallbackRequest(Base):
 # (KCD-131) will keep filled; nothing here is a clinical fact the agent authored, and
 # nothing here holds a result value.
 
+
 class CallRecord(Base):
     """KCD-501: one row per call, written as the call goes (each completed action is
     recorded when it completes, so a call that drops still shows what was done) and
     closed at hang-up. Keyed by `call_id`; every write is an idempotent merge, so a
     retried request cannot double a record or a booking summary."""
+
     __tablename__ = "call_records"
     id = Column(Integer, primary_key=True)
     call_id = Column(String, nullable=False, unique=True, index=True)
-    channel = Column(String, nullable=False, default="voice")          # voice | sms | whatsapp
+    channel = Column(String, nullable=False, default="voice")  # voice | sms | whatsapp
     caller_phone = Column(String, nullable=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
-    languages = Column(String, nullable=False, default="")             # comma-separated, first use first
+    languages = Column(String, nullable=False, default="")  # comma-separated, first use first
     intents_json = Column(Text, nullable=False, default="[]")
-    actions_json = Column(Text, nullable=False, default="[]")          # what was DONE (booked, cancelled, ...)
-    confirmed_json = Column(Text, nullable=False, default="{}")        # values the caller confirmed (redacted)
-    history_statements_json = Column(Text, nullable=False, default="[]")   # KCD-500: ids of history statements rendered
+    actions_json = Column(Text, nullable=False, default="[]")  # what was DONE (booked, cancelled, ...)
+    confirmed_json = Column(Text, nullable=False, default="{}")  # values the caller confirmed (redacted)
+    history_statements_json = Column(Text, nullable=False, default="[]")  # KCD-500: ids of history statements rendered
     escalation_reason = Column(String, nullable=True)
-    outcome = Column(String, nullable=False, default="in_progress")    # in_progress | completed | handed_off | abandoned | failed
+    outcome = Column(
+        String, nullable=False, default="in_progress"
+    )  # in_progress | completed | handed_off | abandoned | failed
     disclosure_version = Column(String, nullable=False, default="")
-    last_seq = Column(Integer, nullable=False, default=0)              # events applied so far (idempotency)
+    last_seq = Column(Integer, nullable=False, default=0)  # events applied so far (idempotency)
     updated_at = Column(DateTime, nullable=False)
     # The implicit happiness score of the call (agent/call_score.py): a 0-100 proxy built from how the call went, NOT
     # from anything the caller said about it. NULL = not scored (too short, an emergency, or an older call).
     satisfaction_score = Column(Integer, nullable=True, index=True)
     satisfaction_band = Column(String, nullable=False, default="", server_default="")
-    satisfaction_json = Column(Text, nullable=False, default="{}", server_default="{}")   # reasons and counts, no text
+    satisfaction_json = Column(Text, nullable=False, default="{}", server_default="{}")  # reasons and counts, no text
 
 
 class HistoryAudit(Base):
     """KCD-495: every read of a patient's history, attributed to the call that made it
     -- and every REFUSED read, because an attempt is as auditable as a success."""
+
     __tablename__ = "history_audit"
     id = Column(Integer, primary_key=True)
     call_id = Column(String, nullable=False, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
-    kind = Column(String, nullable=False)                              # timeline_read | timeline_denied | ...
+    kind = Column(String, nullable=False)  # timeline_read | timeline_denied | ...
     fields_json = Column(Text, nullable=False, default="[]")
     at = Column(DateTime, nullable=False)
 
@@ -620,14 +658,15 @@ class PatientPreference(Base):
     """KCD-499: stored against the PATIENT, not the handset. Offered for confirmation,
     never applied silently; a stored language bias never overrides what the caller
     actually says (agent/patient_context.effective_language)."""
+
     __tablename__ = "patient_preferences"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, unique=True)
     branch = Column(String, nullable=True)
     collection_address = Column(String, nullable=True)
-    delivery_channel = Column(String, nullable=True)                   # sms | whatsapp | voice
-    accessibility_mode = Column(String, nullable=True)                 # slower | shorter | none
-    language_bias = Column(String, nullable=True)                      # bn | hi | en
+    delivery_channel = Column(String, nullable=True)  # sms | whatsapp | voice
+    accessibility_mode = Column(String, nullable=True)  # slower | shorter | none
+    language_bias = Column(String, nullable=True)  # bn | hi | en
     updated_at = Column(DateTime, nullable=False)
 
 
@@ -635,11 +674,12 @@ class TestPerformance(Base):
     """KCD-498: THAT a test was performed and when -- never what it showed. In
     production a hospital connector (KCD-131) keeps this filled from the LIS; the
     table deliberately has no column for a result, a value or an interpretation."""
+
     __tablename__ = "test_performances"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
     lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=False)
-    performed_on = Column(String, nullable=False)                      # ISO date
+    performed_on = Column(String, nullable=False)  # ISO date
     source = Column(String, nullable=False, default="local")
     created_at = Column(DateTime, nullable=False)
 
@@ -648,12 +688,13 @@ class RetestInterval(Base):
     """KCD-498: a CLINICIAN-APPROVED interval after which a test is due again. There
     is no default and no guess: a test with no row here has no "due" statement at
     all, because inventing a retest interval is giving medical advice."""
+
     __tablename__ = "retest_intervals"
     id = Column(Integer, primary_key=True)
     lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=False, unique=True)
     interval_days = Column(Integer, nullable=False)
     approved_by = Column(String, nullable=False)
-    approved_at = Column(String, nullable=False)                       # ISO date
+    approved_at = Column(String, nullable=False)  # ISO date
 
 
 # ================================================================================================
@@ -662,30 +703,33 @@ class RetestInterval(Base):
 # registry, medicines and test history are filled by the hospital connector (KCD-131).
 # ================================================================================================
 
+
 class PatientRegistry(Base):
     """The registry row for a patient: the facts the SECURITY QUESTIONS check against (date of birth,
     address, registered patient id) and nothing clinical. One row per `patients` row. Names and
     addresses may carry aliases in Bengali and Hindi script because that is how a caller's speech
     is transcribed; they are compared exactly (token for token), never by sound."""
+
     __tablename__ = "patient_registry"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, unique=True)
-    patient_uid = Column(String, nullable=False, unique=True, index=True)      # the id printed on the card, e.g. KCP-100234
-    dob = Column(String, nullable=False)                                        # ISO date
+    patient_uid = Column(String, nullable=False, unique=True, index=True)  # the id printed on the card, e.g. KCP-100234
+    dob = Column(String, nullable=False)  # ISO date
     gender = Column(String, nullable=True)
     address_text = Column(String, nullable=False, default="")
     locality = Column(String, nullable=True)
     pincode = Column(String, nullable=True)
-    name_aliases = Column(String, nullable=False, default="")                   # "|"-separated, other scripts
-    address_aliases = Column(String, nullable=False, default="")                # "|"-separated, other scripts
+    name_aliases = Column(String, nullable=False, default="")  # "|"-separated, other scripts
+    address_aliases = Column(String, nullable=False, default="")  # "|"-separated, other scripts
     registered_on = Column(String, nullable=False)
-    status = Column(String, nullable=False, default="active")                   # active | inactive | merged
-    source = Column(String, nullable=False, default="local")                   # local | his
+    status = Column(String, nullable=False, default="active")  # active | inactive | merged
+    source = Column(String, nullable=False, default="local")  # local | his
 
 
 class Medicine(Base):
     """A medicine in the catalogue. Names only: there is deliberately no dosage guidance, no
     indication and no interaction data here, because the agent gives no clinical advice."""
+
     __tablename__ = "medicines"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, unique=True)
@@ -698,11 +742,12 @@ class PatientMedicine(Base):
     """THAT a medicine was prescribed to a patient and when -- a record of a fact, mirrored from
     the hospital. No dose interpretation, no advice, no "should take"; like TestPerformance it has
     no column for one."""
+
     __tablename__ = "patient_medicines"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
     medicine_id = Column(Integer, ForeignKey("medicines.id"), nullable=False)
-    prescribed_on = Column(String, nullable=False)                              # ISO date
+    prescribed_on = Column(String, nullable=False)  # ISO date
     prescribed_by = Column(String, nullable=True)
     source = Column(String, nullable=False, default="local")
     created_at = Column(DateTime, nullable=False)
@@ -713,12 +758,15 @@ class PatientHistory(Base):
     """One row per thing a CALL did for a patient, inserted when the call closes: a booking, a
     cancellation, a question answered, an escalation. It is the durable history that call outcomes
     feed; the one-day cache below is what the NEXT call is greeted with."""
+
     __tablename__ = "patient_history"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
     call_id = Column(String, nullable=False, index=True)
-    kind = Column(String, nullable=False)          # booking_confirmed | tests_booked | appointment_cancelled | ... | call_outcome
-    ref = Column(String, nullable=False, default="")   # confirmation id where there is one
+    kind = Column(
+        String, nullable=False
+    )  # booking_confirmed | tests_booked | appointment_cancelled | ... | call_outcome
+    ref = Column(String, nullable=False, default="")  # confirmation id where there is one
     detail_json = Column(Text, nullable=False, default="{}")
     at = Column(DateTime, nullable=False)
     __table_args__ = (UniqueConstraint("call_id", "kind", "ref", name="uq_patient_history_once"),)
@@ -727,6 +775,7 @@ class PatientHistory(Base):
 class PatientCallCache(Base):
     """KCD-496: the patient's last call, kept for ONE DAY (`expires_at`) and used as context by the
     next call. Expired rows are ignored and purged; the permanent record is PatientHistory."""
+
     __tablename__ = "patient_call_cache"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
@@ -740,12 +789,13 @@ class PatientCallCache(Base):
 class VerificationSession(Base):
     """A passed security check, held server-side for the call: the ONLY thing that authorises a
     history read. `attempts` counts evaluations, `locked` stops a brute-force of the questions."""
+
     __tablename__ = "verification_sessions"
     id = Column(Integer, primary_key=True)
     call_id = Column(String, nullable=False, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     method = Column(String, nullable=False, default="security_questions")
-    factors_json = Column(Text, nullable=False, default="[]")                   # which factors matched (names only)
+    factors_json = Column(Text, nullable=False, default="[]")  # which factors matched (names only)
     attempts = Column(Integer, nullable=False, default=0)
     verified_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
@@ -759,6 +809,7 @@ class AgentMessage(Base):
     agent reads these at call start and falls back to its built-in text if the API is down, so an
     outage can never leave it silent. `version` increases on every change and is written into the
     call record, so an audit knows which wording a caller heard."""
+
     __tablename__ = "agent_messages"
     id = Column(Integer, primary_key=True)
     key = Column(String, nullable=False)
@@ -775,12 +826,13 @@ class AuditLog(Base):
     """Everything the agent did that touches a patient or a rule, one row each: identification
     attempts, security-question attempts (pass, fail, lock), history reads and refusals, booking
     actions, escalations, message edits, call closes. Attempts are as auditable as successes."""
+
     __tablename__ = "audit_log"
     id = Column(Integer, primary_key=True)
     at = Column(DateTime, nullable=False, index=True)
     call_id = Column(String, nullable=True, index=True)
     patient_id = Column(Integer, nullable=True, index=True)
-    actor = Column(String, nullable=False, default="agent")                     # agent | operator | system
+    actor = Column(String, nullable=False, default="agent")  # agent | operator | system
     action = Column(String, nullable=False, index=True)
-    outcome = Column(String, nullable=False, default="ok")                      # ok | denied | failed | locked
+    outcome = Column(String, nullable=False, default="ok")  # ok | denied | failed | locked
     detail_json = Column(Text, nullable=False, default="{}")

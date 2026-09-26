@@ -1,7 +1,8 @@
 """KCD-462: agent/clause_split.py. Pure, offline text splitting.
 
-    python -m pytest tests/test_clause_split.py -v
+python -m pytest tests/test_clause_split.py -v
 """
+
 import os
 import sys
 
@@ -23,18 +24,16 @@ def test_empty_text_returns_empty_list():
 
 
 def test_a_long_bengali_multi_sentence_reply_splits_on_danda():
-    text = ("এই টেস্টের জন্য খালি পেটে আসতে হবে। " * 3 +
-            "প্রেসক্রিপশন সাথে আনবেন।")
+    text = "এই টেস্টের জন্য খালি পেটে আসতে হবে। " * 3 + "প্রেসক্রিপশন সাথে আনবেন।"
     assert len(text) >= MIN_CHARS_TO_SPLIT
     clauses = split_into_clauses(text)
     assert len(clauses) == 4
     for c in clauses:
-        assert c.endswith("।")   # punctuation stays attached to its own clause
+        assert c.endswith("।")  # punctuation stays attached to its own clause
 
 
 def test_a_long_english_reply_splits_on_sentence_punctuation():
-    text = ("Please come on an empty stomach for this test. " * 2 +
-            "Bring your prescription with you. Water is allowed.")
+    text = "Please come on an empty stomach for this test. " * 2 + "Bring your prescription with you. Water is allowed."
     clauses = split_into_clauses(text)
     assert len(clauses) == 4
     assert clauses[0].endswith(".")
@@ -42,8 +41,7 @@ def test_a_long_english_reply_splits_on_sentence_punctuation():
 
 
 def test_rejoining_clauses_reproduces_the_original_text():
-    text = ("এই টেস্টের জন্য খালি পেটে আসতে হবে। প্রেসক্রিপশন সাথে আনবেন। "
-            "জল খাওয়া যাবে।")
+    text = "এই টেস্টের জন্য খালি পেটে আসতে হবে। প্রেসক্রিপশন সাথে আনবেন। জল খাওয়া যাবে।"
     clauses = split_into_clauses(text)
     assert " ".join(clauses) == text
 

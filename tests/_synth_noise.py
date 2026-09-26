@@ -5,8 +5,8 @@ suppressor -- spectral shape and stationarity -- not to imitate a place
 faithfully. No recorded noise exists locally; these are stand-ins with known
 structure. Level is set as RMS in dBFS so a scene can state its noise plainly.
 """
-import numpy as np
 
+import numpy as np
 from _synth_speech import speech
 
 SR = 16000
@@ -21,7 +21,7 @@ def _shape(white, lo, hi):
 
 
 def _at_rms(x, rms_dbfs):
-    r = np.sqrt(np.mean(x ** 2)) + 1e-12
+    r = np.sqrt(np.mean(x**2)) + 1e-12
     return (x * (10 ** (rms_dbfs / 20.0) / r)).astype(np.float32)
 
 
@@ -37,14 +37,14 @@ def noise_profile(name, n, rms_dbfs=-40.0, seed=0):
             a = int(rng.uniform(0, max(n - SR, 1)))
             L = int(rng.uniform(0.2, 0.5) * SR)
             f = rng.choice([420.0, 510.0, 630.0])
-            x[a:a + L] += 0.5 * np.sin(2 * np.pi * f * t[:min(L, n - a)]) * np.hanning(min(L, n - a))
+            x[a : a + L] += 0.5 * np.sin(2 * np.pi * f * t[: min(L, n - a)]) * np.hanning(min(L, n - a))
     elif name == "clinic":
         # mains hum and its harmonics + air-handling hiss + occasional clatter
         x = sum(np.sin(2 * np.pi * 50 * k * t + rng.uniform(0, 6.28)) / k for k in (1, 2, 3, 4, 6))
         x = 0.6 * x + 0.5 * _shape(white, 200, 4000)
         for _ in range(max(1, int(n / SR / 2))):
             a = int(rng.uniform(0, max(n - 400, 1)))
-            x[a:a + 200] += rng.standard_normal(min(200, n - a)) * 2.0
+            x[a : a + 200] += rng.standard_normal(min(200, n - a)) * 2.0
     elif name == "market":
         # broadband din plus the murmur of several distant voices
         x = 0.6 * _shape(white, 100, 5000)

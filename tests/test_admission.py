@@ -1,4 +1,5 @@
 """AdmissionController + HealthMonitor: pure logic, no GPU, no network."""
+
 import asyncio
 
 import pytest
@@ -7,7 +8,7 @@ from agent.admission import AdmissionController, HealthMonitor
 
 
 def ctl(**kw):
-    kw.setdefault("bypass_file", None)   # never let a stray file on the dev box close the door
+    kw.setdefault("bypass_file", None)  # never let a stray file on the dev box close the door
     return AdmissionController(**kw)
 
 
@@ -24,11 +25,11 @@ def test_release_frees_a_slot_and_is_idempotent():
     c = ctl(max_calls=1)
     a = c.try_admit()
     c.release(a)
-    c.release(a)            # second teardown of the same call must not free someone else's slot
+    c.release(a)  # second teardown of the same call must not free someone else's slot
     b = c.try_admit()
     assert b.admitted
     assert not c.try_admit().admitted
-    c.release(a)            # stale ticket again
+    c.release(a)  # stale ticket again
     assert c.active_calls == 1
 
 
@@ -36,7 +37,7 @@ def test_rejected_call_never_holds_a_slot():
     c = ctl(max_calls=0)
     r = c.try_admit()
     assert not r.admitted and r.ticket is None
-    c.release(r)            # releasing a rejection is a no-op
+    c.release(r)  # releasing a rejection is a no-op
     assert c.active_calls == 0
 
 
@@ -64,7 +65,7 @@ def test_bypass_does_not_drop_calls_already_in_progress():
     c = ctl(max_calls=5)
     a = c.try_admit()
     c.set_bypass(True)
-    assert c.active_calls == 1      # existing call untouched; only NEW ones are refused
+    assert c.active_calls == 1  # existing call untouched; only NEW ones are refused
     c.release(a)
 
 
@@ -85,7 +86,7 @@ def test_latency_shed_needs_enough_samples_and_recovers():
     c.record_turn_latency(9.0)
     r = c.try_admit()
     assert not r.admitted and r.reason == "latency_shed"
-    for _ in range(10):                      # window fully replaced by good turns
+    for _ in range(10):  # window fully replaced by good turns
         c.record_turn_latency(0.8)
     assert c.try_admit().admitted
 

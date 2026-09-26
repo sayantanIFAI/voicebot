@@ -10,6 +10,7 @@ exists in exactly one place: the same strings are spoken, pre-synthesized
 at startup (TTSClient.prewarm) and pinned by tests/test_i18n_phrases.py to
 be identical across languages in coverage.
 """
+
 from __future__ import annotations
 
 PHRASES: dict[str, dict[str, str]] = {
@@ -122,8 +123,7 @@ DEFAULT_LANGUAGE = "bn"
 # operator can change in the database (agent/messages.py): the welcome, the disclosure
 # (agent/disclosure.py, versioned), and a one-line pointer to 112 for emergencies. The text kept in
 # PHRASES["greeting"] is the built-in composition, used for the start-up pre-synthesis cache.
-from agent import messages as _messages
-from agent.disclosure import disclosure_for as _disclosure_for
+from agent import messages as _messages  # noqa: E402  (deliberately after the tables above: see the comment)
 
 EMERGENCY_HINT = {
     "bn": "জরুরি অবস্থায় সরাসরি ১১২ নম্বরে ফোন করবেন।",
@@ -150,6 +150,7 @@ def greeting_text(lang: str) -> str:
     """welcome. who you are speaking with. question -- the welcome and the question are the two sentences of the
     `greeting` phrase; the identity sentence (and, only if the operator has set one, the 112 pointer) go between."""
     import re
+
     base = _messages.text("greeting", lang, _BASE_GREETING.get(lang) or _BASE_GREETING["bn"])
     parts = [x for x in re.split(r"(?<=[।.!?])\s+", base.strip()) if x]
     middle = [_messages.text("greeting_identity", lang, GREETING_IDENTITY.get(lang) or GREETING_IDENTITY["bn"])]
@@ -179,7 +180,9 @@ PHRASES["en"]["emergency_notice"] = "This may be an emergency. Please call 112 n
 PHRASES["bn"]["name_not_caught"] = "দুঃখিত, নামটা ঠিক শুনতে পাইনি।"
 PHRASES["hi"]["name_not_caught"] = "माफ़ कीजिए, नाम ठीक से सुन नहीं पाई।"
 PHRASES["en"]["name_not_caught"] = "Sorry, I did not catch the name."
-PHRASES["en"]["reverify_notice"] = "For your security, I need to verify who I am speaking with again before I share any personal details."
+PHRASES["en"]["reverify_notice"] = (
+    "For your security, I need to verify who I am speaking with again before I share any personal details."
+)
 
 # Spoken when a call is turned away before the caller has said a word, so
 # there is no language to choose: all three, shortest first is not worth the

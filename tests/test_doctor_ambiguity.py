@@ -3,6 +3,7 @@ The agent must never pick one: every duplicate or confusion is a question, asked
 
     python -m pytest tests/test_doctor_ambiguity.py -v
 """
+
 import datetime
 import os
 import sys
@@ -15,6 +16,7 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, p)
 
 from _clinic_app import clinic_app
+
 from agent.fast_path import Catalogue, FastPath
 from agent.reply_templates import booking_reply, doctor_availability_reply
 
@@ -27,13 +29,23 @@ def api():
     with clinic_app(sample_patients=False) as (app, client):
         from db import SessionLocal
         from models import Doctor
+
         db = SessionLocal()
         try:
             sen = db.query(Doctor).filter_by(name="Dr. A. Sen").one()
             sen.full_name, sen.full_name_bn, sen.full_name_hi = "Dr. Ashok Sen", "অশোক সেন", "अशोक सेन"
-            db.add(Doctor(name="Dr. A. Sen", full_name="Dr. Abhishek Sen", full_name_bn="অভিষেক সেন",
-                          full_name_hi="अभिषेक सेन", qualifications="MBBS", aliases_bn=sen.aliases_bn,
-                          aliases_hi=sen.aliases_hi, department_id=sen.department_id))
+            db.add(
+                Doctor(
+                    name="Dr. A. Sen",
+                    full_name="Dr. Abhishek Sen",
+                    full_name_bn="অভিষেক সেন",
+                    full_name_hi="अभिषेक सेन",
+                    qualifications="MBBS",
+                    aliases_bn=sen.aliases_bn,
+                    aliases_hi=sen.aliases_hi,
+                    department_id=sen.department_id,
+                )
+            )
             db.commit()
         finally:
             db.close()
@@ -46,6 +58,7 @@ def _avail(client, name, **params):
 
 # ================================================================================ the server asks, by whole name
 
+
 @pytest.mark.parametrize("said", ["Dr. A. Sen", "Sen", "Dr Sen", "সেন", "ডাক্তার সেন", "सेन"])
 def test_a_name_two_doctors_share_is_a_question_never_an_answer(api, said):
     _app, c = api
@@ -53,21 +66,28 @@ def test_a_name_two_doctors_share_is_a_question_never_an_answer(api, said):
     assert body["found"] is False and body["ambiguous"] is True
     # in Bengali or Devanagari script "সেন" is also inside Sengupta's surname alias, which is a genuine candidate too
     assert {"Dr. Ashok Sen", "Dr. Abhishek Sen"} <= set(body["did_you_mean"])
-    assert {"অশোক সেন", "অভিষেক সেন"} <= set(body["did_you_mean_bn"])         # a Bengali voice can say these
+    assert {"অশোক সেন", "অভিষেক সেন"} <= set(body["did_you_mean_bn"])  # a Bengali voice can say these
     assert {"अशोक सेन", "अभिषेक सेन"} <= set(body["did_you_mean_hi"])
     if said in ("Dr. A. Sen", "Sen", "Dr Sen"):
         assert set(body["did_you_mean"]) == {"Dr. Ashok Sen", "Dr. Abhishek Sen"}
 
 
-@pytest.mark.parametrize("said,doctor_full", [
-    ("Ashok Sen", "Dr. Ashok Sen"), ("Dr. Abhishek Sen", "Dr. Abhishek Sen"), ("Abhishek", "Dr. Abhishek Sen"),
-    ("অশোক সেন", "Dr. Ashok Sen"), ("অভিষেক সেন", "Dr. Abhishek Sen"), ("अशोक सेन", "Dr. Ashok Sen"),
-])
+@pytest.mark.parametrize(
+    "said,doctor_full",
+    [
+        ("Ashok Sen", "Dr. Ashok Sen"),
+        ("Dr. Abhishek Sen", "Dr. Abhishek Sen"),
+        ("Abhishek", "Dr. Abhishek Sen"),
+        ("অশোক সেন", "Dr. Ashok Sen"),
+        ("অভিষেক সেন", "Dr. Abhishek Sen"),
+        ("अशोक सेन", "Dr. Ashok Sen"),
+    ],
+)
 def test_the_whole_name_reaches_exactly_one_doctor(api, said, doctor_full):
     _app, c = api
     body = _avail(c, said)
     assert body["found"] is True, body
-    assert body["doctor_name"] == doctor_full                    # the reply names him so it can be looked up again
+    assert body["doctor_name"] == doctor_full  # the reply names him so it can be looked up again
 
 
 def test_a_doctor_with_a_name_of_his_own_is_unaffected(api):
@@ -78,11 +98,21 @@ def test_a_doctor_with_a_name_of_his_own_is_unaffected(api):
 
 def test_booking_a_shared_name_is_a_question_too(api):
     _app, c = api
-    body = c.post("/api/v1/bookings/hold", json={"doctor_name": "Dr. A. Sen", "date": "2026-10-05", "time_slot": "10:00"}).json()
+    body = c.post(
+        "/api/v1/bookings/hold", json={"doctor_name": "Dr. A. Sen", "date": "2026-10-05", "time_slot": "10:00"}
+    ).json()
     assert body["success"] is False and body["reason"] == "doctor_ambiguous"
     assert set(body["did_you_mean"]) == {"Dr. Ashok Sen", "Dr. Abhishek Sen"}
-    legacy = c.post("/api/v1/appointments", json={"doctor_name": "Sen", "date": "2026-10-05", "time_slot": "10:00",
-                                                  "patient_name": "X", "phone": "9830000000"}).json()
+    legacy = c.post(
+        "/api/v1/appointments",
+        json={
+            "doctor_name": "Sen",
+            "date": "2026-10-05",
+            "time_slot": "10:00",
+            "patient_name": "X",
+            "phone": "9830000000",
+        },
+    ).json()
     assert legacy["success"] is False and legacy["reason"] == "doctor_ambiguous"
 
 
@@ -96,12 +126,19 @@ def test_two_doctors_who_still_read_the_same_are_told_apart_by_department(api):
     _app, c = api
     from db import SessionLocal
     from models import Department, Doctor
+
     db = SessionLocal()
     try:
         sen = db.query(Doctor).filter_by(full_name="Dr. Abhishek Sen").one()
         other_dept = db.query(Department).filter(Department.id != sen.department_id).first()
-        twin = Doctor(name="Dr. A. Sen", full_name="Dr. Ashok Sen", full_name_bn="অশোক সেন", full_name_hi="अशोक सेन",
-                      qualifications="MBBS", department_id=other_dept.id)
+        twin = Doctor(
+            name="Dr. A. Sen",
+            full_name="Dr. Ashok Sen",
+            full_name_bn="অশোক সেন",
+            full_name_hi="अशोक सेन",
+            qualifications="MBBS",
+            department_id=other_dept.id,
+        )
         db.add(twin)
         db.commit()
         twin_id = twin.id
@@ -119,9 +156,15 @@ def test_two_doctors_who_still_read_the_same_are_told_apart_by_department(api):
 
 # ================================================================================================ the agent's words
 
+
 def test_the_agent_asks_which_one_in_every_language():
-    result = {"found": False, "ambiguous": True, "did_you_mean": ["Dr. Ashok Sen", "Dr. Abhishek Sen"],
-              "did_you_mean_bn": ["অশোক সেন", "অভিষেক সেন"], "did_you_mean_hi": ["अशोक सेन", "अभिषेक सेन"]}
+    result = {
+        "found": False,
+        "ambiguous": True,
+        "did_you_mean": ["Dr. Ashok Sen", "Dr. Abhishek Sen"],
+        "did_you_mean_bn": ["অশোক সেন", "অভিষেক সেন"],
+        "did_you_mean_hi": ["अशोक सेन", "अभिषेक सेन"],
+    }
     bn = doctor_availability_reply({"doctor_name": "Dr. A. Sen"}, result, "bn")
     assert "অশোক সেন নাকি অভিষেক সেন" in bn and bn.endswith("?")
     hi = doctor_availability_reply({"doctor_name": "Dr. A. Sen"}, result, "hi")
@@ -131,13 +174,18 @@ def test_the_agent_asks_which_one_in_every_language():
 
 
 def test_a_booking_that_hits_a_shared_name_asks_which_one_in_every_language():
-    result = {"success": False, "reason": "doctor_ambiguous", "did_you_mean": ["Dr. Ashok Sen", "Dr. Abhishek Sen"],
-              "did_you_mean_bn": ["অশোক সেন", "অভিষেক সেন"], "did_you_mean_hi": ["अशोक सेन", "अभिषेक सेन"]}
+    result = {
+        "success": False,
+        "reason": "doctor_ambiguous",
+        "did_you_mean": ["Dr. Ashok Sen", "Dr. Abhishek Sen"],
+        "did_you_mean_bn": ["অশোক সেন", "অভিষেক সেন"],
+        "did_you_mean_hi": ["अशोक सेन", "अभिषेक सेन"],
+    }
     assert "অশোক সেন নাকি অভিষেক সেন" in booking_reply({}, result, "bn")
     assert "अशोक सेन या अभिषेक सेन" in booking_reply({}, result, "hi")
     assert "Dr. Ashok Sen or Dr. Abhishek Sen" in booking_reply({}, result, "en")
     for lang in ("bn", "hi", "en"):
-        assert "not found" not in booking_reply({}, result, lang).lower()        # not the "no such doctor" apology
+        assert "not found" not in booking_reply({}, result, lang).lower()  # not the "no such doctor" apology
 
 
 def test_the_orchestrator_clears_the_doctor_after_an_ambiguous_hold():
@@ -147,19 +195,25 @@ def test_the_orchestrator_clears_the_doctor_after_an_ambiguous_hold():
 
 # =================================================================================================== the fast path
 
+
 def test_the_fast_path_never_answers_on_a_surname_two_doctors_share(api):
     _app, c = api
     fp = FastPath(Catalogue(c.get("/api/v1/catalogue").json()), today=TODAY)
-    for text, lang in [("ডাক্তার সেন কবে বসবেন", "bn"), ("sen kab baithte hain", "hi"), ("डॉक्टर सेन कब बैठते हैं", "hi"),
-                       ("when does dr sen sit", "en")]:
+    for text, lang in [
+        ("ডাক্তার সেন কবে বসবেন", "bn"),
+        ("sen kab baithte hain", "hi"),
+        ("डॉक्टर सेन कब बैठते हैं", "hi"),
+        ("when does dr sen sit", "en"),
+    ]:
         assert fp.resolve(text, lang) is None, (text, lang)
-    hit = fp.resolve("ডাক্তার মুখার্জী কবে বসবেন", "bn")                      # a surname of one doctor is still served
+    hit = fp.resolve("ডাক্তার মুখার্জী কবে বসবেন", "bn")  # a surname of one doctor is still served
     assert hit is not None and hit.intent == "doctor_availability"
 
 
 def test_the_seeded_whole_names_exist_in_all_three_scripts():
     sys.path.insert(0, os.path.join(REPO_ROOT, "clinic-api"))
     from seed import doctor_full_names
+
     names = doctor_full_names()
     assert len(names) == 32
     for short, (latin, bn, hi) in names.items():
@@ -169,6 +223,7 @@ def test_the_seeded_whole_names_exist_in_all_three_scripts():
 
 # ==================================================================== the live call: "ডক্টর পার্থ রায় কবে বসছে"
 
+
 def test_a_doctor_named_in_full_is_one_doctor_even_when_the_surname_is_shared(api):
     """Live call 2026-09-25: "ডক্টর পার্থ রায় কবে বসছে" was answered "রায় নাকি রায়?" -- Dr. N. Roy and Dr. P. Ray share the
     Bengali spelling of their surname, and the whole name was never consulted. It is now."""
@@ -176,7 +231,7 @@ def test_a_doctor_named_in_full_is_one_doctor_even_when_the_surname_is_shared(ap
     for said in ("ডক্টর পার্থ রায়", "পার্থ রায়", "Partha Ray", "Dr. Partha Ray", "पार्थ रे"):
         body = _avail(c, said)
         assert body["found"] is True and body["doctor_name"] == "Dr. P. Ray", (said, body)
-    body = _avail(c, "রায়")                                                     # the bare surname IS a question
+    body = _avail(c, "রায়")  # the bare surname IS a question
     assert body["ambiguous"] is True and set(body["did_you_mean_bn"]) >= {"পার্থ রায়", "নির্মল রায়"}, body
 
 

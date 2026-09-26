@@ -16,6 +16,7 @@ mispronounced.
 
     python -m pytest tests/test_digit_fidelity.py -v
 """
+
 import os
 import random
 import sys
@@ -29,7 +30,7 @@ if REPO_ROOT not in sys.path:
 from agent import bn_normalize
 from agent.speech_norm import verbalize_en, verbalize_hi
 
-_BN_DIGIT_WORD = bn_normalize._ONES_TO_99[:10]          # index == digit
+_BN_DIGIT_WORD = bn_normalize._ONES_TO_99[:10]  # index == digit
 _HI_DIGIT_WORD = __import__("agent.speech_norm", fromlist=["_HI_0_99"])._HI_0_99[:10]
 _EN_DIGIT_WORD = __import__("agent.speech_norm", fromlist=["_EN_0_19"])._EN_0_19[:10]
 
@@ -54,8 +55,7 @@ def _random_phone() -> str:
     return "9" + "".join(str(_RNG.randint(0, 9)) for _ in range(9))
 
 
-PHONE_CORPUS = ["9876543210", "9000000001", "9800000099", "9111111111"] + \
-    [_random_phone() for _ in range(20)]
+PHONE_CORPUS = ["9876543210", "9000000001", "9800000099", "9111111111"] + [_random_phone() for _ in range(20)]
 
 
 @pytest.mark.parametrize("phone", PHONE_CORPUS)
@@ -81,8 +81,7 @@ def test_english_phone_number_round_trips_digit_for_digit(phone):
 # exact hundred/thousand/lakh/crore (no remainder branch), and a value
 # exercising every place at once -- the shape of number most likely to
 # silently lose a digit in a recursive divmod implementation.
-AMOUNT_CORPUS = [0, 1, 9, 50, 99, 100, 250, 999, 1000, 1500, 12345,
-                 100000, 150000, 999999, 10000000, 12345678]
+AMOUNT_CORPUS = [0, 1, 9, 50, 99, 100, 250, 999, 1000, 1500, 12345, 100000, 150000, 999999, 10000000, 12345678]
 
 
 @pytest.mark.parametrize("amount", AMOUNT_CORPUS)

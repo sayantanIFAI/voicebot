@@ -24,6 +24,7 @@ account rather than assumed:
    that bug, so the model is never allowed to state a number on its own;
    see main.py's _compose_reply().
 """
+
 from __future__ import annotations
 
 import datetime
@@ -36,12 +37,23 @@ from agent.enquiry_followup import ENQUIRY_INTENTS
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
 
-VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment",
-                  "test_prep", "clinic_faq", "smalltalk", "unclear",
-                  # Epic E26 -- booking, rescheduling and cancellation
-                  "book_test", "reschedule_appointment", "cancel_appointment",
-                  "lookup_booking", "add_test_booking", "resend_confirmation",
-                  "department_query"}
+VALID_INTENTS = {
+    "test_rate",
+    "doctor_availability",
+    "book_appointment",
+    "test_prep",
+    "clinic_faq",
+    "smalltalk",
+    "unclear",
+    # Epic E26 -- booking, rescheduling and cancellation
+    "book_test",
+    "reschedule_appointment",
+    "cancel_appointment",
+    "lookup_booking",
+    "add_test_booking",
+    "resend_confirmation",
+    "department_query",
+}
 
 # The FAQ topic keys FastPath.FAQCatalogue matches locally against
 # /api/v1/catalogue's faq_topics. Kept here too, as a fixed enum for the
@@ -50,8 +62,16 @@ VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment",
 # KEY, never composes the answer itself (agent/reply_templates.py fetches
 # and speaks the real one). If clinic-api's FAQ table grows, update both
 # this tuple and seed.py's FAQ_ENTRIES together.
-FAQ_TOPICS = ("hours", "location", "payment_methods", "insurance", "parking",
-              "report_collection", "contact_number", "home_collection")
+FAQ_TOPICS = (
+    "hours",
+    "location",
+    "payment_methods",
+    "insurance",
+    "parking",
+    "report_collection",
+    "contact_number",
+    "home_collection",
+)
 
 SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's phone assistant. You will be given ONE caller utterance in {language_name}, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in the caller's own script.
 
@@ -147,19 +167,23 @@ def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
     # OK" on this pod. The real fix is OLLAMA_KEEP_ALIVE keeping the model
     # resident (see setup docs) so this path is rarely hit in practice --
     # this margin is a backstop for whenever it still is.
-    payload = json.dumps({
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        # Keep Qwen resident. Ollama unloads a model after 5 idle minutes and a
-        # cold 7B load measured 74 s on this pod -- the first caller after any
-        # quiet spell would wait that long for one intent.
-        "keep_alive": -1,
-        "options": {"temperature": 0.0},
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            # Keep Qwen resident. Ollama unloads a model after 5 idle minutes and a
+            # cold 7B load measured 74 s on this pod -- the first caller after any
+            # quiet spell would wait that long for one intent.
+            "keep_alive": -1,
+            "options": {"temperature": 0.0},
+        }
+    ).encode("utf-8")
     req = urllib.request.Request(
-        OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"},
+        OLLAMA_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:
         body = json.loads(resp.read().decode("utf-8"))
@@ -219,10 +243,24 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
     if not isinstance(slots, dict):
         errors.append("slots: expected object")
     else:
-        for key in ("test_name", "test_names", "doctor_name", "date", "time_slot", "new_date",
-                    "new_time_slot", "confirmation_id", "patient_name", "patient_age", "phone",
-                    "contact_phone", "relationship", "spelled_letters", "symptom_description",
-                    "faq_topic"):
+        for key in (
+            "test_name",
+            "test_names",
+            "doctor_name",
+            "date",
+            "time_slot",
+            "new_date",
+            "new_time_slot",
+            "confirmation_id",
+            "patient_name",
+            "patient_age",
+            "phone",
+            "contact_phone",
+            "relationship",
+            "spelled_letters",
+            "symptom_description",
+            "faq_topic",
+        ):
             if key not in slots:
                 errors.append(f"slots.{key}: missing")
     if data.get("intent") != "smalltalk" and data.get("direct_reply_bn") not in (None, ""):
@@ -268,8 +306,11 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
     data["secondary_intent"] = secondary_intent
     data["secondary_slots"] = secondary_slots
 
-    return (len([e for e in errors if "missing" not in e or "intent" in e or "slots: expected" in e]) == 0
-            and "slots" in data, errors)
+    return (
+        len([e for e in errors if "missing" not in e or "intent" in e or "slots: expected" in e]) == 0
+        and "slots" in data,
+        errors,
+    )
 
 
 _LANGUAGE_NAMES = {"bn": "Bengali", "hi": "Hindi", "en": "English"}
@@ -286,11 +327,12 @@ _LANGUAGE_NAMES = {"bn": "Bengali", "hi": "Hindi", "en": "English"}
 # instead of an unbounded one, exactly the acceptance criterion's own
 # wording. Recalibrate against real telephony latency once measured.
 DEFAULT_DEADLINE_S = 12.0
-_MAX_ATTEMPTS_BACKSTOP = 5   # defence in depth only -- see extract_intent's docstring
+_MAX_ATTEMPTS_BACKSTOP = 5  # defence in depth only -- see extract_intent's docstring
 
 
-def extract_intent(transcript_bn: str, max_retries: int = 2, lang: str = "bn",
-                    deadline_s: float = DEFAULT_DEADLINE_S) -> tuple[dict, dict]:
+def extract_intent(
+    transcript_bn: str, max_retries: int = 2, lang: str = "bn", deadline_s: float = DEFAULT_DEADLINE_S
+) -> tuple[dict, dict]:
     """Returns (parsed JSON dict, diagnostics dict).
 
     `transcript_bn` keeps its historical name for callers; it is the caller's
@@ -312,8 +354,10 @@ def extract_intent(transcript_bn: str, max_retries: int = 2, lang: str = "bn",
         faq_topics=", ".join(FAQ_TOPICS),
         language_name=_LANGUAGE_NAMES.get(lang, "Bengali"),
     )
-    prompt = (f"{system_prompt}\n\nCALLER UTTERANCE ({_LANGUAGE_NAMES.get(lang, 'Bengali')}, "
-              f"ASR output):\n{transcript_bn}\n\nJSON:")
+    prompt = (
+        f"{system_prompt}\n\nCALLER UTTERANCE ({_LANGUAGE_NAMES.get(lang, 'Bengali')}, "
+        f"ASR output):\n{transcript_bn}\n\nJSON:"
+    )
 
     diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": [], "deadline_s": deadline_s}
     last_error: Exception | ExtractionError = ExtractionError("no attempt was made")

@@ -6,6 +6,7 @@ local instance in tests/test_clinic_api_new_endpoints.py).
 
     python -m pytest tests/test_fast_path_faq_prep.py -v
 """
+
 import os
 import sys
 
@@ -81,9 +82,7 @@ def test_clinic_faq_does_not_steal_availability_questions():
     fp = _fast_path()
     result = fp.resolve("ডক্টর সেন কবে চেম্বারে বসবেন")
     assert result is not None
-    assert result.intent == "doctor_availability", (
-        "an availability question must never be misrouted to clinic_faq"
-    )
+    assert result.intent == "doctor_availability", "an availability question must never be misrouted to clinic_faq"
 
 
 def test_unrecognised_faq_style_question_abstains():

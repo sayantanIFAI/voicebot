@@ -22,6 +22,7 @@ The caller (main.py) is responsible for passing only the unprocessed tail
 slice into `poll()` -- this module treats index 0 of whatever tensor it's
 given as "now", and never looks at audio before that.
 """
+
 from __future__ import annotations
 
 import os
@@ -46,25 +47,40 @@ class TurnDetector:
     (KCD-046), the semantic threshold (KCD-048) and the wake-up schedule
     (KCD-049) all live there, documented and tested without torch."""
 
-    def __init__(self, silence_confirm_s: float = 1.0, tail_guard_s: float = 0.3,
-                 min_speech_s: float = 0.35, max_utterance_s: float = 20.0,
-                 config: EndpointConfig | None = None):
+    def __init__(
+        self,
+        silence_confirm_s: float = 1.0,
+        tail_guard_s: float = 0.3,
+        min_speech_s: float = 0.35,
+        max_utterance_s: float = 20.0,
+        config: EndpointConfig | None = None,
+    ):
         # silence_confirm_s was raised from an initial 0.8s after real
         # testing showed that was cutting callers off mid-sentence. The
         # remaining values and their reasons are documented on EndpointConfig.
         self.config = config or EndpointConfig(
-            silence_confirm_s=silence_confirm_s, tail_guard_s=tail_guard_s,
-            min_speech_s=min_speech_s, max_utterance_s=max_utterance_s)
+            silence_confirm_s=silence_confirm_s,
+            tail_guard_s=tail_guard_s,
+            min_speech_s=min_speech_s,
+            max_utterance_s=max_utterance_s,
+        )
 
         if os.path.isdir(_LOCAL_SILERO_REPO):
             self.model, utils = torch.hub.load(
-                repo_or_dir=_LOCAL_SILERO_REPO, source="local", model="silero_vad",
-                force_reload=False, onnx=False, trust_repo=True,
+                repo_or_dir=_LOCAL_SILERO_REPO,
+                source="local",
+                model="silero_vad",
+                force_reload=False,
+                onnx=False,
+                trust_repo=True,
             )
         else:
             self.model, utils = torch.hub.load(
-                repo_or_dir="snakers4/silero-vad", model="silero_vad",
-                force_reload=False, onnx=False, trust_repo=True,
+                repo_or_dir="snakers4/silero-vad",
+                model="silero_vad",
+                force_reload=False,
+                onnx=False,
+                trust_repo=True,
             )
         self._get_speech_timestamps = utils[0]
 
@@ -72,18 +88,20 @@ class TurnDetector:
         """Speech spans (seconds, relative to the tensor) and its duration."""
         if sr != 16000:
             wav_tensor = torch.nn.functional.interpolate(
-                wav_tensor.view(1, 1, -1), scale_factor=16000 / sr, mode="linear",
+                wav_tensor.view(1, 1, -1),
+                scale_factor=16000 / sr,
+                mode="linear",
                 align_corners=False,
             ).view(-1)
             sr = 16000
         duration_s = wav_tensor.shape[-1] / sr
         if duration_s < 0.2:
             return [], duration_s
-        return self._get_speech_timestamps(
-            wav_tensor, self.model, sampling_rate=sr, return_seconds=True), duration_s
+        return self._get_speech_timestamps(wav_tensor, self.model, sampling_rate=sr, return_seconds=True), duration_s
 
-    def poll(self, wav_tensor: torch.Tensor, sr: int, completeness: str | None = None,
-             semantic: bool = False) -> TurnResult:
+    def poll(
+        self, wav_tensor: torch.Tensor, sr: int, completeness: str | None = None, semantic: bool = False
+    ) -> TurnResult:
         """wav_tensor: the UNPROCESSED TAIL of the call's buffer only --
         i.e. audio already consumed by a prior completed turn must not be
         included. Index 0 is treated as "now".

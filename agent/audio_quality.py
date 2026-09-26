@@ -32,6 +32,7 @@ WHAT THIS CANNOT DO, STATED PLAINLY
   "measured vs reasoned" rule as agent/confidence_gate.py: recalibrate
   against real calls before trusting these past the pilot.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -45,13 +46,13 @@ F0_MIN_HZ, F0_MAX_HZ = 70.0, 400.0
 
 # ---- thresholds (REASONED, see module docstring) ----
 MIN_SPEECH_DURATION_S = 0.6
-QUIET_RMS_DBFS = -38.0          # active-speech RMS below this is "low audible"
+QUIET_RMS_DBFS = -38.0  # active-speech RMS below this is "low audible"
 QUIET_PEAK_DBFS = -22.0
 NOISY_SNR_DB = 10.0
 VERY_NOISY_SNR_DB = 5.0
 CLIPPING_FRACTION = 0.01
-VOICED_HARMONICITY = 0.45       # normalised autocorrelation peak for a voiced frame
-MUMBLE_VOICED_RATIO = 0.20      # of active frames; speech is normally 0.4-0.7
+VOICED_HARMONICITY = 0.45  # normalised autocorrelation peak for a voiced frame
+MUMBLE_VOICED_RATIO = 0.20  # of active frames; speech is normally 0.4-0.7
 TWO_PITCH_RESIDUAL_FRACTION = 0.10
 TWO_PITCH_RESIDUAL_HARMONICITY = 0.50
 # Of voiced frames carrying a second pitch track. MEASURED on synthetic
@@ -63,22 +64,22 @@ TWO_PITCH_RESIDUAL_HARMONICITY = 0.50
 # voiced frames is small even for genuine cross-talk. Real handset audio
 # will be messier: recalibrate before trusting this past the pilot.
 CROSSTALK_RATIO = 0.05
-CROSSTALK_MIN_FRAMES = 8         # 80 ms of overlapped speech, so one glitch cannot trip it
-_LAG_EXCLUSION = 0.07           # a "second" pitch within 7% of k*T is the same voice
+CROSSTALK_MIN_FRAMES = 8  # 80 ms of overlapped speech, so one glitch cannot trip it
+_LAG_EXCLUSION = 0.07  # a "second" pitch within 7% of k*T is the same voice
 
 
 @dataclasses.dataclass
 class AudioAssessment:
     duration_s: float
-    active_ratio: float          # share of frames that carry speech-level energy
+    active_ratio: float  # share of frames that carry speech-level energy
     speech_rms_dbfs: float
     peak_dbfs: float
     snr_db: float
-    voiced_ratio: float          # of active frames
-    two_pitch_ratio: float       # of voiced frames
+    voiced_ratio: float  # of active frames
+    two_pitch_ratio: float  # of voiced frames
     clipping_ratio: float
     issues: list[str]
-    intelligibility: float       # 0..1, acoustic proxy only
+    intelligibility: float  # 0..1, acoustic proxy only
 
     @property
     def primary_issue(self) -> str | None:
@@ -94,6 +95,7 @@ class AudioAssessment:
 
 
 # ------------------------------------------------------------------ framing
+
 
 def _frames(x: np.ndarray, sr: int) -> np.ndarray:
     n, hop = int(FRAME_S * sr), int(HOP_S * sr)
@@ -123,7 +125,7 @@ def _pitch_lag(r: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
     strongest peak wins, which avoids the classic octave error of locking
     onto a multiple of the true period."""
     lo, hi = int(sr / F0_MAX_HZ), min(int(sr / F0_MIN_HZ), r.shape[1] - 1)
-    seg = r[:, lo:hi + 1]
+    seg = r[:, lo : hi + 1]
     best = seg.max(axis=1)
     lags = np.zeros(r.shape[0], dtype=int)
     for i in range(r.shape[0]):
@@ -141,6 +143,7 @@ def _pitch_lag(r: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 # --------------------------------------------------------------- cross-talk
+
 
 def _refine_lag(r: np.ndarray, lag: int) -> float:
     """Sub-sample period by parabolic interpolation of the autocorrelation
@@ -170,7 +173,7 @@ def _second_pitch(frame: np.ndarray, lag: float, sr: int) -> bool:
     m = frame.size - whole - 1
     if lag <= 1 or m < 2 * int(sr / F0_MAX_HZ):
         return False
-    shifted = (1.0 - frac) * frame[whole:whole + m] + frac * frame[whole + 1:whole + 1 + m]
+    shifted = (1.0 - frac) * frame[whole : whole + m] + frac * frame[whole + 1 : whole + 1 + m]
     e = frame[:m] - shifted
     ex, ee = float(np.dot(frame[:m], frame[:m])), float(np.dot(e, e))
     if ex < 1e-9 or ee / (2.0 * ex) < TWO_PITCH_RESIDUAL_FRACTION:
@@ -182,14 +185,15 @@ def _second_pitch(frame: np.ndarray, lag: float, sr: int) -> bool:
     lags = np.arange(lo, hi + 1)
     allowed = np.ones(lags.size, dtype=bool)
     for k in (1, 2, 3, 4):
-        allowed &= np.abs(lags - k * lag) > _LAG_EXCLUSION * k * lag        # multiples of T
-        allowed &= np.abs(lags - lag / k) > _LAG_EXCLUSION * lag / k        # sub-multiples of T
+        allowed &= np.abs(lags - k * lag) > _LAG_EXCLUSION * k * lag  # multiples of T
+        allowed &= np.abs(lags - lag / k) > _LAG_EXCLUSION * lag / k  # sub-multiples of T
     if not allowed.any():
         return False
-    return float(er[lo:hi + 1][allowed].max()) >= TWO_PITCH_RESIDUAL_HARMONICITY
+    return float(er[lo : hi + 1][allowed].max()) >= TWO_PITCH_RESIDUAL_HARMONICITY
 
 
 # ------------------------------------------------------------------- assess
+
 
 def assess(samples: np.ndarray, sr: int = 16000) -> AudioAssessment:
     x = np.asarray(samples, dtype=np.float32)
@@ -201,10 +205,9 @@ def assess(samples: np.ndarray, sr: int = 16000) -> AudioAssessment:
 
     frames = _frames(x - (float(np.mean(x)) if x.size else 0.0), sr)
     if frames.shape[0] < 5:
-        return AudioAssessment(duration, 0.0, -120.0, float(_db(peak ** 2)), 0.0, 0.0, 0.0, clipping,
-                               ["too_short"], 0.0)
+        return AudioAssessment(duration, 0.0, -120.0, float(_db(peak**2)), 0.0, 0.0, 0.0, clipping, ["too_short"], 0.0)
 
-    energy_db = _db(np.mean(frames ** 2, axis=1))
+    energy_db = _db(np.mean(frames**2, axis=1))
     floor, top = float(np.percentile(energy_db, 10)), float(np.percentile(energy_db, 90))
     snr = top - floor
     active = energy_db >= max(floor + 0.35 * (top - floor), top - 25.0)
@@ -220,15 +223,14 @@ def assess(samples: np.ndarray, sr: int = 16000) -> AudioAssessment:
         voiced = harm >= VOICED_HARMONICITY
         voiced_ratio = float(np.mean(voiced))
         if voiced.any():
-            hits = sum(_second_pitch(act[i], _refine_lag(acf[i], int(lags[i])), sr)
-                       for i in np.where(voiced)[0])
+            hits = sum(_second_pitch(act[i], _refine_lag(acf[i], int(lags[i])), sr) for i in np.where(voiced)[0])
             two_pitch, two_pitch_hits = hits / float(voiced.sum()), hits
 
     issues: list[str] = []
     if speech_rms < -100.0 or active_ratio * duration < MIN_SPEECH_DURATION_S:
         issues.append("no_speech" if speech_rms < -100.0 else "too_short")
     else:
-        if speech_rms < QUIET_RMS_DBFS or _db(peak ** 2) < QUIET_PEAK_DBFS:
+        if speech_rms < QUIET_RMS_DBFS or _db(peak**2) < QUIET_PEAK_DBFS:
             issues.append("too_quiet")
         if two_pitch >= CROSSTALK_RATIO and two_pitch_hits >= CROSSTALK_MIN_FRAMES:
             issues.append("crosstalk")
@@ -244,16 +246,36 @@ def assess(samples: np.ndarray, sr: int = 16000) -> AudioAssessment:
     def soft(v, lo, hi):
         return float(np.clip((v - lo) / (hi - lo), 0.0, 1.0))
 
-    intelligibility = (soft(snr, 0.0, 20.0) ** 0.5 * soft(speech_rms, -50.0, -30.0) ** 0.5
-                       * (0.4 + 0.6 * soft(voiced_ratio, 0.0, 0.45)) * (1.0 - 0.6 * min(two_pitch, 1.0)))
-    return AudioAssessment(duration, active_ratio, speech_rms, float(_db(peak ** 2)), snr, voiced_ratio,
-                           two_pitch, clipping, issues, float(np.clip(intelligibility, 0.0, 1.0)))
+    intelligibility = (
+        soft(snr, 0.0, 20.0) ** 0.5
+        * soft(speech_rms, -50.0, -30.0) ** 0.5
+        * (0.4 + 0.6 * soft(voiced_ratio, 0.0, 0.45))
+        * (1.0 - 0.6 * min(two_pitch, 1.0))
+    )
+    return AudioAssessment(
+        duration,
+        active_ratio,
+        speech_rms,
+        float(_db(peak**2)),
+        snr,
+        voiced_ratio,
+        two_pitch,
+        clipping,
+        issues,
+        float(np.clip(intelligibility, 0.0, 1.0)),
+    )
 
 
 # ------------------------------------------------------------------ enhance
 
-def enhance(samples: np.ndarray, sr: int = 16000, target_rms_dbfs: float = -24.0,
-            max_gain_db: float = 24.0, floor_gain: float = 0.12) -> np.ndarray:
+
+def enhance(
+    samples: np.ndarray,
+    sr: int = 16000,
+    target_rms_dbfs: float = -24.0,
+    max_gain_db: float = 24.0,
+    floor_gain: float = 0.12,
+) -> np.ndarray:
     """Rumble/DC removal, Wiener-style spectral gating, then gain.
 
     The noise power spectrum is the mean of the quietest 15% of the
@@ -299,23 +321,25 @@ def enhance(samples: np.ndarray, sr: int = 16000, target_rms_dbfs: float = -24.0
         prior = alpha * (prev_clean / noise_psd) + (1 - alpha) * np.maximum(post - 1.0, 0.0)
         g = np.maximum(prior / (1.0 + prior), floor_gain)
         gain[t] = g
-        prev_clean = (g ** 2) * power[t]
+        prev_clean = (g**2) * power[t]
     out_spec = spec * gain
     frames_out = np.fft.irfft(out_spec, n=n_fft, axis=1) * win
     out = np.zeros(xp.size, dtype=np.float32)
     norm = np.zeros(xp.size, dtype=np.float32)
     for t in range(count):
         s = t * hop
-        out[s:s + n_fft] += frames_out[t]
-        norm[s:s + n_fft] += win ** 2
-    out = (out / np.maximum(norm, 1e-6))[pad:pad + x.size]
+        out[s : s + n_fft] += frames_out[t]
+        norm[s : s + n_fft] += win**2
+    out = (out / np.maximum(norm, 1e-6))[pad : pad + x.size]
 
     # gain to a target level, only ever UP to max_gain_db, never into clipping
     frames = _frames(out, sr)
     if frames.shape[0]:
-        e = _db(np.mean(frames ** 2, axis=1))
-        act = e >= max(float(np.percentile(e, 10)) + 0.35 * (float(np.percentile(e, 90)) - float(np.percentile(e, 10))),
-                       float(np.percentile(e, 90)) - 25.0)
+        e = _db(np.mean(frames**2, axis=1))
+        act = e >= max(
+            float(np.percentile(e, 10)) + 0.35 * (float(np.percentile(e, 90)) - float(np.percentile(e, 10))),
+            float(np.percentile(e, 90)) - 25.0,
+        )
         cur = float(_db(np.mean(frames[act] ** 2))) if act.any() else -120.0
         if -100.0 < cur < target_rms_dbfs:
             g = 10 ** (min(target_rms_dbfs - cur, max_gain_db) / 20.0)
@@ -334,8 +358,13 @@ _SCRIPT = {
 }
 
 
-def transcript_problem(text: str, lang: str, audio_duration_s: float | None = None,
-                       decoder_agreement: float | None = None, slot_answer: bool = False) -> str | None:
+def transcript_problem(
+    text: str,
+    lang: str,
+    audio_duration_s: float | None = None,
+    decoder_agreement: float | None = None,
+    slot_answer: bool = False,
+) -> str | None:
     """Why this transcript looks jumbled, or None if it looks like speech.
 
     Order matters: the cheap, unambiguous signals first. A problem here
@@ -356,7 +385,7 @@ def transcript_problem(text: str, lang: str, audio_duration_s: float | None = No
     if not tokens:
         return "empty"
     if audio_duration_s and audio_duration_s >= 2.5 and len(tokens) == 1 and len(tokens[0]) <= 3:
-        return "fragment"                       # seconds of audio, one stray syllable
+        return "fragment"  # seconds of audio, one stray syllable
     script = _SCRIPT.get(lang)
     letters = [c for c in text if c.isalpha()]
     if script and letters and len(letters) >= 4:
@@ -364,10 +393,10 @@ def transcript_problem(text: str, lang: str, audio_duration_s: float | None = No
             return "wrong_script"
     if len(tokens) >= 5:
         if sum(1 for t in tokens if len(t) == 1) / len(tokens) >= 0.5:
-            return "shattered"                  # a run of single characters
+            return "shattered"  # a run of single characters
         lowered = [t.lower() for t in tokens]
         if len(set(lowered)) / len(lowered) <= 0.4:
-            return "repetitive"                 # "the the the ... "
+            return "repetitive"  # "the the the ... "
     if decoder_agreement is not None and 0.0 < decoder_agreement < 0.25:
         return "decoders_disagree"
     return None

@@ -5,6 +5,7 @@ Found on the pod: "lipid profile test" (English) and "लिपिड प्र�
 the catalogue. Matching must accept the wrapped phrase -- and must still
 refuse a near-miss, because a confidently wrong test's real price is the
 failure this service exists to prevent."""
+
 import os
 import sys
 import tempfile
@@ -23,11 +24,20 @@ def client():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+    ):
         sys.modules.pop(mod, None)
-    import main as clinic_main
     from fastapi.testclient import TestClient
+
+    import main as clinic_main
 
     with TestClient(clinic_main.app) as c:
         yield c
@@ -37,16 +47,19 @@ def client():
         pass
 
 
-@pytest.mark.parametrize("phrase,expected", [
-    ("lipid profile test", "Lipid Profile"),
-    ("the lipid profile", "Lipid Profile"),
-    ("Uric Acid test", "Uric Acid"),
-    ("uric acid", "Uric Acid"),
-    ("लिपिड प्रोफ़ाइल टेस्ट", "Lipid Profile"),     # nukta spelling
-    ("लिपिड प्रोफाइल टेस्ट", "Lipid Profile"),      # plain spelling
-    ("यूरिक एसिड टेस्ट", "Uric Acid"),
-    ("ইউরিক অ্যাসিড টেস্টের", "Uric Acid"),
-])
+@pytest.mark.parametrize(
+    "phrase,expected",
+    [
+        ("lipid profile test", "Lipid Profile"),
+        ("the lipid profile", "Lipid Profile"),
+        ("Uric Acid test", "Uric Acid"),
+        ("uric acid", "Uric Acid"),
+        ("लिपिड प्रोफ़ाइल टेस्ट", "Lipid Profile"),  # nukta spelling
+        ("लिपिड प्रोफाइल टेस्ट", "Lipid Profile"),  # plain spelling
+        ("यूरिक एसिड टेस्ट", "Uric Acid"),
+        ("ইউরিক অ্যাসিড টেস্টের", "Uric Acid"),
+    ],
+)
 def test_wrapped_phrases_find_the_right_test(client, phrase, expected):
     body = client.get("/api/v1/tests/search", params={"name": phrase}).json()
     assert body["found"] is True, body

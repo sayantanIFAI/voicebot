@@ -11,10 +11,9 @@ and this script refuses to write if that stops being true.
 
     python tools/make_pcm_variant.py
 """
+
 from __future__ import annotations
 
-import io
-import re
 import sys
 
 HEADER = '''"""Kolkata Care Diagnostics -- voice agent on the RAW PCM transport.
@@ -58,7 +57,7 @@ CALLSESSION_DOC = '''class CallSession:
 
 '''
 
-SLICE_NEW = '''    sr = session.audio.sample_rate
+SLICE_NEW = """    sr = session.audio.sample_rate
     clip = session.audio.slice_tensor(start_s, end_s + UTTERANCE_PAD_S)
     clip_path = os.path.join(session.tmpdir, f"utt{seq}.wav")
 
@@ -74,9 +73,9 @@ SLICE_NEW = '''    sr = session.audio.sample_rate
         torchaudio.save(clip_path, wav, out_sr)
 
     await asyncio.to_thread(_write)
-    return clip_path'''
+    return clip_path"""
 
-HELLO_NEW = '''    if msg.get("type") == "playback_done":
+HELLO_NEW = """    if msg.get("type") == "playback_done":
         session.release_gate()
     elif msg.get("type") == "hello":
         # The browser may refuse the 16kHz AudioContext we ask for. Trust
@@ -94,18 +93,18 @@ HELLO_NEW = '''    if msg.get("type") == "playback_done":
             logger.warning("[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
                            session.call_id, rate, SAMPLE_RATE)
         logger.info("[%s] transport: %s @ %dHz", session.call_id,
-                    msg.get("format", "pcm_s16le"), rate)'''
+                    msg.get("format", "pcm_s16le"), rate)"""
 
-POLL_NEW = '''        sr = session.audio.sample_rate
+POLL_NEW = """        sr = session.audio.sample_rate
         tail = session.audio.tail_tensor(session.processed_until_s)
         if tail.numel() < int(0.2 * sr):
             continue  # not enough new audio to judge yet -- not an error
 
-        result'''
+        result"""
 
 
 def main() -> None:
-    src = io.open("main.py", encoding="utf-8").read()
+    src = open("main.py", encoding="utf-8").read()
     s = src
 
     def rep(old: str, new: str, label: str) -> None:
@@ -114,33 +113,47 @@ def main() -> None:
             sys.exit(f"PATCH MISS ({label}) -- main.py changed shape; update this script")
         s = s.replace(old, new, 1)
 
-    rep('"""Kolkata Care Diagnostics -- Bengali voice agent, WebSocket orchestrator.',
-        HEADER, "docstring")
-    rep("import torchaudio\nfrom fastapi",
+    rep('"""Kolkata Care Diagnostics -- Bengali voice agent, WebSocket orchestrator.', HEADER, "docstring")
+    rep(
+        "import torchaudio\nfrom fastapi",
         "import torchaudio\nfrom agent.pcm_buffer import PcmCallBuffer, SAMPLE_RATE\nfrom fastapi",
-        "imports")
+        "imports",
+    )
 
     # Drop ONLY _decode_to_wav (the WebM decoder). It used to drop everything up to `class CallSession`,
     # which silently took the helpers defined after it (_condition_wav_to_path, _attend_wav_to_path) too
     # -- a NameError in the PCM entrypoint the moment either was switched on.
     start = s.index("async def _decode_to_wav(")
-    nl3 = chr(10) * 3                                  # a top-level definition starts after two blank lines
-    ends = [i for i in (s.find(nl3 + "def ", start + 1), s.find(nl3 + "async def ", start + 1),
-                        s.find(nl3 + "class ", start + 1)) if i != -1]
-    rep(s[start:min(ends) + 3], "", "drop decoder")
-    rep(s[s.index("class CallSession:"):s.index("    def __init__(self, ws: WebSocket):")],
-        CALLSESSION_DOC, "CallSession docstring")
+    nl3 = chr(10) * 3  # a top-level definition starts after two blank lines
+    ends = [
+        i
+        for i in (
+            s.find(nl3 + "def ", start + 1),
+            s.find(nl3 + "async def ", start + 1),
+            s.find(nl3 + "class ", start + 1),
+        )
+        if i != -1
+    ]
+    rep(s[start : min(ends) + 3], "", "drop decoder")
+    rep(
+        s[s.index("class CallSession:") : s.index("    def __init__(self, ws: WebSocket):")],
+        CALLSESSION_DOC,
+        "CallSession docstring",
+    )
 
-    rep('        self.raw_path = os.path.join(self.tmpdir, "call.webm")\n'
+    rep(
+        '        self.raw_path = os.path.join(self.tmpdir, "call.webm")\n'
         '        self.wav_path = self.raw_path + ".wav"\n'
         '        open(self.raw_path, "wb").close()',
         "        self.audio = PcmCallBuffer()\n        self.declared_rate: int | None = None\n"
         "        if AEC_BARGE_IN:\n"
         "            # KCD-051/052: echo cancellation + acoustic barge-in. Raw PCM only.\n"
         "            self.duplex = FullDuplexProcessor(sr=SAMPLE_RATE)",
-        "buffer")
+        "buffer",
+    )
 
-    rep("    async def append(self, chunk: bytes):\n"
+    rep(
+        "    async def append(self, chunk: bytes):\n"
         "        self.last_activity = time.time()\n"
         '        with open(self.raw_path, "ab") as f:\n'
         "            f.write(chunk)",
@@ -157,25 +170,32 @@ def main() -> None:
         "            self.audio.append((np.clip(result.cleaned, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())\n"
         "        if result.barge_in is not None:\n"
         "            await _handle_barge_in(self, result.barge_in)",
-        "append")
+        "append",
+    )
 
-    rep("    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
+    rep(
+        "    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
         "    a = max(0, int(start_s * sr))\n"
         "    b = min(int((end_s + UTTERANCE_PAD_S) * sr), wav.shape[-1])\n"
         '    clip_path = f"{session.wav_path}.utt{seq}.wav"\n'
         "    await asyncio.to_thread(torchaudio.save, clip_path, wav[:, a:b], sr)\n"
         "    return clip_path",
-        SLICE_NEW, "slice")
+        SLICE_NEW,
+        "slice",
+    )
 
-    rep("    if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
+    rep(
+        "    if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
         "        return False\n"
         "    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
         "    buffer_end_s = wav.shape[-1] / sr\n"
         "    session.processed_until_s",
         "    buffer_end_s = session.audio.duration_s\n    session.processed_until_s",
-        "resync")
+        "resync",
+    )
 
-    rep("        if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
+    rep(
+        "        if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
         "            continue  # too little data yet to form a valid container -- not an error\n"
         "\n"
         "        wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
@@ -185,24 +205,29 @@ def main() -> None:
         "        tail = wav[tail_start_sample:]\n"
         "\n"
         "        result",
-        POLL_NEW, "poll")
+        POLL_NEW,
+        "poll",
+    )
 
-    rep('    if msg.get("type") == "playback_done":\n        session.release_gate()',
-        HELLO_NEW, "hello")
+    rep('    if msg.get("type") == "playback_done":\n        session.release_gate()', HELLO_NEW, "hello")
 
-    rep('TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.3"))',
+    rep(
+        'TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.3"))',
         'TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.1"))',
-        "tail guard default")
-    rep('app.mount("/", StaticFiles(directory="static", html=True), name="static")',
+        "tail guard default",
+    )
+    rep(
+        'app.mount("/", StaticFiles(directory="static", html=True), name="static")',
         'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
-        "mount")
+        "mount",
+    )
 
     # The point of the split: prove the reasoning half was untouched.
     a, b = "async def _resolve_intent(", "async def _resync_after_playback("
-    if src[src.index(a):src.index(b)] != s[s.index(a):s.index(b)]:
+    if src[src.index(a) : src.index(b)] != s[s.index(a) : s.index(b)]:
         sys.exit("REFUSING TO WRITE: reasoning half diverged between main.py and the variant")
 
-    io.open("main_pcm.py", "w", encoding="utf-8").write(s)
+    open("main_pcm.py", "w", encoding="utf-8").write(s)
     print("main_pcm.py regenerated; reasoning half verified byte-identical")
 
 

@@ -14,6 +14,7 @@ without a GPU:
   pick_candidate choose between two ASR results for the same audio
   speakable      can a language's TTS voice actually say this text
 """
+
 from __future__ import annotations
 
 from agent.speech_norm import unspeakable_spans
@@ -57,8 +58,7 @@ def speakable(text: str, lang: str) -> bool:
 SECOND_LANGUAGE_FLOOR = 0.03
 
 
-def languages_to_verify(language: str, scores: dict[str, float],
-                        active: tuple[str, ...]) -> list[str] | None:
+def languages_to_verify(language: str, scores: dict[str, float], active: tuple[str, ...]) -> list[str] | None:
     """Every active language, best LID score first, when LID is not decisive;
     None when it is.
 
@@ -67,8 +67,7 @@ def languages_to_verify(language: str, scores: dict[str, float],
     rather than the top two is deliberate: measured, English speech came back
     as bn 0.83 / hi 0.16 / en 0.01, so English was not even in the top two,
     and only running its ASR could have found it."""
-    ranked = [lang for lang, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-              if lang in active]
+    ranked = [lang for lang, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True) if lang in active]
     for lang in active:
         if lang not in ranked:
             ranked.append(lang)
@@ -130,7 +129,8 @@ INDIC_MIN_LID = 0.10
 # gives it some probability, or most of what it wrote is words an English speaker actually says.
 ENGLISH_MIN_LID = 0.05
 ENGLISH_MIN_WORD_SHARE = 0.5
-_ENGLISH_WORDS = frozenset("""
+_ENGLISH_WORDS = frozenset(
+    """
 a an the and or but if so of to in on at for from with by about as is are was were be been am do does did have has had
 i me my we our you your he she it they them this that these those there here what which who whom when where why how
 can could will would shall should may might must not no yes ok okay please thanks thank hello hi sorry
@@ -139,7 +139,8 @@ booking cancel reschedule time timing timings open close hours today tomorrow mo
 wednesday thursday friday saturday sunday fasting fast empty stomach report reports result results sample blood urine
 clinic address location parking insurance payment card cash number phone confirm confirmation need want tell give
 know check see get take come go available sit sits sitting chamber counter staff person help
-""".split())
+""".split()
+)
 
 
 def english_word_share(text: str) -> float:
@@ -150,12 +151,15 @@ def english_word_share(text: str) -> float:
     if not tokens:
         return 0.0
     return sum(t in _ENGLISH_WORDS for t in tokens) / len(tokens)
+
+
 # Leaving the language the call has been in needs language ID to believe the new one, not merely allow it.
 SWITCH_MIN_LID = 0.50
 
 
-def pick_candidate(candidates: list[tuple[str, object]], lid_scores: dict[str, float] | None = None,
-                   prior: str | None = None):
+def pick_candidate(
+    candidates: list[tuple[str, object]], lid_scores: dict[str, float] | None = None, prior: str | None = None
+):
     """Several ASR engines ran on the same audio. Return (language, result)
     for the one that most plausibly heard its own language.
 
@@ -170,11 +174,13 @@ def pick_candidate(candidates: list[tuple[str, object]], lid_scores: dict[str, f
     if not usable:
         return candidates[0]
     for lang, r in usable:
-        if (lang == "en" and r.decoder_agreement >= ENGLISH_MIN_AGREEMENT
-                and script_share(r.text, "en") >= 0.9):
+        if lang == "en" and r.decoder_agreement >= ENGLISH_MIN_AGREEMENT and script_share(r.text, "en") >= 0.9:
             # With language ID scores in hand, "English" must also be English (see ENGLISH_MIN_WORD_SHARE).
-            if lid_scores is None or lid_scores.get("en", 0.0) >= ENGLISH_MIN_LID \
-                    or english_word_share(r.text) >= ENGLISH_MIN_WORD_SHARE:
+            if (
+                lid_scores is None
+                or lid_scores.get("en", 0.0) >= ENGLISH_MIN_LID
+                or english_word_share(r.text) >= ENGLISH_MIN_WORD_SHARE
+            ):
                 return lang, r
     rest = [(lang, r) for lang, r in usable if lang != "en"] or usable
     if lid_scores:
@@ -187,5 +193,5 @@ def pick_candidate(candidates: list[tuple[str, object]], lid_scores: dict[str, f
     if lid_scores and prior and best[0] != prior and lid_scores.get(best[0], 0.0) < SWITCH_MIN_LID:
         stay = [(lang, r) for lang, r in rest if lang == prior]
         if stay:
-            return stay[0]                                  # no switch on a recogniser's say-so alone
+            return stay[0]  # no switch on a recogniser's say-so alone
     return best

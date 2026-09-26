@@ -9,6 +9,7 @@ policy and Appointment.cancellation_policy_version's own docstrings.
 
     python -m pytest tests/test_cancellation_policy.py -v
 """
+
 import datetime
 import os
 import sys
@@ -36,13 +37,23 @@ def clinic_modules(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+    ):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod
+
     seed_mod.seed()
     import booking_migrate
+
     booking_migrate.migrate_booking_schema()
     booking_migrate.finish_booking_schema_setup()
     import booking_service as bs
@@ -93,10 +104,11 @@ def test_a_default_policy_is_seeded_matching_the_old_hardcoded_behaviour(clinic_
 def test_seeding_is_idempotent_and_never_overwrites_an_edited_row(clinic_modules):
     bs, db_mod, m = clinic_modules
     import booking_migrate
+
     db = db_mod.SessionLocal()
     try:
         p = db.query(m.CancellationPolicy).filter_by(version=1).one()
-        p.free_window_hours = 48   # a clinician's own edit
+        p.free_window_hours = 48  # a clinician's own edit
         db.commit()
     finally:
         db.close()
@@ -142,10 +154,15 @@ def test_a_future_dated_policy_version_does_not_apply_before_its_effective_date(
     db = db_mod.SessionLocal()
     try:
         future_effective = (PINNED_TODAY + datetime.timedelta(days=30)).isoformat()
-        db.add(m.CancellationPolicy(
-            version=2, effective_from=future_effective,
-            free_window_hours=72, charge_percent=25, refund_eligible=True,
-        ))
+        db.add(
+            m.CancellationPolicy(
+                version=2,
+                effective_from=future_effective,
+                free_window_hours=72,
+                charge_percent=25,
+                refund_eligible=True,
+            )
+        )
         db.commit()
 
         # Today, version 1 (the only one already in force) still applies.
@@ -171,10 +188,15 @@ def test_a_non_refund_eligible_policy_charges_the_full_consultation_fee(clinic_m
         # refund_eligible=False overrides the window rather than merely
         # applying inside it.
         v1 = db.query(m.CancellationPolicy).filter_by(version=1).one()
-        db.add(m.CancellationPolicy(
-            version=3, effective_from=v1.effective_from,
-            free_window_hours=24, charge_percent=50, refund_eligible=False,
-        ))
+        db.add(
+            m.CancellationPolicy(
+                version=3,
+                effective_from=v1.effective_from,
+                free_window_hours=24,
+                charge_percent=50,
+                refund_eligible=False,
+            )
+        )
         db.commit()
 
         doc = _doctor(db, m)
@@ -203,10 +225,15 @@ def test_the_policy_in_force_at_cancellation_applies_not_one_effective_by_the_ap
     bs, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
     try:
-        db.add(m.CancellationPolicy(
-            version=2, effective_from=(PINNED_TODAY + datetime.timedelta(days=5)).isoformat(),
-            free_window_hours=200, charge_percent=100, refund_eligible=False,
-        ))
+        db.add(
+            m.CancellationPolicy(
+                version=2,
+                effective_from=(PINNED_TODAY + datetime.timedelta(days=5)).isoformat(),
+                free_window_hours=200,
+                charge_percent=100,
+                refund_eligible=False,
+            )
+        )
         db.commit()
 
         doc = _doctor(db, m)
@@ -220,7 +247,7 @@ def test_the_policy_in_force_at_cancellation_applies_not_one_effective_by_the_ap
         booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "X", "111", "111")
 
         result = bs.cancel_appointment(db, booked["confirmation_id"])
-        assert result["success"] is True and result["charge_inr"] == 0     # version 1's free window
+        assert result["success"] is True and result["charge_inr"] == 0  # version 1's free window
         appt = db.query(m.Appointment).filter_by(confirmation_id=booked["confirmation_id"]).one()
         assert appt.cancellation_policy_version == 1
     finally:

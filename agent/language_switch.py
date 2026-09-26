@@ -19,24 +19,40 @@ large to make blind against a file with no local test coverage (it
 needs the pod's ASR/TTS venv to import at all). Revisit with real call
 data once that refactor can be verified live.
 """
+
 from __future__ import annotations
 
 _SWITCH_PHRASES: dict[str, dict[str, str]] = {
     # utterance language -> {phrase substring: target language code}
     "bn": {
-        "হিন্দিতে বল": "hi", "হিন্দিতে কথা": "hi", "হিন্দি ভাষায়": "hi",
-        "ইংরেজিতে বল": "en", "ইংরেজিতে কথা": "en", "ইংলিশে বল": "en",
-        "বাংলায় বল": "bn", "বাংলায় কথা": "bn",
+        "হিন্দিতে বল": "hi",
+        "হিন্দিতে কথা": "hi",
+        "হিন্দি ভাষায়": "hi",
+        "ইংরেজিতে বল": "en",
+        "ইংরেজিতে কথা": "en",
+        "ইংলিশে বল": "en",
+        "বাংলায় বল": "bn",
+        "বাংলায় কথা": "bn",
     },
     "hi": {
-        "हिंदी में बोल": "hi", "हिंदी में बात": "hi",
-        "अंग्रेज़ी में बोल": "en", "इंग्लिश में बोल": "en", "अंग्रेजी में बात": "en",
-        "बंगाली में बोल": "bn", "बांग्ला में बोल": "bn",
+        "हिंदी में बोल": "hi",
+        "हिंदी में बात": "hi",
+        "अंग्रेज़ी में बोल": "en",
+        "इंग्लिश में बोल": "en",
+        "अंग्रेजी में बात": "en",
+        "बंगाली में बोल": "bn",
+        "बांग्ला में बोल": "bn",
     },
     "en": {
-        "speak in hindi": "hi", "talk in hindi": "hi", "hindi please": "hi",
-        "speak in bengali": "bn", "talk in bengali": "bn", "bengali please": "bn",
-        "speak in english": "en", "talk in english": "en", "english please": "en",
+        "speak in hindi": "hi",
+        "talk in hindi": "hi",
+        "hindi please": "hi",
+        "speak in bengali": "bn",
+        "talk in bengali": "bn",
+        "bengali please": "bn",
+        "speak in english": "en",
+        "talk in english": "en",
+        "english please": "en",
     },
 }
 

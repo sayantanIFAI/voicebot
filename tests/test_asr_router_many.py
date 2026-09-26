@@ -1,4 +1,5 @@
 """ASRRouter.transcribe_many: verification must survive one engine being down."""
+
 import asyncio
 import dataclasses
 
@@ -26,8 +27,9 @@ class Down:
 
 
 def router(**engines):
-    return ASRRouter({"bn": engines.get("bn", Ok("b")), "hi": engines.get("hi", Ok("h")),
-                      "en": engines.get("en", Ok("e"))})
+    return ASRRouter(
+        {"bn": engines.get("bn", Ok("b")), "hi": engines.get("hi", Ok("h")), "en": engines.get("en", Ok("e"))}
+    )
 
 
 def test_returns_every_engine_result_in_order():

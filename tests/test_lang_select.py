@@ -1,7 +1,8 @@
 """lang_select: the LID-unsure path, pinned to the numbers measured on the pod."""
+
 import dataclasses
 
-from agent.lang_select import languages_to_verify, pick_candidate, script_share, speakable
+from agent.lang_select import languages_to_verify, pick_candidate, speakable
 
 
 @dataclasses.dataclass
@@ -115,11 +116,12 @@ def test_a_bengali_reply_ending_in_a_danda_is_speakable_and_devanagari_letters_s
     reply that ended in one 'the wrong script'."""
     assert speakable("ধন্যবাদ" + chr(0x0964) + " আর কিছু জানতে চান?", "bn")
     assert speakable("ধন্যবাদ" + chr(0x0965), "bn")
-    assert not speakable("नमस्कार, मैं क्या मदद कर सकती हूँ?", "bn")       # real Devanagari letters: still rejected
+    assert not speakable("नमस्कार, मैं क्या मदद कर सकती हूँ?", "bn")  # real Devanagari letters: still rejected
     assert speakable("नमस्कार" + chr(0x0964), "hi")
 
 
 # ---- found on the live pod (call c7eb4b15): Bengali answered in Hindi -------------------------------------------
+
 
 def test_the_live_pod_case_language_id_said_bengali_95_and_the_hindi_engine_must_not_win_on_its_own_confidence():
     """Logged: LID bn 0.95 / en 0.00 / hi 0.05; recogniser agreement bn 0.20, hi 0.50, en 0.33. The Hindi engine
@@ -128,16 +130,16 @@ def test_the_live_pod_case_language_id_said_bengali_95_and_the_hindi_engine_must
     hi = R("एइबी वन एसी ए टेस्टर्ड दाम को तो", 0.50)
     en = R("hb a one c test her dam co", 0.33)
     scores = {"bn": 0.95, "en": 0.0, "hi": 0.05}
-    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)])[0] == "hi"                   # what it did before
-    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)], scores, "bn")[0] == "bn"      # what it does now
+    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)])[0] == "hi"  # what it did before
+    assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)], scores, "bn")[0] == "bn"  # what it does now
     assert pick_candidate([("bn", bn), ("hi", hi), ("en", en)], scores, None)[0] == "bn"
 
 
 def test_a_call_that_has_been_in_bengali_does_not_switch_to_hindi_unless_language_id_believes_it():
     bn = R("বাংলা কথা", 0.30)
     hi = R("हिंदी बात", 0.80)
-    assert pick_candidate([("bn", bn), ("hi", hi)], {"bn": 0.60, "hi": 0.40}, "bn")[0] == "bn"     # 0.40 < 0.50
-    assert pick_candidate([("bn", bn), ("hi", hi)], {"bn": 0.20, "hi": 0.80}, "bn")[0] == "hi"     # LID believes Hindi
+    assert pick_candidate([("bn", bn), ("hi", hi)], {"bn": 0.60, "hi": 0.40}, "bn")[0] == "bn"  # 0.40 < 0.50
+    assert pick_candidate([("bn", bn), ("hi", hi)], {"bn": 0.20, "hi": 0.80}, "bn")[0] == "hi"  # LID believes Hindi
 
 
 def test_a_genuine_hindi_caller_on_the_first_turn_is_still_recognised():
@@ -191,7 +193,9 @@ def test_the_language_id_favourite_leads_so_it_wins_ties():
 
 
 def test_a_language_that_is_not_active_is_never_planned():
-    assert engines_needed("hi", {"bn": 0.1, "hi": 0.9}, ("bn", "en")) == ["bn", "en"] or "hi" not in engines_needed("hi", {"bn": 0.1, "hi": 0.9}, ("bn", "en"))
+    assert engines_needed("hi", {"bn": 0.1, "hi": 0.9}, ("bn", "en")) == ["bn", "en"] or "hi" not in engines_needed(
+        "hi", {"bn": 0.1, "hi": 0.9}, ("bn", "en")
+    )
 
 
 # ---- found while measuring latency: a Bengali sentence was routed to English ------------------------------------------
@@ -219,7 +223,7 @@ def test_real_english_still_wins_when_language_id_gave_it_almost_nothing():
 
 def test_english_with_some_language_id_support_wins_on_the_agreement_gate_alone():
     bn = R("বাংলা", 0.3)
-    en = R("kolkata care diagnostics", 0.9)              # not common words, but LID gives English real probability
+    en = R("kolkata care diagnostics", 0.9)  # not common words, but LID gives English real probability
     assert pick_candidate([("bn", bn), ("en", en)], {"bn": 0.6, "hi": 0.05, "en": 0.35}, "bn")[0] == "en"
 
 
@@ -232,4 +236,4 @@ def test_the_english_word_share_separates_english_from_transliteration():
 def test_without_language_id_scores_the_english_gate_is_the_old_one():
     bn = R("হোয়াট ইজ দ্য প্রাইজ", 1.00)
     en = R("sibisi tester rate koto", 1.00)
-    assert pick_candidate([("bn", bn), ("en", en)])[0] == "en"        # no scores: unchanged behaviour
+    assert pick_candidate([("bn", bn), ("en", en)])[0] == "en"  # no scores: unchanged behaviour

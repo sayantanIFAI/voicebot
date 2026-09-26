@@ -30,6 +30,7 @@ OUTPUT  a table per (language, condition): WER raw, WER conditioned, and the cha
 
     python tools/conditioning_eval.py CLIPS_DIR --engine en=http://localhost:8003
 """
+
 import argparse
 import asyncio
 import collections
@@ -69,6 +70,7 @@ CONDITIONS = [
 
 # ------------------------------------------------------------------------------- WER
 
+
 def _tokens(text: str) -> list[str]:
     t = unicodedata.normalize("NFC", text or "").lower()
     t = re.sub(r"[^\w\s]", " ", t, flags=re.UNICODE)
@@ -90,6 +92,7 @@ def wer(reference: str, hypothesis: str) -> float:
 
 
 # ------------------------------------------------------------------------------- clips
+
 
 @dataclasses.dataclass
 class Clip:
@@ -135,7 +138,7 @@ def pink_noise(n: int, rng: np.random.Generator) -> np.ndarray:
     f = np.arange(len(spec), dtype=np.float64)
     f[0] = 1.0
     x = np.fft.irfft(spec / np.sqrt(f), n).astype(np.float32)
-    return x / (np.sqrt(np.mean(x ** 2)) + 1e-9)
+    return x / (np.sqrt(np.mean(x**2)) + 1e-9)
 
 
 def degrade(x: np.ndarray, level_dbfs: float | None, snr_db: float | None, rng: np.random.Generator) -> np.ndarray:
@@ -153,15 +156,21 @@ def degrade(x: np.ndarray, level_dbfs: float | None, snr_db: float | None, rng: 
 Transcribe = "async (lang, wav_path) -> str"
 
 
-async def evaluate(clips: list[Clip], transcribe, conditions=CONDITIONS, degrade_clips: bool = True,
-                   conditioner=condition, seed: int = 0) -> dict:
+async def evaluate(
+    clips: list[Clip],
+    transcribe,
+    conditions=CONDITIONS,
+    degrade_clips: bool = True,
+    conditioner=condition,
+    seed: int = 0,
+) -> dict:
     """-> {(lang, condition): {"n", "wer_raw", "wer_conditioned", "change"}}, plus per-clip rows."""
     rng = np.random.default_rng(seed)
     acc: dict[tuple[str, str], list[tuple[float, float]]] = collections.defaultdict(list)
     rows = []
     with tempfile.TemporaryDirectory() as tmp:
         for clip in clips:
-            for cname, level, snr in (conditions if degrade_clips else [("as_recorded", None, None)]):
+            for cname, level, snr in conditions if degrade_clips else [("as_recorded", None, None)]:
                 x = degrade(clip.samples, level, snr, rng) if degrade_clips else clip.samples
                 y, report = conditioner(x, SR)
                 # a fresh path per file: a recogniser (or the OS) may hold or cache by path
@@ -172,8 +181,17 @@ async def evaluate(clips: list[Clip], transcribe, conditions=CONDITIONS, degrade
                 w_raw = wer(clip.reference, await transcribe(clip.lang, raw_p))
                 w_cond = wer(clip.reference, await transcribe(clip.lang, cond_p))
                 acc[(clip.lang, cname)].append((w_raw, w_cond))
-                rows.append({"clip": clip.name, "lang": clip.lang, "condition": cname, "wer_raw": w_raw,
-                             "wer_conditioned": w_cond, "suppressed": report.suppressed, "reason": report.reason})
+                rows.append(
+                    {
+                        "clip": clip.name,
+                        "lang": clip.lang,
+                        "condition": cname,
+                        "wer_raw": w_raw,
+                        "wer_conditioned": w_cond,
+                        "suppressed": report.suppressed,
+                        "reason": report.reason,
+                    }
+                )
     table = {}
     for key, vals in acc.items():
         raw = float(np.mean([a for a, _ in vals]))
@@ -193,17 +211,24 @@ def verdict(change: float, n: int, tolerance: float = 0.01) -> str:
 
 
 def render(result: dict) -> str:
-    lines = ["| language | condition | clips | WER raw | WER conditioned | change | verdict |", "|---|---|---:|---:|---:|---:|---|"]
+    lines = [
+        "| language | condition | clips | WER raw | WER conditioned | change | verdict |",
+        "|---|---|---:|---:|---:|---:|---|",
+    ]
     for (lang, cond), r in sorted(result["table"].items()):
-        lines.append(f"| {lang} | {cond} | {r['n']} | {r['wer_raw']:.1%} | {r['wer_conditioned']:.1%} | "
-                     f"{r['change']:+.1%} | {verdict(r['change'], r['n'])} |")
+        lines.append(
+            f"| {lang} | {cond} | {r['n']} | {r['wer_raw']:.1%} | {r['wer_conditioned']:.1%} | "
+            f"{r['change']:+.1%} | {verdict(r['change'], r['n'])} |"
+        )
     return "\n".join(lines)
 
 
 # ------------------------------------------------------------------------------- engines
 
+
 def http_engine(specs: list[str]):
     import httpx
+
     urls = dict(s.split("=", 1) for s in specs)
 
     async def transcribe(lang: str, wav_path: str) -> str:
@@ -213,6 +238,7 @@ def http_engine(specs: list[str]):
             r = await c.post("/transcribe", json={"wav_path": wav_path})
             r.raise_for_status()
             return r.json().get("text", "")
+
     return transcribe
 
 

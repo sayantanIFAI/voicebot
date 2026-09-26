@@ -19,6 +19,7 @@ spoken word. Two constraints keep it honest:
 
 Wording is provisional and pending native review (agent/persona.py).
 """
+
 from __future__ import annotations
 
 import re
@@ -32,11 +33,13 @@ _ACK = {
     "en": ["Sure.", "Understood.", "Alright."],
 }
 MAX_ACK_WORDS = 3
-MIN_TURNS_BETWEEN = 2                 # an acknowledgement at most every other reply
-MIN_REPLY_WORDS = 3                   # a one- or two-word reply needs no preamble
+MIN_TURNS_BETWEEN = 2  # an acknowledgement at most every other reply
+MIN_REPLY_WORDS = 3  # a one- or two-word reply needs no preamble
 
-_LEADING_ACK = {lang: re.compile("^\\s*(" + "|".join(re.escape(a.rstrip("।.")) for a in variants) + ")\\b", re.I)
-                for lang, variants in _ACK.items()}
+_LEADING_ACK = {
+    lang: re.compile("^\\s*(" + "|".join(re.escape(a.rstrip("।.")) for a in variants) + ")\\b", re.I)
+    for lang, variants in _ACK.items()
+}
 
 
 def validate_table() -> list[str]:
@@ -71,6 +74,7 @@ MAX_THANKS_WORDS = 8
 
 def thanks_for(lang: str) -> str:
     from agent import messages
+
     return messages.text("thanks_ack", lang, THANKS.get(lang) or THANKS["bn"])
 
 
@@ -100,12 +104,17 @@ class AckTracker:
     def next_turn(self) -> None:
         self.turn += 1
 
-    def decorate(self, reply: str, lang: str, substantive: bool = True,
-                 already_acknowledged: bool = False) -> tuple[str, bool]:
+    def decorate(
+        self, reply: str, lang: str, substantive: bool = True, already_acknowledged: bool = False
+    ) -> tuple[str, bool]:
         """(reply, whether an acknowledgement was prefixed)."""
         if self.mode == "always":
-            skip = (not substantive or already_acknowledged or len((reply or "").split()) < MIN_REPLY_WORDS
-                    or count_apologies((reply or "")[:60], lang) > 0)
+            skip = (
+                not substantive
+                or already_acknowledged
+                or len((reply or "").split()) < MIN_REPLY_WORDS
+                or count_apologies((reply or "")[:60], lang) > 0
+            )
             if skip:
                 self.suppressed += 1
                 return reply, False
@@ -117,7 +126,7 @@ class AckTracker:
             or already_acknowledged
             or len((reply or "").split()) < MIN_REPLY_WORDS
             or self.turn - self._last_ack_turn < MIN_TURNS_BETWEEN
-            or count_apologies((reply or "")[:60], lang) > 0                 # an apology opens this reply
+            or count_apologies((reply or "")[:60], lang) > 0  # an apology opens this reply
             or bool(_LEADING_ACK.get(lang, _LEADING_ACK["bn"]).match(reply or ""))
         )
         if skip:

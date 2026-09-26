@@ -31,6 +31,7 @@ Keep language PER UTTERANCE, never latched for the call: a caller may use
 Bengali grammar with an English test name, switch to Hindi next turn, then
 read a phone number in English.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -52,8 +53,8 @@ DEFAULT_MAX_AMBIGUOUS_STREAK = 3
 class LIDResult:
     """One language-identification pass over one utterance's audio."""
 
-    language: str          # one of SUPPORTED_LANGUAGES, or "unknown"
-    confidence: float       # 0.0-1.0
+    language: str  # one of SUPPORTED_LANGUAGES, or "unknown"
+    confidence: float  # 0.0-1.0
     scores: dict[str, float] = dataclasses.field(default_factory=dict)
 
 
@@ -62,8 +63,7 @@ class LanguageIdentifier(Protocol):
     NOT expected to be unit tested without real audio -- exercise them
     with an integration test on the pod instead."""
 
-    def identify(self, audio_16k_mono: "bytes | object") -> LIDResult:
-        ...
+    def identify(self, audio_16k_mono: bytes | object) -> LIDResult: ...
 
 
 class SpeechBrainVoxLingua107LID:
@@ -112,9 +112,12 @@ class SpeechBrainVoxLingua107LID:
         # relative to the process CWD -- i.e. into the repo checkout, or
         # onto the ephemeral overlay depending on where the service starts.
         savedir = os.environ.get("VOICE_AGENT_LID_DIR") or os.path.join(
-            os.path.expanduser("~"), ".cache", "voice-agent-lid")
+            os.path.expanduser("~"), ".cache", "voice-agent-lid"
+        )
         self._model = EncoderClassifier.from_hparams(
-            source=self.MODEL_SOURCE, savedir=savedir, run_opts={"device": self.device},
+            source=self.MODEL_SOURCE,
+            savedir=savedir,
+            run_opts={"device": self.device},
         )
 
     # A supported-language posterior mass below this means the audio is most
@@ -157,13 +160,15 @@ class SpeechBrainVoxLingua107LID:
         if missing:
             raise RuntimeError(
                 f"VoxLingua107 label set at this speechbrain version has no {sorted(missing)}; "
-                f"routing cannot work until that is resolved")
+                f"routing cannot work until that is resolved"
+            )
 
         probs = {lang: float(torch.exp(log_post[i])) for lang, i in self._label_idx.items()}
         mass = sum(probs.values())
         if mass < self.MIN_SUPPORTED_MASS:
-            return LIDResult(language="unknown", confidence=0.0,
-                             scores={k: v / mass if mass else 0.0 for k, v in probs.items()})
+            return LIDResult(
+                language="unknown", confidence=0.0, scores={k: v / mass if mass else 0.0 for k, v in probs.items()}
+            )
         scores = {lang: p / mass for lang, p in probs.items()}
         best = max(scores, key=scores.get)
         return LIDResult(language=best, confidence=scores[best], scores=scores)
@@ -200,8 +205,8 @@ class SpeechBrainVoxLingua107LID:
 class RoutingDecision:
     """What ASRLanguageRouter decided to do with one utterance."""
 
-    action: str              # "commit" | "dual_asr" | "clarify" | "handoff_human"
-    language: str | None      # set when action == "commit" or "dual_asr" (primary)
+    action: str  # "commit" | "dual_asr" | "clarify" | "handoff_human"
+    language: str | None  # set when action == "commit" or "dual_asr" (primary)
     secondary_language: str | None = None  # set only for "dual_asr"
     reason: str = ""
 
@@ -240,27 +245,31 @@ class ASRLanguageRouter:
         if lid.language in SUPPORTED_LANGUAGES and lid.confidence >= self.confidence_floor:
             self._ambiguous_streak = 0
             self._previous_language = lid.language
-            return RoutingDecision(action="commit", language=lid.language,
-                                    reason=f"confidence {lid.confidence:.2f} >= floor")
+            return RoutingDecision(
+                action="commit", language=lid.language, reason=f"confidence {lid.confidence:.2f} >= floor"
+            )
 
         if self._previous_language is not None:
             self._ambiguous_streak = 0
             decided = self._previous_language
             return RoutingDecision(
-                action="commit", language=decided,
+                action="commit",
+                language=decided,
                 reason=f"low confidence ({lid.confidence:.2f}); used previous-turn prior",
             )
 
         self._ambiguous_streak += 1
         if self._ambiguous_streak > self.max_ambiguous_streak:
             return RoutingDecision(
-                action="handoff_human", language=None,
+                action="handoff_human",
+                language=None,
                 reason=f"{self._ambiguous_streak} consecutive ambiguous turns with no prior",
             )
 
         top_two = self._top_two_languages(lid)
         return RoutingDecision(
-            action="dual_asr", language=top_two[0],
+            action="dual_asr",
+            language=top_two[0],
             secondary_language=top_two[1] if len(top_two) > 1 else None,
             reason="no usable prior and low confidence; running top-two ASR for this turn only",
         )
@@ -281,7 +290,8 @@ class ASRLanguageRouter:
         if lid.scores:
             ranked = sorted(
                 ((lang, score) for lang, score in lid.scores.items() if lang in SUPPORTED_LANGUAGES),
-                key=lambda pair: pair[1], reverse=True,
+                key=lambda pair: pair[1],
+                reverse=True,
             )
             if ranked:
                 return [lang for lang, _ in ranked[:2]]

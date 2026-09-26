@@ -29,6 +29,7 @@ sample offset, always. Under WebM the decoded buffer lagged real time by
 a variable amount, which is why vad_stream.py needs a `tail_guard_s`
 fudge factor at all.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -72,7 +73,7 @@ class PcmCallBuffer:
     def _as_float32(self, start_sample: int, end_sample: int | None = None) -> np.ndarray:
         end_sample = len(self) if end_sample is None else min(end_sample, len(self))
         start_sample = max(0, min(start_sample, end_sample))
-        raw = bytes(self._buf[start_sample * BYTES_PER_SAMPLE:end_sample * BYTES_PER_SAMPLE])
+        raw = bytes(self._buf[start_sample * BYTES_PER_SAMPLE : end_sample * BYTES_PER_SAMPLE])
         if not raw:
             return np.zeros(0, dtype=np.float32)
         # /32768 not /32767: matches the client's own asymmetric int16
@@ -88,6 +89,7 @@ class PcmCallBuffer:
     def slice_tensor(self, start_s: float, end_s: float) -> torch.Tensor:
         return torch.from_numpy(
             self._as_float32(
-                int(start_s * self.sample_rate), int(end_s * self.sample_rate),
+                int(start_s * self.sample_rate),
+                int(end_s * self.sample_rate),
             ).copy(),
         )

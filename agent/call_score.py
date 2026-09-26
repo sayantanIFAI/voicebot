@@ -113,9 +113,7 @@ class CallSignals:
 class ScoreResult:
     score: int | None  # 0-100, or None when the call cannot be scored (see `reason`)
     band: str  # happy | neutral | unhappy | very_unhappy | unscored
-    reasons: tuple[
-        tuple[str, int], ...
-    ]  # (signal, points) for every signal that moved the score, biggest first
+    reasons: tuple[tuple[str, int], ...]  # (signal, points) for every signal that moved the score, biggest first
     reason: str = ""  # why it is unscored
     version: str = SCORE_MODEL_VERSION
     basis: str = "behaviour"
@@ -142,9 +140,7 @@ def band_for(score: int) -> str:
 
 def score_call(s: CallSignals) -> ScoreResult:
     if s.emergency:
-        return ScoreResult(
-            None, "unscored", (), reason="emergency"
-        )  # a satisfaction number means nothing here
+        return ScoreResult(None, "unscored", (), reason="emergency")  # a satisfaction number means nothing here
     if s.turns < MIN_TURNS_TO_SCORE:
         return ScoreResult(None, "unscored", (), reason="too_short")
     moved: list[tuple[str, int]] = []

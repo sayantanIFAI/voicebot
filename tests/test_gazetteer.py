@@ -6,9 +6,8 @@ seeded clinic API.
 Every number here is on SYNTHETIC input (tools/gazetteer_eval.py says how it is generated); these tests guard the
 behaviour and the direction of the comparison, they do not measure real callers.
 """
-import json
+
 import os
-import statistics
 import sys
 import time
 
@@ -19,17 +18,24 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tools"), os.path.join(REPO_ROOT, 
     if _p not in sys.path:
         sys.path.append(_p)
 
-import gazetteer_eval as ev                                      # noqa: E402
-from agent import gazetteer as gz                                # noqa: E402
-from agent.gazetteer import Gazetteer, normalise, vowelled_key   # noqa: E402
+import gazetteer_eval as ev  # noqa: E402
+
+from agent.gazetteer import Gazetteer, normalise, vowelled_key  # noqa: E402
 
 TITLES = frozenset(ev.TITLES)
 
 
 def _doctors():
-    rows = {"Dr. S. Mukherjee": ["Mukherjee", "মুখার্জী", "मुखर्जी"], "Dr. A. Sen": ["Sen", "সেন", "सेन"],
-            "Dr. K. Bhattacharya": ["Bhattacharya", "ভট্টাচার্য"], "Dr. R. Chowdhury": ["Chowdhury", "চৌধুরী"],
-            "Dr. N. Roy": ["Roy", "রায়"], "Dr. P. Ray": ["Ray"], "Dr. A. Kar": ["Kar"], "Dr. D. Das": ["Das", "দাস"]}
+    rows = {
+        "Dr. S. Mukherjee": ["Mukherjee", "মুখার্জী", "मुखर्जी"],
+        "Dr. A. Sen": ["Sen", "সেন", "सेन"],
+        "Dr. K. Bhattacharya": ["Bhattacharya", "ভট্টাচার্য"],
+        "Dr. R. Chowdhury": ["Chowdhury", "চৌধুরী"],
+        "Dr. N. Roy": ["Roy", "রায়"],
+        "Dr. P. Ray": ["Ray"],
+        "Dr. A. Kar": ["Kar"],
+        "Dr. D. Das": ["Das", "দাস"],
+    }
     return [(n, f) for n, forms in rows.items() for f in forms]
 
 
@@ -43,6 +49,7 @@ def _names(g, query, **kw):
 
 
 # ============================================================================ the tiers
+
 
 def test_the_written_form_is_an_exact_hit(doctors):
     top = doctors.suggest("Dr. Mukherjee")[0]
@@ -64,13 +71,13 @@ def test_short_surnames_are_matched_by_sound_too(doctors):
     assert _names(doctors, "Shen")[0] == "Dr. A. Sen"
     assert _names(doctors, "Sain")[0] == "Dr. A. Sen"
     assert _names(doctors, "Dass")[0] == "Dr. D. Das"
-    assert _names(doctors, "ষেন")[0] == "Dr. A. Sen"     # Bengali sibilant confusion, same script
+    assert _names(doctors, "ষেন")[0] == "Dr. A. Sen"  # Bengali sibilant confusion, same script
 
 
 def test_vowel_quality_still_separates_short_names(doctors):
     """Sen is not Son: the consonants alone would call them equal."""
     assert vowelled_key("sen") != vowelled_key("son")
-    assert doctors.suggest("Son")[0].basis == "spelling"     # offered on spelling, never as a sound match
+    assert doctors.suggest("Son")[0].basis == "spelling"  # offered on spelling, never as a sound match
 
 
 def test_a_name_in_another_script_matches_when_the_skeleton_is_long_enough(doctors):
@@ -84,6 +91,7 @@ def test_ai_and_ay_are_one_vowel():
 
 
 # ======================================================================= the "Doctor Nobody" class of bug
+
 
 @pytest.mark.parametrize("query", ["Nobody", "Doctor Nobody", "Dr Nobody", "Xyz", "Qwerty", "hello", "", "   ", "123"])
 def test_a_nonsense_name_suggests_no_real_doctor(doctors, query):
@@ -111,6 +119,7 @@ def test_a_test_code_is_not_matched_by_any_four_letter_word():
 
 
 # ================================================================================== the list is short and honest
+
 
 def test_two_names_that_really_tie_come_back_together():
     g = Gazetteer([("Dr. A. Sen", "Sen"), ("Dr. P. Sengupta", "Sengupta"), ("Dr. D. Das", "Das")])
@@ -155,10 +164,12 @@ def test_an_empty_gazetteer_and_duplicate_entries_are_harmless():
 
 # ============================================================================================ an index, not a scan
 
+
 def test_a_lookup_scores_a_bounded_shortlist_not_every_row():
     entries = ev.synthetic_catalogue(6000)
     g = Gazetteer(entries)
     import random
+
     rng = random.Random(3)
     for canonical, form in rng.sample(entries, 25):
         vs = [v for vv in ev.variants(form, rng).values() for v in vv]
@@ -173,6 +184,7 @@ def test_the_answer_for_a_planted_mispronunciation_survives_catalogue_growth():
     big = ev.synthetic_catalogue(8000)
     target_canonical, target_form = small[17]
     import random
+
     for entries in (small, big):
         g = Gazetteer(entries)
         query = ev.variants(target_form, random.Random(5))["in_class"] or [target_form]
@@ -186,6 +198,7 @@ def test_match_latency_stays_inside_the_fast_path_budget_at_ten_thousand_forms()
     entries = ev.synthetic_catalogue(10000)
     g = Gazetteer(entries)
     import random
+
     rng = random.Random(9)
     queries = []
     for _c, f in rng.sample(entries, 40):
@@ -205,9 +218,11 @@ def test_match_latency_stays_inside_the_fast_path_budget_at_ten_thousand_forms()
 
 # ======================================================================== the F-score comparison (synthetic)
 
+
 @pytest.fixture(scope="module")
 def catalogue():
     from _clinic_app import clinic_app
+
     with clinic_app(sample_patients=False) as (_app, client):
         return client.get("/api/v1/catalogue").json()
 
@@ -256,9 +271,11 @@ def test_the_documented_regression_names_never_suggest_a_real_doctor(catalogue):
 
 # ==================================================================== clinic-api uses it (real seeded API)
 
+
 @pytest.fixture
 def clinic():
     from _clinic_app import clinic_app
+
     with clinic_app(sample_patients=False) as (_app, client):
         yield client
 
@@ -293,13 +310,18 @@ def test_the_api_finds_the_bracketed_code_of_a_test_by_sound(clinic):
 def test_a_new_row_is_suggested_at_once_and_an_alias_edit_after_invalidation(clinic):
     """The built index is reused, but a change in the number of rows rebuilds it immediately."""
     main = sys.modules["main"]
-    from models import Doctor
     from db import SessionLocal
+    from models import Doctor
+
     before = clinic.get("/api/v1/doctors/availability", params={"name": "Bandopadhyay"}).json()
     assert "Dr. Z. Bandopadhyay" not in before.get("did_you_mean", [])
     db = SessionLocal()
     try:
-        db.add(Doctor(name="Dr. Z. Bandopadhyay", qualifications="MBBS", department_id=1, aliases_bn="ব্যানার্জী", aliases_hi=""))
+        db.add(
+            Doctor(
+                name="Dr. Z. Bandopadhyay", qualifications="MBBS", department_id=1, aliases_bn="ব্যানার্জী", aliases_hi=""
+            )
+        )
         db.commit()
     finally:
         db.close()
@@ -310,6 +332,7 @@ def test_a_new_row_is_suggested_at_once_and_an_alias_edit_after_invalidation(cli
 
 
 # ========================================================================================== drift guard
+
 
 def test_the_two_copies_of_the_gazetteer_are_byte_identical():
     a = open(os.path.join(REPO_ROOT, "agent", "gazetteer.py"), "rb").read()

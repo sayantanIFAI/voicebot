@@ -8,6 +8,7 @@ Process-local, exposed through main.py's existing /api/stats the same
 way agent/fast_path.py's FastPath.stats and agent/semantic_cache.py's
 SemanticCache already are -- not a new metrics system, the same one.
 """
+
 from __future__ import annotations
 
 import collections

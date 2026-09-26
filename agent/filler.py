@@ -9,16 +9,19 @@ wrapper passing the actual "speak the filler" call as `on_timeout`, so
 this module is fully unit-testable with a fake awaitable and a fake
 callback instead of a real TTS/WebSocket round trip.
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 T = TypeVar("T")
 
 
-async def await_with_filler(awaitable: Awaitable[T], threshold_s: float,
-                            on_timeout: Callable[[], Awaitable[None]]) -> T:
+async def await_with_filler(
+    awaitable: Awaitable[T], threshold_s: float, on_timeout: Callable[[], Awaitable[None]]
+) -> T:
     """Races `awaitable` against `threshold_s`. If it has not finished by
     then, awaits `on_timeout()` (the filler) exactly once, then keeps
     waiting for `awaitable`'s real result. Never calls `on_timeout` if

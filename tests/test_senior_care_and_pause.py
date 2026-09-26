@@ -1,10 +1,10 @@
 """Senior care (KCD-512) and the adaptive pause (KCD-047).
 
-    python -m pytest tests/test_senior_care_and_pause.py -v
+python -m pytest tests/test_senior_care_and_pause.py -v
 """
+
 import math
 import os
-import random
 import sys
 
 import numpy as np
@@ -17,12 +17,17 @@ if REPO_ROOT not in sys.path:
 from agent import senior_care as sc
 from agent.endpointing import EndpointConfig
 from agent.pause_profile import (
-    BUMP_MAX, FALSE_CUT_WINDOW_S, MIN_GAPS, SILENCE_MAX_S, SILENCE_MIN_S, PauseProfile,
+    BUMP_MAX,
+    FALSE_CUT_WINDOW_S,
+    MIN_GAPS,
+    SILENCE_MAX_S,
+    SILENCE_MIN_S,
+    PauseProfile,
 )
 from agent.persona import is_clean
 
-
 # ======================================================================== senior care
+
 
 def test_sixty_and_over_is_a_senior_citizen():
     assert sc.is_senior(60) and sc.is_senior(78) and not sc.is_senior(59) and not sc.is_senior(None)
@@ -32,7 +37,7 @@ def test_senior_care_starts_only_when_the_registered_age_says_so_and_only_once()
     k = sc.KindnessPlanner()
     assert k.activate(45) is False and not k.active
     assert k.activate(72) is True and k.active
-    assert k.activate(72) is False                                   # already on: not "newly"
+    assert k.activate(72) is False  # already on: not "newly"
     assert k.opening("en") == sc.OPENING["en"] and k.opening("en") is None
 
 
@@ -43,7 +48,8 @@ def test_an_inactive_planner_adds_nothing():
 
 
 def test_the_warm_closing_goes_on_every_second_substantive_reply_and_never_on_a_short_one():
-    k = sc.KindnessPlanner(); k.activate(70)
+    k = sc.KindnessPlanner()
+    k.activate(70)
     reply = "Your appointment is on Monday morning."
     outs = [k.decorate(reply, "en") for _ in range(4)]
     assert [o.endswith(sc.CLOSING["en"]) for o in outs] == [False, True, False, True]
@@ -51,7 +57,8 @@ def test_the_warm_closing_goes_on_every_second_substantive_reply_and_never_on_a_
 
 
 def test_a_seniors_reask_carries_patience():
-    k = sc.KindnessPlanner(); k.activate(65)
+    k = sc.KindnessPlanner()
+    k.activate(65)
     assert k.patience("en") == sc.PATIENCE["en"] and k.patience_given == 1
 
 
@@ -64,6 +71,7 @@ def test_every_senior_line_exists_in_three_languages_has_no_fact_and_passes_the_
 
 
 # ======================================================================== adaptive pause
+
 
 def sample_gap(rng, median, sigma=0.45):
     return float(rng.lognormal(math.log(median), sigma))
@@ -108,9 +116,9 @@ def test_without_enough_gaps_the_base_configuration_is_used_unchanged():
 def test_a_slow_deliberate_speaker_is_cut_off_far_less_than_with_the_fixed_threshold():
     fixed_rate, _ = simulate(median_gap=0.9, adaptive=False)
     adaptive_rate, wait = simulate(median_gap=0.9, adaptive=True)
-    assert fixed_rate > 0.30                                          # the fixed 1.0 s cuts this caller constantly
-    assert adaptive_rate < 0.6 * fixed_rate                           # learning their rhythm cuts that by more than 40%
-    assert wait > 1.2                                                 # ...by waiting longer FOR THIS CALLER
+    assert fixed_rate > 0.30  # the fixed 1.0 s cuts this caller constantly
+    assert adaptive_rate < 0.6 * fixed_rate  # learning their rhythm cuts that by more than 40%
+    assert wait > 1.2  # ...by waiting longer FOR THIS CALLER
 
 
 def test_a_brisk_speaker_is_answered_sooner_than_the_fixed_threshold_allows():
@@ -149,8 +157,12 @@ def test_the_raise_is_capped_and_relaxes_after_a_run_of_clean_turns():
 
 def test_only_pauses_inside_one_utterance_are_recorded_and_absurd_ones_are_ignored():
     p = PauseProfile()
-    spans = [{"start": 0.0, "end": 0.5}, {"start": 0.55, "end": 1.0},      # 0.05 s: the detector's own hangover
-             {"start": 1.6, "end": 2.0}, {"start": 6.0, "end": 6.5}]        # 0.6 s counts, 4.0 s is not a pause
+    spans = [
+        {"start": 0.0, "end": 0.5},
+        {"start": 0.55, "end": 1.0},  # 0.05 s: the detector's own hangover
+        {"start": 1.6, "end": 2.0},
+        {"start": 6.0, "end": 6.5},
+    ]  # 0.6 s counts, 4.0 s is not a pause
     assert p.observe_utterance(spans) == 1 and list(p.gaps) == [pytest.approx(0.6)]
 
 

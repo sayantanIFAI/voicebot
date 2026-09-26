@@ -7,6 +7,7 @@ load, and the first caller after a restart paid the cold start. Both entrypoints
 
     python -m pytest tests/test_startup_warmup.py -v
 """
+
 import asyncio
 import os
 import sys
@@ -19,9 +20,10 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, p)
 
 from _pod_stubs import pod_stubs
+
 from agent.llm import DEFAULT_DEADLINE_S
 
-COLD_LOAD_MEASURED_S = 74.0        # agent/llm.py: a cold 7B load on the pod
+COLD_LOAD_MEASURED_S = 74.0  # agent/llm.py: a cold 7B load on the pod
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +59,7 @@ def test_a_failed_warmup_is_logged_and_never_stops_startup(m, monkeypatch):
 
 def test_the_startup_sequence_calls_the_warmup_helper_not_the_default_deadline(m):
     import inspect
+
     src = inspect.getsource(m._startup)
     assert "_warm_intent_model()" in src
     assert 'extract_intent, "' not in src

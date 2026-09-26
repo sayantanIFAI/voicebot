@@ -6,6 +6,7 @@ recorded with the call (clinic-api), reported by language and cause (GET /api/v1
 The weights are REASONED, not measured: these tests pin the SHAPE (signs, bounds, ordering, determinism, no text stored),
 not any claim that a 72 means 72% happy.
 """
+
 import json
 import os
 import sys
@@ -17,12 +18,15 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from agent.call_score import (BASE_SCORE, MIN_TURNS_TO_SCORE, SLOW_REPLY_S, CallSignals, band_for, score_call)
-from agent.phrases import phrase
-from test_orchestrator_booking_flow import book, env, m       # noqa: F401  (the harness: real dispatch, fake tools)
+from test_orchestrator_booking_flow import book, env, m  # noqa: F401  (the harness: real dispatch, fake tools)
 
+from agent.call_score import BASE_SCORE, MIN_TURNS_TO_SCORE, SLOW_REPLY_S, CallSignals, band_for, score_call
 
-SAY = {"bn": "সিবিসি টেস্টের দাম কত", "hi": "सीबीसी टेस्ट का रेट कितना है", "en": "how much is the CBC"}   # text in the call's script
+SAY = {
+    "bn": "সিবিসি টেস্টের দাম কত",
+    "hi": "सीबीसी टेस्ट का रेट कितना है",
+    "en": "how much is the CBC",
+}  # text in the call's script
 
 
 def calls(**kw):
@@ -34,6 +38,7 @@ def calls(**kw):
 
 # ======================================================================================================== the scorer
 
+
 def test_a_smooth_call_that_got_the_job_done_scores_high():
     r = score_call(calls(answers_given=2, caller_thanked=True, task_completed=True))
     assert r.score >= 90 and r.band == "happy" and r.basis == "behaviour"
@@ -43,14 +48,24 @@ def test_a_rough_call_scores_low_and_says_why():
     r = score_call(calls(reasks=3, slow_replies=3, abuse_turns=1, asked_for_person=True))
     assert r.score < 50 and r.band in ("unhappy", "very_unhappy")
     assert {name for name, _ in r.reasons} == {"reasks", "slow_replies", "abuse_turns", "asked_for_person"}
-    assert r.reasons[0][1] <= r.reasons[-1][1] or abs(r.reasons[0][1]) >= abs(r.reasons[-1][1])   # biggest movement first
+    assert r.reasons[0][1] <= r.reasons[-1][1] or abs(r.reasons[0][1]) >= abs(
+        r.reasons[-1][1]
+    )  # biggest movement first
 
 
 def test_every_bad_signal_lowers_the_score_and_every_good_one_raises_it():
     base = score_call(calls()).score
     assert base == BASE_SCORE
-    for bad in ("reasks", "system_failures", "abuse_turns", "silence_prompts", "language_flips", "barge_ins",
-                "slow_replies", "corrections"):
+    for bad in (
+        "reasks",
+        "system_failures",
+        "abuse_turns",
+        "silence_prompts",
+        "language_flips",
+        "barge_ins",
+        "slow_replies",
+        "corrections",
+    ):
         assert score_call(calls(**{bad: 1})).score < base, bad
     for bad in ("asked_for_person", "system_handoff", "silence_timeout", "left_mid_task"):
         assert score_call(calls(**{bad: True})).score < base, bad
@@ -61,10 +76,23 @@ def test_every_bad_signal_lowers_the_score_and_every_good_one_raises_it():
 
 
 def test_one_signal_can_only_take_so_much_and_the_score_stays_within_0_and_100():
-    assert score_call(calls(reasks=50)).score == BASE_SCORE - 24                  # capped at its limit
-    worst = score_call(calls(reasks=9, system_failures=9, abuse_turns=9, silence_prompts=9, language_flips=9, barge_ins=9,
-                             slow_replies=9, corrections=9, asked_for_person=True, system_handoff=True,
-                             silence_timeout=True, left_mid_task=True))
+    assert score_call(calls(reasks=50)).score == BASE_SCORE - 24  # capped at its limit
+    worst = score_call(
+        calls(
+            reasks=9,
+            system_failures=9,
+            abuse_turns=9,
+            silence_prompts=9,
+            language_flips=9,
+            barge_ins=9,
+            slow_replies=9,
+            corrections=9,
+            asked_for_person=True,
+            system_handoff=True,
+            silence_timeout=True,
+            left_mid_task=True,
+        )
+    )
     best = score_call(calls(answers_given=99, task_completed=True, caller_thanked=True, ended_by_caller=True))
     assert 0 <= worst.score < 10 and 90 < best.score <= 100 and worst.band == "very_unhappy"
 
@@ -84,7 +112,15 @@ def test_a_call_too_short_or_an_emergency_is_not_scored():
 
 def test_the_bands_cover_every_score():
     assert [band_for(s) for s in (100, 80, 79, 60, 59, 40, 39, 0)] == [
-        "happy", "happy", "neutral", "neutral", "unhappy", "unhappy", "very_unhappy", "very_unhappy"]
+        "happy",
+        "happy",
+        "neutral",
+        "neutral",
+        "unhappy",
+        "unhappy",
+        "very_unhappy",
+        "very_unhappy",
+    ]
 
 
 def test_a_reply_slower_than_the_limit_counts_and_a_quick_one_does_not():
@@ -107,10 +143,11 @@ def test_the_stored_payload_is_counts_and_flags_only():
     assert payload["basis"] == "behaviour" and payload["version"] == "implicit-v1"
     assert all(isinstance(v, (bool, int, type(None))) for v in payload["signals"].values())
     assert payload["signals"]["median_reply_ms"] == 1900 and "reply_ms" not in payload["signals"]
-    json.dumps(payload)                                                          # serialisable
+    json.dumps(payload)  # serialisable
 
 
 # ============================================================================================ the wiring, real dispatch
+
 
 @pytest.mark.asyncio
 async def test_a_price_question_is_counted_as_an_answer_and_a_slow_one_is_noticed(m, env):
@@ -159,7 +196,7 @@ async def test_a_language_moved_and_moved_back_is_counted_as_a_flip(m, env):
         await env.say(SAY[lang], "test_rate", {"test_name": "CBC"})
     assert s.signals.language_flips == 1
     env.state["lang"] = "hi"
-    await env.say(SAY["hi"], "test_rate", {"test_name": "CBC"})                          # bn hi bn hi: flips again
+    await env.say(SAY["hi"], "test_rate", {"test_name": "CBC"})  # bn hi bn hi: flips again
     assert s.signals.language_flips == 2
 
 
@@ -187,9 +224,11 @@ async def test_a_half_finished_booking_at_hang_up_is_marked_and_the_score_is_que
 
 # ======================================================================================= the clinic API stores and reports
 
+
 @pytest.fixture(scope="module")
 def api():
     from _clinic_app import clinic_app
+
     with clinic_app(sample_patients=False) as (_app, client):
         yield client
 
@@ -211,7 +250,7 @@ def test_a_score_is_stored_with_the_call_and_reported(api):
     _call(api, "sc-1", "bn", _payload(answers_given=2, caller_thanked=True))
     _call(api, "sc-2", "bn", _payload(reasks=3, slow_replies=4, abuse_turns=1))
     _call(api, "sc-3", "hi", _payload(answers_given=1))
-    _call(api, "sc-4", "hi", score_call(CallSignals(turns=1)).to_payload(CallSignals(turns=1)))       # too short
+    _call(api, "sc-4", "hi", score_call(CallSignals(turns=1)).to_payload(CallSignals(turns=1)))  # too short
     body = api.get("/api/v1/calls/satisfaction/summary").json()
     assert body["basis"] == "behaviour" and body["overall"]["calls"] >= 4 and body["overall"]["scored"] >= 3
     assert body["by_language"]["bn"]["scored"] == 2 and body["by_language"]["hi"]["scored"] == 1
@@ -236,6 +275,7 @@ def test_free_text_can_never_be_stored_through_the_score(api):
     _call(api, "sc-6", "bn", payload)
     from db import SessionLocal
     from models import CallRecord
+
     db = SessionLocal()
     try:
         raw = db.query(CallRecord).filter_by(call_id="sc-6").one().satisfaction_json

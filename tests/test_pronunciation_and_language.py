@@ -1,7 +1,8 @@
 """KCD-159 (agent/pronunciation.py), KCD-087/KCD-150 (agent/language_policy.py).
 
-    python -m pytest tests/test_pronunciation_and_language.py -v
+python -m pytest tests/test_pronunciation_and_language.py -v
 """
+
 import os
 import sys
 
@@ -13,13 +14,17 @@ if REPO_ROOT not in sys.path:
 
 from agent import pronunciation
 from agent.language_policy import (
-    choose_spoken_form, dominant_script, language_mismatch, reply_matches_language,
+    choose_spoken_form,
+    dominant_script,
+    language_mismatch,
+    reply_matches_language,
     resolve_reply_language,
 )
 from agent.phrases import PHRASES
 from agent.speech_norm import unspeakable_spans, verbalize
 
 # ============================================================ pronunciation
+
 
 @pytest.fixture(autouse=True)
 def _drafts_audible(monkeypatch):
@@ -33,16 +38,16 @@ def _drafts_audible(monkeypatch):
 def test_an_unreviewed_draft_is_not_spoken_by_default(monkeypatch):
     monkeypatch.setenv(pronunciation.ALLOW_DRAFT_ENV, "0")
     out = verbalize("Your CT scan and Creatinine", "bn")
-    assert "সিটি স্ক্যান" not in out and "ক্রিয়েটিনিন" not in out      # the drafts stay silent
-    assert any("Creatinine" in span for span in unspeakable_spans(out, "bn"))   # blocked (KCD-455), never guessed
-    assert pronunciation.speakable("blood", "bn")             # the established seven are exempt
+    assert "সিটি স্ক্যান" not in out and "ক্রিয়েটিনিন" not in out  # the drafts stay silent
+    assert any("Creatinine" in span for span in unspeakable_spans(out, "bn"))  # blocked (KCD-455), never guessed
+    assert pronunciation.speakable("blood", "bn")  # the established seven are exempt
 
 
 def test_a_reviewed_pair_is_spoken_and_only_in_its_own_language(monkeypatch):
     monkeypatch.setenv(pronunciation.ALLOW_DRAFT_ENV, "0")
     monkeypatch.setattr(pronunciation, "REVIEWED", {("creatinine", "bn")})
     assert "ক্রিয়েটিনিন" in verbalize("Creatinine", "bn")
-    assert verbalize("Creatinine", "hi") == "Creatinine"      # not yet approved for Hindi
+    assert verbalize("Creatinine", "hi") == "Creatinine"  # not yet approved for Hindi
 
 
 def test_a_review_file_approves_pairs(monkeypatch, tmp_path):
@@ -59,12 +64,16 @@ def test_a_lexicon_term_is_matched_before_its_digit_is_spoken():
     # word before the lexicon can match the whole term.
     assert verbalize("HbA1c", "bn") == "এইচবিএ ওয়ান সি"
 
-@pytest.mark.parametrize("lang,text,expected_fragment", [
-    ("bn", "আপনার Sugar টেস্ট", "সুগার"),
-    ("hi", "आपका Sugar टेस्ट", "शुगर"),
-    ("bn", "Report কালকে পাবেন", "রিপোর্ট"),
-    ("hi", "Fasting रखना है", "फास्टिंग"),
-])
+
+@pytest.mark.parametrize(
+    "lang,text,expected_fragment",
+    [
+        ("bn", "আপনার Sugar টেস্ট", "সুগার"),
+        ("hi", "आपका Sugar टेस्ट", "शुगर"),
+        ("bn", "Report কালকে পাবেন", "রিপোর্ট"),
+        ("hi", "Fasting रखना है", "फास्टिंग"),
+    ],
+)
 def test_a_latin_clinical_word_is_spoken_through_the_lexicon(lang, text, expected_fragment):
     out = verbalize(text, lang)
     assert expected_fragment in out
@@ -90,7 +99,7 @@ def test_a_multi_word_term_wins_over_its_parts():
 
 def test_matching_is_whole_word_and_case_insensitive():
     assert "রিপোর্ট" in verbalize("REPORT", "bn")
-    assert "reporting" in verbalize("reporting", "bn").lower()      # "report" inside a longer word is left alone
+    assert "reporting" in verbalize("reporting", "bn").lower()  # "report" inside a longer word is left alone
 
 
 def test_an_unlisted_acronym_is_spelled_letter_by_letter():
@@ -140,6 +149,7 @@ def test_every_lexicon_form_is_in_the_right_script():
 
 # ============================================================ language policy
 
+
 def test_the_current_utterance_decides_the_reply_language():
     assert resolve_reply_language("hi", fallback="bn") == "hi"
     assert resolve_reply_language("en", fallback="bn") == "en"
@@ -157,16 +167,19 @@ def test_garbage_falls_back_to_bengali_never_raises():
     assert resolve_reply_language("xx", "yy", "zz") == "bn"
 
 
-@pytest.mark.parametrize("lang,reply,ok", [
-    ("bn", "আপনার রেট পাঁচশো টাকা।", True),
-    ("hi", "आपकी कीमत पाँच सौ रुपये है।", True),
-    ("en", "The price is five hundred rupees.", True),
-    ("bn", "The price is five hundred rupees.", False),
-    ("en", "আপনার রেট পাঁচশো টাকা।", False),
-    ("hi", "আপনার রেট পাঁচশো টাকা।", False),
-    ("bn", "৫০০", True),
-    ("bn", "আপনার Report কালকে পাবেন", True),        # one borrowed word inside a Bengali reply is fine
-])
+@pytest.mark.parametrize(
+    "lang,reply,ok",
+    [
+        ("bn", "আপনার রেট পাঁচশো টাকা।", True),
+        ("hi", "आपकी कीमत पाँच सौ रुपये है।", True),
+        ("en", "The price is five hundred rupees.", True),
+        ("bn", "The price is five hundred rupees.", False),
+        ("en", "আপনার রেট পাঁচশো টাকা।", False),
+        ("hi", "আপনার রেট পাঁচশো টাকা।", False),
+        ("bn", "৫০০", True),
+        ("bn", "আপনার Report কালকে পাবেন", True),  # one borrowed word inside a Bengali reply is fine
+    ],
+)
 def test_reply_language_matches_the_question_language(lang, reply, ok):
     assert reply_matches_language(reply, lang) is ok
     assert language_mismatch(lang, reply) is (not ok)
@@ -188,15 +201,24 @@ def test_every_fixed_phrase_is_in_its_own_language(lang):
 
 def test_a_reply_template_answers_in_the_requested_language():
     from agent import reply_templates as rt
+
     slots = {"test_name": "x"}
-    result = {"found": True, "test_name": "Lipid Profile", "test_name_bn": "লিপিড",
-              "test_name_hi": "लिपिड", "rate_inr": 650, "report_time_hours": 24, "sample_type": "Blood"}
+    result = {
+        "found": True,
+        "test_name": "Lipid Profile",
+        "test_name_bn": "লিপিড",
+        "test_name_hi": "लिपिड",
+        "rate_inr": 650,
+        "report_time_hours": 24,
+        "sample_type": "Blood",
+    }
     for lang in ("bn", "hi", "en"):
         reply = rt.test_rate_reply(slots, result, lang)
         assert reply_matches_language(reply, lang), (lang, reply)
 
 
 # ------------------------------------------------------ KCD-150 register
+
 
 def test_the_form_the_caller_used_is_spoken_back():
     aliases = ["রক্তে শর্করা", "সুগার"]

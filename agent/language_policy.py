@@ -12,6 +12,7 @@ that form, not swapped for a formal literary synonym.
 
 No model is involved. Script detection is a character-class count.
 """
+
 from __future__ import annotations
 
 import re
@@ -32,8 +33,7 @@ SCRIPT_FOR_LANGUAGE = {"bn": "bengali", "hi": "devanagari", "en": "latin"}
 _FOREIGN_TOLERANCE = 0.34
 
 
-def resolve_reply_language(identified: str | None, explicit_request: str | None = None,
-                           fallback: str = "bn") -> str:
+def resolve_reply_language(identified: str | None, explicit_request: str | None = None, fallback: str = "bn") -> str:
     """The language to answer in. An explicit request ("speak Hindi",
     agent/language_switch.py) outranks identification for the turn it is
     made in; otherwise it is whatever THIS utterance was identified as;
@@ -49,9 +49,11 @@ def script_counts(text: str) -> dict[str, int]:
     text = unicodedata.normalize("NFC", text or "")
     # LETTERS only: the Bengali and Devanagari blocks also hold their own
     # digits, and a numeral carries no language.
-    return {"bengali": sum(1 for c in _BENGALI.findall(text) if c.isalpha()),
-            "devanagari": sum(1 for c in _DEVANAGARI.findall(text) if c.isalpha()),
-            "latin": len(_LATIN.findall(text))}
+    return {
+        "bengali": sum(1 for c in _BENGALI.findall(text) if c.isalpha()),
+        "devanagari": sum(1 for c in _DEVANAGARI.findall(text) if c.isalpha()),
+        "latin": len(_LATIN.findall(text)),
+    }
 
 
 def dominant_script(text: str) -> str | None:
@@ -70,8 +72,7 @@ def reply_matches_language(reply: str, lang: str) -> bool:
     expected = SCRIPT_FOR_LANGUAGE.get(lang)
     if expected is None:
         return True
-    words = [w for w in unicodedata.normalize("NFC", reply or "").split()
-             if sum(script_counts(w).values())]
+    words = [w for w in unicodedata.normalize("NFC", reply or "").split() if sum(script_counts(w).values())]
     if not words:
         return True
     foreign = sum(1 for w in words if script_counts(w)[expected] == 0)

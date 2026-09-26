@@ -58,6 +58,7 @@ shortlist whose only failure mode is an abstain. The commit gate stays a CHARACT
 fast-path answer has no model behind it, and a sound-alike is a suggestion for the caller to confirm
 (agent/gazetteer.py), never evidence to act on.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -129,9 +130,20 @@ def _normalize(text: str) -> str:
 # ALSO hold on the words that name the test (FormTable's `generic_words`): the forms themselves stay whole, so a
 # specific alias is never confused with a shorter one that is merely its prefix. The same list, for the same
 # reason, is in clinic-api/main.py (_GENERIC_WORDS).
-_GENERIC_TEST_WORDS = frozenset({
-    "test", "tests", "টেস্ট", "টেস্টের", "টেস্টটা", "টেস্টটি", "টেস্টগুলো", "टेस्ट", "जांच", "जाँच",
-})
+_GENERIC_TEST_WORDS = frozenset(
+    {
+        "test",
+        "tests",
+        "টেস্ট",
+        "টেস্টের",
+        "টেস্টটা",
+        "টেস্টটি",
+        "টেস্টগুলো",
+        "टेस्ट",
+        "जांच",
+        "जाँच",
+    }
+)
 
 
 def _name_forms(name: str) -> list[str]:
@@ -163,14 +175,15 @@ class Catalogue:
     """
 
     def __init__(self, payload: dict, index_min_forms: int = INDEX_MIN_FORMS):
-        self._n_rows = (len(payload.get("tests", [])) + len(payload.get("doctors", []))
-                        + len(payload.get("faq_topics", [])))
+        self._n_rows = (
+            len(payload.get("tests", [])) + len(payload.get("doctors", [])) + len(payload.get("faq_topics", []))
+        )
         langs = set(cues.languages()) | {"bn", "hi", "en"}
         for group in ("tests", "doctors"):
             for row in payload.get(group, []):
-                langs |= {k[len("aliases_"):] for k in row if k.startswith("aliases_")}
+                langs |= {k[len("aliases_") :] for k in row if k.startswith("aliases_")}
         for row in payload.get("faq_topics", []):
-            langs |= {k[len("keywords_"):] for k in row if k.startswith("keywords_")}
+            langs |= {k[len("keywords_") :] for k in row if k.startswith("keywords_")}
         # Which doctors (by position in the payload) a spoken form belongs to: "sen" belongs to every Sen. A form with
         # more than one owner is ambiguous, whatever its similarity score, and the fast path never answers on it.
         self._doctor_owners: dict[tuple[str, str], set[int]] = defaultdict(set)
@@ -182,13 +195,18 @@ class Catalogue:
         for lang in sorted(langs):
             cue_table = cues.table_for(lang)
             exact_below = cue_table.exact_below_chars if cue_table else 5
-            for kind, rows in (("test", self._test_rows(payload, lang)),
-                               ("doctor", self._doctor_rows(payload, lang)),
-                               ("doctorfull", self._doctor_full_rows(payload, lang)),
-                               ("faq", self._faq_rows(payload, lang))):
+            for kind, rows in (
+                ("test", self._test_rows(payload, lang)),
+                ("doctor", self._doctor_rows(payload, lang)),
+                ("doctorfull", self._doctor_full_rows(payload, lang)),
+                ("faq", self._faq_rows(payload, lang)),
+            ):
                 self._tables[(kind, lang)] = FormTable(
-                    rows, exact_below_chars=exact_below, index_min_forms=index_min_forms,
-                    generic_words=_GENERIC_TEST_WORDS if kind == "test" else frozenset())
+                    rows,
+                    exact_below_chars=exact_below,
+                    index_min_forms=index_min_forms,
+                    generic_words=_GENERIC_TEST_WORDS if kind == "test" else frozenset(),
+                )
         # the Bengali rows, under the names other code and tests have always read
         self.tests = self._tables[("test", "bn")].rows
         self.doctors = self._tables[("doctor", "bn")].rows
@@ -209,7 +227,7 @@ class Catalogue:
         forms.append(_normalize(d.get("surname") or d["name"].split()[-1]))
         whole = Catalogue._full_name_form(d, lang)
         if whole:
-            forms.append(whole)                    # owned by this doctor: a shared surname's owners are counted with it
+            forms.append(whole)  # owned by this doctor: a shared surname's owners are counted with it
         return _dedupe(forms)
 
     @staticmethod
@@ -233,8 +251,10 @@ class Catalogue:
 
     @staticmethod
     def _faq_rows(payload: dict, lang: str):
-        return [(f["topic"], _dedupe(_normalize(k) for k in f.get(f"keywords_{lang}", [])))
-                for f in payload.get("faq_topics", [])]
+        return [
+            (f["topic"], _dedupe(_normalize(k) for k in f.get(f"keywords_{lang}", [])))
+            for f in payload.get("faq_topics", [])
+        ]
 
     def __len__(self) -> int:
         return self._n_rows
@@ -245,8 +265,9 @@ class Catalogue:
     def table(self, kind: str, lang: str = "bn") -> FormTable | None:
         return self._tables.get((kind, lang))
 
-    def match(self, text: str, kind: str, lang: str = "bn",
-              floor: float = 0.0, skip_name: str | None = None) -> tuple[str | None, str | None, float]:
+    def match(
+        self, text: str, kind: str, lang: str = "bn", floor: float = 0.0, skip_name: str | None = None
+    ) -> tuple[str | None, str | None, float]:
         """-> (canonical_key, matched_spoken_form, score). `canonical_key`
         is a test/doctor name for kind in {"test", "doctor"}, or a FAQ
         topic key for kind="faq".
@@ -283,8 +304,15 @@ class FastPathResult:
 
 
 def _empty_slots(**kw) -> dict:
-    slots = {"test_name": None, "doctor_name": None, "date": None,
-             "time_slot": None, "patient_name": None, "phone": None, "faq_topic": None}
+    slots = {
+        "test_name": None,
+        "doctor_name": None,
+        "date": None,
+        "time_slot": None,
+        "patient_name": None,
+        "phone": None,
+        "faq_topic": None,
+    }
     slots.update(kw)
     return slots
 
@@ -301,22 +329,33 @@ def _complexity(text: str, table: cues.CueTable) -> bool:
     return any((cue in words) if " " not in cue else (cue in text) for cue in table.complexity)
 
 
-def serve_rate_gap(by_lang: dict[str, dict[str, int]], margin: float = LANGUAGE_GAP_MARGIN,
-                   min_turns: int = MIN_TURNS_FOR_GAP) -> dict:
+def serve_rate_gap(
+    by_lang: dict[str, dict[str, int]], margin: float = LANGUAGE_GAP_MARGIN, min_turns: int = MIN_TURNS_FOR_GAP
+) -> dict:
     """Serve rate per language and the widest gap between two languages with enough turns to compare. A gap wider
     than `margin` is a defect in the cue data of the lower one (KCD-095)."""
     rates = {}
     for lang, c in by_lang.items():
         turns = c["served"] + c["abstained"]
-        rates[lang] = {"served": c["served"], "abstained": c["abstained"], "turns": turns,
-                       "serve_rate": round(c["served"] / turns, 3) if turns else 0.0}
+        rates[lang] = {
+            "served": c["served"],
+            "abstained": c["abstained"],
+            "turns": turns,
+            "serve_rate": round(c["served"] / turns, 3) if turns else 0.0,
+        }
     eligible = {lang: r["serve_rate"] for lang, r in rates.items() if r["turns"] >= min_turns}
     gap, widest = None, None
     if len(eligible) >= 2:
         top, bottom = max(eligible, key=eligible.get), min(eligible, key=eligible.get)
         gap, widest = round(eligible[top] - eligible[bottom], 3), [top, bottom]
-    return {"by_language": rates, "margin": margin, "min_turns": min_turns, "gap": gap, "widest": widest,
-            "defect": gap is not None and gap > margin}
+    return {
+        "by_language": rates,
+        "margin": margin,
+        "min_turns": min_turns,
+        "gap": gap,
+        "widest": widest,
+        "defect": gap is not None and gap > margin,
+    }
 
 
 class FastPath:
@@ -366,7 +405,7 @@ class FastPath:
         """`text` with the rate and preparation cue phrases taken out: what is left is what NAMES something."""
         remaining = f" {text} "
         cues_longest_first = sorted(table.rate + table.prep, key=len, reverse=True)
-        while True:                                # taking one cue out can leave two words that form another ("how price much")
+        while True:  # taking one cue out can leave two words that form another ("how price much")
             before = remaining
             for cue in cues_longest_first:
                 if table.match == "substring":
@@ -384,7 +423,7 @@ class FastPath:
         phrases: "খালি পেটে" is a cue for preparation, not part of the name of the test called "খালি পেটে সুগার", and
         letting it count made an ordinary "<test> ... খালি পেটে ..." look ambiguous."""
         if score >= 1.0:
-            return False                                           # said in full: exactly one test's name
+            return False  # said in full: exactly one test's name
         body = self._without_cues(text, table)
         first, _form, first_score = self.catalogue.match(body, "test", lang, COMMIT_FLOOR)
         if first is None or first_score >= 1.0:
@@ -451,7 +490,9 @@ class FastPath:
                 if topic_test:
                     self._serve(intent, lang)
                     logger.info("fast path: %s %r from the topic [%s] for %r", intent, topic_test, lang, transcript)
-                    return FastPathResult(intent, _empty_slots(test_name=topic_test), COMMIT_FLOOR, matched_form="topic")
+                    return FastPathResult(
+                        intent, _empty_slots(test_name=topic_test), COMMIT_FLOOR, matched_form="topic"
+                    )
                 self._abstain("names_no_entity", intent, lang)
                 return None
 
@@ -463,8 +504,7 @@ class FastPath:
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_rate", lang)
                 logger.info("fast path: test_rate %r (%.2f) [%s] from %r", name, score, lang, transcript)
-                return FastPathResult("test_rate", _empty_slots(test_name=form or name),
-                                      score, matched_form=form)
+                return FastPathResult("test_rate", _empty_slots(test_name=form or name), score, matched_form=form)
             self._abstain("below_commit_floor", "test_rate", lang)
             return None
 
@@ -476,13 +516,12 @@ class FastPath:
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_prep", lang)
                 logger.info("fast path: test_prep %r (%.2f) [%s] from %r", name, score, lang, transcript)
-                return FastPathResult("test_prep", _empty_slots(test_name=form or name),
-                                      score, matched_form=form)
+                return FastPathResult("test_prep", _empty_slots(test_name=form or name), score, matched_form=form)
             self._abstain("below_commit_floor", "test_prep", lang)
             return None
 
         if wants_avail:
-            name, form, score = self.catalogue.match(text, "doctorfull", lang, 0.9)      # the whole name, if it was said
+            name, form, score = self.catalogue.match(text, "doctorfull", lang, 0.9)  # the whole name, if it was said
             if not name:
                 name, form, score = self.catalogue.match(text, "doctor", lang, COMMIT_FLOOR)
             if name and score >= COMMIT_FLOOR and self.catalogue.doctor_owner_count(lang, form) > 1:
@@ -496,11 +535,20 @@ class FastPath:
                     self._abstain("date_not_confident", "doctor_availability", lang)
                     return None
                 self._serve("doctor_availability", lang)
-                logger.info("fast path: doctor_availability %r (%.2f) date=%s [%s] from %r",
-                            name, score, date_iso, lang, transcript)
-                return FastPathResult("doctor_availability",
-                                      _empty_slots(doctor_name=form or name, date=date_iso),
-                                      score, matched_form=form)
+                logger.info(
+                    "fast path: doctor_availability %r (%.2f) date=%s [%s] from %r",
+                    name,
+                    score,
+                    date_iso,
+                    lang,
+                    transcript,
+                )
+                return FastPathResult(
+                    "doctor_availability",
+                    _empty_slots(doctor_name=form or name, date=date_iso),
+                    score,
+                    matched_form=form,
+                )
             if not table.faq_after_failed_avail:
                 self._abstain("below_commit_floor", "doctor_availability", lang)
                 return None
@@ -516,8 +564,7 @@ class FastPath:
         if faq_topic and faq_score >= FAQ_COMMIT_FLOOR:
             self._serve("clinic_faq", lang)
             logger.info("fast path: clinic_faq %r (%.2f) [%s] from %r", faq_topic, faq_score, lang, transcript)
-            return FastPathResult("clinic_faq", _empty_slots(faq_topic=faq_topic),
-                                  faq_score, matched_form=faq_form)
+            return FastPathResult("clinic_faq", _empty_slots(faq_topic=faq_topic), faq_score, matched_form=faq_form)
 
         # Pure greeting or thanks, with no entity and no question in it.
         if table.greeting_reply and table.any(text, table.greeting) and len(text.split()) <= 4:

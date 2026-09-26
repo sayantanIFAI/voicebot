@@ -19,9 +19,10 @@ to_log_dict() exists anyway, and is the only sanctioned way to log a
 CallState, so a future field addition cannot silently start leaking PII
 into logs the way an ad-hoc dict.items() dump could.
 """
+
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 SCHEMA_VERSION = 1
 
@@ -65,11 +66,11 @@ class CallState:
 
     # ---- delivery parameters (Appendix C), all at their neutral-caller
     # default until something in caller_state actually drives them ----
-    speech_rate: float = 1.0                # 1.0 = normal TTS rate
-    response_length: str = "normal"         # "normal" | "short" (fewer clauses)
-    one_question_at_a_time: bool = True     # already this codebase's baseline behaviour
+    speech_rate: float = 1.0  # 1.0 = normal TTS rate
+    response_length: str = "normal"  # "normal" | "short" (fewer clauses)
+    one_question_at_a_time: bool = True  # already this codebase's baseline behaviour
     interruption_tolerance: str = "normal"  # "normal" | "patient" (wider endpointing)
-    escalation_threshold: str = "normal"    # "normal" | "lowered" (offer a human sooner)
+    escalation_threshold: str = "normal"  # "normal" | "lowered" (offer a human sooner)
 
     def to_log_dict(self) -> dict:
         """The only sanctioned way to log a CallState -- see module
@@ -94,8 +95,7 @@ def apply_channel_quality(state: CallState, channel_quality: str) -> None:
     state.channel_quality = channel_quality
 
 
-def apply_caller_state(state: CallState, caller_state: str | None = None,
-                       senior: bool | None = None) -> None:
+def apply_caller_state(state: CallState, caller_state: str | None = None, senior: bool | None = None) -> None:
     """KCD-149: record the caller's state and re-derive every delivery
     parameter from Appendix C's table (agent/speech_policy.py) -- the only
     place those fields are written, so they can never disagree with the

@@ -18,9 +18,10 @@ words below were drafted by the engineering side. REVIEW_STATUS says so and the
 release gate reads it. Changing a word means bumping DISCLOSURE_VERSION, so an
 audit can say which wording a given call heard (the version is logged per call).
 """
+
 from __future__ import annotations
 
-DISCLOSURE_VERSION = "2.1-draft"      # 2.1: the spoken greeting now carries only the identity sentence
+DISCLOSURE_VERSION = "2.1-draft"  # 2.1: the spoken greeting now carries only the identity sentence
 REVIEW_STATUS = "pending_clinical_and_legal_review"
 
 # What is spoken, and the built-in default: the operator can change it from the database without a
@@ -38,12 +39,14 @@ DISCLOSURE = {
 
 def disclosure_for(lang: str) -> str:
     from agent import messages
+
     return messages.text("disclosure", lang if lang in DISCLOSURE else "bn", DISCLOSURE.get(lang) or DISCLOSURE["bn"])
 
 
 def version_label() -> str:
     """The wording version to record for a call: the database's when it supplied the text."""
     from agent import messages
+
     return f"{DISCLOSURE_VERSION}+{messages.label()}"
 
 
@@ -51,6 +54,7 @@ def insert_into_greeting(greeting: str, lang: str) -> str:
     """The greeting is "welcome. question?". The disclosure goes between them, so
     the call still ends its opening on the question that hands the caller the floor."""
     import re
+
     parts = [p for p in re.split(r"(?<=[।.!?])\s+", greeting.strip()) if p]
     if len(parts) < 2:
         return f"{greeting.strip()} {disclosure_for(lang)}"

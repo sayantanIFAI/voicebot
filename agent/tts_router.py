@@ -9,6 +9,7 @@ parameters (rate, pause length, first-clause streaming) -- those come
 from the Response Policy layer (Blueprint 2.1 [8] / [9], Appendix C) and
 are passed through, not decided here.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -20,8 +21,7 @@ from agent.lid import SUPPORTED_LANGUAGES
 class TTSEngine(Protocol):
     """Whatever agent/tts.py's TTSClient (or its hi/en siblings) exposes."""
 
-    async def synthesize(self, text: str, **speech_params) -> bytes:
-        ...
+    async def synthesize(self, text: str, **speech_params) -> bytes: ...
 
 
 @dataclasses.dataclass
@@ -34,15 +34,21 @@ class TTSModelSpec:
 
 PILOT_TTS_MODELS: dict[str, TTSModelSpec] = {
     "bn": TTSModelSpec(
-        language="bn", acoustic_model="FastPitch", vocoder="HiFi-GAN",
+        language="bn",
+        acoustic_model="FastPitch",
+        vocoder="HiFi-GAN",
         source="ai4bharat/indic-tts (existing checkpoint, already in production)",
     ),
     "hi": TTSModelSpec(
-        language="hi", acoustic_model="FastPitch", vocoder="HiFi-GAN",
+        language="hi",
+        acoustic_model="FastPitch",
+        vocoder="HiFi-GAN",
         source="ai4bharat/indic-tts, Hindi checkpoint",
     ),
     "en": TTSModelSpec(
-        language="en", acoustic_model="FastPitch", vocoder="HiFi-GAN",
+        language="en",
+        acoustic_model="FastPitch",
+        vocoder="HiFi-GAN",
         source="nvidia/tts_en_fastpitch + nvidia/tts_hifigan",
     ),
 }
@@ -67,9 +73,7 @@ class TTSRouter:
         try:
             return self._engines[language]
         except KeyError as exc:
-            raise UnroutableLanguageError(
-                f"No TTS engine registered for language={language!r}"
-            ) from exc
+            raise UnroutableLanguageError(f"No TTS engine registered for language={language!r}") from exc
 
     async def synthesize(self, language: str, text: str, **speech_params) -> bytes:
         return await self.engine_for(language).synthesize(text, **speech_params)

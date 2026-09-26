@@ -12,11 +12,11 @@ misremember or round a price it was merely shown a moment ago.
 Only "smalltalk" skips this file entirely and uses the LLM's own
 direct_reply_bn -- there is no fact to get wrong in "নমস্কার" or "ধন্যবাদ".
 """
+
 from __future__ import annotations
 
-from agent.sample_wording import sample_sentence
-
 from agent import reply_templates_i18n as _i18n
+from agent.sample_wording import sample_sentence
 
 
 def _spoken_test_name(slots: dict, result: dict) -> str:
@@ -29,10 +29,7 @@ def _spoken_test_name(slots: dict, result: dict) -> str:
     the seeded Bengali alias; failing that, echo the caller's own words
     back, which is what a person at the counter would do anyway.
     """
-    return (result.get("test_name_bn")
-            or slots.get("test_name")
-            or result.get("test_name")
-            or "টেস্ট")
+    return result.get("test_name_bn") or slots.get("test_name") or result.get("test_name") or "টেস্ট"
 
 
 def _spoken_doctor_name(slots: dict, result: dict) -> str:
@@ -95,8 +92,7 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
             # would tell the caller something untrue.
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
-            return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
-                     f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?")
+            return f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
         return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
 
     rate = result["rate_inr"]
@@ -121,8 +117,7 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
             # Doctor-side counterpart of KCD-446's test-ambiguity framing.
             return f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(suggestions)}?"
         if suggestions:
-            return (f"'{slots.get('doctor_name')}' নামে ডাক্তার খুঁজে পাইনি। "
-                     f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?")
+            return f"'{slots.get('doctor_name')}' নামে ডাক্তার খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
         return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার আমাদের এখানে নেই।"
 
     name = _spoken_doctor_name(slots, result)
@@ -145,16 +140,17 @@ def test_prep_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         if result.get("ambiguous") and suggestions:
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
-            return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
-                     f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?")
+            return f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
         return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
 
     name = _spoken_test_name(slots, result)
     # The lab-test table decides: its preparation text if it has one; else its fasting_required column. A test the table
     # marks as needing fasting is never told "no special preparation" because the text column was left empty.
     instructions = result.get("prep_instructions") or (
-        "এই টেস্টের জন্য উপবাস থাকতে হবে। কত ঘণ্টা, তা কাউন্টারে জেনে নিন।" if result.get("fasting_required")
-        else "এই টেস্টের জন্য বিশেষ কোনো প্রস্তুতির প্রয়োজন নেই।")
+        "এই টেস্টের জন্য উপবাস থাকতে হবে। কত ঘণ্টা, তা কাউন্টারে জেনে নিন।"
+        if result.get("fasting_required")
+        else "এই টেস্টের জন্য বিশেষ কোনো প্রস্তুতির প্রয়োজন নেই।"
+    )
     return f"{name} টেস্টের জন্য: {instructions}"
 
 
@@ -170,9 +166,11 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.booking_reply(slots, result, lang)
     if result.get("success"):
-        return (f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
-                f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {result['time_slot']}। "
-                f"কনফার্মেশন নম্বর: {result['confirmation_id']}।")
+        return (
+            f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
+            f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {result['time_slot']}। "
+            f"কনফার্মেশন নম্বর: {result['confirmation_id']}।"
+        )
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -183,8 +181,11 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if reason == "doctor_ambiguous":
         # Two doctors fit the name (two Sens): never picked -- asked, by whole name.
         names = result.get("did_you_mean_bn") or result.get("did_you_mean") or []
-        return f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(names)}?" if names else \
-            "একাধিক ডাক্তার পেলাম। আপনি কোন ডাক্তারের কথা বলছেন, পুরো নামটা বলবেন?"
+        return (
+            f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(names)}?"
+            if names
+            else "একাধিক ডাক্তার পেলাম। আপনি কোন ডাক্তারের কথা বলছেন, পুরো নামটা বলবেন?"
+        )
     if reason == "doctor_not_found":
         return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার খুঁজে পেলাম না।"
     if reason == "doctor_not_available_that_day":
@@ -218,9 +219,11 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") ->
         # rather than repeated.
         phone = slots.get("contact_phone") or slots.get("phone")
         phone_clause = f", ফোন নম্বর {phone} " if phone else " "
-        return (f"তাহলে {slots.get('doctor_name')} ডাক্তারের কাছে {slots.get('date')} তারিখে, "
-                f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')}"
-                f"{phone_clause}-- এই অ্যাপয়েন্টমেন্টটা কনফার্ম করব?")
+        return (
+            f"তাহলে {slots.get('doctor_name')} ডাক্তারের কাছে {slots.get('date')} তারিখে, "
+            f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')}"
+            f"{phone_clause}-- এই অ্যাপয়েন্টমেন্টটা কনফার্ম করব?"
+        )
     if action == "book_test":
         # ", " not the ideographic "、" -- a stray full-width character
         # from an earlier edit, inconsistent with every other list-join
@@ -228,8 +231,10 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") ->
         tests = ", ".join(slots.get("_test_names_display", [])) or "টেস্ট"
         phone = slots.get("contact_phone") or slots.get("phone")
         phone_clause = f", ফোন নম্বর {phone} " if phone else " "
-        return (f"তাহলে {slots.get('date')} তারিখে {tests} -- রোগীর নাম {slots.get('patient_name')}"
-                f"{phone_clause}-- এই বুকিংটা কনফার্ম করব?")
+        return (
+            f"তাহলে {slots.get('date')} তারিখে {tests} -- রোগীর নাম {slots.get('patient_name')}"
+            f"{phone_clause}-- এই বুকিংটা কনফার্ম করব?"
+        )
     if action == "reschedule_appointment":
         return f"তাহলে অ্যাপয়েন্টমেন্টটা {slots.get('new_date')} তারিখে, সময় {slots.get('new_time_slot')}-এ নিয়ে যাব?"
     if action == "cancel_appointment":
@@ -243,8 +248,10 @@ def reschedule_reply(result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.reschedule_reply(result, lang)
     if result.get("success"):
-        return (f"আপনার অ্যাপয়েন্টমেন্টটা {result['date']} তারিখে, সময় {result['time_slot']}-এ "
-                f"পাল্টে দেওয়া হয়েছে। নতুন কনফার্মেশন নম্বর: {result['confirmation_id']}।")
+        return (
+            f"আপনার অ্যাপয়েন্টমেন্টটা {result['date']} তারিখে, সময় {result['time_slot']}-এ "
+            f"পাল্টে দেওয়া হয়েছে। নতুন কনফার্মেশন নম্বর: {result['confirmation_id']}।"
+        )
     reason = result.get("reason")
     if reason == "not_found":
         return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো অ্যাপয়েন্টমেন্ট খুঁজে পেলাম না।"
@@ -262,7 +269,7 @@ def cancel_reply(result: dict, lang: str = "bn") -> str:
     reason = result.get("reason")
     if reason == "charge_confirmation_required":
         charge = result["charge_inr"]
-        return (f"এই সময়ে বাতিল করলে {charge} টাকা কাটা যাবে। তাও কি বাতিল করব?")
+        return f"এই সময়ে বাতিল করলে {charge} টাকা কাটা যাবে। তাও কি বাতিল করব?"
     if result.get("success"):
         charge = result.get("charge_inr") or 0
         if charge:
@@ -279,9 +286,11 @@ def lookup_reply(bookings: list[dict], lang: str = "bn") -> str:
     if not bookings:
         return "দুঃখিত, আপনার নামে কোনো আসন্ন অ্যাপয়েন্টমেন্ট খুঁজে পেলাম না।"
     b = bookings[0]
-    return (f"আপনার পরবর্তী অ্যাপয়েন্টমেন্ট: {b.get('doctor_name')} ডাক্তারের কাছে, "
-            f"{b['date']} তারিখে, সময় {b['time_slot']}-এ। কনফার্মেশন নম্বর: {b['confirmation_id']}। "
-            f"লিখিত কনফার্মেশনটা আবার পাঠিয়ে দিতে পারি, চাইলে বলবেন।")
+    return (
+        f"আপনার পরবর্তী অ্যাপয়েন্টমেন্ট: {b.get('doctor_name')} ডাক্তারের কাছে, "
+        f"{b['date']} তারিখে, সময় {b['time_slot']}-এ। কনফার্মেশন নম্বর: {b['confirmation_id']}। "
+        f"লিখিত কনফার্মেশনটা আবার পাঠিয়ে দিতে পারি, চাইলে বলবেন।"
+    )
 
 
 def multi_test_reply(result: dict, lang: str = "bn") -> str:
@@ -290,8 +299,10 @@ def multi_test_reply(result: dict, lang: str = "bn") -> str:
     if not result.get("success"):
         return "দুঃখিত, টেস্টগুলো বুক করা গেল না। একটু পরে আবার চেষ্টা করুন।"
     names = ", ".join(result["test_names"])
-    reply = (f"{names} -- এই টেস্টগুলো {result['date']} তারিখে বুক করা হয়েছে। "
-             f"মোট খরচ {result['total_rate_inr']} টাকা। কনফার্মেশন নম্বর {result['confirmation_id']}।")
+    reply = (
+        f"{names} -- এই টেস্টগুলো {result['date']} তারিখে বুক করা হয়েছে। "
+        f"মোট খরচ {result['total_rate_inr']} টাকা। কনফার্মেশন নম্বর {result['confirmation_id']}।"
+    )
     if result.get("combined_prep"):
         reply += f" প্রস্তুতি: {result['combined_prep']}"
     return reply
@@ -342,8 +353,10 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
 def conflict_reply(conflict: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.conflict_reply(conflict, lang)
-    return (f"আপনার তো ওই সময়ে আগে থেকেই একটা অ্যাপয়েন্টমেন্ট আছে -- {conflict.get('doctor_name')} ডাক্তারের কাছে, "
-            f"{conflict['date']} তারিখে, সময় {conflict['time_slot']}-এ। আগেরটা রাখব, পাল্টাব, নাকি নতুন করে যোগ করব?")
+    return (
+        f"আপনার তো ওই সময়ে আগে থেকেই একটা অ্যাপয়েন্টমেন্ট আছে -- {conflict.get('doctor_name')} ডাক্তারের কাছে, "
+        f"{conflict['date']} তারিখে, সময় {conflict['time_slot']}-এ। আগেরটা রাখব, পাল্টাব, নাকি নতুন করে যোগ করব?"
+    )
 
 
 def earliest_available_reply(result: dict, lang: str = "bn") -> str:
@@ -378,8 +391,7 @@ def multiple_bookings_reply(bookings: list[dict], lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.multiple_bookings_reply(bookings, lang)
     parts = [f"{b.get('doctor_name')} ডাক্তারের {b['date']} তারিখের" for b in bookings[:3]]
-    return (f"আপনার নামে একাধিক বুকিং আছে -- {', '.join(parts)}। "
-            f"কোনটার কথা বলছেন, কনফার্মেশন নম্বরটা বলবেন?")
+    return f"আপনার নামে একাধিক বুকিং আছে -- {', '.join(parts)}। কোনটার কথা বলছেন, কনফার্মেশন নম্বরটা বলবেন?"
 
 
 def spelling_prompt(lang: str = "bn") -> str:

@@ -1,7 +1,8 @@
 """KCD-469: agent/latency_metrics.py. Pure, offline.
 
-    python -m pytest tests/test_latency_metrics.py -v
+python -m pytest tests/test_latency_metrics.py -v
 """
+
 import os
 import sys
 

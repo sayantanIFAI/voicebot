@@ -17,6 +17,7 @@ already established -- never claim something happened that did not:
   - request_callback(): records the promise; no outbound-calling system
     exists (that is telephony infrastructure, Epic E22, not this file).
 """
+
 from __future__ import annotations
 
 import datetime
@@ -56,6 +57,7 @@ def _now() -> datetime.datetime:
 
 # ============================================================ KCD-385: leave
 
+
 def doctor_leave_on(db: Session, doctor_id: int, date: str) -> dict | None:
     """None if the doctor is not on leave that date. Otherwise the leave
     row's facts -- never invented, and the return date is stated as
@@ -64,12 +66,17 @@ def doctor_leave_on(db: Session, doctor_id: int, date: str) -> dict | None:
     for leave in db.query(DoctorLeave).filter_by(doctor_id=doctor_id).all():
         start, end = datetime.date.fromisoformat(leave.start_date), datetime.date.fromisoformat(leave.end_date)
         if start <= d <= end:
-            return {"on_leave": True, "start_date": leave.start_date, "end_date": leave.end_date,
-                    "return_date": leave.return_date}
+            return {
+                "on_leave": True,
+                "start_date": leave.start_date,
+                "end_date": leave.end_date,
+                "return_date": leave.return_date,
+            }
     return None
 
 
 # ======================================================= KCD-381/382: prep
+
 
 def merge_prep_instructions(db: Session, lab_test_ids: list[int]) -> dict:
     """KCD-382: several tests' preparation merged to the STRICTEST
@@ -98,14 +105,17 @@ def merge_prep_instructions(db: Session, lab_test_ids: list[int]) -> dict:
     escalate = False
 
     return {
-        "found": True, "test_names": [t.name for t in tests],
-        "fasting_hours": merged_hours, "water_allowed_while_fasting": water_allowed,
+        "found": True,
+        "test_names": [t.name for t in tests],
+        "fasting_hours": merged_hours,
+        "water_allowed_while_fasting": water_allowed,
         "escalate_to_human": escalate,
         "prescription_required": any(t.prescription_required for t in tests),
     }
 
 
 # ==================================================== KCD-380/397: packages
+
 
 def get_package(db: Session, name: str) -> dict | None:
     pkg = db.query(Package).filter(Package.name.ilike(f"%{name}%")).first()
@@ -120,8 +130,11 @@ def _package_dict(db: Session, pkg: Package) -> dict:
     tests = [t for t in tests if t is not None]
     separate_total = sum(t.rate_inr for t in tests)
     return {
-        "found": True, "package_name": pkg.name, "test_names": [t.name for t in tests],
-        "bundled_price_inr": pkg.bundled_price_inr, "separate_total_inr": separate_total,
+        "found": True,
+        "package_name": pkg.name,
+        "test_names": [t.name for t in tests],
+        "bundled_price_inr": pkg.bundled_price_inr,
+        "separate_total_inr": separate_total,
         "savings_inr": max(0, separate_total - pkg.bundled_price_inr),
         "branch_restricted": pkg.branch_restricted,
     }
@@ -138,22 +151,34 @@ def compare_package_vs_separate(db: Session, name: str) -> dict:
 
 # ========================================================= KCD-393: walk-in
 
+
 def walk_in_policy(db: Session, department_id: int | None = None, lab_test_id: int | None = None) -> dict:
     q = db.query(WalkInPolicy)
     if lab_test_id is not None:
         row = q.filter_by(lab_test_id=lab_test_id).first()
         if row:
-            return {"found": True, "allowed": row.allowed, "queue_note_bn": row.queue_note_bn,
-                    "queue_note_hi": row.queue_note_hi, "queue_note_en": row.queue_note_en}
+            return {
+                "found": True,
+                "allowed": row.allowed,
+                "queue_note_bn": row.queue_note_bn,
+                "queue_note_hi": row.queue_note_hi,
+                "queue_note_en": row.queue_note_en,
+            }
     if department_id is not None:
         row = q.filter_by(department_id=department_id, lab_test_id=None).first()
         if row:
-            return {"found": True, "allowed": row.allowed, "queue_note_bn": row.queue_note_bn,
-                    "queue_note_hi": row.queue_note_hi, "queue_note_en": row.queue_note_en}
+            return {
+                "found": True,
+                "allowed": row.allowed,
+                "queue_note_bn": row.queue_note_bn,
+                "queue_note_hi": row.queue_note_hi,
+                "queue_note_en": row.queue_note_en,
+            }
     return {"found": False}
 
 
 # =========================================================== KCD-389: billing
+
 
 def outstanding_balance(db: Session, phone: str) -> dict:
     patient = db.query(Patient).filter_by(phone=phone).first()
@@ -161,12 +186,14 @@ def outstanding_balance(db: Session, phone: str) -> dict:
         return {"found": False}
     items = db.query(BillingLineItem).filter_by(patient_id=patient.id, status="outstanding").all()
     return {
-        "found": True, "total_inr": sum(i.amount_inr for i in items),
+        "found": True,
+        "total_inr": sum(i.amount_inr for i in items),
         "line_items": [{"description": i.description, "amount_inr": i.amount_inr} for i in items],
     }
 
 
 # ================================================== KCD-387: home collection
+
 
 def home_collection_eligibility(db: Session, lab_test_id: int, postal_code: str) -> dict:
     test = db.get(LabTest, lab_test_id)
@@ -178,13 +205,17 @@ def home_collection_eligibility(db: Session, lab_test_id: int, postal_code: str)
     if not coverage or not coverage.serviceable:
         return {"found": True, "eligible": False, "reason": "area_not_covered"}
     return {
-        "found": True, "eligible": True, "charge_inr": coverage.charge_inr,
-        "slot_note_bn": coverage.slot_note_bn, "slot_note_hi": coverage.slot_note_hi,
+        "found": True,
+        "eligible": True,
+        "charge_inr": coverage.charge_inr,
+        "slot_note_bn": coverage.slot_note_bn,
+        "slot_note_hi": coverage.slot_note_hi,
         "slot_note_en": coverage.slot_note_en,
     }
 
 
 # ====================================================== KCD-388: insurance
+
 
 def check_insurance_coverage(db: Session, policy_number: str, lab_test_id: int | None = None) -> dict:
     """Reads this service's own MOCK insurer tables -- see this module's
@@ -196,37 +227,46 @@ def check_insurance_coverage(db: Session, policy_number: str, lab_test_id: int |
         return {"found": False, "reachable": True}
     if not policy.active:
         return {"found": True, "active": False}
-    rule = (db.query(InsuranceCoverageRule)
-            .filter_by(insurer_name=policy.insurer_name, lab_test_id=lab_test_id).first()
-            or db.query(InsuranceCoverageRule)
-            .filter_by(insurer_name=policy.insurer_name, lab_test_id=None).first())
+    rule = (
+        db.query(InsuranceCoverageRule).filter_by(insurer_name=policy.insurer_name, lab_test_id=lab_test_id).first()
+        or db.query(InsuranceCoverageRule).filter_by(insurer_name=policy.insurer_name, lab_test_id=None).first()
+    )
     if not rule:
         return {"found": True, "active": True, "covered": False}
-    return {"found": True, "active": True, "covered": True,
-            "coverage_percent": rule.coverage_percent, "co_payment_inr": rule.co_payment_inr}
+    return {
+        "found": True,
+        "active": True,
+        "covered": True,
+        "coverage_percent": rule.coverage_percent,
+        "co_payment_inr": rule.co_payment_inr,
+    }
 
 
 # =================================================== KCD-392: prescription
+
 
 def prescription_requirement(db: Session, lab_test_id: int, lang: str = "bn") -> dict:
     test = db.get(LabTest, lab_test_id)
     if not test:
         return {"found": False}
-    note = {"bn": test.prescription_note_bn, "hi": test.prescription_note_hi,
-            "en": test.prescription_note_en}.get(lang, test.prescription_note_bn)
+    note = {"bn": test.prescription_note_bn, "hi": test.prescription_note_hi, "en": test.prescription_note_en}.get(
+        lang, test.prescription_note_bn
+    )
     return {"found": True, "required": test.prescription_required, "note": note}
 
 
 # =================================================== KCD-394: out of scope
 
-def record_out_of_scope(db: Session, call_id: str, caller_question: str,
-                         reason_code: str = "out_of_scope") -> dict:
-    twin = db.query(CallOutcome).filter_by(call_id=call_id, reason_code=reason_code,
-                                           caller_question=caller_question).first()
-    if twin is not None:                                     # the same question on the same call is recorded once
+
+def record_out_of_scope(db: Session, call_id: str, caller_question: str, reason_code: str = "out_of_scope") -> dict:
+    twin = (
+        db.query(CallOutcome)
+        .filter_by(call_id=call_id, reason_code=reason_code, caller_question=caller_question)
+        .first()
+    )
+    if twin is not None:  # the same question on the same call is recorded once
         return {"recorded": True, "id": twin.id, "duplicate": True}
-    row = CallOutcome(call_id=call_id, reason_code=reason_code, caller_question=caller_question,
-                       created_at=_now())
+    row = CallOutcome(call_id=call_id, reason_code=reason_code, caller_question=caller_question, created_at=_now())
     db.add(row)
     db.commit()
     return {"recorded": True, "id": row.id}
@@ -234,13 +274,23 @@ def record_out_of_scope(db: Session, call_id: str, caller_question: str,
 
 # ========================================================= KCD-398: callback
 
+
 def request_callback(db: Session, phone: str, call_id: str, requested_window: str, reason: str = "") -> dict:
-    twin = (db.query(CallbackRequest).filter_by(phone=phone, call_id=call_id, requested_window=requested_window,
-                                                status="scheduled").first())
-    if twin is not None:                                     # the same callback asked for twice is one callback
+    twin = (
+        db.query(CallbackRequest)
+        .filter_by(phone=phone, call_id=call_id, requested_window=requested_window, status="scheduled")
+        .first()
+    )
+    if twin is not None:  # the same callback asked for twice is one callback
         return {"success": True, "id": twin.id, "requested_window": requested_window, "duplicate": True}
-    row = CallbackRequest(phone=phone, call_id=call_id, requested_window=requested_window,
-                           reason=reason, status="scheduled", created_at=_now())
+    row = CallbackRequest(
+        phone=phone,
+        call_id=call_id,
+        requested_window=requested_window,
+        reason=reason,
+        status="scheduled",
+        created_at=_now(),
+    )
     db.add(row)
     db.commit()
     return {"success": True, "id": row.id, "requested_window": requested_window}
@@ -248,11 +298,16 @@ def request_callback(db: Session, phone: str, call_id: str, requested_window: st
 
 # ======================================================= KCD-383/384: reports
 
+
 def report_status(db: Session, confirmation_id: str) -> dict:
     report = db.query(LabReport).filter_by(confirmation_id=confirmation_id).first()
     if not report:
         return {"found": False}
-    return {"found": True, "status": report.status, "ready_at": report.ready_at.isoformat() if report.ready_at else None}
+    return {
+        "found": True,
+        "status": report.status,
+        "ready_at": report.ready_at.isoformat() if report.ready_at else None,
+    }
 
 
 def request_report_otp(db: Session, confirmation_id: str, phone: str) -> dict:
@@ -265,14 +320,27 @@ def request_report_otp(db: Session, confirmation_id: str, phone: str) -> dict:
         return {"success": False, "reason": "phone_mismatch"}
 
     # A retry within the window gets the code already issued, not a second one that would leave the first dangling.
-    live = (db.query(ReportDeliveryOTP).filter_by(report_id=report.id, phone=phone, verified=False)
-            .order_by(ReportDeliveryOTP.created_at.desc()).first())
-    if live is not None and live.expires_at > _now() and (_now() - live.created_at).total_seconds() < OTP_REISSUE_WINDOW_S:
+    live = (
+        db.query(ReportDeliveryOTP)
+        .filter_by(report_id=report.id, phone=phone, verified=False)
+        .order_by(ReportDeliveryOTP.created_at.desc())
+        .first()
+    )
+    if (
+        live is not None
+        and live.expires_at > _now()
+        and (_now() - live.created_at).total_seconds() < OTP_REISSUE_WINDOW_S
+    ):
         return {"success": True, "otp_id": live.id, "expires_in_minutes": REPORT_OTP_TTL_MINUTES, "duplicate": True}
     otp = f"{secrets.randbelow(1_000_000):06d}"
-    row = ReportDeliveryOTP(report_id=report.id, phone=phone, otp_code=otp, verified=False,
-                             expires_at=_now() + datetime.timedelta(minutes=REPORT_OTP_TTL_MINUTES),
-                             created_at=_now())
+    row = ReportDeliveryOTP(
+        report_id=report.id,
+        phone=phone,
+        otp_code=otp,
+        verified=False,
+        expires_at=_now() + datetime.timedelta(minutes=REPORT_OTP_TTL_MINUTES),
+        created_at=_now(),
+    )
     db.add(row)
     db.commit()
     # Logged, not sent -- the same disclosed placeholder as booking_service.queue_sms.
@@ -283,16 +351,23 @@ def deliver_report(db: Session, confirmation_id: str, otp_code: str) -> dict:
     report = db.query(LabReport).filter_by(confirmation_id=confirmation_id).first()
     if not report:
         return {"success": False, "reason": "not_found"}
-    otp = (db.query(ReportDeliveryOTP).filter_by(report_id=report.id, otp_code=otp_code, verified=False)
-           .order_by(ReportDeliveryOTP.created_at.desc()).first())
+    otp = (
+        db.query(ReportDeliveryOTP)
+        .filter_by(report_id=report.id, otp_code=otp_code, verified=False)
+        .order_by(ReportDeliveryOTP.created_at.desc())
+        .first()
+    )
     if not otp or otp.expires_at < _now():
         return {"success": False, "reason": "otp_invalid_or_expired"}
 
     otp.verified = True
     link_token = uuid.uuid4().hex
     audit = ReportDeliveryAudit(
-        report_id=report.id, recipient_phone=otp.phone, verification_method="otp",
-        link_token=link_token, link_expires_at=_now() + datetime.timedelta(hours=REPORT_LINK_TTL_HOURS),
+        report_id=report.id,
+        recipient_phone=otp.phone,
+        verification_method="otp",
+        link_token=link_token,
+        link_expires_at=_now() + datetime.timedelta(hours=REPORT_LINK_TTL_HOURS),
         delivered_at=_now(),
     )
     db.add(audit)
@@ -301,6 +376,7 @@ def deliver_report(db: Session, confirmation_id: str, otp_code: str) -> dict:
 
 
 # =========================================================== KCD-386: hours
+
 
 def department_hours(db: Session, department_id: int, lang: str = "bn") -> dict | None:
     row = db.query(DepartmentHours).filter_by(department_id=department_id).first()

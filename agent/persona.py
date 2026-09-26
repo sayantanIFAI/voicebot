@@ -32,6 +32,7 @@ REVIEW_STATUS records, per language, that the persona is drafted and awaiting a
 native reviewer's sign-off (the story requires one per language). Nothing here
 claims otherwise; pending_review() feeds the release gate.
 """
+
 from __future__ import annotations
 
 import re
@@ -51,18 +52,25 @@ _BN = re.compile(r"[ঀ-৿]")
 _HI = re.compile(r"[ऀ-ॿ]")
 
 # --- register (informal second person and its imperatives) -----------------
-_BN_INFORMAL = re.compile(
-    r"(?<![ঀ-৿])(তুমি|তুই|তোমার|তোমাকে|তোর|তোকে|করো|বলো|দেখো|শোনো|এসো|যাও|নাও|দাও)(?![ঀ-৿])")
-_HI_INFORMAL = re.compile(
-    r"(?<![ऀ-ॿ])(तू|तुम|तुझे|तेरा|तेरी|तुझसे|तुम्हारा|तुम्हारी|तुम्हें|करो|बोलो|देखो|आओ|जाओ|सुनो)(?![ऀ-ॿ])")
+_BN_INFORMAL = re.compile(r"(?<![ঀ-৿])(তুমি|তুই|তোমার|তোমাকে|তোর|তোকে|করো|বলো|দেখো|শোনো|এসো|যাও|নাও|দাও)(?![ঀ-৿])")
+_HI_INFORMAL = re.compile(r"(?<![ऀ-ॿ])(तू|तुम|तुझे|तेरा|तेरी|तुझसे|तुम्हारा|तुम्हारी|तुम्हें|करो|बोलो|देखो|आओ|जाओ|सुनो)(?![ऀ-ॿ])")
 
 # --- never say ---------------------------------------------------------------
 _NEVER_SAY = {
     "en": [
         ("hedge", re.compile(r"\b(probably|maybe|perhaps|i think|i guess|i believe|might be|not sure)\b", re.I)),
-        ("reassurance", re.compile(r"\b(don'?t worry|nothing serious|nothing to worry|everything will be (fine|ok|okay))\b", re.I)),
-        ("clinical_direction", re.compile(r"\b(you should (take|avoid|stop)|i recommend|i advise|you (must|need to) take)\b", re.I)),
-        ("self_reference_as_model", re.compile(r"\b(as an? (ai|language model)|i am an? (ai|language model)|large language model)\b", re.I)),
+        (
+            "reassurance",
+            re.compile(r"\b(don'?t worry|nothing serious|nothing to worry|everything will be (fine|ok|okay))\b", re.I),
+        ),
+        (
+            "clinical_direction",
+            re.compile(r"\b(you should (take|avoid|stop)|i recommend|i advise|you (must|need to) take)\b", re.I),
+        ),
+        (
+            "self_reference_as_model",
+            re.compile(r"\b(as an? (ai|language model)|i am an? (ai|language model)|large language model)\b", re.I),
+        ),
     ],
     "bn": [
         ("hedge", re.compile(r"(সম্ভবত|হয়তো|মনে হয়|বোধহয়|আন্দাজ)")),

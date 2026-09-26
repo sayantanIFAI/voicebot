@@ -5,11 +5,11 @@ thresholds). Requires numpy (already a project dependency via librosa).
 
     python -m pytest tests/test_channel_quality.py -v
 """
+
 import os
 import sys
 
 import numpy as np
-import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -86,8 +86,7 @@ def test_continuous_high_energy_with_no_silence_is_crosstalk():
     # Wideband content, but never drops near the noise floor -- the
     # heuristic's proxy for "someone is always talking."
     t = np.linspace(0, DURATION_S, int(SR * DURATION_S), endpoint=False)
-    samples = (np.sin(2 * np.pi * 400 * t) + 0.6 * np.sin(2 * np.pi * 5200 * t)
-              + 0.3 * np.sin(2 * np.pi * 2600 * t))
+    samples = np.sin(2 * np.pi * 400 * t) + 0.6 * np.sin(2 * np.pi * 5200 * t) + 0.3 * np.sin(2 * np.pi * 2600 * t)
     assert classify_channel(samples, SR) == CHANNEL_CROSSTALK
 
 

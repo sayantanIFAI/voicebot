@@ -4,6 +4,7 @@ this runs with no Ollama server and no real network waits.
 
     python -m pytest tests/test_llm_deadline.py -v
 """
+
 import os
 import sys
 import time
@@ -32,7 +33,7 @@ def test_a_slow_first_attempt_that_eats_the_deadline_stops_without_a_second_atte
 
     def fake_call_ollama(prompt, timeout_s=90):
         calls.append(timeout_s)
-        time.sleep(0.05)   # consumes real wall-clock time against the deadline
+        time.sleep(0.05)  # consumes real wall-clock time against the deadline
         raise TimeoutError("simulated slow/unreachable Ollama")
 
     monkeypatch.setattr(llm_mod, "_call_ollama", fake_call_ollama)

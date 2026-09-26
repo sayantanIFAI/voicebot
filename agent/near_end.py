@@ -30,6 +30,7 @@ recalibrate on recorded rooms before trusting them past the pilot. Cross-talk
 rate is exported (agent/golden_buckets.py) as the Appendix F `cross_talk` channel
 bucket.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -37,7 +38,15 @@ import dataclasses
 import numpy as np
 
 from agent.audio_quality import (
-    FRAME_S, HOP_S, VOICED_HARMONICITY, _autocorr, _db, _frames, _pitch_lag, _refine_lag, _second_pitch,
+    FRAME_S,
+    HOP_S,
+    VOICED_HARMONICITY,
+    _autocorr,
+    _db,
+    _frames,
+    _pitch_lag,
+    _refine_lag,
+    _second_pitch,
 )
 
 # An utterance this much quieter than the call's near-end level, in a different
@@ -73,7 +82,7 @@ def _voiced_track(samples: np.ndarray, sr: int):
     frames = _frames(x, sr)
     if frames.shape[0] < 5:
         return None
-    energy = _db(np.mean(frames ** 2, axis=1))
+    energy = _db(np.mean(frames**2, axis=1))
     floor, top = float(np.percentile(energy, 10)), float(np.percentile(energy, 90))
     active = energy >= max(floor + 0.35 * (top - floor), top - 25.0)
     idx = np.where(active)[0]
@@ -94,7 +103,7 @@ def _alternation_mask(f0: np.ndarray) -> np.ndarray:
     tight values (see ALTERNATION_* above): evidence of two voices when neither dominates."""
     out = np.zeros(f0.shape[0], dtype=bool)
     half = ALTERNATION_WINDOW // 2
-    for c in range(0, f0.shape[0], 5):                       # every 50 ms; a window is 0.4 s
+    for c in range(0, f0.shape[0], 5):  # every 50 ms; a window is 0.4 s
         lo, hi = max(0, c - half), min(f0.shape[0], c + half + 1)
         v = f0[lo:hi][f0[lo:hi] > 0]
         if v.size < 12:
@@ -105,8 +114,12 @@ def _alternation_mask(f0: np.ndarray) -> np.ndarray:
         near_low = np.abs(v / low - 1.0) <= CLUSTER_TOL
         near_high = np.abs(v / high - 1.0) <= CLUSTER_TOL
         between = 1.0 - float(np.mean(near_low | near_high))
-        if near_low.mean() >= CLUSTER_MIN_SHARE and near_high.mean() >= CLUSTER_MIN_SHARE and between <= CLUSTER_MAX_BETWEEN:
-            out[lo:hi] |= (f0[lo:hi] > 0)
+        if (
+            near_low.mean() >= CLUSTER_MIN_SHARE
+            and near_high.mean() >= CLUSTER_MIN_SHARE
+            and between <= CLUSTER_MAX_BETWEEN
+        ):
+            out[lo:hi] |= f0[lo:hi] > 0
     return out
 
 
@@ -134,8 +147,9 @@ def overlap_segments(samples: np.ndarray, sr: int = 16000) -> list[tuple[float, 
     return [(a, b + HOP_S * 4) for a, b in segs if (b - a) + HOP_S * 4 >= MIN_OVERLAP_S]
 
 
-def dominant_span(samples: np.ndarray, sr: int = 16000, drop_db: float = 12.0,
-                  smooth_s: float = 0.25, min_len_s: float = 0.3) -> tuple[float, float] | None:
+def dominant_span(
+    samples: np.ndarray, sr: int = 16000, drop_db: float = 12.0, smooth_s: float = 0.25, min_len_s: float = 0.3
+) -> tuple[float, float] | None:
     """The stretch of the clip in which the loudest voice carries the energy,
     with leading and trailing stretches more than `drop_db` below it removed.
     Energy is smoothed over `smooth_s` first, so the gaps between a talker's own
@@ -144,7 +158,7 @@ def dominant_span(samples: np.ndarray, sr: int = 16000, drop_db: float = 12.0,
     frames = _frames(x - (float(np.mean(x)) if x.size else 0.0), sr)
     if frames.shape[0] < 5:
         return None
-    energy = np.mean(frames ** 2, axis=1)
+    energy = np.mean(frames**2, axis=1)
     k = max(1, int(smooth_s / HOP_S))
     smooth_db = _db(np.convolve(energy, np.ones(k) / k, mode="same"))
     peak = float(np.max(smooth_db))
@@ -194,17 +208,19 @@ class NearEndProfile:
         if quieter < BACKGROUND_DELTA_DB:
             return Verdict(False, "as_loud_as_the_caller")
         if f0_hz <= 0 or not self.f0_hz:
-            return Verdict(False, "no_pitch_to_compare")          # unvoiced: too quiet, not a different person
+            return Verdict(False, "no_pitch_to_compare")  # unvoiced: too quiet, not a different person
         ratio = max(f0_hz, self.f0_hz) / min(f0_hz, self.f0_hz)
         if ratio <= DIFFERENT_VOICE_F0_RATIO:
-            return Verdict(False, "same_voice_but_quieter")       # the caller moved away: re-ask, do not ignore
+            return Verdict(False, "same_voice_but_quieter")  # the caller moved away: re-ask, do not ignore
         return Verdict(True, "quieter_and_a_different_voice")
 
     def accept(self, level_dbfs: float, f0_hz: float) -> None:
         a = PROFILE_ALPHA
         self.level_dbfs = level_dbfs if self.level_dbfs is None else (1 - a) * self.level_dbfs + a * level_dbfs
         if f0_hz > 0:
-            self.f0_hz = f0_hz if self.f0_hz is None else float(np.exp((1 - a) * np.log(self.f0_hz) + a * np.log(f0_hz)))
+            self.f0_hz = (
+                f0_hz if self.f0_hz is None else float(np.exp((1 - a) * np.log(self.f0_hz) + a * np.log(f0_hz)))
+            )
         self.accepted += 1
 
     def reject(self) -> None:

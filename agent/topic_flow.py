@@ -78,9 +78,7 @@ def worth_suspending(booking: BookingState | None) -> bool:
 
 def resume_allowed(questions_per_turn: int, reply_so_far: str) -> bool:
     """A resume line is a question. Not when the policy allows none, and not on top of a reply that already asks."""
-    return (
-        questions_per_turn >= 1 and "?" not in reply_so_far and "؟" not in reply_so_far
-    )
+    return questions_per_turn >= 1 and "?" not in reply_so_far and "؟" not in reply_so_far
 
 
 # ---------------------------------------------------------------------------------------------------- wording

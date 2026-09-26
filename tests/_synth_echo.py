@@ -5,8 +5,8 @@ speech generator, the echo path is a decaying random impulse response after a
 bulk delay (the client's network + output buffering), and the near-end (the
 caller) is a second synthetic voice. Ground truth is known by construction.
 """
-import numpy as np
 
+import numpy as np
 from _synth_speech import speech
 
 SR = 16000
@@ -38,8 +38,17 @@ def far_end(seed, dur_each=4.0, voices=3, amp=0.4, same_voice=False):
     parts = []
     for k in range(voices):
         j = 0 if same_voice else k
-        parts.append(speech(f0=100 + 30 * ((seed + j) % 4) + 8 * j, dur=dur_each, seed=seed * 7 + k, amp=amp,
-                            tremor_hz=1.3 + 0.4 * ((seed + j) % 3), tremor_st=3 + (j % 2), breath=0.12))
+        parts.append(
+            speech(
+                f0=100 + 30 * ((seed + j) % 4) + 8 * j,
+                dur=dur_each,
+                seed=seed * 7 + k,
+                amp=amp,
+                tremor_hz=1.3 + 0.4 * ((seed + j) % 3),
+                tremor_st=3 + (j % 2),
+                breath=0.12,
+            )
+        )
     x = np.concatenate(parts)
     return x + fricatives(x.size, seed)
 
@@ -59,8 +68,8 @@ def fricatives(n, seed, amp=0.12):
         if t + L >= n:
             break
         burst = rng.standard_normal(L)
-        burst = np.diff(burst, prepend=0.0)              # crude high-pass tilt
-        out[t:t + L] += (amp * burst / (np.max(np.abs(burst)) + 1e-9) * np.hanning(L)).astype(np.float32)
+        burst = np.diff(burst, prepend=0.0)  # crude high-pass tilt
+        out[t : t + L] += (amp * burst / (np.max(np.abs(burst)) + 1e-9) * np.hanning(L)).astype(np.float32)
         t += L
     return out
 
@@ -76,30 +85,39 @@ def echo_scene(seed, delay_ms=None, noise=0.001, drive=0.0, gain=0.35, dur_each=
     """-> (far, mic, echo). mic = echo + noise, caller silent."""
     delay_ms = 120 + 50 * (seed % 5) if delay_ms is None else delay_ms
     far = far_end(seed, dur_each, voices, same_voice=same_voice)
-    echo = np.convolve(speaker(far, drive), rir(delay_ms, seed=seed, gain=gain))[:far.size].astype(np.float32)
+    echo = np.convolve(speaker(far, drive), rir(delay_ms, seed=seed, gain=gain))[: far.size].astype(np.float32)
     rng = np.random.default_rng(1000 + seed)
     mic = echo + noise * rng.standard_normal(far.size).astype(np.float32)
     return far, mic.astype(np.float32), echo
 
 
 def caller(seed, dur=1.5, f0=155.0, amp=0.25):
-    return speech(f0=f0 + 10 * (seed % 5), dur=dur, seed=200 + seed, amp=amp, syll_hz=4.0,
-                  tremor_hz=1.0, tremor_st=2.0, breath=0.05)
+    return speech(
+        f0=f0 + 10 * (seed % 5),
+        dur=dur,
+        seed=200 + seed,
+        amp=amp,
+        syll_hz=4.0,
+        tremor_hz=1.0,
+        tremor_st=2.0,
+        breath=0.05,
+    )
 
 
 def voice_segments(far, dur_each, sr=SR):
     """The far end as the clips the server would send: one per voice."""
     n = int(dur_each * sr)
-    return [far[i:i + n] for i in range(0, far.size, n)]
+    return [far[i : i + n] for i in range(0, far.size, n)]
 
 
 def run_pipeline(mic, far, chunk=1600, **kw):
     from agent.echo_cancel import EchoPipeline
+
     p = EchoPipeline(**kw)
     p.feed_reference(far, 0)
     cleaned, echos = [], []
     for i in range(0, mic.size, chunk):
-        c, e = p.process_ex(mic[i:i + chunk])
+        c, e = p.process_ex(mic[i : i + chunk])
         cleaned.append(c)
         echos.append(e)
     return p, np.concatenate(cleaned), np.concatenate(echos)

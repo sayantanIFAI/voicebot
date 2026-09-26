@@ -29,6 +29,7 @@ goes to a person; it is not queued -- agent/admission.py).
     python tools/capacity_model.py --measured M.json     # full sizing; see docs/capacity-measurements.template.json
     python tools/capacity_model.py --measured M.json --json
 """
+
 import argparse
 import dataclasses
 import json
@@ -58,13 +59,19 @@ def default_inputs() -> dict[str, Input]:
         # ---- workload (ADR 0001 section 5)
         "calls_per_day": Input(7000, STATED, "upper end of the stated 6,000-7,000/day"),
         "window_hours": Input(10, STATED, "operating window"),
-        "peak_hour_factor": Input(1.5, REASONED, "busiest hour / average hour; replace with the client's hourly profile"),
+        "peak_hour_factor": Input(
+            1.5, REASONED, "busiest hour / average hour; replace with the client's hourly profile"
+        ),
         "aht_min": Input(2.5, REASONED, "ADR 0001 section 5 range 2.0-3.0 min; average AI call duration"),
         "target_utilisation": Input(0.70, REASONED, "keep each GPU under this share of its measured throughput"),
-        "configured_cap": Input(28, STATED, "ADMISSION_MAX_CALLS default in main.py / agent/admission.py (ADR 0001 section 5)"),
+        "configured_cap": Input(
+            28, STATED, "ADMISSION_MAX_CALLS default in main.py / agent/admission.py (ADR 0001 section 5)"
+        ),
         "max_blocking": Input(0.02, REASONED, "share of calls that may be refused to a person at peak"),
         # ---- call mix
-        "caller_speech_fraction": Input(0.40, REASONED, "share of a call during which the caller speaks (ASR decoding)"),
+        "caller_speech_fraction": Input(
+            0.40, REASONED, "share of a call during which the caller speaks (ASR decoding)"
+        ),
         "agent_speech_fraction": Input(0.45, REASONED, "share of a call during which the agent speaks (TTS producing)"),
         "turns_per_minute": Input(4.0, REASONED, "caller turns per minute"),
         "llm_share_of_turns": Input(0.30, REASONED, "turns that miss the fast path (ADR: 65-75% fast-path target)"),
@@ -98,6 +105,7 @@ def apply_measured(inputs: dict[str, Input], measured: dict) -> dict[str, Input]
 
 # ------------------------------------------------------------------------------ queueing
 
+
 def erlang_b(offered_erlangs: float, servers: int) -> float:
     """Blocking probability with `servers` lines and Poisson arrivals, blocked calls cleared."""
     if servers <= 0:
@@ -126,6 +134,7 @@ def appendix_h_row(concurrency: int) -> tuple[str, str]:
 
 # ------------------------------------------------------------------------------ the model
 
+
 def size(inp: dict[str, Input]) -> dict:
     v = {k: i.value for k, i in inp.items()}
     out: dict = {"inputs": {k: {"value": i.value, "source": i.source, "note": i.note} for k, i in inp.items()}}
@@ -133,16 +142,20 @@ def size(inp: dict[str, Input]) -> dict:
     # ---- workload: how many calls are in progress at the busiest hour
     avg_calls_hr = v["calls_per_day"] / v["window_hours"]
     peak_calls_hr = avg_calls_hr * v["peak_hour_factor"]
-    offered = peak_calls_hr * v["aht_min"] / 60.0                       # Little's law: L = lambda * W
+    offered = peak_calls_hr * v["aht_min"] / 60.0  # Little's law: L = lambda * W
     cap = cap_for_blocking(offered, v["max_blocking"])
     blocked_peak = erlang_b(offered, cap)
     out["workload"] = {
-        "average_calls_per_hour": round(avg_calls_hr, 1), "peak_calls_per_hour": round(peak_calls_hr, 1),
+        "average_calls_per_hour": round(avg_calls_hr, 1),
+        "peak_calls_per_hour": round(peak_calls_hr, 1),
         "offered_load_erlangs_at_peak": round(offered, 1),
-        "ai_cap_for_blocking_target": cap, "blocking_at_that_cap": round(blocked_peak, 4),
+        "ai_cap_for_blocking_target": cap,
+        "blocking_at_that_cap": round(blocked_peak, 4),
         "configured_cap": int(v["configured_cap"]),
         "blocking_at_configured_cap_peak": round(erlang_b(offered, int(v["configured_cap"])), 4),
-        "blocking_at_configured_cap_average": round(erlang_b(avg_calls_hr * v["aht_min"] / 60.0, int(v["configured_cap"])), 4),
+        "blocking_at_configured_cap_average": round(
+            erlang_b(avg_calls_hr * v["aht_min"] / 60.0, int(v["configured_cap"])), 4
+        ),
         "calls_to_a_person_per_peak_hour": round(peak_calls_hr * blocked_peak, 1),
         "telephony_sessions_needed": math.ceil(offered * 1.5),
         "telephony_note": "AI lines plus overflow to people; 1.5x offered load is REASONED and is the SBC/trunk team's number to confirm",
@@ -195,15 +208,23 @@ def size(inp: dict[str, Input]) -> dict:
         carried = (per_dc - int(v["spare_gpus_per_dc"])) * calls_per_gpu
         # after losing one site, the survivors carry their own share PLUS what fits in their spare
         surviving = int(v["data_centres"]) - 1
-        out["capacity_after_dc_loss_calls"] = int(min(target, math.floor(per_dc * calls_per_gpu * surviving))) if v["active_active"] else int(min(target, math.floor(carried)))
+        out["capacity_after_dc_loss_calls"] = (
+            int(min(target, math.floor(per_dc * calls_per_gpu * surviving)))
+            if v["active_active"]
+            else int(min(target, math.floor(carried)))
+        )
         out["headroom_calls"] = int(math.floor(out["gpus_total"] * calls_per_gpu)) - target
         out["headroom_pct"] = round(100.0 * out["headroom_calls"] / target, 1)
     else:
         out["headroom_calls"] = out["headroom_pct"] = None
 
     stages, gpus = appendix_h_row(target)
-    out["appendix_h_indicative"] = {"tier_for_concurrency": target, "stages": stages, "gpus_per_dc": gpus,
-                                    "status": "INDICATIVE, not measured; the measured result above replaces it"}
+    out["appendix_h_indicative"] = {
+        "tier_for_concurrency": target,
+        "stages": stages,
+        "gpus_per_dc": gpus,
+        "status": "INDICATIVE, not measured; the measured result above replaces it",
+    }
     out["at_capacity"] = at_capacity_statement(target, out)
     return out
 
@@ -223,31 +244,50 @@ def at_capacity_statement(target: int, out: dict) -> str:
 def report(out: dict) -> str:
     w = out["workload"]
     lines = ["# Capacity sizing (KCD-019)", "", "## Workload (arithmetic on the stated and reasoned inputs)", ""]
-    lines += [f"- average {w['average_calls_per_hour']} calls/h; busiest hour {w['peak_calls_per_hour']} calls/h",
-              f"- offered load at peak: {w['offered_load_erlangs_at_peak']} Erlangs (Little's law)",
-              f"- AI cap that keeps refusals under target: {w['ai_cap_for_blocking_target']} "
-              f"(blocking {w['blocking_at_that_cap']:.2%}) -> {w['calls_to_a_person_per_peak_hour']} calls/h go to a person at peak",
-              f"- at the CONFIGURED cap of {w['configured_cap']}: {w['blocking_at_configured_cap_average']:.1%} of calls "
-              f"go to a person in an average hour, {w['blocking_at_configured_cap_peak']:.1%} in the busiest",
-              f"- telephony sessions: {w['telephony_sessions_needed']} ({w['telephony_note']})", "",
-              "## GPUs", ""]
+    lines += [
+        f"- average {w['average_calls_per_hour']} calls/h; busiest hour {w['peak_calls_per_hour']} calls/h",
+        f"- offered load at peak: {w['offered_load_erlangs_at_peak']} Erlangs (Little's law)",
+        f"- AI cap that keeps refusals under target: {w['ai_cap_for_blocking_target']} "
+        f"(blocking {w['blocking_at_that_cap']:.2%}) -> {w['calls_to_a_person_per_peak_hour']} calls/h go to a person at peak",
+        f"- at the CONFIGURED cap of {w['configured_cap']}: {w['blocking_at_configured_cap_average']:.1%} of calls "
+        f"go to a person in an average hour, {w['blocking_at_configured_cap_peak']:.1%} in the busiest",
+        f"- telephony sessions: {w['telephony_sessions_needed']} ({w['telephony_note']})",
+        "",
+        "## GPUs",
+        "",
+    ]
     if out["undetermined"]:
         lines += ["**UNDETERMINED.** These measurements are missing, so no GPU count is stated:", ""]
         lines += [f"- `{m}`" for m in out["undetermined"]]
-        lines += ["", "Run the bake-off (Appendix E) on the target GPU and fill "
-                  "`docs/capacity-measurements.template.json`; nothing else in this report needs to change.", ""]
+        lines += [
+            "",
+            "Run the bake-off (Appendix E) on the target GPU and fill "
+            "`docs/capacity-measurements.template.json`; nothing else in this report needs to change.",
+            "",
+        ]
     else:
-        lines += [f"- one GPU carries {out['calls_per_gpu']} calls at {out['inputs']['target_utilisation']['value']:.0%} utilisation",
-                  f"- **{out['gpus_per_dc']} GPU per data centre** ({out['gpus_total']} total), "
-                  f"headroom {out['headroom_calls']} calls ({out['headroom_pct']}%) over the {out['target_concurrency']}-call target",
-                  f"- capacity after losing one site: {out['capacity_after_dc_loss_calls']} calls"]
+        lines += [
+            f"- one GPU carries {out['calls_per_gpu']} calls at {out['inputs']['target_utilisation']['value']:.0%} utilisation",
+            f"- **{out['gpus_per_dc']} GPU per data centre** ({out['gpus_total']} total), "
+            f"headroom {out['headroom_calls']} calls ({out['headroom_pct']}%) over the {out['target_concurrency']}-call target",
+            f"- capacity after losing one site: {out['capacity_after_dc_loss_calls']} calls",
+        ]
         if out["llm_devices_total"] is not None:
             lines.append(f"- LLM devices needed in total: {out['llm_devices_total']}")
         lines.append("")
     ah = out["appendix_h_indicative"]
-    lines += [f"Appendix H (INDICATIVE) for this tier: {ah['gpus_per_dc']} per DC -- {ah['stages']}.", "",
-              "## At capacity", "", out["at_capacity"], "", "## Inputs", "",
-              "| input | value | source |", "|---|---:|---|"]
+    lines += [
+        f"Appendix H (INDICATIVE) for this tier: {ah['gpus_per_dc']} per DC -- {ah['stages']}.",
+        "",
+        "## At capacity",
+        "",
+        out["at_capacity"],
+        "",
+        "## Inputs",
+        "",
+        "| input | value | source |",
+        "|---|---:|---|",
+    ]
     lines += [f"| {k} | {i['value']} | {i['source']} |" for k, i in out["inputs"].items()]
     return "\n".join(lines) + "\n"
 

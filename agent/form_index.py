@@ -43,9 +43,7 @@ MIN_PAIR_SHARE = 0.4
 INDEX_MIN_FORMS = 400
 
 
-def _bag_bound(
-    form_bag: Counter, form_len: int, win_bag: Counter, win_len: int
-) -> float:
+def _bag_bound(form_bag: Counter, form_len: int, win_bag: Counter, win_len: int) -> float:
     common = 0
     for ch, n in form_bag.items():
         m = win_bag.get(ch)
@@ -109,10 +107,7 @@ class FormTable:
             return False
         hit = self._fuzzy_generic.get(token)
         if hit is None:
-            hit = any(
-                difflib.SequenceMatcher(None, token, g).ratio() >= 0.8
-                for g in self._generic
-            )
+            hit = any(difflib.SequenceMatcher(None, token, g).ratio() >= 0.8 for g in self._generic)
             self._fuzzy_generic[token] = hit
         return hit
 
@@ -150,21 +145,14 @@ class FormTable:
         if not self._forms:
             return None, None, 0.0
         text = " ".join(words)
-        order = (
-            self._candidates(text)
-            if (self.indexed and floor > 0.0)
-            else range(len(self._forms))
-        )
+        order = self._candidates(text) if (self.indexed and floor > 0.0) else range(len(self._forms))
         windows: dict[int, list[tuple[str, Counter, int]]] = {}
 
         def windows_of(width: int):
             if width not in windows:
                 windows[width] = [
                     (w, Counter(w), len(w))
-                    for w in (
-                        " ".join(words[i : i + width])
-                        for i in range(max(1, len(words) - width + 1))
-                    )
+                    for w in (" ".join(words[i : i + width]) for i in range(max(1, len(words) - width + 1)))
                 ]
             return windows[width]
 

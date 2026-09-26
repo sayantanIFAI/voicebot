@@ -16,10 +16,11 @@ router at process startup -- see agent/asr.py for the proven bn loading
 shape; hi and en checkpoints are new and unverified off-pod, same caveat
 as agent/lid.py.
 """
+
 from __future__ import annotations
 
 import dataclasses
-from typing import Awaitable, Callable, Protocol
+from typing import Protocol
 
 from agent.lid import SUPPORTED_LANGUAGES
 
@@ -28,8 +29,7 @@ class ASREngine(Protocol):
     """Whatever agent/asr.py's TurnASR (or its hi/en siblings) exposes.
     The router only ever calls this one method."""
 
-    async def transcribe_utterance(self, wav_path: str):
-        ...
+    async def transcribe_utterance(self, wav_path: str): ...
 
 
 @dataclasses.dataclass
@@ -77,11 +77,11 @@ class HTTPASREngine:
 
     def __init__(self, base_url: str, timeout_s: float = 15.0):
         import httpx
+
         self.base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s)
 
     async def transcribe_utterance(self, wav_path: str):
-        import dataclasses
         r = await self._client.post("/transcribe", json={"wav_path": wav_path})
         r.raise_for_status()
         data = r.json()
@@ -89,6 +89,7 @@ class HTTPASREngine:
         # therefore on the AI4Bharat NeMo fork) for a class that exists
         # specifically so English does NOT need that fork installed.
         from agent.asr import ASRResult
+
         return ASRResult(**{k: v for k, v in data.items() if k in ASRResult.__dataclass_fields__})
 
     async def aclose(self):
@@ -121,9 +122,7 @@ class ASRRouter:
         try:
             return self._engines[language]
         except KeyError as exc:
-            raise UnroutableLanguageError(
-                f"No ASR engine registered for language={language!r}"
-            ) from exc
+            raise UnroutableLanguageError(f"No ASR engine registered for language={language!r}") from exc
 
     async def transcribe(self, language: str, wav_path: str):
         """Convenience wrapper for the common `commit` routing decision."""
@@ -138,7 +137,6 @@ class ASRRouter:
         what is available. Only when EVERY engine fails does this raise."""
         import asyncio
         import logging
-
         import time
 
         took: dict[str, float] = {}
@@ -151,8 +149,9 @@ class ASRRouter:
                 took[lang] = (time.perf_counter() - t0) * 1000
 
         outcomes = await asyncio.gather(*[timed(lang) for lang in languages], return_exceptions=True)
-        logging.getLogger("asr_router").info("ASR timings (concurrent): %s",
-                                             " | ".join(f"{lang} {int(ms)} ms" for lang, ms in took.items()))
+        logging.getLogger("asr_router").info(
+            "ASR timings (concurrent): %s", " | ".join(f"{lang} {int(ms)} ms" for lang, ms in took.items())
+        )
         good = []
         for lang, out in zip(languages, outcomes):
             if isinstance(out, BaseException):

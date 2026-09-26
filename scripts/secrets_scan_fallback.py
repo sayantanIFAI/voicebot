@@ -9,6 +9,7 @@ clinic-api/setup_db.sh once shipped `DB_PASS="${DB_PASS:-kcd_app_pw}"` --
 an overridable shell default, not a live credential, but exactly the shape
 this scan should flag for a human to confirm.
 """
+
 from __future__ import annotations
 
 import pathlib

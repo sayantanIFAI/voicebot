@@ -3,6 +3,7 @@
 
     python -m pytest tests/test_messages_and_wording.py -v
 """
+
 import datetime
 import os
 import sys
@@ -13,7 +14,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from agent import apology, disclosure, history_templates as ht, messages, patient_context as pc, turn_ack
+from agent import apology, disclosure, messages, turn_ack
+from agent import history_templates as ht
+from agent import patient_context as pc
 from agent.history_intent import detect_history_question
 from agent.persona import is_clean
 from agent.phrases import PHRASES, greeting_text, phrase
@@ -29,13 +32,21 @@ def clean_messages():
 
 
 def payload(**by_key):
-    return {"messages": {k: {lang: {"text": t, "version": 3} for lang, t in v.items()} for k, v in by_key.items()}, "version": 3}
+    return {
+        "messages": {k: {lang: {"text": t, "version": 3} for lang, t in v.items()} for k, v in by_key.items()},
+        "version": 3,
+    }
 
 
 # ================================================================ the cache
 
+
 def test_with_nothing_loaded_the_built_in_text_is_used():
-    assert messages.text("disclosure", "en", "fallback") == "fallback" and messages.stale() and messages.label() == "built-in"
+    assert (
+        messages.text("disclosure", "en", "fallback") == "fallback"
+        and messages.stale()
+        and messages.label() == "built-in"
+    )
 
 
 def test_a_loaded_message_overrides_the_default_for_that_key_and_language_only():
@@ -51,16 +62,19 @@ def test_a_bad_or_empty_payload_never_empties_a_good_cache():
     for bad in (None, {}, {"messages": None}, "oops", {"nothing": 1}):
         messages.load(bad)
         assert messages.text("disclosure", "en", "d") == "Kept."
-    messages.load({"messages": {"disclosure": {"en": {"text": "   "}}}, "version": 1})   # blank text is not a message
+    messages.load({"messages": {"disclosure": {"en": {"text": "   "}}}, "version": 1})  # blank text is not a message
     assert messages.text("disclosure", "en", "d") == "d"
 
 
 def test_the_cache_goes_stale_and_asks_for_a_refresh():
     messages.load(payload(disclosure={"en": "x"}), now=100.0)
-    assert not messages.stale(now=100.0 + messages.REFRESH_AFTER_S - 1) and messages.stale(now=100.0 + messages.REFRESH_AFTER_S + 1)
+    assert not messages.stale(now=100.0 + messages.REFRESH_AFTER_S - 1) and messages.stale(
+        now=100.0 + messages.REFRESH_AFTER_S + 1
+    )
 
 
 # ================================================================ the wording it changes
+
 
 def test_the_disclosure_follows_the_database():
     messages.load(payload(disclosure={"en": "You are speaking with Sonoscan Vaani, an automated helper."}))
@@ -90,7 +104,10 @@ def test_the_greeting_is_only_the_welcome_who_you_are_speaking_with_and_the_ques
 
 def test_any_phrase_can_be_overridden_by_its_key():
     messages.load(payload(unclear={"en": "Pardon? Please say that again."}))
-    assert phrase("unclear", "en") == "Pardon? Please say that again." and phrase("unclear", "bn") == PHRASES["bn"]["unclear"]
+    assert (
+        phrase("unclear", "en") == "Pardon? Please say that again."
+        and phrase("unclear", "bn") == PHRASES["bn"]["unclear"]
+    )
 
 
 def test_the_cannot_find_wording_is_the_operators_and_is_what_every_history_gap_says():
@@ -100,10 +117,14 @@ def test_the_cannot_find_wording_is_the_operators_and_is_what_every_history_gap_
         assert pc.answer_appointments(kind, "en", NOW).text == en
     assert ht.no_record("en")[1] == en and ht.cannot_see("hi")[1] == ht.CANNOT_FIND["hi"]
     messages.load(payload(cannot_find={"en": "Sorry. I cannot find it. Please help me."}))
-    assert ht.cannot_see("en")[1] == "Sorry. I cannot find it. Please help me." and ht.cannot_see("bn")[1] == ht.CANNOT_FIND["bn"]
+    assert (
+        ht.cannot_see("en")[1] == "Sorry. I cannot find it. Please help me."
+        and ht.cannot_see("bn")[1] == ht.CANNOT_FIND["bn"]
+    )
 
 
 # ================================================================ KCD-513: the thank-you
+
 
 def test_the_thanks_opens_every_substantive_reply_when_the_mode_is_always():
     t = turn_ack.AckTracker(mode="always")
@@ -143,8 +164,10 @@ def test_the_varied_mode_is_unchanged():
 
 # ================================================================ KCD-514: simple apologies
 
+
 def sentences(text):
     import re
+
     return [s for s in re.split(r"(?<=[।.?!])\s+", text.strip()) if s]
 
 
@@ -153,12 +176,27 @@ def test_every_apology_is_one_word_of_sorry_then_a_short_plain_sentence():
         for lang, text in table.items():
             parts = sentences(text)
             assert apology.count_apologies(text, lang) == 1, (cause, lang)
-            assert len(parts) == 2 and len(parts[0].split()) <= 2, (cause, lang, text)      # "Sorry." / "দুঃখিত।" / "माफ़ कीजिए।"
+            assert len(parts) == 2 and len(parts[0].split()) <= 2, (
+                cause,
+                lang,
+                text,
+            )  # "Sorry." / "দুঃখিত।" / "माफ़ कीजिए।"
             assert len(parts[1].split()) <= 8, (cause, lang, text)
 
 
-@pytest.mark.parametrize("key", ["asr_empty", "unclear", "reask_low_volume", "reask_noisy", "reask_crosstalk",
-                                 "reask_mumbled", "reask_generic", "reask_final"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "asr_empty",
+        "unclear",
+        "reask_low_volume",
+        "reask_noisy",
+        "reask_crosstalk",
+        "reask_mumbled",
+        "reask_generic",
+        "reask_final",
+    ],
+)
 def test_every_reask_phrase_has_at_most_one_apology_and_short_sentences(key):
     for lang in ("bn", "hi", "en"):
         text = PHRASES[lang][key]
@@ -176,22 +214,32 @@ def test_a_leading_apology_ending_in_a_full_stop_is_recognised_so_a_second_one_i
 
 # ================================================================ KCD-057: ask, kindly, for a louder voice
 
+
 def test_the_quiet_line_asks_for_a_louder_voice_in_three_languages_and_blames_nobody():
     assert "louder" in PHRASES["en"]["reask_low_volume"] and "please" in PHRASES["en"]["reask_low_volume"].lower()
     assert "জোরে" in PHRASES["bn"]["reask_low_volume"] and "ज़ोर से" in PHRASES["hi"]["reask_low_volume"]
     from agent.reask_policy import ReaskTracker
+
     d = ReaskTracker().decide(asr_empty=True, audio_issues=["too_quiet"])
     assert d.action == "reask" and d.phrase_key == "reask_low_volume"
 
 
 # ================================================================ the new history questions
 
-@pytest.mark.parametrize("text,lang,kind", [
-    ("when is my next appointment", "en", "appointments"), ("do I have an appointment", "en", "appointments"),
-    ("আমার পরের অ্যাপয়েন্টমেন্ট কবে", "bn", "appointments"), ("मेरा अगला अपॉइंटमेंट कब है", "hi", "appointments"),
-    ("what medicines was I prescribed", "en", "medicines"), ("my medicines", "en", "medicines"),
-    ("আমার ওষুধ কী ছিল", "bn", "medicines"), ("मेरी दवाइयाँ कौन सी हैं", "hi", "medicines"),
-])
+
+@pytest.mark.parametrize(
+    "text,lang,kind",
+    [
+        ("when is my next appointment", "en", "appointments"),
+        ("do I have an appointment", "en", "appointments"),
+        ("আমার পরের অ্যাপয়েন্টমেন্ট কবে", "bn", "appointments"),
+        ("मेरा अगला अपॉइंटमेंट कब है", "hi", "appointments"),
+        ("what medicines was I prescribed", "en", "medicines"),
+        ("my medicines", "en", "medicines"),
+        ("আমার ওষুধ কী ছিল", "bn", "medicines"),
+        ("मेरी दवाइयाँ कौन सी हैं", "hi", "medicines"),
+    ],
+)
 def test_appointment_and_medicine_questions_are_recognised(text, lang, kind):
     assert detect_history_question(text, lang).kind == kind
 
@@ -204,17 +252,32 @@ def test_a_test_history_question_is_still_a_test_history_question():
 
 def med_event(i, name, days_ago, bn=None, hi=None):
     on = (NOW.date() - datetime.timedelta(days=days_ago)).isoformat()
-    return {"id": f"medicine_prescribed:{i}", "kind": "medicine_prescribed",
-            "fields": {"medicine_name": name, "medicine_name_bn": bn, "medicine_name_hi": hi, "prescribed_on": on}}
+    return {
+        "id": f"medicine_prescribed:{i}",
+        "kind": "medicine_prescribed",
+        "fields": {"medicine_name": name, "medicine_name_bn": bn, "medicine_name_hi": hi, "prescribed_on": on},
+    }
 
 
 def test_medicines_are_stated_as_a_fact_with_a_date_in_the_callers_script_and_nothing_more():
-    tl = {"success": True, "as_of": NOW.isoformat(),
-          "events": [med_event(1, "Metformin", 70, "মেটফর্মিন", "मेटफॉर्मिन"), med_event(2, "Metformin", 200), med_event(3, "Amlodipine", 71)]}
+    tl = {
+        "success": True,
+        "as_of": NOW.isoformat(),
+        "events": [
+            med_event(1, "Metformin", 70, "মেটফর্মিন", "मेटफॉर्मिन"),
+            med_event(2, "Metformin", 200),
+            med_event(3, "Amlodipine", 71),
+        ],
+    }
     en = pc.answer_medicines(tl, "en", NOW)
-    assert [i for i, _ in en.statements] == ["medicine_prescribed:1", "medicine_prescribed:3"]     # latest of each, newest first
+    assert [i for i, _ in en.statements] == [
+        "medicine_prescribed:1",
+        "medicine_prescribed:3",
+    ]  # latest of each, newest first
     assert "Metformin was prescribed to you on" in en.text
-    assert "মেটফর্মিন" in pc.answer_medicines(tl, "bn", NOW).text and "मेटफॉर्मिन" in pc.answer_medicines(tl, "hi", NOW).text
+    assert (
+        "মেটফর্মিন" in pc.answer_medicines(tl, "bn", NOW).text and "मेटफॉर्मिन" in pc.answer_medicines(tl, "hi", NOW).text
+    )
     for word in ("dose", "take", "should", "mg", "safe", "advise"):
         assert word not in en.text.lower()
 
@@ -222,26 +285,58 @@ def test_medicines_are_stated_as_a_fact_with_a_date_in_the_callers_script_and_no
 def test_no_medicine_on_record_or_a_stale_record_says_it_cannot_find_or_confirm():
     fresh = {"success": True, "as_of": NOW.isoformat(), "events": []}
     assert pc.answer_medicines(fresh, "en", NOW).ids == ["cannot_see"]
-    stale = {"success": True, "as_of": (NOW - datetime.timedelta(hours=30)).isoformat(), "events": [med_event(1, "X", 5)]}
+    stale = {
+        "success": True,
+        "as_of": (NOW - datetime.timedelta(hours=30)).isoformat(),
+        "events": [med_event(1, "X", 5)],
+    }
     assert pc.answer_medicines(stale, "en", NOW).ids == ["cannot_confirm"]
 
 
 def test_appointment_and_test_statements_use_the_callers_script_when_the_record_carries_it():
-    ev = {"id": "test_performed:9", "kind": "test_performed",
-          "fields": {"test_name": "CBC", "test_name_bn": "সিবিসি", "test_name_hi": "सीबीसी", "performed_on": "2026-08-01"}}
+    ev = {
+        "id": "test_performed:9",
+        "kind": "test_performed",
+        "fields": {
+            "test_name": "CBC",
+            "test_name_bn": "সিবিসি",
+            "test_name_hi": "सीबीसी",
+            "performed_on": "2026-08-01",
+        },
+    }
     assert "সিবিসি" in ht.test_performed_statement(ev, "bn")[1] and "सीबीसी" in ht.test_performed_statement(ev, "hi")[1]
     assert "CBC" in ht.test_performed_statement(ev, "en")[1]
 
 
 # ================================================================ the persona over every new template
 
+
 def _all_new_templates():
-    from agent import entity_confirmation as ec, security_check as scq, senior_care as sen
+    from agent import entity_confirmation as ec
+    from agent import security_check as scq
+    from agent import senior_care as sen
     from agent.phrases import EMERGENCY_HINT
-    tables = [scq.INTRO, scq.DID_NOT_UNDERSTAND, scq.NOT_MATCHED, scq.VERIFIED, scq.FAILED, scq.FIND_BY_DETAILS,
-              *scq.QUESTION.values(), sen.OPENING, sen.CLOSING, sen.PATIENCE, sen.WARM_ACK,
-              ec.CONFIRM_NAME, ec.CONFIRM_NUMBER, ec.REASK, EMERGENCY_HINT, ht.CANNOT_FIND, turn_ack.THANKS,
-              disclosure.DISCLOSURE]
+
+    tables = [
+        scq.INTRO,
+        scq.DID_NOT_UNDERSTAND,
+        scq.NOT_MATCHED,
+        scq.VERIFIED,
+        scq.FAILED,
+        scq.FIND_BY_DETAILS,
+        *scq.QUESTION.values(),
+        sen.OPENING,
+        sen.CLOSING,
+        sen.PATIENCE,
+        sen.WARM_ACK,
+        ec.CONFIRM_NAME,
+        ec.CONFIRM_NUMBER,
+        ec.REASK,
+        EMERGENCY_HINT,
+        ht.CANNOT_FIND,
+        turn_ack.THANKS,
+        disclosure.DISCLOSURE,
+    ]
     for table in tables:
         for lang, text in table.items():
             yield lang, text
@@ -261,15 +356,23 @@ def test_the_operators_cannot_find_wording_and_the_thanks_pass_the_same_checks_t
 
 # ================================================================ tools/check_messages.py
 
+
 def test_the_message_checker_passes_the_built_in_wording_and_catches_a_bad_edit():
     sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
     import check_messages as cm
-    good = {"disclosure": {lg: {"text": t} for lg, t in disclosure.DISCLOSURE.items()},
-            "cannot_find": {lg: {"text": t} for lg, t in ht.CANNOT_FIND.items()},
-            "thanks_ack": {lg: {"text": t} for lg, t in turn_ack.THANKS.items()}}
+
+    good = {
+        "disclosure": {lg: {"text": t} for lg, t in disclosure.DISCLOSURE.items()},
+        "cannot_find": {lg: {"text": t} for lg, t in ht.CANNOT_FIND.items()},
+        "thanks_ack": {lg: {"text": t} for lg, t in turn_ack.THANKS.items()},
+    }
     assert cm.check_all(good) == {}
-    bad = {"thanks_ack": {"en": {"text": "Sorry, sorry. Don't worry, it is probably nothing, and you should take rest 2 times."}},
-           "disclosure": {"en": {"text": "Welcome to the clinic."}}}
+    bad = {
+        "thanks_ack": {
+            "en": {"text": "Sorry, sorry. Don't worry, it is probably nothing, and you should take rest 2 times."}
+        },
+        "disclosure": {"en": {"text": "Welcome to the clinic."}},
+    }
     found = cm.check_all(bad)
     text = " ".join(p for v in found.values() for p in v)
     assert ("thanks_ack", "en") in found and ("disclosure", "en") in found

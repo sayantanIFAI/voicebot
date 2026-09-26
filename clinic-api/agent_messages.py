@@ -14,15 +14,13 @@ The operator owns the wording. `tools/check_messages.py` runs the persona checks
 apology, sentence length, no hedging or reassurance) over what is in the database so a change can
 be checked before callers hear it.
 """
+
 from __future__ import annotations
-
-import datetime
-
-from sqlalchemy.orm import Session
 
 from booking_service import _now
 from models import AgentMessage
 from registry import audit
+from sqlalchemy.orm import Session
 
 LANGS = ("bn", "hi", "en")
 MAX_TEXT_CHARS = 600
@@ -64,8 +62,11 @@ def seed_defaults(db: Session) -> int:
         for lang, text in by_lang.items():
             row = db.query(AgentMessage).filter_by(key=key, lang=lang).first()
             if row is None:
-                db.add(AgentMessage(key=key, lang=lang, text=text, version=1, active=True,
-                                    updated_at=_now(), updated_by="seed"))
+                db.add(
+                    AgentMessage(
+                        key=key, lang=lang, text=text, version=1, active=True, updated_at=_now(), updated_by="seed"
+                    )
+                )
                 n += 1
             elif row.updated_by == "seed" and row.text in SUPERSEDED.get((key, lang), ()):
                 row.text, row.version, row.updated_at = text, row.version + 1, _now()
@@ -87,8 +88,7 @@ def get_messages(db: Session, lang: str | None = None) -> dict:
     return {"messages": out, "version": top}
 
 
-def set_message(db: Session, key: str, lang: str, text: str, updated_by: str = "operator",
-                active: bool = True) -> dict:
+def set_message(db: Session, key: str, lang: str, text: str, updated_by: str = "operator", active: bool = True) -> dict:
     key = (key or "").strip()
     if not key or lang not in LANGS:
         return {"success": False, "reason": "invalid_key_or_language"}
@@ -97,8 +97,9 @@ def set_message(db: Session, key: str, lang: str, text: str, updated_by: str = "
         return {"success": False, "reason": "invalid_text"}
     row = db.query(AgentMessage).filter_by(key=key, lang=lang).first()
     if row is None:
-        row = AgentMessage(key=key, lang=lang, text=text, version=1, active=active, updated_at=_now(),
-                           updated_by=updated_by)
+        row = AgentMessage(
+            key=key, lang=lang, text=text, version=1, active=active, updated_at=_now(), updated_by=updated_by
+        )
         db.add(row)
     elif row.text != text or row.active != active:
         row.text, row.active, row.version = text, active, row.version + 1

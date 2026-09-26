@@ -10,6 +10,7 @@ sounds; a person has to.
 
 Then set TTS_SPEAKER=<name> in deploy/env.sh and restart the TTS service.
 """
+
 import argparse
 import os
 import sys

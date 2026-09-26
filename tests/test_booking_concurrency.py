@@ -11,6 +11,7 @@ key plus SQLite's serialized writers mean exactly one INSERT for the same
 
     python -m pytest tests/test_booking_concurrency.py -v
 """
+
 import concurrent.futures
 import os
 import sys
@@ -30,13 +31,23 @@ def clinic_modules():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+    ):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod
+
     seed_mod.seed()
     import booking_migrate
+
     booking_migrate.migrate_booking_schema()
     booking_migrate.finish_booking_schema_setup()
     import booking_service as bs
@@ -65,6 +76,7 @@ def test_thirty_simultaneous_holds_produce_exactly_one_success(clinic_modules):
     # A weekday this doctor actually sits -- seed.py's SHIFT_TEMPLATES only
     # cover Mon-Sat, so pick the next Monday to be schedule-agnostic.
     import datetime
+
     # CodeRabbit-flagged: start tomorrow, not today -- see
     # test_booking_service.py's _next_weekday for why (same-day chamber
     # hours already past would make available_slots() correctly empty).
@@ -103,6 +115,7 @@ def test_the_two_losers_get_useful_alternatives(clinic_modules):
     bs, db_mod, m = clinic_modules
     doctor_id = _first_doctor_id(db_mod, m)
     import datetime
+
     # CodeRabbit-flagged: start tomorrow, not today -- see
     # test_booking_service.py's _next_weekday for why (same-day chamber
     # hours already past would make available_slots() correctly empty).

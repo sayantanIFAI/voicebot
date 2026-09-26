@@ -11,6 +11,7 @@ half of catching that.
 
     python -m pytest tests/test_register_consistency_e29.py -v
 """
+
 import pathlib
 import re
 

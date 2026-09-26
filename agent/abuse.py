@@ -145,9 +145,7 @@ def is_abusive(text: str) -> bool:
 def response_key(count: int) -> str:
     """Which fixed line answers the `count`-th abusive turn of this call (1-based): the boundary, a plainer boundary,
     then the courteous close."""
-    return (
-        "abuse_first" if count <= 1 else "abuse_second" if count == 2 else "abuse_final"
-    )
+    return "abuse_first" if count <= 1 else "abuse_second" if count == 2 else "abuse_final"
 
 
 def closes_the_call(count: int) -> bool:

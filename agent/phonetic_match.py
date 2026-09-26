@@ -18,6 +18,7 @@ Devanagari consonant inventories, so a name folded in one script can be
 compared against a name folded in another once both are transliterated
 to the same class alphabet.
 """
+
 from __future__ import annotations
 
 import re
@@ -70,18 +71,37 @@ def _fold_latin(name: str) -> str:
 # collapses. Matras (vowel signs) and the virama are stripped entirely --
 # folding is consonant-skeleton only, same principle as Latin Soundex.
 _BENGALI_CLASS = {
-    "ব": "1", "ভ": "1", "প": "1", "ফ": "1",
-    "ক": "2", "খ": "2", "গ": "2", "ঘ": "2",
-    "চ": "2", "ছ": "2", "জ": "2", "ঝ": "2",
-    "শ": "2", "ষ": "2", "স": "2",
-    "ড": "3", "ঢ": "3", "দ": "3", "ধ": "3", "ট": "3", "ঠ": "3", "ত": "3", "থ": "3",
+    "ব": "1",
+    "ভ": "1",
+    "প": "1",
+    "ফ": "1",
+    "ক": "2",
+    "খ": "2",
+    "গ": "2",
+    "ঘ": "2",
+    "চ": "2",
+    "ছ": "2",
+    "জ": "2",
+    "ঝ": "2",
+    "শ": "2",
+    "ষ": "2",
+    "স": "2",
+    "ড": "3",
+    "ঢ": "3",
+    "দ": "3",
+    "ধ": "3",
+    "ট": "3",
+    "ঠ": "3",
+    "ত": "3",
+    "থ": "3",
     "ল": "4",
-    "ম": "5", "ন": "5", "ণ": "5",
+    "ম": "5",
+    "ন": "5",
+    "ণ": "5",
     "র": "6",
 }
 
-_BENGALI_VOWEL_SIGNS = re.compile(
-    r"[া-ৌৗঁ-ঃ্]")  # matras, chandrabindu, anusvara, visarga, virama
+_BENGALI_VOWEL_SIGNS = re.compile(r"[া-ৌৗঁ-ঃ্]")  # matras, chandrabindu, anusvara, visarga, virama
 
 # CodeRabbit-flagged, real bug: ড়/ঢ় (flap consonants, class "6" same as
 # র) are in Unicode's NFC composition EXCLUSION list for Bengali/
@@ -113,18 +133,38 @@ def _fold_bengali(name: str) -> str:
 # ----------------------------------------------------------- Devanagari
 
 _DEVANAGARI_CLASS = {
-    "ब": "1", "भ": "1", "प": "1", "फ": "1", "व": "1",
-    "क": "2", "ख": "2", "ग": "2", "घ": "2",
-    "च": "2", "छ": "2", "ज": "2", "झ": "2",
-    "श": "2", "ष": "2", "स": "2",
-    "ड": "3", "ढ": "3", "द": "3", "ध": "3", "ट": "3", "ठ": "3", "त": "3", "थ": "3",
+    "ब": "1",
+    "भ": "1",
+    "प": "1",
+    "फ": "1",
+    "व": "1",
+    "क": "2",
+    "ख": "2",
+    "ग": "2",
+    "घ": "2",
+    "च": "2",
+    "छ": "2",
+    "ज": "2",
+    "झ": "2",
+    "श": "2",
+    "ष": "2",
+    "स": "2",
+    "ड": "3",
+    "ढ": "3",
+    "द": "3",
+    "ध": "3",
+    "ट": "3",
+    "ठ": "3",
+    "त": "3",
+    "थ": "3",
     "ल": "4",
-    "म": "5", "न": "5", "ण": "5",
+    "म": "5",
+    "न": "5",
+    "ण": "5",
     "र": "6",
 }
 
-_DEVANAGARI_VOWEL_SIGNS = re.compile(
-    r"[ा-ौ॑-ॗऀ-ः़्]")  # matras, accents, nasals, virama, nukta
+_DEVANAGARI_VOWEL_SIGNS = re.compile(r"[ा-ौ॑-ॗऀ-ः़्]")  # matras, accents, nasals, virama, nukta
 
 
 # Same NFC composition-exclusion issue as _BENGALI_FLAPS above, same fix.

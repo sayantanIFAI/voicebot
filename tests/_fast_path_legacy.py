@@ -44,6 +44,7 @@ where a pattern-matcher's failure mode is silent and wrong. The fast path
 handles the questions with one entity and no PII, and hands over anything
 else. Abstaining is a first-class result here, not a failure.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -78,20 +79,27 @@ COMMIT_FLOOR = 0.72
 # in this codebase.
 FAQ_COMMIT_FLOOR = 0.72
 
-_RATE_CUES = ("রেট", "দাম", "খরচ", "চার্জ", "মূল্য", "কত টাকা", "কত পড়বে",
-              "কত লাগবে", "কত নেবে", "প্রাইস", "টাকা লাগে")
-_AVAIL_CUES = ("কবে", "কখন", "বসবেন", "বসেন", "চেম্বার", "আছেন", "থাকবেন",
-               "পাওয়া যাবে", "ভিজিট", "সময়সূচি", "শিডিউল")
-_BOOK_CUES = ("বুক", "বুকিং", "অ্যাপয়েন্টমেন্ট", "অ্যাপয়েনমেন্ট", "সিরিয়াল",
-              "নাম লেখা", "স্লট")
+_RATE_CUES = ("রেট", "দাম", "খরচ", "চার্জ", "মূল্য", "কত টাকা", "কত পড়বে", "কত লাগবে", "কত নেবে", "প্রাইস", "টাকা লাগে")
+_AVAIL_CUES = ("কবে", "কখন", "বসবেন", "বসেন", "চেম্বার", "আছেন", "থাকবেন", "পাওয়া যাবে", "ভিজিট", "সময়সূচি", "শিডিউল")
+_BOOK_CUES = ("বুক", "বুকিং", "অ্যাপয়েন্টমেন্ট", "অ্যাপয়েনমেন্ট", "সিরিয়াল", "নাম লেখা", "স্লট")
 # What must the caller DO before/for a test -- distinct from _RATE_CUES
 # ("কত টাকা") and _AVAIL_CUES (a DOCTOR's schedule), so a test-prep
 # question never gets misrouted as a price or a doctor question even
 # though all three can mention a test/doctor name in the same sentence
 # shape.
-_PREP_CUES = ("প্রস্তুতি", "উপবাস", "উপোস", "খালি পেটে", "ফাস্টিং", "আগে কী করতে হবে",
-              "আগে কি করতে হবে", "কী মানতে হবে", "কি মানতে হবে", "খাওয়া যাবে কিনা",
-              "আগে খাওয়া যাবে")
+_PREP_CUES = (
+    "প্রস্তুতি",
+    "উপবাস",
+    "উপোস",
+    "খালি পেটে",
+    "ফাস্টিং",
+    "আগে কী করতে হবে",
+    "আগে কি করতে হবে",
+    "কী মানতে হবে",
+    "কি মানতে হবে",
+    "খাওয়া যাবে কিনা",
+    "আগে খাওয়া যাবে",
+)
 _GREETING_CUES = ("নমস্কার", "নমষ্কার", "হ্যালো", "হ্যালো?", "শুভ সকাল", "আসসালামু")
 _THANKS_CUES = ("ধন্যবাদ", "থ্যাঙ্ক", "থ্যাংক")
 
@@ -103,8 +111,7 @@ _RELATIVE_DAYS = {"আজ": 0, "আজকে": 0, "কাল": 1, "আগাম�
 # Words that make an utterance more than a simple lookup: a comparison, a
 # list request, a negation, a follow-up. Cheap insurance -- if any appear,
 # abstain rather than answer half the question.
-_COMPLEXITY_CUES = ("সব", "সবগুলো", "তালিকা", "কোন কোন", "আর", "এবং", "না",
-                    "নাকি", "বদলে", "চেয়ে", "ছাড়া", "কিন্তু", "অন্য")
+_COMPLEXITY_CUES = ("সব", "সবগুলো", "তালিকা", "কোন কোন", "আর", "এবং", "না", "নাকি", "বদলে", "চেয়ে", "ছাড়া", "কিন্তু", "অন্য")
 
 _RE_WS = re.compile(r"\s+")
 _RE_PUNCT = re.compile(r"[।?!,.;:'\"()\-]+")
@@ -128,7 +135,7 @@ def _best_window_ratio(needle: str, haystack_words: list[str]) -> float:
     best = 0.0
     for width in {max(1, span - 1), span, span + 1}:
         for i in range(max(1, len(haystack_words) - width + 1)):
-            window = " ".join(haystack_words[i:i + width])
+            window = " ".join(haystack_words[i : i + width])
             best = max(best, difflib.SequenceMatcher(None, needle, window).ratio())
     return best
 
@@ -204,8 +211,15 @@ class FastPathResult:
 
 
 def _empty_slots(**kw) -> dict:
-    slots = {"test_name": None, "doctor_name": None, "date": None,
-             "time_slot": None, "patient_name": None, "phone": None, "faq_topic": None}
+    slots = {
+        "test_name": None,
+        "doctor_name": None,
+        "date": None,
+        "time_slot": None,
+        "patient_name": None,
+        "phone": None,
+        "faq_topic": None,
+    }
     slots.update(kw)
     return slots
 
@@ -256,7 +270,7 @@ class FastPath:
         broken down by which kind of question is being served instantly
         vs. falling through to the LLM."""
         self.stats["served"] += 1
-        fast_path_served.record(intent, "served", "bn")   # this module is Bengali-only today
+        fast_path_served.record(intent, "served", "bn")  # this module is Bengali-only today
 
     def _resolve_date(self, text: str) -> tuple[str | None, bool]:
         """-> (iso_date_or_None, is_confident). Not confident means the
@@ -309,8 +323,7 @@ class FastPath:
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_rate")
                 logger.info("fast path: test_rate %r (%.2f) from %r", name, score, transcript)
-                return FastPathResult("test_rate", _empty_slots(test_name=form or name),
-                                      score, matched_form=form)
+                return FastPathResult("test_rate", _empty_slots(test_name=form or name), score, matched_form=form)
             self._abstain("below_commit_floor", "test_rate")
             return None
 
@@ -319,8 +332,7 @@ class FastPath:
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_prep")
                 logger.info("fast path: test_prep %r (%.2f) from %r", name, score, transcript)
-                return FastPathResult("test_prep", _empty_slots(test_name=form or name),
-                                      score, matched_form=form)
+                return FastPathResult("test_prep", _empty_slots(test_name=form or name), score, matched_form=form)
             self._abstain("below_commit_floor", "test_prep")
             return None
 
@@ -334,11 +346,10 @@ class FastPath:
                 self._abstain("date_not_confident", "doctor_availability")
                 return None
             self._serve("doctor_availability")
-            logger.info("fast path: doctor_availability %r (%.2f) date=%s from %r",
-                        name, score, date_iso, transcript)
-            return FastPathResult("doctor_availability",
-                                  _empty_slots(doctor_name=form or name, date=date_iso),
-                                  score, matched_form=form)
+            logger.info("fast path: doctor_availability %r (%.2f) date=%s from %r", name, score, date_iso, transcript)
+            return FastPathResult(
+                "doctor_availability", _empty_slots(doctor_name=form or name, date=date_iso), score, matched_form=form
+            )
 
         # No rate/prep/availability cue at all -- try the FAQ topic table
         # before falling through to greeting/thanks/abstain. Deliberately
@@ -350,18 +361,15 @@ class FastPath:
         if faq_topic and faq_score >= FAQ_COMMIT_FLOOR:
             self._serve("clinic_faq")
             logger.info("fast path: clinic_faq %r (%.2f) from %r", faq_topic, faq_score, transcript)
-            return FastPathResult("clinic_faq", _empty_slots(faq_topic=faq_topic),
-                                  faq_score, matched_form=faq_form)
+            return FastPathResult("clinic_faq", _empty_slots(faq_topic=faq_topic), faq_score, matched_form=faq_form)
 
         # Pure greeting or thanks, with no entity and no question in it.
         if _any_cue(text, _GREETING_CUES) and len(text.split()) <= 4:
             self._serve("smalltalk")
-            return FastPathResult("smalltalk", _empty_slots(), 1.0,
-                                  direct_reply_bn="নমস্কার, কী সাহায্য করতে পারি?")
+            return FastPathResult("smalltalk", _empty_slots(), 1.0, direct_reply_bn="নমস্কার, কী সাহায্য করতে পারি?")
         if _any_cue(text, _THANKS_CUES) and len(text.split()) <= 4:
             self._serve("smalltalk")
-            return FastPathResult("smalltalk", _empty_slots(), 1.0,
-                                  direct_reply_bn="ধন্যবাদ। আর কিছু জানতে চান?")
+            return FastPathResult("smalltalk", _empty_slots(), 1.0, direct_reply_bn="ধন্যবাদ। আর কিছু জানতে চান?")
 
         self._abstain("no_cue_matched")
         return None

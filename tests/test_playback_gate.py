@@ -6,6 +6,7 @@ lifts the gate when the client never reports completion.
 
     python -m pytest tests/test_playback_gate.py -v
 """
+
 import os
 import sys
 
@@ -43,7 +44,7 @@ def test_clips_queued_on_the_client_extend_the_deadline_cumulatively():
     g.release()
     g.hold(2.0)
     first_deadline = g.deadline
-    g.hold(3.0)                                   # queued behind the first: plays after it ends
+    g.hold(3.0)  # queued behind the first: plays after it ends
     # extended from the FIRST deadline, not replaced by "now + 3": the second clip
     # cannot start until the first has finished. (The backstop guard is added per
     # clip -- it only ever lengthens the safety net, never the gate's real closing.)
@@ -69,7 +70,7 @@ def test_the_backstop_lifts_the_gate_if_playback_done_never_arrives():
     c.t += 1.0 + PLAYBACK_GUARD_S - 0.01
     assert g.blocked()
     c.t += 0.02
-    assert not g.blocked()                        # deadline passed: released
+    assert not g.blocked()  # deadline passed: released
     assert g.backstop_releases == 1 and g.resync_pending
 
 
@@ -78,7 +79,7 @@ def test_the_backstop_is_counted_only_when_it_actually_fired():
     g = PlaybackGate(clock=c)
     g.release()
     g.hold(0.5)
-    g.release()                                   # the client did report
+    g.release()  # the client did report
     c.t += 100.0
     assert not g.blocked() and g.backstop_releases == 0
 

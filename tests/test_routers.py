@@ -3,6 +3,7 @@ logic only, with fake engines. No GPU, no models, no pod.
 
     python -m pytest tests/test_routers.py -v
 """
+
 import os
 import sys
 
@@ -10,8 +11,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from agent.asr_router import ASRRouter, UnroutableLanguageError as ASRUnroutable
-from agent.tts_router import TTSRouter, UnroutableLanguageError as TTSUnroutable
+from agent.asr_router import ASRRouter
+from agent.asr_router import UnroutableLanguageError as ASRUnroutable
+from agent.tts_router import TTSRouter
+from agent.tts_router import UnroutableLanguageError as TTSUnroutable
 
 
 class _FakeASREngine:

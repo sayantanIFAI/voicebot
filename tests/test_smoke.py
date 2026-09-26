@@ -17,8 +17,8 @@ test_unknown_doctor_is_not_fuzzy_matched and test_unknown_test_not_matched.
 Both encode bugs this project already hit -- a confidently wrong answer is
 far worse here than an admitted miss.
 """
+
 import asyncio
-import json
 import os
 import sys
 
@@ -28,13 +28,13 @@ sys.path.insert(0, "/workspace/kolkata-care-voice-agent")
 
 import httpx
 
-from agent.bn_normalize import verbalize, number_to_bn_words, unspeakable_spans
 # NB: import the MODULE, not the names. reply_templates.test_rate_reply
 # starts with "test_", so a direct import makes pytest try to collect it as
 # a test case and fail on its (slots, result) signature.
 import agent.reply_templates as rt
+from agent.bn_normalize import number_to_bn_words, unspeakable_spans, verbalize
 from agent.llm import extract_intent
-from agent.tools_client import ClinicToolsClient, ToolCallError
+from agent.tools_client import ClinicToolsClient
 from agent.tts import TTSClient
 
 CLINIC = "http://localhost:8080"
@@ -47,6 +47,8 @@ def _clinic_headers() -> dict:
     unchanged; the request now carries the token the deployment already has, exactly as agent/tools_client.py does."""
     token = os.environ.get("CLINIC_API_TOKEN", "")
     return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 AGENT = "http://localhost:8100"
 TTS = "http://localhost:8002"
 
@@ -54,6 +56,7 @@ TTS = "http://localhost:8002"
 # ===================================================================
 # 1. Pure functions -- no network, no GPU
 # ===================================================================
+
 
 class TestBengaliNormalization:
     """The tokenizer drops Latin digits outright, so every number must be
@@ -66,8 +69,7 @@ class TestBengaliNormalization:
 
     def test_verbalize_removes_latin_digits(self):
         out = verbalize("লিপিড প্রোফাইল টেস্টের রেট 650 টাকা")
-        assert not any(c.isdigit() for c in out), \
-            f"Latin digits survived verbalize(): {out!r}"
+        assert not any(c.isdigit() for c in out), f"Latin digits survived verbalize(): {out!r}"
 
     def test_verbalize_handles_multiple_numbers(self):
         out = verbalize("রেট 250 টাকা, রিপোর্ট 12 ঘণ্টা")
@@ -88,15 +90,19 @@ class TestReplyTemplates:
     API response, so a hallucinated number cannot reach the caller."""
 
     def test_test_rate_reply_contains_api_price(self):
-        result = {"found": True, "test_name": "Lipid Profile",
-                  "test_name_bn": "লিপিড প্রোফাইল", "rate_inr": 650,
-                  "sample_type": "Blood", "report_time_hours": 24}
+        result = {
+            "found": True,
+            "test_name": "Lipid Profile",
+            "test_name_bn": "লিপিড প্রোফাইল",
+            "rate_inr": 650,
+            "sample_type": "Blood",
+            "report_time_hours": 24,
+        }
         out = rt.test_rate_reply({"test_name": "লিপিড প্রোফাইল"}, result)
         assert "650" in out, f"price missing from reply: {out!r}"
 
     def test_doctor_availability_reply_uses_api_result(self):
-        result = {"found": True, "doctor_name": "Dr. A. Sen",
-                  "available": False, "next_available_date": "2026-09-03"}
+        result = {"found": True, "doctor_name": "Dr. A. Sen", "available": False, "next_available_date": "2026-09-03"}
         out = rt.doctor_availability_reply({"doctor_name": "সেন"}, result)
         assert isinstance(out, str) and len(out) > 0
 
@@ -104,8 +110,7 @@ class TestReplyTemplates:
         # Doctor-side counterpart of test_rate_reply's ambiguous framing
         # (KCD-446) -- "ask correct questions back" instead of silently
         # picking one of the tied candidates.
-        result = {"found": False, "query": "ry", "ambiguous": True,
-                  "did_you_mean": ["Dr. N. Roy", "Dr. P. Ray"]}
+        result = {"found": False, "query": "ry", "ambiguous": True, "did_you_mean": ["Dr. N. Roy", "Dr. P. Ray"]}
         out = rt.doctor_availability_reply({"doctor_name": "ry"}, result)
         assert "Dr. N. Roy" in out and "Dr. P. Ray" in out
         for lang in ("hi", "en"):
@@ -123,15 +128,14 @@ class TestReplyTemplates:
 # 2. Clinic API -- HTTP + Postgres
 # ===================================================================
 
-class TestClinicAPI:
 
+class TestClinicAPI:
     def test_health(self):
         r = httpx.get(f"{CLINIC}/api/health", timeout=10)
         assert r.status_code == 200
 
     def test_known_test_returns_price(self):
-        r = httpx.get(f"{CLINIC}/api/v1/tests/search",
-                      params={"name": "lipid"}, timeout=10, headers=_clinic_headers())
+        r = httpx.get(f"{CLINIC}/api/v1/tests/search", params={"name": "lipid"}, timeout=10, headers=_clinic_headers())
         assert r.status_code == 200
         body = r.json()
         assert body["found"] is True, f"seeded test not found: {body!r}"
@@ -141,25 +145,27 @@ class TestClinicAPI:
         """REGRESSION: a nonsense query must not fuzzy-match a real test.
         Quoting a real price for a test the caller did not ask about is the
         exact 'Naloxone' failure this project already reproduced once."""
-        r = httpx.get(f"{CLINIC}/api/v1/tests/search",
-                      params={"name": "zzzznotarealtest"}, timeout=10, headers=_clinic_headers())
+        r = httpx.get(
+            f"{CLINIC}/api/v1/tests/search", params={"name": "zzzznotarealtest"}, timeout=10, headers=_clinic_headers()
+        )
         assert r.status_code == 200
         body = r.json()
-        assert body["found"] is False, \
-            f"nonsense query fuzzy-matched a real test: {body!r}"
+        assert body["found"] is False, f"nonsense query fuzzy-matched a real test: {body!r}"
         assert "rate_inr" not in body, "a price leaked on a not-found result"
 
     def test_known_doctor_availability(self):
-        r = httpx.get(f"{CLINIC}/api/v1/doctors/availability",
-                      params={"name": "Sen"}, timeout=10, headers=_clinic_headers())
+        r = httpx.get(
+            f"{CLINIC}/api/v1/doctors/availability", params={"name": "Sen"}, timeout=10, headers=_clinic_headers()
+        )
         assert r.status_code == 200
 
     def test_unknown_doctor_is_not_fuzzy_matched(self):
         """REGRESSION: 'Doctor Nobody' once matched 'Dr. N. Roy' above the
         similarity floor and returned that real doctor's real schedule.
         Fixed by matching on surname only, FUZZY_SURNAME_FLOOR = 0.60."""
-        r = httpx.get(f"{CLINIC}/api/v1/doctors/availability",
-                      params={"name": "Nobody"}, timeout=10, headers=_clinic_headers())
+        r = httpx.get(
+            f"{CLINIC}/api/v1/doctors/availability", params={"name": "Nobody"}, timeout=10, headers=_clinic_headers()
+        )
         assert r.status_code in (200, 404)
         if r.status_code == 200:
             body = r.json()
@@ -171,8 +177,8 @@ class TestClinicAPI:
 # 3. LLM intent extraction
 # ===================================================================
 
-class TestIntentExtraction:
 
+class TestIntentExtraction:
     def test_test_rate_intent(self):
         result, meta = extract_intent("লিপিড প্রোফাইল টেস্টের রেট কত")
         assert result["intent"] == "test_rate"
@@ -188,8 +194,7 @@ class TestIntentExtraction:
         would mean the model is stating numbers on its own authority."""
         result, meta = extract_intent("ইউরিক অ্যাসিড টেস্ট কত টাকা")
         direct = result.get("direct_reply_bn") or ""
-        assert not any(c.isdigit() for c in direct), \
-            f"model volunteered a number: {direct!r}"
+        assert not any(c.isdigit() for c in direct), f"model volunteered a number: {direct!r}"
 
     def test_garbled_input_does_not_crash(self):
         result, meta = extract_intent("অকিওেয ঝিওেয")
@@ -200,17 +205,15 @@ class TestIntentExtraction:
 # 4. TTS
 # ===================================================================
 
-class TestTTS:
 
+class TestTTS:
     def test_health(self):
         r = httpx.get(f"{TTS}/health", timeout=10)
         assert r.status_code == 200
         assert r.json()["status"] == "ok"
 
     def test_synthesize_returns_riff_wav(self):
-        r = httpx.post(f"{TTS}/synthesize",
-                       json={"text": "আপনার রিপোর্ট প্রস্তুত", "lang": "bn"},
-                       timeout=60)
+        r = httpx.post(f"{TTS}/synthesize", json={"text": "আপনার রিপোর্ট প্রস্তুত", "lang": "bn"}, timeout=60)
         assert r.status_code == 200
         assert r.content[:4] == b"RIFF", "not a WAV file"
         assert len(r.content) > 10000
@@ -219,9 +222,7 @@ class TestTTS:
         """A price with digits must produce audio of comparable length to the
         same sentence with the number spelled out -- if the tokenizer drops
         the digits, the clip is noticeably shorter."""
-        with_digits = httpx.post(f"{TTS}/synthesize",
-                                 json={"text": verbalize("রেট 650 টাকা")},
-                                 timeout=60)
+        with_digits = httpx.post(f"{TTS}/synthesize", json={"text": verbalize("রেট 650 টাকা")}, timeout=60)
         assert with_digits.status_code == 200
         assert len(with_digits.content) > 20000
 
@@ -232,9 +233,14 @@ class TestFallbackAudio:
 
     FALLBACK_DIR = "/workspace/kolkata-care-voice-agent/static/fallback_audio"
 
-    @pytest.mark.parametrize("name", [
-        "sorry_repeat.wav", "system_busy.wav", "check_failed.wav",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "sorry_repeat.wav",
+            "system_busy.wav",
+            "check_failed.wav",
+        ],
+    )
     def test_fallback_file_is_a_real_wav(self, name):
         path = os.path.join(self.FALLBACK_DIR, name)
         assert os.path.exists(path), f"missing fallback: {name}"
@@ -247,13 +253,16 @@ class TestFallbackAudio:
 # 5. Full pipeline
 # ===================================================================
 
-class TestPipeline:
 
-    @pytest.mark.parametrize("utterance,expect_intent", [
-        ("লিপিড প্রোফাইল টেস্টের রেট কত", "test_rate"),
-        ("ইউরিক অ্যাসিড টেস্ট কত টাকা", "test_rate"),
-        ("ডক্টর সেন কি আজ চেম্বারে বসবেন", "doctor_availability"),
-    ])
+class TestPipeline:
+    @pytest.mark.parametrize(
+        "utterance,expect_intent",
+        [
+            ("লিপিড প্রোফাইল টেস্টের রেট কত", "test_rate"),
+            ("ইউরিক অ্যাসিড টেস্ট কত টাকা", "test_rate"),
+            ("ডক্টর সেন কি আজ চেম্বারে বসবেন", "doctor_availability"),
+        ],
+    )
     def test_transcript_to_audio(self, utterance, expect_intent):
         async def run():
             tools = ClinicToolsClient(CLINIC)
@@ -267,8 +276,7 @@ class TestPipeline:
                     api = await tools.get_test_rate(slots.get("test_name", ""))
                     reply = rt.test_rate_reply(slots, api)
                 else:
-                    api = await tools.get_doctor_availability(
-                        slots.get("doctor_name", ""), slots.get("date"))
+                    api = await tools.get_doctor_availability(slots.get("doctor_name", ""), slots.get("date"))
                     reply = rt.doctor_availability_reply(slots, api)
 
                 assert reply and len(reply) > 5
@@ -297,8 +305,8 @@ class TestPipeline:
 # 6. Transport -- through the RunPod proxy
 # ===================================================================
 
-class TestTransport:
 
+class TestTransport:
     def test_agent_health(self):
         r = httpx.get(f"{AGENT}/api/health", timeout=15)
         assert r.status_code == 200
@@ -326,8 +334,7 @@ class TestTransport:
             pytest.skip("websockets not installed")
 
         async def probe():
-            async with websockets.connect("ws://localhost:8100/ws/audio",
-                                          open_timeout=15) as ws:
+            async with websockets.connect("ws://localhost:8100/ws/audio", open_timeout=15) as ws:
                 return ws.state.name if hasattr(ws, "state") else "OPEN"
 
         state = asyncio.run(probe())

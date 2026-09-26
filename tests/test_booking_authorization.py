@@ -8,6 +8,7 @@ lookup is unchanged (it is the existing bearer-token access model).
 
     python -m pytest tests/test_booking_authorization.py -v
 """
+
 import datetime
 import os
 import sys
@@ -27,13 +28,23 @@ def clinic_modules():
     os.environ.pop("DATABASE_URL", None)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+    ):
         sys.modules.pop(mod, None)
 
     import seed as seed_mod
+
     seed_mod.seed()
     import booking_migrate
+
     booking_migrate.migrate_booking_schema()
     booking_migrate.finish_booking_schema_setup()
     import booking_service as bs
@@ -73,13 +84,14 @@ def _book(bs, db, m, patient_name: str, phone: str, caller_phone: str | None = N
             hold = bs.hold_slot(db, doc.id, date, slot)
             if hold["success"]:
                 break
-    result = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot,
-                                 patient_name, phone, caller_phone or phone)
+    result = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, patient_name, phone, caller_phone or phone)
     assert result["success"], result
     return result
 
 
-def test_a_stranger_who_states_the_patients_phone_cannot_see_the_booking_via_a_different_caller_identity(clinic_modules):
+def test_a_stranger_who_states_the_patients_phone_cannot_see_the_booking_via_a_different_caller_identity(
+    clinic_modules,
+):
     # This is the legitimate case: the patient's OWN phone IS sufficient
     # (authorize_disclosure returns True for caller_phone == patient.phone).
     bs, db_mod, m = clinic_modules
@@ -97,7 +109,7 @@ def test_an_unrelated_phone_number_gets_nothing_even_if_it_matches_nobody(clinic
     db = db_mod.SessionLocal()
     try:
         _book(bs, db, m, "Ravi Das", "9111111111")
-        rows = bs.lookup_bookings(db, phone="9222222222")   # nobody's number
+        rows = bs.lookup_bookings(db, phone="9222222222")  # nobody's number
         assert rows == []
     finally:
         db.close()
@@ -165,8 +177,9 @@ def test_a_proxy_who_confirms_the_patients_age_is_upgraded_and_authorized(clinic
         doc = _doctor(db, m)
         date = _next_weekday(0)
         hold = bs.hold_slot(db, doc.id, date, "11:00")
-        bs.confirm_booking(db, hold["hold_token"], doc.id, date, "11:00",
-                            "Ravi Das", "9111111111", "9333333333", patient_age=40)
+        bs.confirm_booking(
+            db, hold["hold_token"], doc.id, date, "11:00", "Ravi Das", "9111111111", "9333333333", patient_age=40
+        )
         patient = db.query(m.Patient).filter_by(phone="9111111111").one()
         assert bs.authorize_disclosure(db, patient, "9333333333", confirmed_age=40) is True
         proxy = db.query(m.PatientProxy).filter_by(patient_id=patient.id, caller_phone="9333333333").one()
@@ -184,7 +197,7 @@ def test_reschedule_cannot_be_driven_by_a_strangers_phone_guess(clinic_modules):
     db = db_mod.SessionLocal()
     try:
         _book(bs, db, m, "Ravi Das", "9111111111")
-        found = bs.lookup_bookings(db, phone="9999999999")   # attacker's own number, a guess
+        found = bs.lookup_bookings(db, phone="9999999999")  # attacker's own number, a guess
         assert found == []
         # main.py would now correctly ask the caller for a confirmation_id
         # instead of silently resolving to Ravi Das's appointment.

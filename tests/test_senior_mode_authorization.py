@@ -5,6 +5,7 @@ database.
 
     python -m pytest tests/test_senior_mode_authorization.py -v
 """
+
 import os
 import sys
 import tempfile
@@ -23,17 +24,28 @@ def clinic(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     if CLINIC_API_DIR not in sys.path:
         sys.path.insert(0, CLINIC_API_DIR)
-    for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate",
-                "enquiry_migrate", "i18n_content"):
+    for mod in (
+        "main",
+        "db",
+        "models",
+        "seed",
+        "booking_service",
+        "booking_migrate",
+        "enquiry_migrate",
+        "i18n_content",
+    ):
         sys.modules.pop(mod, None)
     import seed as seed_mod
+
     seed_mod.seed()
     import booking_migrate
+
     booking_migrate.migrate_booking_schema()
     booking_migrate.finish_booking_schema_setup()
     import booking_service as bs
     import db as db_mod
     import models as m
+
     yield bs, db_mod, m
     try:
         os.remove(db_path)
@@ -88,9 +100,15 @@ def test_a_verified_proxy_may_set_the_flag(clinic):
     db = db_mod.SessionLocal()
     try:
         p = _patient(db, m)
-        db.add(m.PatientProxy(patient_id=p.id, caller_phone="9222222222", relationship_label="son",
-                              verified_by="dob_confirmed",
-                              created_at=__import__("datetime").datetime(2030, 1, 1)))
+        db.add(
+            m.PatientProxy(
+                patient_id=p.id,
+                caller_phone="9222222222",
+                relationship_label="son",
+                verified_by="dob_confirmed",
+                created_at=__import__("datetime").datetime(2030, 1, 1),
+            )
+        )
         db.commit()
         assert bs.set_patient_senior(db, "9000000001", True, caller_phone="9222222222") == 1
     finally:
@@ -102,11 +120,18 @@ def test_boolean_columns_have_a_database_default_on_a_fresh_schema(clinic):
     raw insert that omits the column works on one database and fails on the other."""
     bs, db_mod, m = clinic
     from sqlalchemy import text
+
     db = db_mod.SessionLocal()
     try:
-        db.execute(text("INSERT INTO patients (name, phone, created_at) VALUES ('Raw', '9333333333', '2030-01-01 00:00:00')"))
-        db.execute(text("INSERT INTO cancellation_policies (version, effective_from, free_window_hours, charge_percent) "
-                        "VALUES (9, '2031-01-01', 1, 1)"))
+        db.execute(
+            text("INSERT INTO patients (name, phone, created_at) VALUES ('Raw', '9333333333', '2030-01-01 00:00:00')")
+        )
+        db.execute(
+            text(
+                "INSERT INTO cancellation_policies (version, effective_from, free_window_hours, charge_percent) "
+                "VALUES (9, '2031-01-01', 1, 1)"
+            )
+        )
         db.commit()
         row = db.query(m.Patient).filter_by(phone="9333333333").one()
         assert not row.senior_mode

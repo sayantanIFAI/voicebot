@@ -9,6 +9,7 @@ code.
 
     python -m pytest tests/test_clinic_api_new_endpoints.py -v
 """
+
 import os
 import sys
 import tempfile
@@ -36,8 +37,9 @@ def clinic_client():
     for mod in ("main", "db", "models", "seed", "booking_service", "booking_migrate", "enquiry_migrate"):
         sys.modules.pop(mod, None)
 
-    import main as clinic_main  # noqa: PLC0415
     from fastapi.testclient import TestClient
+
+    import main as clinic_main  # noqa: PLC0415
 
     with TestClient(clinic_main.app) as client:
         yield client
@@ -114,6 +116,7 @@ def test_existing_test_search_endpoint_still_works(clinic_client):
 
 # ============================================================== KCD-446
 
+
 def test_search_offers_near_matches_for_a_genuinely_ambiguous_name(clinic_client):
     # "সুগার" (sugar) alone matches BOTH "Blood Sugar Fasting" (alias
     # "সুগার ফাস্টিং") and "Blood Sugar PP" (alias "পিপি সুগার") equally
@@ -154,6 +157,7 @@ def test_a_genuinely_unambiguous_name_is_not_flagged_ambiguous(clinic_client):
 # instead of a fabricated one. _find_doctor_candidates + the ambiguous/
 # did_you_mean branch below close that gap the same way search_test's did.
 
+
 def test_doctor_availability_offers_a_choice_for_a_genuinely_ambiguous_surname(clinic_client):
     # "Dr. N. Roy" and "Dr. P. Ray" are both seeded (Cardiology). A short,
     # garbled fragment like "ry" scores identically (0.8) against both
@@ -182,13 +186,13 @@ def test_doctor_availability_still_resolves_an_unambiguous_fuzzy_name(clinic_cli
 
 # ============================================================== KCD-449
 
+
 def test_repeating_the_same_question_three_times_gives_the_identical_answer(clinic_client):
-    """"The same question gets the same answer within one call" -- three
+    """ "The same question gets the same answer within one call" -- three
     repeats with the backend unchanged (KCD-444, Done, already keeps
     every hit live -- this is the consistency PROOF that live-fetching
     actually implies, not a new fetch behaviour)."""
-    answers = [clinic_client.get("/api/v1/tests/search", params={"name": "সিবিসি"}).json()
-               for _ in range(3)]
+    answers = [clinic_client.get("/api/v1/tests/search", params={"name": "সিবিসি"}).json() for _ in range(3)]
     assert answers[0] == answers[1] == answers[2]
 
 
@@ -200,6 +204,7 @@ def test_a_real_data_change_is_reflected_on_the_very_next_call(clinic_client):
 
     import db as db_mod  # noqa: PLC0415 - clinic-api module, imported by the fixture's sys.path setup
     import models as m  # noqa: PLC0415
+
     db = db_mod.SessionLocal()
     try:
         test_row = db.query(m.LabTest).filter_by(name="Complete Blood Count (CBC)").one()

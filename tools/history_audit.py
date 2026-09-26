@@ -20,18 +20,32 @@ STATUS.json        optional list of test-status responses retrieved during the c
 
 Exit status 0 when every call is clean, 1 otherwise. `audit()` is the importable form.
 """
+
 import argparse
 import json
 import sys
 
 # Fixed statements that carry no patient data. They are safe by construction and need no origin.
-FIXED_LABELS = frozenset({
-    "cannot_see", "cannot_confirm", "ambiguous", "needs_verification", "no_record",
-    "ask_phone", "ask_which_test", "ok_anything_else",
-    # the security-question conversation (agent/security_check.py): fixed sentences, no patient data
-    "security_question", "security_verified", "security_failed", "security_not_understood",
-    "security_not_matched", "senior_opening", "continuity_offer",
-})
+FIXED_LABELS = frozenset(
+    {
+        "cannot_see",
+        "cannot_confirm",
+        "ambiguous",
+        "needs_verification",
+        "no_record",
+        "ask_phone",
+        "ask_which_test",
+        "ok_anything_else",
+        # the security-question conversation (agent/security_check.py): fixed sentences, no patient data
+        "security_question",
+        "security_verified",
+        "security_failed",
+        "security_not_understood",
+        "security_not_matched",
+        "senior_opening",
+        "continuity_offer",
+    }
+)
 
 
 def audit(events: list[dict], timeline: dict | None, statuses: list[dict] | None = None) -> dict:

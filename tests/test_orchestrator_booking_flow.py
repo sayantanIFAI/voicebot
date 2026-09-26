@@ -8,12 +8,11 @@ main_pcm.py with the pod-only libraries stubbed, and the extractor, ASR and clin
 real is the wiring and the order of the checks. Timing tests use small REAL waits (a fraction of a second) so a
 deadline is a wall-clock fact, not a mocked one.
 """
-import asyncio
+
 import os
 import sys
 import time
 
-import numpy as np
 import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,8 +22,9 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 from _pod_stubs import pod_stubs
 from _synth_voices import FATHER, utterance
-from agent.phrases import phrase
 from test_orchestrator_persona import ASRResult, FakeTTS, FakeWS, _wav
+
+from agent.phrases import phrase
 
 ASK_SCHEDULE = "For the appointment, which doctor, which day and what time?"
 ASK_DAY_TIME = "For the appointment, which day and what time?"
@@ -49,8 +49,13 @@ class FakeTools:
 
     async def confirm_booking(self, hold_token, doctor_id, date, slot, name, phone, **kw):
         self.confirms.append({"hold": hold_token, "date": date, "slot": slot, "name": name, "phone": phone})
-        return {"success": True, "date": date, "time_slot": slot, "confirmation_id": "KCD-1001",
-                "doctor_name": "Dr. A. Sen"}
+        return {
+            "success": True,
+            "date": date,
+            "time_slot": slot,
+            "confirmation_id": "KCD-1001",
+            "doctor_name": "Dr. A. Sen",
+        }
 
     async def cancel_appointment(self, confirmation_id, confirm_charge):
         self.cancels.append(confirmation_id)
@@ -111,6 +116,7 @@ def env(m, monkeypatch, tmp_path):
         before = len(session.ws.spoken())
         await m._dispatch_turn(session, path)
         return session.ws.spoken()[before:]
+
     d.say = say
     d.last = lambda: session.ws.spoken()[-1]
     yield d
@@ -127,12 +133,13 @@ def text_of(said):
 
 # ========================================================================= KCD-103: several fields in one question
 
+
 @pytest.mark.asyncio
 async def test_a_booking_is_collected_with_grouped_questions(m, env):
     said = await book(env, doctor_name="Sen")
-    assert ASK_DAY_TIME in text_of(said)                                # the doctor is known: day and time together
+    assert ASK_DAY_TIME in text_of(said)  # the doctor is known: day and time together
     said = await env.say("tomorrow at ten", "book_appointment", {"date": "2026-10-01", "time_slot": "10:00"})
-    assert ASK_DETAILS in text_of(said)                                 # then the name and number together
+    assert ASK_DETAILS in text_of(said)  # then the name and number together
     said = await env.say("Ravi Das 9876543210", "book_appointment", {"patient_name": "Ravi Das", "phone": "9876543210"})
     assert env.session.booking.stage == "confirming"
     assert env.tools.holds == [("Sen", "2026-10-01", "10:00")]
@@ -150,7 +157,7 @@ async def test_a_partial_answer_keeps_what_was_given_and_asks_the_rest_alone(m, 
     said = await env.say("tomorrow", "book_appointment", {"date": "2026-10-01"})
     st = env.session.booking
     assert st.slots["doctor_name"] == "Sen" and st.slots["date"] == "2026-10-01"
-    assert "what time" in text_of(said).lower() and ASK_DAY_TIME not in text_of(said)     # only the time is asked
+    assert "what time" in text_of(said).lower() and ASK_DAY_TIME not in text_of(said)  # only the time is asked
 
 
 @pytest.mark.asyncio
@@ -172,6 +179,7 @@ async def test_a_distressed_caller_is_asked_one_thing_at_a_time(m, env):
 @pytest.mark.asyncio
 async def test_a_grouped_question_is_never_more_than_the_normal_policy_allows(m, env):
     from agent.speech_policy import check_reply
+
     said = await env.say("I want to book", "book_appointment", {})
     assert check_reply(said[-1], env.session.policy) == []
 
@@ -203,9 +211,9 @@ async def test_a_question_at_any_stage_is_answered_and_the_caller_is_brought_bac
     stage_before = st.stage
     said = await env.say("what does the CBC cost", "test_rate", {"test_name": "CBC"})
     spoken = text_of(said)
-    assert PRICE in spoken and BACK in spoken                              # answered, then back to the booking
-    assert env.session.booking is st and dict(st.slots) == before          # nothing captured was lost or changed
-    assert st.stage == stage_before                                        # and the step it was at is still pending
+    assert PRICE in spoken and BACK in spoken  # answered, then back to the booking
+    assert env.session.booking is st and dict(st.slots) == before  # nothing captured was lost or changed
+    assert st.stage == stage_before  # and the step it was at is still pending
     if stage == "confirming":
         assert "Shall I confirm it?" in spoken
 
@@ -217,8 +225,11 @@ async def test_after_the_aside_the_booking_carries_on_from_where_it_was(m, env, 
     await env.say("what does the CBC cost", "test_rate", {"test_name": "CBC"})
     st = env.session.booking
     # finish it with everything still missing, in one go
-    await env.say("all of it", "book_appointment", {"date": "2026-10-01", "time_slot": "10:00",
-                                                    "patient_name": "Ravi Das", "phone": "9876543210"})
+    await env.say(
+        "all of it",
+        "book_appointment",
+        {"date": "2026-10-01", "time_slot": "10:00", "patient_name": "Ravi Das", "phone": "9876543210"},
+    )
     assert st.stage == "confirming" and st.slots["doctor_name"] == "Sen"
     await env.say("yes", "unclear", {})
     assert len(env.tools.confirms) == 1 and env.tools.confirms[0]["slot"] == "10:00"
@@ -228,7 +239,7 @@ async def test_after_the_aside_the_booking_carries_on_from_where_it_was(m, env, 
 async def test_a_question_at_the_confirmation_step_is_answered_and_a_later_yes_still_confirms(m, env):
     await reach(env, "confirming")
     await env.say("do I need to fast for the CBC", "test_prep", {"test_name": "CBC"})
-    assert env.session.booking.stage == "confirming" and not env.tools.confirms      # answering it confirmed nothing
+    assert env.session.booking.stage == "confirming" and not env.tools.confirms  # answering it confirmed nothing
     await env.say("yes", "unclear", {})
     assert len(env.tools.confirms) == 1 and env.tools.confirms[0]["name"] == "Ravi Das"
     assert env.session.booking is None
@@ -246,7 +257,7 @@ async def test_an_unclear_reply_at_the_confirmation_step_repeats_the_confirmatio
     await reach(env, "confirming")
     said = await env.say("hmm", "unclear", {})
     assert env.session.booking.stage == "confirming" and not env.tools.confirms
-    assert "Ravi Das" in text_of(said)                                      # the readback, again
+    assert "Ravi Das" in text_of(said)  # the readback, again
 
 
 @pytest.mark.asyncio
@@ -273,23 +284,26 @@ async def test_a_senior_caller_is_brought_back_with_one_question_only(m, env):
 
 # ============================================================================= KCD-104: corrections at every stage
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["after_time", "all_but_phone", "confirming"])
 async def test_a_corrected_time_updates_that_slot_only_and_a_new_slot_is_held(m, env, stage):
     before = await reach(env, stage)
     said = await env.say("no, make it eleven", "book_appointment", {"time_slot": "11:00"})
     st = env.session.booking
-    assert "11:00" in text_of(said)                                          # said back: what changed
+    assert "11:00" in text_of(said)  # said back: what changed
     assert st.slots["time_slot"] == "11:00"
-    assert {k: v for k, v in st.slots.items() if k != "time_slot"} == {k: v for k, v in before.items() if k != "time_slot"}
-    assert env.tools.holds[-1] == ("Sen", "2026-10-01", "11:00")             # the hold moved with the slot
+    assert {k: v for k, v in st.slots.items() if k != "time_slot"} == {
+        k: v for k, v in before.items() if k != "time_slot"
+    }
+    assert env.tools.holds[-1] == ("Sen", "2026-10-01", "11:00")  # the hold moved with the slot
 
 
 @pytest.mark.asyncio
 async def test_a_correction_after_the_final_prompt_is_confirmed_again_and_commits_the_corrected_slot(m, env):
     await reach(env, "confirming")
     await env.say("actually the name is Ravi Dass", "book_appointment", {"patient_name": "Ravi Dass"})
-    assert env.session.booking.stage == "confirming"                          # read back again before anything is written
+    assert env.session.booking.stage == "confirming"  # read back again before anything is written
     assert not env.tools.confirms
     await env.say("yes", "unclear", {})
     assert env.tools.confirms[0]["name"] == "Ravi Dass" and env.tools.confirms[0]["phone"] == "9876543210"
@@ -307,6 +321,7 @@ async def test_a_corrected_day_is_held_again_and_the_old_hold_is_not_used(m, env
 
 # =========================================================================== KCD-104: a different task is not lost
 
+
 @pytest.mark.asyncio
 async def test_a_different_task_sets_the_booking_aside_and_offers_it_back_when_done(m, env):
     await reach(env, "after_date")
@@ -319,7 +334,7 @@ async def test_a_different_task_sets_the_booking_aside_and_offers_it_back_when_d
     said = await env.say("yes", "unclear", {})
     st = env.session.booking
     assert st.action == "book_appointment" and st.slots == {"doctor_name": "Sen", "date": "2026-10-01"}
-    assert "what time" in text_of(said).lower()                               # carries on with the next detail
+    assert "what time" in text_of(said).lower()  # carries on with the next detail
 
 
 @pytest.mark.asyncio
@@ -334,7 +349,7 @@ async def test_declining_the_offer_drops_the_set_aside_booking(m, env):
 @pytest.mark.asyncio
 async def test_a_task_started_with_nothing_captured_is_not_offered_back(m, env):
     await env.say("I want to book", "book_appointment", {})
-    said = await env.say("cancel KCD-9", "cancel_appointment", {"confirmation_id": "KCD-9"})
+    await env.say("cancel KCD-9", "cancel_appointment", {"confirmation_id": "KCD-9"})
     assert env.session.suspended is None
 
 
@@ -342,11 +357,12 @@ async def test_a_task_started_with_nothing_captured_is_not_offered_back(m, env):
 async def test_aborting_the_new_task_also_offers_the_old_one_back(m, env):
     await reach(env, "after_doctor")
     await env.say("cancel KCD-9", "cancel_appointment", {"confirmation_id": "KCD-9"})
-    said = await env.say("no", "unclear", {})                                 # "no" aborts a cancellation
+    said = await env.say("no", "unclear", {})  # "no" aborts a cancellation
     assert "Shall I go back to it?" in text_of(said)
 
 
 # ===================================================== KCD-101: one budget, a holding phrase once, then the apology
+
 
 class SlowCache:
     def __init__(self, get_s=0.0):
@@ -372,6 +388,7 @@ def budget(m, env, monkeypatch):
 
     async def no_reload():
         return None
+
     monkeypatch.setattr(m, "_maybe_reload_fast_path", no_reload)
     real_filler = m._await_with_filler
     monkeypatch.setattr(m, "_await_with_filler", lambda s, aw, lang, threshold_s=0.25: real_filler(s, aw, lang, 0.25))
@@ -415,6 +432,7 @@ async def test_a_slow_answer_speaks_the_holding_phrase_exactly_once_then_answers
     def slow(text, max_retries=2, lang="bn", deadline_s=12.0):
         time.sleep(0.5)
         return dict(GOOD), {"total_time_s": 0.5, "attempts": 1}
+
     monkeypatch.setattr(m, "extract_intent", slow)
     result, took = await resolve_real(m, budget, monkeypatch)
     assert result["intent"] == "test_rate" and len(holding(budget)) == 1
@@ -423,29 +441,31 @@ async def test_a_slow_answer_speaks_the_holding_phrase_exactly_once_then_answers
 @pytest.mark.asyncio
 async def test_no_answer_ends_in_the_apology_path_at_the_budget_not_later(m, budget, monkeypatch):
     def hangs(text, max_retries=2, lang="bn", deadline_s=12.0):
-        time.sleep(min(deadline_s, 5.0))               # honours its deadline like the real extractor
+        time.sleep(min(deadline_s, 5.0))  # honours its deadline like the real extractor
         raise m.ExtractionError("deadline")
+
     monkeypatch.setattr(m, "extract_intent", hangs)
     result, took = await resolve_real(m, budget, monkeypatch)
     assert isinstance(result, m.ExtractionError)
-    assert 0.8 <= took <= 1.6, took                       # the 1.0 s budget, plus scheduling slack
-    assert len(holding(budget)) == 1                       # said once, not once per attempt
+    assert 0.8 <= took <= 1.6, took  # the 1.0 s budget, plus scheduling slack
+    assert len(holding(budget)) == 1  # said once, not once per attempt
 
 
 @pytest.mark.asyncio
 async def test_a_slow_cache_and_a_slow_model_together_still_end_inside_the_budget(m, budget, monkeypatch):
-    monkeypatch.setattr(m, "_intent_cache", SlowCache(get_s=0.9))       # the embedding lookup alone takes 0.9 s
+    monkeypatch.setattr(m, "_intent_cache", SlowCache(get_s=0.9))  # the embedding lookup alone takes 0.9 s
     seen = {}
 
     def slow(text, max_retries=2, lang="bn", deadline_s=12.0):
         seen["deadline_s"] = deadline_s
         time.sleep(min(deadline_s, 5.0))
         raise m.ExtractionError("deadline")
+
     monkeypatch.setattr(m, "extract_intent", slow)
     result, took = await resolve_real(m, budget, monkeypatch)
     assert isinstance(result, m.ExtractionError)
-    assert took <= 1.0 + 0.6, took                        # before this change: 0.9 + the model's whole deadline
-    assert seen["deadline_s"] < 1.0                       # the model was given what was LEFT, not a fresh budget
+    assert took <= 1.0 + 0.6, took  # before this change: 0.9 + the model's whole deadline
+    assert seen["deadline_s"] < 1.0  # the model was given what was LEFT, not a fresh budget
 
 
 @pytest.mark.asyncio
@@ -459,8 +479,9 @@ async def test_a_slow_cache_is_a_miss_and_the_model_still_answers(m, budget, mon
 @pytest.mark.asyncio
 async def test_a_model_that_ignores_its_deadline_is_still_cut_off_at_the_budget(m, budget, monkeypatch):
     def deaf(text, max_retries=2, lang="bn", deadline_s=12.0):
-        time.sleep(2.5)                                    # ignores deadline_s entirely
+        time.sleep(2.5)  # ignores deadline_s entirely
         return dict(GOOD), {"total_time_s": 2.5, "attempts": 1}
+
     monkeypatch.setattr(m, "extract_intent", deaf)
     result, took = await resolve_real(m, budget, monkeypatch)
     assert isinstance(result, m.ExtractionError) and took <= 2.3, took
@@ -472,17 +493,23 @@ async def test_when_the_cache_uses_up_the_budget_the_model_is_not_asked_at_all(m
     monkeypatch.setattr(m, "CACHE_LOOKUP_MAX_S", 0.55)
     monkeypatch.setattr(m, "_intent_cache", SlowCache(get_s=0.5))
     called = []
-    monkeypatch.setattr(m, "extract_intent", lambda *a, **k: called.append(1) or (dict(GOOD), {"total_time_s": 0, "attempts": 1}))
+    monkeypatch.setattr(
+        m, "extract_intent", lambda *a, **k: called.append(1) or (dict(GOOD), {"total_time_s": 0, "attempts": 1})
+    )
     result, took = await resolve_real(m, budget, monkeypatch)
     assert isinstance(result, m.ExtractionError) and not called
 
 
 @pytest.mark.asyncio
-async def test_the_caller_hears_the_apology_when_extraction_fails_and_nothing_else(m, env, budget, monkeypatch, tmp_path):
+async def test_the_caller_hears_the_apology_when_extraction_fails_and_nothing_else(
+    m, env, budget, monkeypatch, tmp_path
+):
     """Through the real `_dispatch_turn`: the spoken apology is the llm_failure phrase, and the turn ends."""
+
     def hangs(text, max_retries=2, lang="bn", deadline_s=12.0):
         time.sleep(min(deadline_s, 5.0))
         raise m.ExtractionError("deadline")
+
     monkeypatch.setattr(m, "extract_intent", hangs)
     monkeypatch.setattr(m, "_resolve_intent", _REAL_RESOLVE)
     env.state["text"] = "what is the price of a CBC"
@@ -498,20 +525,23 @@ async def test_the_caller_hears_the_apology_when_extraction_fails_and_nothing_el
 
 # ========================================= KCD-104: a bare "no" still reopens; "no, ..." is heard as what it says
 
+
 @pytest.mark.asyncio
-async def test_a_bare_no_at_the_confirmation_step_reopens_and_asks_again_without_consulting_the_extractor(m, env, monkeypatch):
+async def test_a_bare_no_at_the_confirmation_step_reopens_and_asks_again_without_consulting_the_extractor(
+    m, env, monkeypatch
+):
     await reach(env, "confirming")
     calls = []
-    real = env.state
 
     async def must_not_run(*a, **k):
         calls.append(1)
         return {"intent": "unclear", "slots": {}, "secondary_intent": None, "direct_reply_bn": None}
+
     monkeypatch.setattr(m, "_resolve_intent", must_not_run)
     said = await env.say("no", "unclear", {})
     assert not calls and env.session.booking.stage == "collecting"
     assert "Which doctor" in text_of(said)
-    assert env.session.booking.slots["patient_name"] == "Ravi Das"          # what was captured stays
+    assert env.session.booking.slots["patient_name"] == "Ravi Das"  # what was captured stays
 
 
 @pytest.mark.asyncio

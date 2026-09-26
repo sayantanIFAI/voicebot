@@ -57,9 +57,7 @@ def entries_from_catalogue(
     doctors, tests = [], []
     for d in cat.get("doctors", []):
         doctors.append((d["name"], d.get("surname") or d["name"].split()[-1]))
-        doctors += [
-            (d["name"], a) for a in d.get("aliases_bn", []) + d.get("aliases_hi", [])
-        ]
+        doctors += [(d["name"], a) for a in d.get("aliases_bn", []) + d.get("aliases_hi", [])]
     for t in cat.get("tests", []):
         forms = {t["name"], t["name"].split("(")[0].strip()}
         if "(" in t["name"]:
@@ -185,26 +183,20 @@ def variants(form: str, rng: random.Random) -> dict[str, list[str]]:
             out["vowel"].append(v)
     if script == "latin" and len(base) >= 4:
         out["vowel"].append(
-            base.replace("ee", "i").replace("oo", "u")
-            if ("ee" in base or "oo" in base)
-            else base + base[-1]
+            base.replace("ee", "i").replace("oo", "u") if ("ee" in base or "oo" in base) else base + base[-1]
         )
         cons = [i for i, c in enumerate(base) if c.isalpha() and c not in "aeiou"]
         if cons:
             i = rng.choice(cons)
             out["drop_insert"].append(base[:i] + base[i + 1 :])
-            out["drop_insert"].append(
-                base[:i] + base[i] + "a" + base[i:] if i else base + "a"
-            )
+            out["drop_insert"].append(base[:i] + base[i] + "a" + base[i:] if i else base + "a")
     elif len(base) >= 4:
         i = rng.randrange(1, len(base) - 1)
         out["drop_insert"].append(base[:i] + base[i + 1 :])
     if len(base) >= 4:
         j = rng.randrange(0, len(base) - 1)
         out["spelling"].append(base[:j] + base[j + 1] + base[j] + base[j + 2 :])
-        out["spelling"].append(
-            base[:j] + rng.choice("xqz" if script == "latin" else "কমন") + base[j + 1 :]
-        )
+        out["spelling"].append(base[:j] + rng.choice("xqz" if script == "latin" else "কমন") + base[j + 1 :])
     return {k: [x for x in dict.fromkeys(v) if x and x != base] for k, v in out.items()}
 
 
@@ -261,15 +253,8 @@ class LinearScan:
         qk = phonetic_key(name)
         phonetic = []
         if len(qk) >= 3:
-            phonetic = [
-                c
-                for c, f in self.entries
-                if phonetic_key(f) == qk and len(phonetic_key(f)) >= 3
-            ]
-        spelled = [
-            self.canon_of.get(s, s)
-            for s in difflib.get_close_matches(name, self.forms, n=3, cutoff=0.5)
-        ]
+            phonetic = [c for c, f in self.entries if phonetic_key(f) == qk and len(phonetic_key(f)) >= 3]
+        spelled = [self.canon_of.get(s, s) for s in difflib.get_close_matches(name, self.forms, n=3, cutoff=0.5)]
         n = len(self.entries) * 2
         self.stats["queries"] += 1
         self.stats["scored"] += n
@@ -299,9 +284,7 @@ def _score(results: list[tuple[str | None, list[str]]]) -> dict:
     }
 
 
-def build_queries(
-    entries, seed: int = 20260925
-) -> dict[str, list[tuple[str | None, str]]]:
+def build_queries(entries, seed: int = 20260925) -> dict[str, list[tuple[str | None, str]]]:
     rng = random.Random(seed)
     by_family: dict[str, list[tuple[str | None, str]]] = {f: [] for f in FAMILIES}
     for canonical, form in entries:
@@ -323,9 +306,7 @@ def evaluate(entries, drop_words=TITLES) -> dict:
         if fam != "negative":
             mis_new += new
             mis_old += old
-    neg_new = [
-        (g, [s.canonical for s in gaz.suggest(q)]) for g, q in queries["negative"]
-    ]
+    neg_new = [(g, [s.canonical for s in gaz.suggest(q)]) for g, q in queries["negative"]]
     neg_old = [(g, scan.suggest(q)) for g, q in queries["negative"]]
     report["mispronunciation_bucket"] = {"new": _score(mis_new), "old": _score(mis_old)}
     report["negatives"] = {
@@ -339,12 +320,7 @@ def evaluate(entries, drop_words=TITLES) -> dict:
     # Like for like: BOTH methods limited to one suggestion (the caller is asked about one name first). This is
     # the comparison that does not depend on how many names each method is willing to list.
     def one(fn):
-        rows = [
-            (g, fn(q))
-            for fam, qs in queries.items()
-            if fam != "negative"
-            for g, q in qs
-        ]
+        rows = [(g, fn(q)) for fam, qs in queries.items() if fam != "negative" for g, q in qs]
         return _score(rows)
 
     report["top1"] = {
@@ -388,8 +364,7 @@ def synthetic_catalogue(n: int, seed: int = 7) -> list[tuple[str, str]]:
     seen, out = set(), []
     while len(out) < n:
         name = "".join(
-            rng.choice(_ONSETS) + rng.choice(_VOWELS) + rng.choice(_CODAS)
-            for _ in range(rng.choice((2, 3, 3, 4)))
+            rng.choice(_ONSETS) + rng.choice(_VOWELS) + rng.choice(_CODAS) for _ in range(rng.choice((2, 3, 3, 4)))
         )
         if name not in seen:
             seen.add(name)
@@ -397,9 +372,7 @@ def synthetic_catalogue(n: int, seed: int = 7) -> list[tuple[str, str]]:
     return out
 
 
-def scale_probe(
-    sizes=(74, 1000, 10000, 50000), queries_per_size: int = 60, seed: int = 11
-) -> list[dict]:
+def scale_probe(sizes=(74, 1000, 10000, 50000), queries_per_size: int = 60, seed: int = 11) -> list[dict]:
     rng = random.Random(seed)
     rows = []
     for n in sizes:
@@ -427,18 +400,14 @@ def scale_probe(
             }
 
         new = run(gaz.suggest)
-        old = (
-            run(scan.suggest) if n <= 10000 else None
-        )  # the scan at 50k rows is minutes; extrapolated below
+        old = run(scan.suggest) if n <= 10000 else None  # the scan at 50k rows is minutes; extrapolated below
         rows.append(
             {
                 "forms": n,
                 "build_ms": round(build_ms, 1),
                 "new": new,
                 "old": old,
-                "new_scored_per_query": round(
-                    gaz.stats["scored"] / max(1, gaz.stats["queries"]), 1
-                ),
+                "new_scored_per_query": round(gaz.stats["scored"] / max(1, gaz.stats["queries"]), 1),
                 "old_scored_per_query": n,
             }
         )
@@ -449,9 +418,7 @@ def _print(report: dict) -> None:
     print(f"\nForms indexed: {report['forms']}")
     hdr = f"{'bucket':22s}{'old P':>8}{'old R':>8}{'old F1':>8}   {'new P':>8}{'new R':>8}{'new F1':>8}   n"
     print(hdr)
-    rows = list(report["families"].items()) + [
-        ("MISPRONUNCIATION (all)", report["mispronunciation_bucket"])
-    ]
+    rows = list(report["families"].items()) + [("MISPRONUNCIATION (all)", report["mispronunciation_bucket"])]
     for name, r in rows:
         if name == "negative":
             continue
@@ -471,15 +438,11 @@ def _print(report: dict) -> None:
         f"old {ng['old_false_suggestions']} (on {ng['old_queries_with_a_suggestion']} queries), "
         f"new {ng['new_false_suggestions']} (on {ng['new_queries_with_a_suggestion']})"
     )
-    print(
-        "\nSynthetic variants generated by rules; a regression harness, not a measurement of real callers."
-    )
+    print("\nSynthetic variants generated by rules; a regression harness, not a measurement of real callers.")
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument(
         "--catalogue",
         help="a saved /api/v1/catalogue JSON; default is the seeded clinic data",
@@ -504,11 +467,7 @@ def main(argv=None) -> int:
         rep = evaluate(entries)
         _print(rep)
         out[label] = rep
-    scale = (
-        []
-        if args.no_scale
-        else scale_probe(tuple(int(s) for s in args.sizes.split(",")))
-    )
+    scale = [] if args.no_scale else scale_probe(tuple(int(s) for s in args.sizes.split(",")))
     if scale:
         print("\n===== scale (synthetic names) =====")
         for r in scale:

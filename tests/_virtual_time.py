@@ -28,6 +28,7 @@ test should not mix real sockets with virtual time.
     @virtual_time
     async def test_something(): ...        # runs on a VirtualClockLoop
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -39,7 +40,7 @@ import selectors
 class _JumpingSelector:
     """Wraps the real selector: a blocking wait becomes a clock jump."""
 
-    def __init__(self, loop: "VirtualClockLoop", real: selectors.BaseSelector):
+    def __init__(self, loop: VirtualClockLoop, real: selectors.BaseSelector):
         self._loop = loop
         self._real = real
 

@@ -25,6 +25,7 @@ reusing, because it encodes real, previously-debugged failures:
     strings or a list of single-item lists depending on internal batching
     state -- unwrap defensively.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -51,8 +52,8 @@ if not hasattr(np, "sctypes"):
     }
 
 import nemo.collections.asr as nemo_asr
-from omegaconf import OmegaConf
 from nemo.collections.asr.parts.submodules.rnnt_decoding import RNNTDecodingConfig
+from omegaconf import OmegaConf
 
 # HF repo per language -- bn/hi share this fork's checkpoint family; en is
 # NOT here on purpose, it needs mainline NeMo (see the module docstring)
@@ -139,8 +140,7 @@ class TurnASR:
     """One instance shared across all calls -- the NeMo model is the
     expensive singleton, loaded once at process startup."""
 
-    def __init__(self, nemo_file: str | None = None, language_id: str = "bn",
-                 device: str | None = None):
+    def __init__(self, nemo_file: str | None = None, language_id: str = "bn", device: str | None = None):
         self.language_id = language_id
         # cur_decoder is flipped per call; concurrent threads must not interleave.
         self._lock = threading.Lock()
@@ -158,7 +158,10 @@ class TurnASR:
     def _transcribe_clip(self, clip_path: str) -> tuple[str, str]:
         self.model.cur_decoder = "ctc"
         ctc_texts = self.model.transcribe(
-            [clip_path], batch_size=1, logprobs=False, language_id=self.language_id,
+            [clip_path],
+            batch_size=1,
+            logprobs=False,
+            language_id=self.language_id,
         )
         ctc_text = _first_text(ctc_texts)
 
@@ -176,8 +179,9 @@ class TurnASR:
             ctc_text, rnnt_text = self._transcribe_clip(wav_path)
 
         if rnnt_text:
-            return ASRResult(text=rnnt_text, decoder_used="rnnt",
-                              decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2))
+            return ASRResult(
+                text=rnnt_text, decoder_used="rnnt", decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2)
+            )
         if ctc_text:
             return ASRResult(text=ctc_text, decoder_used="ctc_fallback", decoder_agreement=0.0)
         return ASRResult(text="", decoder_used="none", decoder_agreement=1.0)
