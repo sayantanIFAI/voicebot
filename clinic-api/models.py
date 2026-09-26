@@ -597,6 +597,11 @@ class CallRecord(Base):
     disclosure_version = Column(String, nullable=False, default="")
     last_seq = Column(Integer, nullable=False, default=0)              # events applied so far (idempotency)
     updated_at = Column(DateTime, nullable=False)
+    # The implicit happiness score of the call (agent/call_score.py): a 0-100 proxy built from how the call went, NOT
+    # from anything the caller said about it. NULL = not scored (too short, an emergency, or an older call).
+    satisfaction_score = Column(Integer, nullable=True, index=True)
+    satisfaction_band = Column(String, nullable=False, default="", server_default="")
+    satisfaction_json = Column(Text, nullable=False, default="{}", server_default="{}")   # reasons and counts, no text
 
 
 class HistoryAudit(Base):

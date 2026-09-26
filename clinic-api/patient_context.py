@@ -113,6 +113,23 @@ def _new_record(db: Session, call_id: str, caller_phone: str | None) -> CallReco
     return row
 
 
+_BANDS = ("happy", "neutral", "unhappy", "very_unhappy", "unscored")
+
+
+def clean_satisfaction(payload: dict) -> dict:
+    """What is kept of a satisfaction event: the score, the band, the reasons and the counts -- and nothing else. Anything
+    that is not a number, a flag or a short label is dropped, so free text can never be stored through this door."""
+    score = payload.get("score")
+    score = int(score) if isinstance(score, (int, float)) and not isinstance(score, bool) and 0 <= score <= 100 else None
+    band = payload.get("band") if payload.get("band") in _BANDS else ("unscored" if score is None else "")
+    reasons = [[str(r[0])[:40], int(r[1])] for r in (payload.get("reasons") or [])[:20]
+               if isinstance(r, (list, tuple)) and len(r) == 2 and isinstance(r[1], (int, float))]
+    signals = {str(k)[:40]: v for k, v in (payload.get("signals") or {}).items()
+               if isinstance(v, (bool, int, float)) or v is None}
+    return {"score": score, "band": band, "reasons": reasons, "reason": str(payload.get("reason") or "")[:40],
+            "version": str(payload.get("version") or "")[:40], "basis": "behaviour", "signals": signals}
+
+
 def record_call_event(db: Session, call_id: str, seq: int, kind: str, payload: dict | None = None,
                       caller_phone: str | None = None) -> dict:
     """Apply one event to the call's record. IDEMPOTENT: an event whose `seq` has
@@ -159,6 +176,10 @@ def record_call_event(db: Session, call_id: str, seq: int, kind: str, payload: d
     elif kind == "escalation":
         row.escalation_reason = payload.get("reason")
         reg.audit(db, "escalation", "ok", call_id=call_id, patient_id=row.patient_id, reason=payload.get("reason"))
+    elif kind == "satisfaction":
+        cleaned = clean_satisfaction(payload)
+        row.satisfaction_score, row.satisfaction_band = cleaned["score"], cleaned["band"]
+        row.satisfaction_json = json.dumps(cleaned, ensure_ascii=False)
     elif kind == "end":
         row.ended_at = _now()
         row.outcome = payload.get("outcome", "completed")

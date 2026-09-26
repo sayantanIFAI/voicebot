@@ -99,6 +99,7 @@ from agent.confidence_gate import (
     VERIFIED, confidence_state, is_low_confidence, needs_entity_readback, should_withhold_factual_answer,
 )
 from agent import abuse, call_end
+from agent.call_score import CallSignals, score_call
 from agent import entity_confirmation as entity_text
 from agent.emergency import detect_emergency
 from agent.detector_budget import run_within_budget
@@ -939,6 +940,11 @@ class CallSession:
         self.silence_prompts = 0
         self.awaiting_close_answer = False
         self.abuse_count = 0                     # abusive turns so far this call (agent/abuse.py)
+        # The implicit happiness score (agent/call_score.py): counters updated as the call goes, scored once at hang-up.
+        self.signals = CallSignals()
+        self.reply_noted = False                 # this turn's time-to-first-audio has been counted
+        self.speaking_filler = False             # the "achha bolchi" filler is being spoken: not the answer
+        self.lang_history: list[str] = []        # the language of each accepted turn, to see a flip that is flipped back
         # KCD-353: the disclosure was spoken in the greeting (Bengali); once more, in the
         # caller's own language, the first time it differs.
         self.disclosed_langs: set[str] = {"bn"}
@@ -1104,6 +1110,8 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
     elsewhere in this file, so streaming several clips here is the same,
     already-proven pattern, not a new one."""
     lang = lang or session.lang
+    if fallback_reason in ("llm_failure", "tool_failure"):
+        _note(session, "system_failures")
     session.agent_spoke_since_commit = True
     if session.speak_epoch != session.turn_epoch:
         # The caller interrupted the turn this reply belongs to: it is stale, and
@@ -1152,6 +1160,9 @@ async def _speak(session: CallSession, text: str, lang: str | None = None,
         if i == 0:
             _mark(session, "send")
             _log_timing(session)
+            if not session.reply_noted and not session.speaking_filler and session.turn_started_at is not None:
+                session.reply_noted = True
+                session.signals.note_reply(time.monotonic() - session.turn_started_at)
 
         # "Time to first audio" (admission.py's own docstring) means the
         # FIRST clause, not the last -- recorded once, right after it is
@@ -1180,6 +1191,8 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
     the caller's is not yet known.
     """
     logger.warning("[%s] handoff to human: %s", session.call_id, reason)
+    _note(session, "emergency" if reason == "emergency"
+          else "asked_for_person" if reason in ("caller_requested", "history_requested_staff") else "system_handoff")
     session.outcome = "handed_off"
     _rec(session, "escalation", reason)
     with contextlib.suppress(Exception):
@@ -1202,6 +1215,7 @@ async def _reask_or_handoff(session: CallSession, decision, lang: str,
     slows the agent and lowers its escalation threshold for the rest of the
     call (Appendix C)."""
     reask_outcomes.record(decision.reason or "unclear", decision.action, lang)
+    _note(session, "reasks")
     if decision.mark_confused:
         apply_caller_state(session.call_state, caller_state="confused")
     # `languages` is passed when the caller's language could not be identified:
@@ -1349,6 +1363,25 @@ async def _refresh_messages() -> None:
             _last_messages_error_logged = True
 
 
+def _note(session: CallSession, name: str, n: int = 1) -> None:
+    """Count one signal for the call's implicit happiness score. Never raises: a score is never a reason to fail a turn."""
+    try:
+        session.signals.note(name, n)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[%s] score signal %s failed: %s", session.call_id, name, e)
+
+
+def _write_satisfaction(session: CallSession) -> None:
+    """At hang-up: score the call from its signals and queue the result with the call record. Counts and flags only."""
+    st = session.booking
+    if st is not None and topic_flow.worth_suspending(st):
+        session.signals.left_mid_task = True             # a booking was still half-done when the line dropped
+    result = score_call(session.signals)
+    logger.info("[%s] call score: %s (%s) %s", session.call_id, result.score, result.band,
+                ", ".join(f"{n} {p:+d}" for n, p in result.reasons) or result.reason)
+    _rec(session, "satisfaction", result.to_payload(session.signals))
+
+
 def _rec(session: CallSession, method: str, *args) -> None:
     """Queue one call-record event and start delivering it. Never raises and never waits: a
     record that cannot be written is retried and, at hang-up, reported (agent/call_record.py) --
@@ -1365,6 +1398,7 @@ def _rec(session: CallSession, method: str, *args) -> None:
 
 def _record_action(session: CallSession, name: str, result: dict, slots: dict) -> None:
     if result.get("success"):
+        _note(session, "task_completed")
         _rec(session, "action", name, result.get("confirmation_id"))
         _rec(session, "confirmed", slots)
 
@@ -1396,7 +1430,11 @@ async def _await_with_filler(session: CallSession, awaitable, lang: str,
     costs no synthesis time at exactly the moment the system is already
     running slow."""
     async def _speak_filler():
-        await _speak(session, phrase("please_wait", lang), lang)
+        session.speaking_filler = True                  # the holding phrase is not the answer: do not time it as one
+        try:
+            await _speak(session, phrase("please_wait", lang), lang)
+        finally:
+            session.speaking_filler = False
     # The threshold is counted from when the caller stopped speaking, not from when this stage began: recognition
     # already used some of it. It never drops below FILLER_MIN_WAIT_S, so a semantic-cache hit is not announced.
     started = session.turn_started_at
@@ -1642,6 +1680,7 @@ async def _finish_enquiry_turn(session: CallSession, text: str, lang: str,
     # An answer to the caller's own question starts with the answer (no "thank you for telling me"); KCD-512: a
     # senior's warm closing after.
     base_reply = session.kindness.decorate(base_reply, lang)
+    _note(session, "answers_given")
     await _speak(session, base_reply, lang)
 
 
@@ -1758,6 +1797,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.turn_epoch = session.speak_epoch      # this turn is current; an interrupt from now on makes it stale
         session.acks.next_turn()
         session.turn_acknowledged = False
+        session.reply_noted = False
         prior_lang = session.lang            # the language the call was in BEFORE this turn's recognition (see _keep_language)
         # An answer to a question we asked: the last thing we said had a question mark, or a flow that asks in commands
         # ("please tell me your full name") is waiting on this very turn.
@@ -1869,6 +1909,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await session.send_json("User", text)
             session.turn_count += 1
             session.booking, session.pending_entity, session.history_state = None, None, None
+            _note(session, "emergency")
             apply_caller_state(session.call_state, "emergency")
             await _speak(session, phrase("emergency_notice", lang), lang)
             await _handoff_to_human(session, "emergency", (lang,))
@@ -1878,6 +1919,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # the third time in one call, a courteous close.
         if abuse.is_abusive(text):
             session.abuse_count += 1
+            _note(session, "abuse_turns")
+            session.signals.turns += 1
             reply_lang = _abuse_reply_language(text, lang, prior_lang)
             _keep_language(session, reply_lang)
             logger.info("[%s] abusive turn %d", session.call_id, session.abuse_count)
@@ -1909,6 +1952,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 session, session.reask.decide(transcript_issue=problem, audio_issues=audio_issues), lang)
             return
         session.reask.note_success()
+        session.signals.turns += 1
+        session.lang_history.append(lang)
+        if len(session.lang_history) >= 3 and session.lang_history[-1] == session.lang_history[-3] != session.lang_history[-2]:
+            _note(session, "language_flips")       # A, B, A: the bot moved the call to B and the caller went back
+        if _caller_thanked(text, lang):
+            _note(session, "caller_thanked")
         session.silence_prompts = 0
         await session.send_json("User", text)
         session.turn_count += 1
@@ -1916,6 +1965,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         answer = classify_yes_no(text, lang) if after_prompt else None
         # "end the call", "শেষ করে দিন" (as the answer to "anything else?"): the call ends, decided by words, not the model
         if call_end.wants_to_end(text, lang, after_prompt=after_prompt) or answer == "no":
+            _note(session, "ended_by_caller")
             await _end_call(session, lang, "silence_goodbye")
             return
         if answer == "yes":
@@ -2476,6 +2526,7 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
         return False          # KCD-104: not a yes or a no -- the caller handles it as a fresh turn
 
     if answer == "no":
+        _note(session, "corrections")
         if st.action == "cancel_appointment":
             await _speak(session, phrase("cancel_aborted", lang), lang)
             session.booking = None
@@ -2655,6 +2706,8 @@ async def _interrupt_playback(session: CallSession, reason: str, resume_from_s: 
     call timeline: the marker is set there and the usual post-playback resync
     (which would skip past their first words) is cancelled."""
     was_speaking = session.agent_speaking
+    if was_speaking:
+        _note(session, "barge_ins")                 # the caller talked over the agent
     session.speak_epoch += 1
     session.release_gate()
     if session.duplex is not None:
@@ -3046,6 +3099,12 @@ async def _save_unfinished_draft(session: CallSession) -> None:
         logger.warning("[%s] could not save the unfinished booking: %s", session.call_id, e)
 
 
+def _caller_thanked(text: str, lang: str) -> bool:
+    from agent import fast_path_cues as _cues
+    table = _cues.table_for(lang)
+    return bool(table and table.any(_cues.normalise_cue(text), table.thanks))
+
+
 def _keep_language(session: CallSession, prior_lang: str) -> str:
     """A turn we could not read (empty, jumbled) says nothing about which language the caller speaks: the call stays in the
     language it was in, and is answered in it. Before this, a swear word or a mumble that language ID happened to label
@@ -3088,6 +3147,7 @@ async def _handle_silence(session: CallSession, quiet: bool) -> bool:
     waited = now - session.silence_since
     if session.silence_prompts == 0 and waited >= SILENCE_PROMPT_S:
         session.silence_prompts = 1
+        _note(session, "silence_prompts")
         session.silence_since = None
         session.awaiting_close_answer = True
         session.turn_epoch = session.speak_epoch
@@ -3097,6 +3157,7 @@ async def _handle_silence(session: CallSession, quiet: bool) -> bool:
     if session.silence_prompts >= 1 and waited >= SILENCE_CLOSE_S:
         logger.info("[%s] still silent after the prompt -- ending the call", session.call_id)
         session.outcome = "silence_timeout"
+        _note(session, "silence_timeout")
         await _end_call(session, session.lang, "idle_close")
         return True
     return False
@@ -3249,6 +3310,8 @@ async def ws_audio(ws: WebSocket):
             # KCD-501: everything completed was already written as it happened; this adds the outcome
             # and drains anything still queued, within the story's thirty seconds. A miss is logged.
             outcome = session.outcome if session.turn_count else "abandoned"
+            with contextlib.suppress(Exception):
+                _write_satisfaction(session)
             try:
                 left = await asyncio.wait_for(session.recorder.finish(outcome), CALL_RECORD_DEADLINE_S + 3.0)
                 if left:

@@ -198,6 +198,29 @@ def add_patient_columns() -> list[str]:
     return added
 
 
+CALL_RECORD_COLUMNS: dict[str, str] = {
+    "satisfaction_score": "INTEGER",
+    "satisfaction_band": "VARCHAR NOT NULL DEFAULT ''",
+    "satisfaction_json": "TEXT NOT NULL DEFAULT '{}'",
+}
+
+
+def add_call_record_columns() -> list[str]:
+    """The implicit-happiness columns on `call_records`. Idempotent; a database without the table yet has nothing to add
+    (create_all() makes it with the columns)."""
+    added = []
+    insp = inspect(engine)
+    if "call_records" not in insp.get_table_names():
+        return added
+    have = {c["name"] for c in insp.get_columns("call_records")}
+    with engine.begin() as conn:
+        for col, decl in CALL_RECORD_COLUMNS.items():
+            if col not in have:
+                conn.execute(text(f"ALTER TABLE call_records ADD COLUMN {col} {decl}"))
+                added.append(f"call_records.{col}")
+    return added
+
+
 def add_doctor_booking_columns() -> list[str]:
     added = []
     insp = inspect(engine)
@@ -323,7 +346,7 @@ def migrate_booking_schema() -> dict:
     caught by tests/test_booking_endpoints.py::test_department_route_endpoint
     failing against a throwaway DB."""
     columns_added = (add_appointment_booking_columns() + add_doctor_booking_columns()
-                     + add_patient_columns())
+                     + add_patient_columns() + add_call_record_columns())
     # Must run AFTER add_appointment_booking_columns(): see this
     # function's own docstring for why.
     rebuilt = rebuild_appointments_partial_unique_index()

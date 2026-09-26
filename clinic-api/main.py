@@ -1256,6 +1256,57 @@ def department_hours_endpoint(department_name: str, lang: str = Query("bn"), db:
 # Epic E33: patient context and history (clinic-api/patient_context.py)
 # =============================================================================
 
+@app.get("/api/v1/calls/satisfaction/summary")
+def satisfaction_summary(since: str | None = Query(None, description="ISO date; calls that started on or after it"),
+                         language: str | None = Query(None, description="bn | hi | en: the call's first language"),
+                         db: Session = Depends(get_db)):
+    """How the calls went, from the implicit happiness score (agent/call_score.py): scored calls, their mean and
+    median, the share in each band, the same by language, and what pulled scores down most. A PROXY built from behaviour,
+    not from anything callers said; no call, phone number or text is returned."""
+    from models import CallRecord
+    q = db.query(CallRecord)
+    if since:
+        try:
+            q = q.filter(CallRecord.started_at >= datetime.datetime.fromisoformat(since))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="since must be an ISO date")
+    rows = q.all()
+    if language:
+        rows = [r for r in rows if (r.languages or "").split(",")[0] == language]
+
+    def block(subset):
+        scored = sorted(r.satisfaction_score for r in subset if r.satisfaction_score is not None)
+        bands = {b: sum(1 for r in subset if r.satisfaction_score is not None and r.satisfaction_band == b)
+                 for b in ("happy", "neutral", "unhappy", "very_unhappy")}
+        return {"calls": len(subset), "scored": len(scored),
+                "mean": round(sum(scored) / len(scored), 1) if scored else None,
+                "median": scored[len(scored) // 2] if scored else None,
+                "bands": bands,
+                "share_unhappy": round((bands["unhappy"] + bands["very_unhappy"]) / len(scored), 3) if scored else None}
+
+    by_language: dict[str, list] = {}
+    for r in rows:
+        by_language.setdefault((r.languages or "").split(",")[0] or "unknown", []).append(r)
+    costs: dict[str, list[int]] = {}
+    unscored: dict[str, int] = {}
+    for r in rows:
+        try:
+            data = json.loads(r.satisfaction_json or "{}")
+        except ValueError:
+            data = {}
+        if r.satisfaction_score is None:
+            unscored[data.get("reason") or "no_score"] = unscored.get(data.get("reason") or "no_score", 0) + 1
+            continue
+        for name, pts in data.get("reasons", []):
+            if pts < 0:
+                costs.setdefault(name, []).append(pts)
+    top = sorted(({"signal": n, "calls": len(v), "points_lost": -sum(v)} for n, v in costs.items()),
+                 key=lambda d: (-d["points_lost"], d["signal"]))[:8]
+    return {"basis": "behaviour", "version": "implicit-v1", "overall": block(rows),
+            "by_language": {lang: block(rs) for lang, rs in sorted(by_language.items())},
+            "top_causes": top, "unscored_reasons": unscored}
+
+
 class CallEventRequest(BaseModel):
     seq: int
     kind: str

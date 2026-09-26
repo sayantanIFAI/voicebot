@@ -91,6 +91,10 @@ class CallRecorder:
     def patient(self, patient_ref) -> None:
         self.add("patient", {"patient_ref": patient_ref})
 
+    def satisfaction(self, payload: dict) -> None:
+        """The call's implicit happiness score (agent/call_score.py): counts, flags and reasons, never any text."""
+        self.add("satisfaction", payload)
+
     def escalation(self, reason: str) -> None:
         self.add("escalation", {"reason": reason})
 

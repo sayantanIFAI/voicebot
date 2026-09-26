@@ -198,3 +198,21 @@ risk for a preparation answer and wants an ambiguity margin between the two best
 * `doctors.full_name` (new column, migration + backfill at start-up, never overwrites an entered value): the whole name of
   each of the 32 doctors, exposed in the catalogue as `full_name`. The seeded given names are FICTIONAL placeholders (the seed
   only held initials); replace them with the real names by editing the column. Spoken replies still use the short name.
+
+---
+
+## Implicit happiness score (2026-09-26)
+
+Every call is scored 0-100 at hang-up from how it went, with no question asked (`agent/call_score.py`, model `implicit-v1`):
+re-asks, system failures, swearing, silence prompts, language flips (moved and moved back), talking over the bot, slow replies
+(> 1.5 s to first audio), corrections at read-back, a request for a person, a system hand-off, a silence timeout and a booking
+left half-done take points off; answers given, a completed task, the caller's thanks and a polite end add them. The score, band
+(happy / neutral / unhappy / very_unhappy), the reasons and the counts are stored with the call record
+(`call_records.satisfaction_*`, event kind `satisfaction`; no text, no phone number) and reported by
+`GET /api/v1/calls/satisfaction/summary[?since=&language=]`: mean, median, band shares, by language, top causes, unscored calls.
+Too-short calls and emergencies are not scored.
+
+It is a PROXY from behaviour, not what the caller felt. Every weight is REASONED, not measured. To make it real: ask the
+one-question survey on a sample of good calls and refit the weights to those answers; until then read it as a ranking of calls.
+Pod-only to check: that the numbers look sane on real calls (a smooth call should land in `happy`, a call with swearing or a
+hand-off in `unhappy`), that `slow_replies` is not inflated by the hold-line, and the per-language means.
