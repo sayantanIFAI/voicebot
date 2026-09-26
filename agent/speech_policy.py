@@ -177,7 +177,7 @@ def check_reply(text: str, policy: SpeechPolicy) -> list[str]:
     """Constraint violations in `text`, empty if it complies. Used by the
     test suite over every reply template (a senior caller must never hear
     several questions in one reply) and as a runtime guard."""
-    problems = []
+    problems: list[str] = []
     if policy.emergency:
         return problems
     if count_questions(text) > policy.questions_per_turn:

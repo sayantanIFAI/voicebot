@@ -35,7 +35,7 @@ read a phone number in English.
 from __future__ import annotations
 
 import dataclasses
-from typing import Protocol
+from typing import Any, Protocol
 
 SUPPORTED_LANGUAGES = ("bn", "hi", "en")
 
@@ -125,11 +125,18 @@ class SpeechBrainVoxLingua107LID:
     # renormalizing three near-zero numbers into a confident-looking guess.
     MIN_SUPPORTED_MASS = 0.25
 
+    def _require_model(self) -> Any:
+        """The loaded model, or a plain error saying it is not (it loads lazily: _ensure_loaded())."""
+        if self._model is None:
+            raise RuntimeError("the language-identification model is not loaded")
+        return self._model
+
     def _label_index(self) -> dict[str, int]:
         """Model label ("bn: Bengali") -> class index, for the three
         languages we route between. Built once from the loaded model."""
         idx: dict[str, int] = {}
-        for label, i in self._model.hparams.label_encoder.lab2ind.items():
+        model = self._require_model()
+        for label, i in model.hparams.label_encoder.lab2ind.items():
             code = str(label).split(":")[0].strip().lower()
             if code in SUPPORTED_LANGUAGES:
                 idx[code] = int(i)
@@ -152,7 +159,7 @@ class SpeechBrainVoxLingua107LID:
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
 
-        out_prob, _score, _index, _label = self._model.classify_batch(wav)
+        out_prob, _score, _index, _label = self._require_model().classify_batch(wav)
         log_post = out_prob[0]
         if self._label_idx is None:
             self._label_idx = self._label_index()
@@ -170,7 +177,7 @@ class SpeechBrainVoxLingua107LID:
                 language="unknown", confidence=0.0, scores={k: v / mass if mass else 0.0 for k, v in probs.items()}
             )
         scores = {lang: p / mass for lang, p in probs.items()}
-        best = max(scores, key=scores.get)
+        best = max(scores, key=lambda k: scores[k])
         return LIDResult(language=best, confidence=scores[best], scores=scores)
 
     def load(self) -> None:  # pragma: no cover - needs the model

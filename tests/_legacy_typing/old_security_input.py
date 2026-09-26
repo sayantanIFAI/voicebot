@@ -398,18 +398,16 @@ def _to_numbers(tokens: list[str]) -> list:
         t = tokens[i]
         if t in _FUSED_HUNDREDS:
             value, i = _FUSED_HUNDREDS[t], i + 1
-            following = _value_of(tokens[i]) if i < len(tokens) else None
-            if following is not None:
-                value += following
+            if i < len(tokens) and _value_of(tokens[i]) is not None:
+                value += _value_of(tokens[i])
                 i += 1
                 if (
                     i < len(tokens)
                     and _value_of(tokens[i]) is not None
                     and value % 10 == 0
-                    and (units := _value_of(tokens[i])) is not None
-                    and units < 10
+                    and _value_of(tokens[i]) < 10
                 ):
-                    value += units
+                    value += _value_of(tokens[i])
                     i += 1
             out.append(value)
             continue
@@ -418,7 +416,7 @@ def _to_numbers(tokens: list[str]) -> list:
             out.append(t)
             i += 1
             continue
-        run: list[int | str] = []
+        run = []
         while i < len(tokens):
             tok = tokens[i]
             if tok in _HUNDRED_WORDS or tok in _THOUSAND_WORDS:

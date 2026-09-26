@@ -121,9 +121,8 @@ class BargeInDetector:
         # Noise floor: a running minimum that creeps upward (5 dB/s), so a
         # line that gets noisier raises the bar instead of tripping it.
         floor = db if self._floor_db is None else min(db, self._floor_db + 0.05)
-        floor_db = max(floor, self.cfg.min_floor_dbfs)
-        self._floor_db = floor_db
-        if db < self.cfg.absolute_floor_dbfs or db < floor_db + self.cfg.above_floor_db:
+        self._floor_db = max(floor, self.cfg.min_floor_dbfs)
+        if db < self.cfg.absolute_floor_dbfs or db < self._floor_db + self.cfg.above_floor_db:
             return 0.0
         pe = float(np.mean(echo**2)) + 1e-12
         rel = 10 * np.log10(p / pe) if pe > 1e-8 else float("inf")

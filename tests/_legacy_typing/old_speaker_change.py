@@ -163,10 +163,7 @@ class SpeakerChangeDetector:
 
     def _corroborated(self, emb: VoiceEmbedding, level_dbfs: float | None) -> bool:
         """Pitch, and pitch with level, agree with the spectral distance that this is another voice."""
-        ref = self._ref
-        if ref is None:  # no reference voice to compare with: nothing corroborates
-            return False
-        octaves = abs(emb.log2_f0 - ref.log2_f0)
+        octaves = abs(emb.log2_f0 - self._ref.log2_f0)
         if octaves >= PITCH_JUMP_OCTAVES:
             return True
         if level_dbfs is not None and self._levels and octaves >= PITCH_SOME_OCTAVES:

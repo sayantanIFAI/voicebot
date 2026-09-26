@@ -21,6 +21,7 @@ real handset without a redeploy -- the story's own requirement.
 from __future__ import annotations
 
 import dataclasses
+from typing import Any, cast
 
 import numpy as np
 
@@ -81,7 +82,7 @@ def resolve_params(base: ProsodyParams, overrides: dict | None = None) -> Prosod
         if not (lo <= value <= hi):
             raise ValueError(f"{key}={value} outside [{lo}, {hi}]")
         applied[key] = int(value) if key == "max_chunk_chars" else float(value)
-    return dataclasses.replace(base, **applied)
+    return dataclasses.replace(base, **cast("dict[str, Any]", applied))
 
 
 def _is_sentence_boundary(text: str, i: int) -> bool:

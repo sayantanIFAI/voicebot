@@ -1,7 +1,6 @@
 # Continuous integration: the same checks scripts/gate.sh runs, on every push and pull request.
 #
-#   static   format, lint, the two structural rules, the tuple/list scan, strict typing on the modules that are ready for
-#            it, and "main_pcm.py is what the generator produces from main.py".
+#   static   format, lint, the two structural rules, the tuple/list scan, mypy over agent/ (strict on 32 modules), and "main_pcm.py is what the generator produces from main.py".
 #   tests    the whole test suite, in 8 parallel shards (about 5 minutes). tests/test_smoke.py is left out: it needs the
 #            live pod.
 #   audit    known-vulnerability scan of the pinned dependencies. INFORMATIONAL for now: torch 2.1.0 (28 advisories) and
@@ -43,10 +42,7 @@ jobs:
         run: python scripts/check_boundaries.py
       - name: "Tuple / list / default-argument traps"
         run: python tools/hygiene_scan.py
-      - name: "Strict typing (the modules listed under [[tool.mypy.overrides]] in pyproject.toml)"
-        run: mypy agent/call_score.py agent/call_end.py agent/abuse.py agent/topic_flow.py agent/slot_grouping.py agent/intent_schema.py agent/api_models.py
-      - name: "Typing across all of agent/ (informational: the baseline is still being worked down)"
-        continue-on-error: true
+      - name: "Typing: mypy over all of agent/ (strict flags on the modules listed in pyproject.toml, plain checking on the rest)"
         run: mypy agent
       - name: "main_pcm.py is generated from main.py"
         run: |

@@ -346,7 +346,7 @@ def serve_rate_gap(
     eligible = {lang: r["serve_rate"] for lang, r in rates.items() if r["turns"] >= min_turns}
     gap, widest = None, None
     if len(eligible) >= 2:
-        top, bottom = max(eligible, key=eligible.get), min(eligible, key=eligible.get)
+        top, bottom = max(eligible, key=lambda k: eligible[k]), min(eligible, key=lambda k: eligible[k])
         gap, widest = round(eligible[top] - eligible[bottom], 3), [top, bottom]
     return {
         "by_language": rates,

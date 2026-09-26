@@ -132,9 +132,7 @@ def overlap_segments(samples: np.ndarray, sr: int = 16000) -> list[tuple[float, 
         return []
     _, f0, second, _ = tr
     second = second | _alternation_mask(f0)
-    segs: list[tuple[float, float]] = []
-    start: float | None = None
-    last = 0.0  # only read once `start` is set, which sets it too
+    segs, start, last = [], None, None
     for i in np.where(second)[0]:
         t = i * HOP_S
         if start is None:
@@ -205,8 +203,6 @@ class NearEndProfile:
 
     def judge(self, level_dbfs: float, f0_hz: float) -> Verdict:
         if not self.established:
-            return Verdict(False, "no_profile_yet")
-        if self.level_dbfs is None:  # (established already implies a level: this narrows the type)
             return Verdict(False, "no_profile_yet")
         quieter = self.level_dbfs - level_dbfs
         if quieter < BACKGROUND_DELTA_DB:

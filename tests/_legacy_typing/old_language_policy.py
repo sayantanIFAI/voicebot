@@ -58,7 +58,7 @@ def script_counts(text: str) -> dict[str, int]:
 
 def dominant_script(text: str) -> str | None:
     counts = script_counts(text)
-    best = max(counts, key=lambda script: counts[script])
+    best = max(counts, key=counts.get)
     return best if counts[best] else None
 
 

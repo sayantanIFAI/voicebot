@@ -35,11 +35,9 @@ def load(payload: dict | None, now: float | None = None) -> int:
     """Replace the cache from a GET /api/v1/agent/messages response. Returns how many entries.
     A missing or malformed payload leaves the existing cache untouched (never empties it)."""
     global _loaded_at, _top_version
-    if not isinstance(payload, dict):
-        return len(_cache)  # None, a list, a string: malformed, the cache is left as it was
     try:
         rows = payload["messages"]
-    except KeyError:
+    except (TypeError, KeyError):
         return len(_cache)
     if not isinstance(rows, dict):  # a malformed body is ignored, never trusted
         return len(_cache)

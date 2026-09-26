@@ -104,7 +104,7 @@ def evaluate(
     cuts, waits, long_waits = 0, [], 0
     for rec in recordings:
         t_commit, utt_end = commit_time(rec, cfg)
-        if t_commit is None or utt_end is None:  # they are None together
+        if t_commit is None:
             continue
         if utt_end < rec.turn_end_s - cut_tolerance_s:
             cuts += 1

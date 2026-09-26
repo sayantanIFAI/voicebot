@@ -126,7 +126,6 @@ def enforce_single_apology(text: str, lang: str) -> tuple[str, int]:
             seen = True
             if n > 1:  # "sorry, sorry" inside the first sentence
                 first = marker.search(s)
-                assert first is not None, "n > 1 markers were counted, so the first one exists"
                 head, tail = s[: first.end()], s[first.end() :]
                 tail, extra = marker.subn("", tail)
                 removed += extra

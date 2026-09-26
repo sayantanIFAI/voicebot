@@ -311,7 +311,7 @@ _CUES = {
     # slowing that caller down would be the wrong adaptation (the same rule
     # stated_age_is_senior applies to a stated age).
 }
-_REQUEST_MARKERS = ("slow", "धीरे", "धीमे", "ধীরে", "আস্তে")
+_REQUEST_MARKERS: tuple[str, ...] = ("slow", "धीरे", "धीमे", "ধীরে", "আস্তে")
 
 
 def _nfc(s: str) -> str:

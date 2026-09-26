@@ -34,6 +34,7 @@ import os
 import threading
 import time
 import urllib.request
+from typing import Any
 
 from agent.enquiry_followup import ENQUIRY_INTENTS  # noqa: F401  (re-exported: callers import it from here)
 from agent.intent_schema import FAQ_TOPICS, VALID_INTENTS, normalize_age, parse_extraction  # noqa: F401
@@ -189,7 +190,7 @@ class ExtractionError(Exception):
     pass
 
 
-def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
+def _call_ollama(prompt: str, timeout_s: float = 90) -> str:
     # 90s, not 20s: a cold-loaded Qwen2.5:7b (Ollama unloaded it after its
     # default 5-minute idle timeout) measured at 47s just to answer "Say
     # OK" on this pod. The real fix is OLLAMA_KEEP_ALIVE keeping the model
@@ -297,7 +298,7 @@ def extract_intent(
     variant = INTENT_PROMPT_VARIANT
     prompt = build_prompt(transcript_bn, lang, datetime.datetime.now(), variant)
 
-    diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": [], "deadline_s": deadline_s}
+    diagnostics: dict[str, Any] = {"attempts": 0, "total_time_s": 0.0, "errors": [], "deadline_s": deadline_s}
     last_error: Exception | ExtractionError = ExtractionError("no attempt was made")
     start = time.time()
     max_attempts = min(max_retries + 2, _MAX_ATTEMPTS_BACKSTOP)

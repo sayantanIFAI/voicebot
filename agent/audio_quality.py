@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from typing import Any
 
 import numpy as np
 
@@ -106,7 +107,9 @@ def _frames(x: np.ndarray, sr: int) -> np.ndarray:
     return x[idx]
 
 
-def _db(power: np.ndarray | float) -> np.ndarray | float:
+def _db(power: Any) -> Any:
+    """Power to decibels. A numpy scalar in gives a scalar out and an array in gives an array out, which a single
+    static return type cannot say without a false "or a bool" that every comparison downstream then trips over."""
     return 10.0 * np.log10(np.maximum(power, 1e-12))
 
 
@@ -324,7 +327,7 @@ def enhance(
         prev_clean = (g**2) * power[t]
     out_spec = spec * gain
     frames_out = np.fft.irfft(out_spec, n=n_fft, axis=1) * win
-    out = np.zeros(xp.size, dtype=np.float32)
+    out: np.ndarray = np.zeros(xp.size, dtype=np.float32)
     norm = np.zeros(xp.size, dtype=np.float32)
     for t in range(count):
         s = t * hop

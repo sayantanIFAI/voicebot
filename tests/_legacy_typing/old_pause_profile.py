@@ -104,10 +104,9 @@ class PauseProfile:
         (unless early cuts have already been noticed, which alone raises the wait)."""
         if not self.adapted and self.bump == 1.0:
             return base
-        p90, median = self.p90(), self.median()
-        if self.adapted and p90 is not None and median is not None:  # adapted means gaps exist: both are numbers
-            silence = _clamp(p90 * MARGIN * self.bump, SILENCE_MIN_S, SILENCE_MAX_S)
-            complete = _clamp(median * COMPLETE_MARGIN * self.bump, COMPLETE_MIN_S, COMPLETE_MAX_S)
+        if self.adapted:
+            silence = _clamp(self.p90() * MARGIN * self.bump, SILENCE_MIN_S, SILENCE_MAX_S)
+            complete = _clamp(self.median() * COMPLETE_MARGIN * self.bump, COMPLETE_MIN_S, COMPLETE_MAX_S)
         else:
             silence = _clamp(base.silence_confirm_s * self.bump, SILENCE_MIN_S, SILENCE_MAX_S)
             complete = _clamp(base.complete_confirm_s * self.bump, COMPLETE_MIN_S, COMPLETE_MAX_S)
@@ -123,8 +122,8 @@ class PauseProfile:
     def snapshot(self) -> dict:
         return {
             "gaps": len(self.gaps),
-            "p90_s": None if (p90 := self.p90()) is None else round(p90, 3),
-            "median_s": None if (median := self.median()) is None else round(median, 3),
+            "p90_s": None if not self.gaps else round(self.p90(), 3),
+            "median_s": None if not self.gaps else round(self.median(), 3),
             "bump": round(self.bump, 3),
             "false_cuts": self.false_cuts,
             "adapted": self.adapted,

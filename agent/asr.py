@@ -43,7 +43,8 @@ import torch
 # loader. Restored here rather than downgrading numpy, which torch/scipy/
 # speechbrain in this venv were installed against.
 if not hasattr(np, "sctypes"):
-    np.sctypes = {
+    # (set through the module's namespace, not `np.sctypes = ...`: numpy 2's type stubs no longer declare this attribute)
+    vars(np)["sctypes"] = {
         "int": [np.int8, np.int16, np.int32, np.int64],
         "uint": [np.uint8, np.uint16, np.uint32, np.uint64],
         "float": [np.float16, np.float32, np.float64],

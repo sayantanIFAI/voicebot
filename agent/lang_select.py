@@ -17,6 +17,8 @@ without a GPU:
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from agent.speech_norm import unspeakable_spans
 
 _SCRIPT_RANGE = {"bn": ("ঀ", "৿"), "hi": ("ऀ", "ॿ")}
@@ -157,8 +159,15 @@ def english_word_share(text: str) -> float:
 SWITCH_MIN_LID = 0.50
 
 
+class _Recognition(Protocol):
+    """What the picker reads of one recogniser's result (agent/asr.ASRResult has both)."""
+
+    text: str
+    decoder_agreement: float
+
+
 def pick_candidate(
-    candidates: list[tuple[str, object]], lid_scores: dict[str, float] | None = None, prior: str | None = None
+    candidates: list[tuple[str, _Recognition]], lid_scores: dict[str, float] | None = None, prior: str | None = None
 ):
     """Several ASR engines ran on the same audio. Return (language, result)
     for the one that most plausibly heard its own language.

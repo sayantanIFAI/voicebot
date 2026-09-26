@@ -57,16 +57,42 @@ warn_unreachable = false
 no_implicit_optional = true
 check_untyped_defs = true
 
-# Strict, module by module, as each is brought up to it. These are the modules written with complete annotations.
+# Strict, module by module: every module listed here passes the flags below and must keep passing (CI runs `mypy agent`). A
+# module joins the list when its functions are fully annotated; the modules not listed are still checked, without these flags.
 [[tool.mypy.overrides]]
 module = [
-    "agent.call_score",
-    "agent.call_end",
     "agent.abuse",
-    "agent.topic_flow",
-    "agent.slot_grouping",
-    "agent.intent_schema",
+    "agent.acknowledgement",
     "agent.api_models",
+    "agent.apology",
+    "agent.attention",
+    "agent.barge_in",
+    "agent.call_end",
+    "agent.call_score",
+    "agent.clause_split",
+    "agent.code_switch",
+    "agent.confidence_gate",
+    "agent.disclosure",
+    "agent.echo_cancel",
+    "agent.emergency",
+    "agent.filler",
+    "agent.history_intent",
+    "agent.human_request",
+    "agent.intent_schema",
+    "agent.language_policy",
+    "agent.language_switch",
+    "agent.level",
+    "agent.persona",
+    "agent.phonetic_match",
+    "agent.phrases",
+    "agent.playback_gate",
+    "agent.reask_policy",
+    "agent.sample_wording",
+    "agent.slot_grouping",
+    "agent.speech_norm",
+    "agent.spoken_text_lint",
+    "agent.topic_flow",
+    "agent.turn_ack",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

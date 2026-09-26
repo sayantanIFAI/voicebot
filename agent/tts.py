@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import threading
+from typing import Any
 
 import httpx
 
@@ -206,7 +207,7 @@ class TTSClient:
 
         with self._cache_lock:
             self.stats["misses"] += 1
-        payload = {"text": spoken, "lang": lang}
+        payload: dict[str, Any] = {"text": spoken, "lang": lang}
         if speed != 1.0:
             payload["speed"] = speed
         payload.update(prosody)
