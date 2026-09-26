@@ -49,7 +49,7 @@ quote-style = "double"
 
 # ----------------------------------------------------------------------------------------------------- mypy
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"                    # what CI runs; numpy 2.5 type stubs need >= 3.12 to parse
 ignore_missing_imports = true        # the pod-only libraries (torch, nemo, speechbrain, ...) have no stubs here
 warn_unused_ignores = true
 warn_redundant_casts = true

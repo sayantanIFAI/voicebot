@@ -1,6 +1,6 @@
 # Continuous integration: the same checks scripts/gate.sh runs, on every push and pull request.
 #
-#   static   format, lint, the two structural rules, the tuple/list scan, mypy over agent/ (strict on 32 modules), and "main_pcm.py is what the generator produces from main.py".
+#   static   format, lint, the two structural rules, the tuple/list scan, mypy over agent/ (strict on 38 modules), and "main_pcm.py is what the generator produces from main.py".
 #   tests    the whole test suite, in 8 parallel shards (about 5 minutes). tests/test_smoke.py is left out: it needs the
 #            live pod.
 #   audit    known-vulnerability scan of the pinned dependencies. INFORMATIONAL for now: torch 2.1.0 (28 advisories) and
