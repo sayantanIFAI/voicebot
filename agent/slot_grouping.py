@@ -27,6 +27,8 @@ scripted callers in tests/test_slot_grouping.py, not on real ones.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 # Fields asked together, in the order they are asked. A group is only ever asked from the front: the first missing
 # field decides which group is in play, and only that group's still-missing fields are asked.
 GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
@@ -40,8 +42,11 @@ GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
 # No question ever carries more fields than this, whatever the tables say.
 MAX_FIELDS_PER_QUESTION = 3
 
-# (frame, {field: fragment}, and, comma) per action-group-language. `{}` in the frame is the joined fragments.
-_FRAMES: dict[tuple[str, str], dict[str, tuple]] = {
+# One frame per (action-group, language): `frame` has `{}` where the joined fragments go, `f` maps a field to the words that
+# ask for it. (Functional TypedDict syntax because "and" is not a valid attribute name.)
+_Frame = TypedDict("_Frame", {"frame": str, "and": str, "comma": str, "f": dict[str, str]})
+
+_FRAMES: dict[tuple[str, str], _Frame] = {
     ("schedule", "en"): {
         "frame": "For the appointment, {}?",
         "and": " and ",
@@ -124,7 +129,7 @@ def next_fields(
     action: str,
     missing: list[str],
     questions_per_turn: int,
-    asked: set[str] | frozenset = frozenset(),
+    asked: set[str] | frozenset[str] = frozenset(),
 ) -> list[str]:
     """The fields the next question asks for: one, or a group. `missing` is what is still needed, in the order
     booking_flow.missing_required lists it. Always at least one field when anything is missing."""

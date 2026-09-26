@@ -365,12 +365,18 @@ class FastPath:
     def _without_cues(text: str, table: cues.CueTable) -> str:
         """`text` with the rate and preparation cue phrases taken out: what is left is what NAMES something."""
         remaining = f" {text} "
-        for cue in sorted(table.rate + table.prep, key=len, reverse=True):
-            if table.match == "substring":
-                remaining = remaining.replace(cue, " ")
-            else:
-                while f" {cue} " in remaining:
-                    remaining = remaining.replace(f" {cue} ", " ")
+        cues_longest_first = sorted(table.rate + table.prep, key=len, reverse=True)
+        while True:                                # taking one cue out can leave two words that form another ("how price much")
+            before = remaining
+            for cue in cues_longest_first:
+                if table.match == "substring":
+                    remaining = remaining.replace(cue, " ")
+                else:
+                    while f" {cue} " in remaining:
+                        remaining = remaining.replace(f" {cue} ", " ")
+            remaining = f" {' '.join(remaining.split())} "
+            if remaining == before:
+                break
         return " ".join(remaining.split())
 
     def _ambiguous_test(self, text: str, lang: str, table: cues.CueTable, score: float) -> bool:

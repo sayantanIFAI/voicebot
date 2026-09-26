@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
+from typing import Any
 
 SCORE_MODEL_VERSION = "implicit-v1"
 BASE_SCORE = 80
@@ -90,9 +91,7 @@ class CallSignals:
     caller_thanked: bool = False
     ended_by_caller: bool = False
     emergency: bool = False
-    reply_ms: list = field(
-        default_factory=list
-    )  # first-audio time of each turn, milliseconds
+    reply_ms: list[int] = field(default_factory=list)  # first-audio time of each turn, milliseconds
 
     def note(self, name: str, n: int = 1) -> None:
         """Count (int fields) or raise (bool fields) a signal; an unknown name is a programming error, not ignored."""
@@ -121,7 +120,7 @@ class ScoreResult:
     version: str = SCORE_MODEL_VERSION
     basis: str = "behaviour"
 
-    def to_payload(self, signals: CallSignals) -> dict:
+    def to_payload(self, signals: CallSignals) -> dict[str, Any]:
         """What is stored with the call record: the number, the band, the reasons and the counts. No text."""
         d = dataclasses.asdict(signals)
         replies = d.pop("reply_ms")
