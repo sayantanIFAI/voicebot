@@ -177,7 +177,7 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
                 else f"वह टेस्ट नहीं मिला। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
             )
         base = f"माफ़ कीजिए, '{q}' नाम का कोई टेस्ट हमारी सूची में नहीं है।" if q else "माफ़ कीजिए, वह टेस्ट हमारी सूची में नहीं है।"
-        return f"{base} अगर कोई सामान्य हेल्थ चेकअप चाहिए तो बताइए, हमारा एक सहकर्मी आपको जानकारी देगा।"
+        return f"{base} कोई और टेस्ट या डॉक्टर की अपॉइंटमेंट बुक करनी है?"
     if sugg:
         return (
             f"I couldn't find a test called '{q}'. Did you mean: {', '.join(sugg)}?"
@@ -185,7 +185,7 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
             else f"I couldn't find that test. Did you mean: {', '.join(sugg)}?"
         )
     base = f"Sorry, there is no test called '{q}' on our list." if q else "Sorry, that test is not on our list."
-    return f"{base} If you need any general health check-up, let us know and a colleague will guide you."
+    return f"{base} Is there any other test or doctor's appointment you'd like to book?"
 
 
 def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:

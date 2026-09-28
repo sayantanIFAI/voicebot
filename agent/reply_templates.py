@@ -93,12 +93,12 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
             return f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
-        # KCD-lay-terms: nothing at all matched -- a flat "no such test" tells the caller nothing useful next. If
-        # what they actually need is a general check-up rather than one named test, inviting that here, once, costs
-        # nothing and might save a second call; it never claims we HAVE something we do not.
+        # KCD-lay-terms: nothing at all matched -- a flat "no such test" tells the caller nothing useful next.
+        # Asking what else they need, once, costs nothing and might save a second call. No package/checkup offer
+        # here -- there is no such catalogue entry or flow to point them to, so it never invites one.
         return (
             f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই। "
-            "কোনো সাধারণ স্বাস্থ্য পরীক্ষার (হেলথ চেকআপ) দরকার হলে বলুন, একজন সহকর্মী আপনাকে জানাবেন।"
+            "অন্য কোনো নির্দিষ্ট টেস্ট বা ডাক্তারের অ্যাপয়েন্টমেন্ট বুক করতে চান?"
         )
 
     rate = result["rate_inr"]
