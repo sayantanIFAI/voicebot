@@ -584,9 +584,16 @@ def resend_reply(result: dict, lang: str) -> str:
     )
 
 
+_NAMES_PER_GROUP = 5
+
+
 def blood_test_list_reply(spoken_names: list[str], lang: str) -> str:
     """`spoken_names` are already the short codes (reply_templates.blood_test_list_reply calls
-    agent.catalogue_forms.lab_test_code before delegating here)."""
+    agent.catalogue_forms.lab_test_code before delegating here).
+
+    Grouped into short runs, each ending in a sentence break -- same fix, same reason, as the Bengali version:
+    one long comma-separated run with no internal sentence break became one over-long TTS clause on a live call
+    (2026-09-28) and was never actually spoken."""
     hi = lang == "hi"
     if not spoken_names:
         return (
@@ -594,27 +601,40 @@ def blood_test_list_reply(spoken_names: list[str], lang: str) -> str:
             if hi
             else "Sorry, we don't have any blood tests listed right now. You could ask at the counter."
         )
-    joined = ", ".join(spoken_names)
+    groups = [spoken_names[i : i + _NAMES_PER_GROUP] for i in range(0, len(spoken_names), _NAMES_PER_GROUP)]
     if hi:
-        return f"हमारे यहाँ ये ब्लड टेस्ट होते हैं -- {joined}। इनमें से कौन सा करवाना है?"
-    return f"These are the blood tests we do -- {joined}. Which one would you like?"
+        listed = "। ".join(", ".join(g) for g in groups)
+        return f"हमारे यहाँ ये ब्लड टेस्ट होते हैं -- {listed}। इनमें से कौन सा करवाना है?"
+    listed = ". ".join(", ".join(g) for g in groups)
+    return f"These are the blood tests we do -- {listed}. Which one would you like?"
 
 
 def department_route_reply(result: dict, symptom: str, lang: str) -> str:
     hi = lang == "hi"
     if result.get("matched"):
-        return (
-            f"इसके लिए {result['department_name']} विभाग में दिखाना ठीक रहेगा। डॉक्टर की अपॉइंटमेंट बना दूँ?"
-            if hi
-            else f"For this, it would be best to see the {result['department_name']} department. "
-            f"Shall I book a doctor's appointment?"
+        doctors = result.get("doctors") or []
+        who = (
+            (f" हमारे यहाँ {', '.join(doctors)} हैं।" if hi else f" We have {', '.join(doctors)} here.") if doctors else ""
         )
-    if result.get("ambiguous"):
-        cands = result["candidates"]
-        return (
-            f"यह {' या '.join(cands)} -- इनमें से कोई एक विभाग हो सकता है। कौन सा बताएँगे?"
+        base = (
+            f"इसके लिए {result['department_name']} विभाग में दिखाना ठीक रहेगा।"
             if hi
-            else f"This could be either {' or '.join(cands)}. Which would you like?"
+            else f"For this, it would be best to see the {result['department_name']} department."
+        )
+        ask = " डॉक्टर की अपॉइंटमेंट बना दूँ?" if hi else " Shall I book a doctor's appointment?"
+        return base + who + ask
+    if result.get("ambiguous"):
+        by_dept = result.get("doctors_by_department") or {}
+
+        def _with_doctors(name: str) -> str:
+            docs = by_dept.get(name) or []
+            return f"{name} ({', '.join(docs)})" if docs else name
+
+        parts = [_with_doctors(n) for n in result["candidates"]]
+        return (
+            f"यह {' या '.join(parts)} -- इनमें से कोई एक विभाग हो सकता है। कौन सा बताएँगे?"
+            if hi
+            else f"This could be either {' or '.join(parts)}. Which would you like?"
         )
     return (
         "माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर पूछ सकते हैं।"

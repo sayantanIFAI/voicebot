@@ -58,6 +58,16 @@ def test_the_answer_to_anything_else_that_means_no_ends_the_call(text, lang):
         ("goodbye", "en"),
         ("that's all", "en"),
         ("bye", "en"),
+        # A live call (2026-09-28): "কেটে দিন" said mid-conversation, not right after the "anything else?" prompt,
+        # was not recognised -- "cut" is unambiguous for ending a call (unlike "শেষ"/finish, which also means
+        # finishing a booking), so it belongs here, not gated behind after_prompt.
+        ("কেটে দিন", "bn"),
+        ("কেটে দাও", "bn"),
+        ("কাটো", "bn"),
+        ("দাদা একটু কাটো তো", "bn"),  # a whole-token match: "কাটো" inside an ordinary sentence still counts
+        ("काट दीजिए", "hi"),
+        ("काट दो", "hi"),
+        ("काटो", "hi"),
     ],
 )
 def test_an_explicit_request_ends_the_call_at_any_moment(text, lang):

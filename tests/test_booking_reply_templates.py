@@ -109,6 +109,21 @@ def test_department_route_reply_never_frames_as_diagnosis():
         assert rt.department_route_reply(none, "??", lang)
 
 
+def test_department_route_reply_names_real_doctors_when_given_them():
+    matched = {"matched": True, "department_name": "Cardiology", "doctors": ["Dr. K. Bhattacharya", "Dr. N. Roy"]}
+    ambiguous = {
+        "matched": False,
+        "ambiguous": True,
+        "candidates": ["Cardiology", "General Medicine"],
+        "doctors_by_department": {"Cardiology": ["Dr. K. Bhattacharya"], "General Medicine": ["Dr. S. Mukherjee"]},
+    }
+    for lang in ("bn", "hi", "en"):
+        r = rt.department_route_reply(matched, "chest pain", lang)
+        assert "Dr. K. Bhattacharya" in r and "Dr. N. Roy" in r
+        r2 = rt.department_route_reply(ambiguous, "pain", lang)
+        assert "Dr. K. Bhattacharya" in r2 and "Dr. S. Mukherjee" in r2
+
+
 def test_conflict_reply_states_the_existing_booking():
     conflict = {"doctor_name": "Dr. P. Ghosh", "date": "2026-10-03", "time_slot": "10:15"}
     for lang in ("bn", "hi", "en"):
@@ -177,3 +192,34 @@ def test_spelling_prompt_and_readback_all_languages():
         assert rt.spelling_prompt(lang)
         r = rt.spelling_readback("ravi", lang)
         assert "RAVI" in r
+
+
+def test_blood_test_list_reply_splits_into_short_tts_clauses_not_one_giant_one():
+    """A live call (2026-09-28): the whole test list joined into one comma-separated run with only a single
+    sentence break at the end came back as ONE over-long TTS clause and was never actually spoken. Grouped into
+    short runs of _NAMES_PER_GROUP, each ending in a sentence break, so agent.clause_split.split_into_clauses
+    turns this into several short clauses instead."""
+    from agent.clause_split import split_into_clauses
+    from agent.reply_templates import _NAMES_PER_GROUP, blood_test_list_reply
+
+    names = [f"Test {i:02d}" for i in range(23)]  # more than one group's worth
+    for lang in ("bn", "hi", "en"):
+        reply = blood_test_list_reply(names, lang)
+        for name in names:
+            assert name in reply
+        clauses = split_into_clauses(reply)
+        assert len(clauses) > 1, (lang, reply)
+        assert all(len(c) < 150 for c in clauses), (lang, [len(c) for c in clauses])
+        # every group of _NAMES_PER_GROUP names lands together in the same clause -- and one clause is never split
+        # across two group boundaries, or a caller would hear a mid-list pause in the wrong place
+        for clause in clauses:
+            in_this_clause = [n for n in names if n in clause]
+            assert len(in_this_clause) <= _NAMES_PER_GROUP
+
+
+def test_blood_test_list_reply_with_no_tests_is_a_single_short_reply():
+    from agent.reply_templates import blood_test_list_reply
+
+    for lang in ("bn", "hi", "en"):
+        reply = blood_test_list_reply([], lang)
+        assert reply and len(reply) < 150

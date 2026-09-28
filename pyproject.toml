@@ -92,6 +92,7 @@ module = [
     "agent.nbest_rescore",
     "agent.persona",
     "agent.phonetic_match",
+    "agent.phrase_proximity",
     "agent.phrases",
     "agent.playback_gate",
     "agent.reask_policy",

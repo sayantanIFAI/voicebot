@@ -22,9 +22,8 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
 
 from test_orchestrator_booking_flow import env, m  # noqa: F401  (the harness: real dispatch, fake tools)
 
+from agent import entity_confirmation as ec
 from agent.lid import LIDResult
-from agent.phrases import phrase
-from agent.reply_templates import missing_slot_prompt
 from agent.reply_templates import test_rate_reply as price_reply
 from agent.sample_wording import is_specimen, sample_sentence
 
@@ -129,7 +128,11 @@ async def test_when_only_the_name_was_not_trusted_the_agent_asks_for_the_name(m,
     monkeypatch.setattr(m, "_route_and_transcribe", route)
     env.session.disclosed_langs.add(lang)
     said = await env.say(heard, "test_rate", {"test_name": "ইউরিন"})
-    assert said[-1] == f"{phrase('name_not_caught', lang)} {missing_slot_prompt('test_rate', 'test_name', lang)}"
+    # DELIBERATE spec change (a live call, 2026-09-28): the model DID extract a name ("ইউরিন") even though the
+    # recognisers disagreed -- the agent now reads it back and asks a yes/no ("do you mean X?") instead of a
+    # blank "I didn't catch it, which test?" -- see main.py's REPEAT branch and tests/test_no_guess.py's own
+    # version of this same change.
+    assert said[-1] == ec.confirm_question("test_name", "ইউরিন", lang)
     assert "?" in said[-1] and said[-1].count("?") == 1  # one question: which test
 
 
@@ -142,10 +145,8 @@ async def test_a_doctor_question_asks_for_the_doctor_and_an_unnamed_intent_keeps
 
     monkeypatch.setattr(m, "_route_and_transcribe", route)
     said = await env.say("garbled", "doctor_availability", {"doctor_name": "x"})
-    assert (
-        said[-1]
-        == f"{phrase('name_not_caught', 'en')} {missing_slot_prompt('doctor_availability', 'doctor_name', 'en')}"
-    )
+    # DELIBERATE spec change: see the read-back comment above -- a name WAS extracted ("x"), so it is read back.
+    assert said[-1] == ec.confirm_question("doctor_name", "x", "en")
     said = await env.say("garbled", "clinic_faq", {"faq_topic": "hours"})
     assert said[-1] == insufficient_information_reply("en")  # no name to ask for: the general reply
 

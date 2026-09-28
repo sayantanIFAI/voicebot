@@ -752,3 +752,29 @@ def test_send_payment_link_with_no_phone_on_file_is_refused_not_queued(clinic_mo
         assert result == {"success": False, "reason": "no_phone_on_file"}
     finally:
         db.close()
+
+
+def test_department_routing_names_real_doctors_from_the_matched_departments(clinic_modules):
+    """KCD-lay-terms: a caller asking about chest pain hears actual doctor names, not just a department -- and a
+    word inserted between the two words of a keyword ("বুকে খুব ব্যথা" for "বুকে ব্যথা") still matches."""
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        cardiology = db.query(m.Department).filter_by(name="Cardiology").one()
+        expected = {d.name for d in db.query(m.Doctor).filter_by(department_id=cardiology.id).all()}
+
+        result = bs.route_department(db, "I have chest pain", "en")
+        assert result["matched"] and result["department_name"] == "Cardiology"
+        assert result["doctors"] and set(result["doctors"]) <= expected
+        assert len(result["doctors"]) <= bs.MAX_SUGGESTED_DOCTORS
+
+        # the live-call regression case: an intensifier word inserted between the two keyword words
+        gap = bs.route_department(db, "আমার বুকে খুব ব্যথা করছে", "bn")
+        assert gap["matched"] and gap["department_name"] == "Cardiology" and gap["doctors"]
+
+        ambiguous = bs.route_department(db, "I have bad hand pain", "en")
+        assert ambiguous["ambiguous"] is True
+        assert set(ambiguous["doctors_by_department"]) == set(ambiguous["candidates"])
+        assert all(ambiguous["doctors_by_department"][c] for c in ambiguous["candidates"])
+    finally:
+        db.close()

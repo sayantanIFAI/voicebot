@@ -940,10 +940,17 @@ class CallSession:
         # (the PCM variant assigns it earlier in __init__ when AEC_BARGE_IN is on)
         self.duplex: FullDuplexProcessor | None = getattr(self, "duplex", None)
 
-        # Language is per UTTERANCE (ASRLanguageRouter decides each turn);
-        # `lang` is only the last committed one -- the reply language, and
-        # the prior the router falls back on when LID is unsure.
+        # `lang` is the call's REPLY language -- sticky by design (KCD-lay-terms, a live call 2026-09-28): a caller
+        # who started in Bengali and later says one English or Hindi word/name is not asking to be answered in a
+        # different language, and re-flipping mid-call, re-playing the disclosure notice each time, was
+        # disorienting on a real call. Recognition (which ASR engine transcribes THIS turn) still follows
+        # per-utterance LID every turn, via ASRLanguageRouter/_route_and_transcribe -- only the REPLY language is
+        # locked. It changes only for: the first turn (nothing is locked yet), an explicit request ("speak in
+        # Hindi" -- agent/language_switch.py), or a detected different voice after identity verification
+        # (agent/speaker_change.py revokes verification on a voice change; see _check_speaker_change) -- see
+        # _resolve_reply_language below, which is the one place this decision is made.
         self.lang = "bn"
+        self.lang_locked = False
         self.lang_router = ASRLanguageRouter()
         self.turn_started_at: float | None = None
         self.admission = None
@@ -2059,10 +2066,9 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 languages=_languages_active,
             )
             return
-        session.lang = lang
-        _rec(session, "language", lang)
-        session.lang_router.note_response_language(lang)
-        apply_language(session.call_state, lang)
+        detected_lang = lang  # what the CALLER actually spoke this turn -- kept for analytics; never overridden
+        _rec(session, "language", detected_lang)
+        lang = _resolve_reply_language(session, lang)  # what the AGENT replies in -- sticky; see the function
         confidence = confidence_state(getattr(asr_result, "decoder_used", None), asr_result.decoder_agreement)
         apply_confidence(session.call_state, confidence != VERIFIED)
         apply_channel_quality(session.call_state, channel_quality)
@@ -2121,7 +2127,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         )
         problem = transcript_problem(
             text,
-            lang,
+            detected_lang,  # the script this text was actually RECOGNISED in, not the (now sticky) reply language
             analysis["audio"].duration_s if analysis else None,
             asr_result.decoder_agreement,
             slot_answer=in_booking_flow
@@ -2142,13 +2148,15 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         session.reask.note_success()
         session.signals.turns += 1
-        session.lang_history.append(lang)
+        # The CALLER's language history (for the flip-detection signal below and call_score.py's language_flips) --
+        # what was actually SAID each turn, not the (now sticky) reply language, which barely varies by design.
+        session.lang_history.append(detected_lang)
         if (
             len(session.lang_history) >= 3
             and session.lang_history[-1] == session.lang_history[-3] != session.lang_history[-2]
         ):
             _note(session, "language_flips")  # A, B, A: the bot moved the call to B and the caller went back
-        if _caller_thanked(text, lang):
+        if _caller_thanked(text, detected_lang):  # detecting a thank-you in what was actually said, not the reply lang
             _note(session, "caller_thanked")
         session.silence_prompts = 0
         await session.send_json("User", text)
@@ -2214,13 +2222,13 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # KCD-438: an explicit "speak in Hindi/Bengali/English" request,
         # detected deterministically (no LLM call, same zero-extra-latency
         # reasoning as the yes/no check below). Acknowledged immediately in
-        # the requested language, and biases the language-ID router's
-        # ambiguous-turn prior toward it (note_response_language) -- see
-        # agent/language_switch.py's docstring for the deliberate scope
-        # limit: this does not force every later reply into the requested
-        # language regardless of what the caller goes on to actually say.
+        # the requested language. KCD-lay-terms: this is now the (only)
+        # way the sticky reply language (_resolve_reply_language) changes
+        # mid-call -- an explicit request LOCKS it, unlike ambient per-turn
+        # language ID, which no longer moves it at all.
         switch_target = detect_language_switch_request(text, lang)
         if switch_target:
+            _lock_reply_language(session, switch_target)
             session.lang_router.note_response_language(switch_target)
             await _speak(session, phrase("language_switched", switch_target), switch_target)
             return
@@ -2355,8 +2363,22 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 asr_result.decoder_agreement,
             )
             insufficient_information.record("low_decoder_agreement", intent, lang)
-            # The caller already said WHAT they want ("the price of ..."); what was not trusted is the name.
-            # Ask for the name only, instead of "say that again" for the whole sentence.
+            # A live call (2026-09-28): the model DID extract a name ("Roy") even though the two decoders
+            # disagreed on the sentence as a whole -- the caller heard a blank "sorry, I didn't catch the name,
+            # which doctor?" when what they actually needed was "do you mean Roy?", a yes/no that is faster to
+            # answer and confirms EXACTLY the uncertain part instead of asking them to repeat everything. This is
+            # the same read-back entity_text already does for UNAVAILABLE confidence (see the READ_BACK branch
+            # below) -- extended here to LOW confidence too, but ONLY when the model actually named something;
+            # nothing is invented, and the lookup still only runs after an explicit yes.
+            entity = entity_text.entity_to_confirm(intent, slots)
+            if entity is not None:
+                slot, value = entity
+                session.pending_entity = entity_text.PendingEntity(intent, slot, value, data)
+                insufficient_information.record("low_decoder_agreement_readback", intent, lang)
+                await _speak(session, entity_text.confirm_question(slot, value, lang), lang)
+                return
+            # Nothing at all was extracted: the caller said WHAT they want ("the price of ...") but not clearly
+            # enough to guess a name from. Ask for the name only, instead of "say that again" for the whole sentence.
             name_slot = {"test_rate": "test_name", "test_prep": "test_name", "doctor_availability": "doctor_name"}.get(
                 intent
             )
@@ -3358,6 +3380,29 @@ def _caller_thanked(text: str, lang: str) -> bool:
 
     table = _cues.table_for(lang)
     return bool(table and table.any(_cues.normalise_cue(text), table.thanks))
+
+
+def _resolve_reply_language(session: CallSession, detected_lang: str) -> str:
+    """The language to REPLY in this turn (KCD-lay-terms, a live call 2026-09-28) -- locked to the first language
+    established for the call, not re-derived from this turn's own language ID. `detected_lang` is what THIS turn's
+    LID/ASR-verification actually settled on (used to select the ASR engine already, by the time this runs) --
+    that recognition is unaffected; only which language the agent ANSWERS in is locked.
+
+    Unlocks (moves session.lang) only for: the first turn (nothing locked yet -- CallSession.lang_locked), or an
+    explicit request, handled where it is detected (agent/language_switch.detect_language_switch_request's call
+    site calls _lock_reply_language directly, since that decision is made later in the same turn than this
+    function runs). A detected different voice after identity verification revokes verification and asks to
+    re-verify (agent/speaker_change.py) but does not, on its own, reopen the language lock -- a new voice
+    re-verifying is free to explicitly ask for a different language like any caller can."""
+    if not session.lang_locked:
+        _lock_reply_language(session, detected_lang)
+    session.lang_router.note_response_language(session.lang)
+    apply_language(session.call_state, session.lang)
+    return session.lang
+
+
+def _lock_reply_language(session: CallSession, lang: str) -> None:
+    session.lang, session.lang_locked = lang, True
 
 
 def _keep_language(session: CallSession, prior_lang: str) -> str:

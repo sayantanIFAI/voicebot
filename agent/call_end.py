@@ -37,6 +37,13 @@ _EXPLICIT = {
         "বাই",
         "গুডবাই",
         "টা টা",
+        # "cut" on its own is unambiguous for ending a CALL (unlike "শেষ"/finish, which also means finishing a
+        # booking -- that stays in _WHEN_ASKED below, gated by _TASK_WORDS). A live call (2026-09-28): the caller
+        # said "কেটে দিন" mid-conversation, not right after the "anything else?" prompt, and it was not recognised.
+        "কেটে দিন",
+        "কেটে দাও",
+        "কাটো",
+        "কেটে দে",
     ),
     "hi": (
         "कॉल खत्म",
@@ -53,6 +60,10 @@ _EXPLICIT = {
         "अलविदा",
         "गुडबाय",
         "टाटा",
+        # Same reasoning as the Bengali "কাটো" entries above.
+        "काट दीजिए",
+        "काट दो",
+        "काटो",
     ),
     "en": (
         "end the call",
@@ -80,8 +91,6 @@ _WHEN_ASKED = {
         "শেষ",
         "বন্ধ করে দিন",
         "বন্ধ করুন",
-        "কেটে দিন",
-        "কেটে দাও",
         "আর কিছু না",
         "আর কিছু নেই",
         "আর কিছু লাগবে না",
@@ -102,8 +111,6 @@ _WHEN_ASKED = {
         "खत्म",
         "बंद कर दीजिए",
         "बंद करें",
-        "काट दीजिए",
-        "काट दो",
         "और कुछ नहीं",
         "कुछ नहीं",
         "कुछ और नहीं",

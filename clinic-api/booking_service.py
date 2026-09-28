@@ -40,6 +40,7 @@ from models import (
     SmsOutbox,
     TestBooking,
 )
+from phrase_proximity import phrase_matches
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -877,21 +878,45 @@ def resend_confirmation(db: Session, confirmation_id: str) -> dict:
 # ========================================================== department routing
 
 
+MAX_SUGGESTED_DOCTORS = 3
+
+
+def _department_doctor_names(db: Session, department_id: int, limit: int = MAX_SUGGESTED_DOCTORS) -> list[str]:
+    """The real, currently-seeded doctors in a department, short-name form -- never a name the model made up
+    (CLAUDE.md's truth boundary): this is a live query, the same table booking_service's own doctor search reads."""
+    return [
+        d.name for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).limit(limit).all()
+    ]
+
+
 def route_department(db: Session, query_text: str, lang: str) -> dict:
+    """Symptom text -> department, plus (KCD-lay-terms) the real doctors in it, so the agent can name someone
+    instead of only the department. `phrase_matches` tolerates a word or two inserted inside a keyword phrase --
+    "বুকে ব্যথা" (chest pain) must still match "বুকে খুব ব্যথা" (chest REALLY hurts), an ordinary way to say it."""
     q = query_text.lower()
     matches: list[int] = []
     for r in db.query(DepartmentRoute).all():
         kws = {"bn": r.keywords_bn, "hi": r.keywords_hi, "en": r.keywords_en}.get(lang, r.keywords_en)
-        if any(kw and kw.lower() in q for kw in kws.split("|")):
+        if any(kw and phrase_matches(kw.lower(), q) for kw in kws.split("|")):
             matches.append(r.department_id)
     matches = list(dict.fromkeys(matches))
     if not matches:
         return {"matched": False}
     if len(matches) > 1:
-        names = [db.get(Department, m).name for m in matches[:2]]
-        return {"matched": False, "ambiguous": True, "candidates": names}
+        depts = [db.get(Department, m) for m in matches[:2]]
+        return {
+            "matched": False,
+            "ambiguous": True,
+            "candidates": [d.name for d in depts],
+            "doctors_by_department": {d.name: _department_doctor_names(db, d.id) for d in depts},
+        }
     dept = db.get(Department, matches[0])
-    return {"matched": True, "department_name": dept.name, "department_id": dept.id}
+    return {
+        "matched": True,
+        "department_name": dept.name,
+        "department_id": dept.id,
+        "doctors": _department_doctor_names(db, dept.id),
+    }
 
 
 # ============================================================= drafts

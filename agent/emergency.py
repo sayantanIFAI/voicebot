@@ -29,6 +29,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from agent.phrase_proximity import any_phrase_matches
+
 # Approved by the project owner in chat on 2026-09-24: the phrase samples, the notice (wording A) and the
 # greeting pointer in docs/emergency-for-approval.md. The document's sign-off table still has no named
 # clinician or native reviewer; if the clinic requires one, that is a separate sign-off.
@@ -79,6 +81,39 @@ _HI = re.compile(
 
 _PATTERNS = (_EN, _BN, _HI)
 
+# A live call (2026-09-28): "বুকে খুব ব্যথা করছে" ("my chest REALLY hurts") matched NONE of the patterns above,
+# because "বুকে ব্যথা" there is a fixed two-word ADJACENT phrase and "খুব" (an intensifier) sits between the two
+# words. An ordinary way to say "my chest hurts a lot" must not silently fail to be an emergency. Rather than
+# rewrite (and re-review) every approved phrase above into a gap-tolerant regex by hand, this is a SECOND,
+# ADDITIVE check over the plain multi-word phrases most exposed to exactly this (an intensifier or filler word
+# inserted between two content words): it can only make detect_emergency() MORE likely to fire on a real case
+# (RECALL OVER PRECISION, this module's own rule), never less -- the patterns above are unchanged and still run.
+_GAP_TOLERANT_PHRASES = (
+    "chest pain",
+    "not responding",
+    "passed out",
+    "heart attack",
+    "serious accident",
+    "road accident",
+    "medical emergency",
+    "বুকে ব্যথা",
+    "বুকে যন্ত্রণা",
+    "বুকে চাপ",
+    "প্রচুর রক্ত",
+    "হার্ট অ্যাটাক",
+    "সাপে কামড়",
+    "মরে যেতে চাই",
+    "छाती में दर्द",
+    "ज़्यादा खून",
+    "ज्यादा खून",
+    "दिल का दौरा",
+    "हार्ट अटैक",
+    "साँप ने काट",
+    "सांप ने काट",
+    "मर जाना चाहता",
+    "मर जाना चाहती",
+)
+
 
 def _nfc(text: str) -> str:
     return unicodedata.normalize("NFC", text or "")
@@ -87,4 +122,6 @@ def _nfc(text: str) -> str:
 def detect_emergency(text: str) -> bool:
     """True if the transcript contains an emergency phrase in ANY of the three languages."""
     t = _nfc(text)
-    return bool(t) and any(p.search(t) for p in _PATTERNS)
+    if not t:
+        return False
+    return any(p.search(t) for p in _PATTERNS) or any_phrase_matches(_GAP_TOLERANT_PHRASES, t)

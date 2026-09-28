@@ -336,6 +336,18 @@ def add_test_reply(result: dict, lang: str = "bn") -> str:
     return "দুঃখিত, টেস্টটা যোগ করা গেল না।"
 
 
+# A live call (2026-09-28): the whole test list, joined into one comma-separated run with only a single sentence
+# break at the end, came back as one TTS clause (agent/clause_split.py only splits at "।.!?") -- 25+ items in one
+# synthesis call, and the caller never heard it. Grouped into short runs, each ending in "।", so
+# split_into_clauses turns this into several short clauses instead of one very long one, same fix in spirit as
+# KCD-462's own reason for splitting a reply into clauses at all.
+_NAMES_PER_GROUP = 5
+
+
+def _grouped(items: list[str], size: int = _NAMES_PER_GROUP) -> list[list[str]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
 def blood_test_list_reply(names: list[str], lang: str = "bn") -> str:
     """ "রক্ত পরীক্ষা" ("a blood test") on its own names nothing: the REAL list of blood tests, off the live catalogue
     (main.py's lay-term handling, agent/lay_terms.py), read as their short codes (agent/catalogue_forms.lab_test_code)
@@ -347,7 +359,8 @@ def blood_test_list_reply(names: list[str], lang: str = "bn") -> str:
         return _i18n.blood_test_list_reply(spoken, lang)
     if not spoken:
         return "দুঃখিত, এই মুহূর্তে আমাদের তালিকায় কোনো রক্ত পরীক্ষা নেই। কাউন্টারে খোঁজ নিতে পারেন।"
-    return f"আমাদের এখানে রক্তের যে পরীক্ষাগুলো হয় তা হল {', '.join(spoken)}। এর মধ্যে কোনটা করাতে চান?"
+    listed = "। ".join(", ".join(g) for g in _grouped(spoken))
+    return f"আমাদের এখানে রক্তের যে পরীক্ষাগুলো হয় তা হল {listed}। এর মধ্যে কোনটা করাতে চান?"
 
 
 def resend_reply(result: dict, lang: str = "bn") -> str:
@@ -370,10 +383,18 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.department_route_reply(result, symptom, lang)
     if result.get("matched"):
-        # Administrative routing only, never a diagnosis.
-        return f"এই সমস্যার জন্য {result['department_name']} বিভাগে দেখানো ভালো হবে। ডাক্তারের অ্যাপয়েন্টমেন্ট করে দেব?"
+        # Administrative routing only, never a diagnosis. The doctor names are a live query result
+        # (clinic-api's _department_doctor_names), never invented -- an empty list just omits the sentence.
+        doctors = result.get("doctors") or []
+        who = f" আমাদের এখানে {' ও '.join(doctors)} আছেন।" if doctors else ""
+        return f"এই সমস্যার জন্য {result['department_name']} বিভাগে দেখানো ভালো হবে।{who} ডাক্তারের অ্যাপয়েন্টমেন্ট করে দেব?"
     if result.get("ambiguous"):
-        return f"এটা {' অথবা '.join(result['candidates'])} -- দুটোর যেকোনো একটা বিভাগ হতে পারে। কোনটা বলবেন?"
+        by_dept = result.get("doctors_by_department") or {}
+        parts = []
+        for name in result["candidates"]:
+            docs = by_dept.get(name) or []
+            parts.append(f"{name} ({', '.join(docs)})" if docs else name)
+        return f"এটা {' অথবা '.join(parts)} -- দুটোর যেকোনো একটা বিভাগ হতে পারে। কোনটা বলবেন?"
     return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
 
 

@@ -163,6 +163,13 @@ def test_an_emergency_phrase_in_a_garbled_transcript_still_counts():
     assert not detect_emergency("")
 
 
+def test_a_live_call_2026_09_28_an_intensifier_word_inside_a_fixed_phrase_still_counts():
+    # "বুকে ব্যথা" (chest pain) did not match "বুকে খুব ব্যথা করছে" ("my chest REALLY hurts") on a real call --
+    # an ordinary way to say it, with "খুব" inserted between the two words. agent/phrase_proximity.py fixes this.
+    assert detect_emergency("আমার বুকে খুব ব্যথা করছে")
+    assert not detect_emergency("normal conversation about tests and prices")
+
+
 def test_the_notice_exists_in_every_language_states_no_condition_and_gives_no_advice():
     for lang in ("bn", "hi", "en"):
         n = phrase("emergency_notice", lang)
@@ -286,7 +293,29 @@ async def test_a_reply_that_is_neither_lapses_the_question_and_is_handled_as_a_n
 
 @pytest.mark.asyncio
 async def test_two_decoders_disagreeing_is_refused_not_read_back(m, env):
+    # Below 0.25, agent/audio_quality.transcript_problem's OWN, earlier "decoders_disagree" check intercepts the
+    # turn first (a re-ask, agent/reask_policy.py) -- it never reaches intent resolution or the action gate at
+    # all, so nothing is extracted to read back. Unchanged by this session's work; see the 0.38 case below for that.
     await env.turn(decoder="rnnt", agreement=0.2)
+    assert env.state["answered"] == [] and env.state["resolved"] == 0 and env.session.pending_entity is None
+
+
+@pytest.mark.asyncio
+async def test_two_decoders_disagreeing_above_the_reask_floor_reads_back_a_name_the_model_did_extract(m, env):
+    """DELIBERATE spec change (a live call, 2026-09-28, decoder_agreement=0.38 -- above transcript_problem's 0.25
+    re-ask floor, so it reaches here): the model extracted "CBC" even though the two decoders disagreed on the
+    sentence as a whole. The old behaviour was a blank "sorry, I didn't catch it, repeat the whole thing" -- now it
+    reads the name back and asks a yes/no, exactly like the single-decoder case above, and the lookup still never
+    runs without an explicit yes (asserted here: answered stays empty)."""
+    await env.turn(decoder="rnnt", agreement=0.38)
+    assert env.state["answered"] == []  # the lookup never ran on the unconfirmed name
+    assert env.session.ws.spoken()[-1] == ec.confirm_question("test_name", "CBC", "en")
+    assert env.session.pending_entity is not None
+
+
+@pytest.mark.asyncio
+async def test_two_decoders_disagreeing_with_no_name_at_all_still_gets_the_blank_ask(m, env):
+    await env.turn(decoder="rnnt", agreement=0.38, slots={})
     assert env.state["answered"] == [] and env.session.pending_entity is None
 
 
