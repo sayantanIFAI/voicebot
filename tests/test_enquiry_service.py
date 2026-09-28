@@ -262,3 +262,32 @@ def test_department_hours_override(clinic_modules):
         assert es.department_hours(db, derm.id) is None  # no override -- falls back to clinic-wide FAQ
     finally:
         db.close()
+
+
+def test_a_call_summary_is_stored_with_the_callback_and_never_overwritten_by_a_duplicate(clinic_modules):
+    es, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        result = es.request_callback(
+            db,
+            "9888888888",
+            "call-2",
+            "asap",
+            "lay_term_blood",
+            call_summary="reason: lay_term_blood | phone: 9888888888",
+        )
+        row = db.query(m.CallbackRequest).filter_by(id=result["id"]).one()
+        assert row.call_summary == "reason: lay_term_blood | phone: 9888888888"
+
+        # the SAME callback asked for again (duplicate) does not overwrite an existing summary with a different one
+        again = es.request_callback(db, "9888888888", "call-2", "asap", "lay_term_blood", call_summary="different text")
+        assert again["duplicate"] is True
+        db.refresh(row)
+        assert row.call_summary == "reason: lay_term_blood | phone: 9888888888"
+
+        # a callback asked for with no summary at all still works exactly as before (optional, additive)
+        bare = es.request_callback(db, "9777777777", "call-3", "asap")
+        bare_row = db.query(m.CallbackRequest).filter_by(id=bare["id"]).one()
+        assert bare_row.call_summary == ""
+    finally:
+        db.close()

@@ -125,3 +125,22 @@ def test_department_hours_endpoint(clinic_client):
 
     no_override = clinic_client.get("/api/v1/departments/Dermatology/hours").json()
     assert no_override["found"] is False
+
+
+def test_the_callback_endpoint_accepts_and_stores_a_call_summary(clinic_client):
+    cb = clinic_client.post(
+        "/api/v1/callbacks",
+        json={
+            "phone": "9222222222",
+            "call_id": "c9",
+            "requested_window": "asap",
+            "reason": "lay_term_abdomen",
+            "call_summary": 'reason: lay_term_abdomen | language: bn | caller said: "পেটের ছবি"',
+        },
+    ).json()
+    assert cb["success"] is True
+
+
+def test_the_payment_link_endpoint_refuses_a_confirmation_id_that_is_not_a_confirmed_appointment(clinic_client):
+    result = clinic_client.post("/api/v1/payments/send-link", json={"confirmation_id": "KCD-NOPE"}).json()
+    assert result == {"success": False, "reason": "not_found"}

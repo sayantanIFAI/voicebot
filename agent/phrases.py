@@ -184,6 +184,61 @@ PHRASES["en"]["reverify_notice"] = (
     "For your security, I need to verify who I am speaking with again before I share any personal details."
 )
 
+# ------------------------------------------------------------------------------------------- lay terms / prescription
+# Said whenever the caller is asked to send a prescription photo over WhatsApp so a human colleague can call back
+# (agent/lay_terms.py's HEAD category, and both blood/abdomen flows in main.py). The number is fixed and spoken
+# plainly -- digits, not a link, since this is a voice call.
+PHRASES["bn"]["send_prescription_whatsapp"] = (
+    "প্রেসক্রিপশনের একটা ছবি এই হোয়াটসঅ্যাপ নম্বরে পাঠিয়ে দিন, ৯৬৩৫৫৮৮৩০৬। আমাদের একজন সহকর্মী দেখে আপনাকে কল করবেন।"
+)
+PHRASES["hi"]["send_prescription_whatsapp"] = (
+    "पर्चे की एक फोटो इस व्हाट्सऐप नंबर पर भेज दीजिए, 9635588306। हमारा एक सहकर्मी देखकर आपको कॉल करेगा।"
+)
+PHRASES["en"]["send_prescription_whatsapp"] = (
+    "Please send a photo of the prescription to this WhatsApp number, 9635588306. A colleague will look at it "
+    "and call you back."
+)
+
+# The catalogue has no head/brain imaging test today (agent/lay_terms.py's module docstring); this says so plainly
+# instead of naming a service the clinic does not offer, then hands off to send_prescription_whatsapp above.
+PHRASES["bn"]["head_imaging_not_listed"] = (
+    "মাথার স্ক্যান বা এমআরআই এখন আমাদের তালিকায় নেই। ডাক্তার প্রেসক্রিপশনে ঠিক কী বলেছেন সেটা দেখে বলা ভালো।"
+)
+PHRASES["hi"]["head_imaging_not_listed"] = (
+    "सिर का स्कैन या एमआरआई अभी हमारी सूची में नहीं है। पर्चे में डॉक्टर ने ठीक क्या लिखा है, वह देखकर बताना बेहतर होगा।"
+)
+PHRASES["en"]["head_imaging_not_listed"] = (
+    "A head scan or MRI is not on our list right now. It's best a colleague checks exactly what the doctor's "
+    "prescription says."
+)
+
+# ------------------------------------------------------------------------------------------------------- lab tests
+# A lab test is paid and booked at the counter, never over the call (main.py's book_test/add_test_booking intents).
+PHRASES["bn"]["lab_test_counter_only"] = (
+    "টেস্টের বুকিং আর পেমেন্ট আমাদের কাউন্টারে গিয়ে করতে হয়, ফোনে হয় না। প্রেসক্রিপশন নিয়ে কাউন্টারে চলে আসুন।"
+)
+PHRASES["hi"]["lab_test_counter_only"] = (
+    "टेस्ट की बुकिंग और पेमेंट काउंटर पर आकर करनी होती है, फ़ोन पर नहीं होती। पर्चा लेकर काउंटर पर आ जाइए।"
+)
+PHRASES["en"]["lab_test_counter_only"] = (
+    "A lab test has to be booked and paid for at the counter, not over the phone. Please come to the counter with "
+    "your prescription."
+)
+
+# ---------------------------------------------------------------------------------------------------- payment link
+# Said as the closing line after a doctor's appointment is confirmed: the payment link has been sent, and the call
+# ends here (main.py's _end_call) -- the caller pays on their own phone, never a number spoken or taken on the call.
+PHRASES["bn"]["payment_link_sent"] = (
+    "আপনার অ্যাপয়েন্টমেন্ট বুক হয়েছে। পেমেন্ট লিংক আপনার মোবাইলে পাঠানো হয়েছে, ওখান থেকে পেমেন্ট করে বুকিং নিশ্চিত করুন। ধন্যবাদ।"
+)
+PHRASES["hi"]["payment_link_sent"] = (
+    "आपकी अपॉइंटमेंट बुक हो गई है। पेमेंट लिंक आपके मोबाइल पर भेज दिया गया है, वहाँ से पेमेंट करके बुकिंग पक्की कर लीजिए। धन्यवाद।"
+)
+PHRASES["en"]["payment_link_sent"] = (
+    "Your appointment is booked. A payment link has been sent to your phone -- please pay there to confirm it. "
+    "Thank you."
+)
+
 # Spoken when a call is turned away before the caller has said a word, so
 # there is no language to choose: all three, shortest first is not worth the
 # complexity -- they are pre-synthesized and cached, so this costs no GPU

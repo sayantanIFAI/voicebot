@@ -110,9 +110,10 @@ def _ensure_seeded():
     # Column-ALTER only, same "before any ORM query" reasoning, same
     # class of bug if this ran after the LabTest.count() query below
     # instead of before it.
-    from enquiry_migrate import add_enquiry_columns
+    from enquiry_migrate import add_callback_request_columns, add_enquiry_columns
 
     logging.getLogger("clinic-api").info("enquiry schema migration: %s", add_enquiry_columns())
+    logging.getLogger("clinic-api").info("callback request schema migration: %s", add_callback_request_columns())
 
     db = SessionLocal()
     try:
@@ -201,6 +202,10 @@ def catalogue(db: Session = Depends(get_db)):
                 "name": t.name,
                 "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a],
                 "aliases_hi": [a for a in (t.aliases_hi or "").split("|") if a],
+                # The lay-term fast path (agent/lay_terms.py) reads this to answer "রক্ত পরীক্ষা" ("blood test") with
+                # the REAL list of blood tests, off the same cached catalogue fetch every other lookup already uses --
+                # never a second endpoint, never a hardcoded list that could drift from what the lab actually runs.
+                "sample_type": t.sample_type,
             }
             for t in db.query(LabTest).all()
         ],
@@ -1313,12 +1318,25 @@ class CallbackRequestBody(BaseModel):
     call_id: str
     requested_window: str
     reason: str = ""
+    call_summary: str = ""
 
 
 @app.post("/api/v1/callbacks")
 @idempotent("callbacks")
 def callback_endpoint(req: CallbackRequestBody, db: Session = Depends(get_db)):
-    return eq.request_callback(db, req.phone, req.call_id, req.requested_window, req.reason)
+    return eq.request_callback(db, req.phone, req.call_id, req.requested_window, req.reason, req.call_summary)
+
+
+class PaymentLinkRequest(BaseModel):
+    confirmation_id: str
+
+
+@app.post("/api/v1/payments/send-link")
+@idempotent("payments.send_link")
+def send_payment_link_endpoint(req: PaymentLinkRequest, db: Session = Depends(get_db)):
+    """Only a CONFIRMED DOCTOR appointment's confirmation_id ever gets a link back -- a lab test is paid and booked
+    at the counter, never over the call (bs.send_payment_link's own docstring)."""
+    return bs.send_payment_link(db, req.confirmation_id)
 
 
 @app.get("/api/v1/reports/status")

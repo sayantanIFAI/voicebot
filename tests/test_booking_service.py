@@ -681,3 +681,74 @@ def test_draft_booking_round_trip_and_expiry(clinic_modules):
         assert bs.find_draft(db, "9990002") is None
     finally:
         db.close()
+
+
+def test_a_hand_pain_symptom_is_ambiguous_between_general_medicine_and_orthopaedics(clinic_modules):
+    """KCD-lay-terms: general limb/body pain genuinely could be either -- route_department() must offer both, not
+    silently pick one (booking_migrate.DEPARTMENT_ROUTE_KEYWORDS deliberately lists "hand pain" under both)."""
+    bs, db_mod, _m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        result = bs.route_department(db, "I have bad hand pain", "en")
+        assert result["matched"] is False and result["ambiguous"] is True
+        assert set(result["candidates"]) == {"General Medicine", "Orthopaedics"}
+
+        result_bn = bs.route_department(db, "আমার হাতে ব্যথা করছে", "bn")
+        assert result_bn["ambiguous"] is True
+        assert set(result_bn["candidates"]) == {"General Medicine", "Orthopaedics"}
+
+        # An unambiguous General Medicine symptom is unaffected by the new shared keyword.
+        result_fever = bs.route_department(db, "fever", "en")
+        assert result_fever["matched"] is True and result_fever["department_name"] == "General Medicine"
+    finally:
+        db.close()
+
+
+def test_send_payment_link_only_ever_finds_a_confirmed_doctor_appointment(clinic_modules):
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "Ravi Das", "9800000002", "9800000002")
+
+        result = bs.send_payment_link(db, booked["confirmation_id"])
+        assert result["success"] is True
+        assert result["amount_inr"] == doc.consultation_fee_inr
+        assert result["payment_link"].endswith(booked["confirmation_id"])
+        assert result["payment_link"].startswith("https://") and ".invalid/" in result["payment_link"]
+
+        sms = (
+            db.query(m.SmsOutbox)
+            .filter_by(related_confirmation_id=booked["confirmation_id"], template_key="payment_link")
+            .one()
+        )
+        assert sms.status == "queued"  # never claims "sent" -- same discipline as every other queue_sms call
+
+        # A lab test booking's confirmation_id lives in a different table entirely: never finds an appointment.
+        cbc = db.query(m.LabTest).filter_by(name="Complete Blood Count (CBC)").one()
+        tb_result = bs.book_tests(db, [cbc.id], date, "Ravi Das", "9800000003", "9800000003")
+        assert bs.send_payment_link(db, tb_result["confirmation_id"]) == {"success": False, "reason": "not_found"}
+
+        assert bs.send_payment_link(db, "KCD-NOPE") == {"success": False, "reason": "not_found"}
+    finally:
+        db.close()
+
+
+def test_send_payment_link_with_no_phone_on_file_is_refused_not_queued(clinic_modules):
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        booked = bs.confirm_booking(
+            db, hold["hold_token"], doc.id, date, slot, "Ravi Das", bs.NOT_PROVIDED_PHONE, bs.NOT_PROVIDED_PHONE
+        )
+        result = bs.send_payment_link(db, booked["confirmation_id"])
+        assert result == {"success": False, "reason": "no_phone_on_file"}
+    finally:
+        db.close()

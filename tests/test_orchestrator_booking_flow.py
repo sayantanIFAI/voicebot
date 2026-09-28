@@ -61,6 +61,15 @@ class FakeTools:
         self.cancels.append(confirmation_id)
         return {"success": True, "charge_inr": 0}
 
+    async def send_payment_link(self, confirmation_id):
+        # KCD-lay-terms: main.py calls this right after a doctor booking is confirmed, then ends the call.
+        self.payment_links = [*getattr(self, "payment_links", []), confirmation_id]
+        return {"success": True, "amount_inr": 500, "payment_link": f"https://pay.invalid/{confirmation_id}"}
+
+    async def request_callback(self, phone, call_id, requested_window, reason="", call_summary=""):
+        self.callbacks = [*getattr(self, "callbacks", []), {"phone": phone, "reason": reason}]
+        return {"success": True, "id": len(self.callbacks)}
+
     async def get_patient_senior(self, phone):
         return False
 

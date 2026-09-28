@@ -586,7 +586,13 @@ class CallbackRequest(Base):
     """KCD-398: a promised callback. No real outbound-calling system
     exists (Epic E22/telephony infra) -- this records the promise and
     its fulfilment status, the placeholder half of the same discipline
-    as SMS: never claim a call was placed that was not."""
+    as SMS: never claim a call was placed that was not.
+
+    `call_summary` (added for the prescription-by-WhatsApp flow, KCD-lay-terms): a short, deterministic, FACTUAL note
+    of what this call was about -- built from known slots and the raw transcript (agent/call_summary.py), never an
+    LLM paraphrase -- so the human colleague who opens the WhatsApp prescription photo has the call's context next
+    to it, not just a phone number. Text, not a real BLOB: SQLite has no separate blob affinity, and this is short
+    plain text, not binary."""
 
     __tablename__ = "callback_requests"
     id = Column(Integer, primary_key=True)
@@ -596,6 +602,7 @@ class CallbackRequest(Base):
     reason = Column(String, nullable=False, default="")
     status = Column(String, nullable=False, default="scheduled")  # scheduled | fulfilled | cancelled
     created_at = Column(DateTime, nullable=False)
+    call_summary = Column(Text, nullable=False, default="", server_default="")
 
 
 # =============================================================================

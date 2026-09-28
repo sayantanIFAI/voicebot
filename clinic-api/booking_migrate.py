@@ -283,9 +283,13 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
     ),
     (
         "Orthopaedics",
-        ["হাড়ে ব্যথা", "গাঁটে ব্যথা", "কোমরে ব্যথা", "পিঠে ব্যথা"],
-        ["हड्डी में दर्द", "जोड़ों में दर्द", "कमर दर्द", "पीठ दर्द"],
-        ["bone pain", "joint pain", "back pain", "knee pain"],
+        # "হাতে ব্যথা"/"hand pain" is deliberately in BOTH this row and General Medicine's below: a caller saying
+        # only "my hand/body hurts" (no fever, no clearly bone/joint framing) genuinely could mean either a GP visit
+        # or an orthopaedic one -- route_department() already returns both as candidates when a query matches more
+        # than one department's keywords, rather than guessing; this is what makes that happen here.
+        ["হাড়ে ব্যথা", "গাঁটে ব্যথা", "কোমরে ব্যথা", "পিঠে ব্যথা", "হাতে ব্যথা", "পায়ে ব্যথা"],
+        ["हड्डी में दर्द", "जोड़ों में दर्द", "कमर दर्द", "पीठ दर्द", "हाथ में दर्द", "पैर में दर्द"],
+        ["bone pain", "joint pain", "back pain", "knee pain", "hand pain", "leg pain"],
     ),
     (
         "ENT",
@@ -319,9 +323,10 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
     ),
     (
         "General Medicine",
-        ["জ্বর", "সর্দি কাশি", "দুর্বলতা", "পেট খারাপ"],
-        ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब"],
-        ["fever", "cold and cough", "weakness", "stomach upset"],
+        # See the Orthopaedics row above for why "হাতে ব্যথা"/"hand pain" and general body ache are listed here too.
+        ["জ্বর", "সর্দি কাশি", "দুর্বলতা", "পেট খারাপ", "হাতে ব্যথা", "গায়ে ব্যথা", "শরীরে ব্যথা"],
+        ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब", "हाथ में दर्द", "शरीर में दर्द"],
+        ["fever", "cold and cough", "weakness", "stomach upset", "hand pain", "body ache"],
     ),
 ]
 
@@ -355,6 +360,37 @@ def seed_department_routes() -> int:
     finally:
         db.close()
     return added
+
+
+def backfill_department_route_keywords() -> int:
+    """Adds any keyword from DEPARTMENT_ROUTE_KEYWORDS an EXISTING route row does not already have -- additive only,
+    appended after what is already there, never removing or reordering it, so a clinician's own edit (including a
+    deliberate removal) is never put back. Same discipline as backfill_doctor_fees(); a department with no route row
+    yet is left to seed_department_routes(), which must run first."""
+    from models import Department, DepartmentRoute
+
+    db = SessionLocal()
+    updated = 0
+    try:
+        by_name = {d.name: d for d in db.query(Department).all()}
+        rows = {r.department_id: r for r in db.query(DepartmentRoute).all()}
+        for dept_name, kw_bn, kw_hi, kw_en in DEPARTMENT_ROUTE_KEYWORDS:
+            dept = by_name.get(dept_name)
+            row = rows.get(dept.id) if dept else None
+            if row is None:
+                continue
+            changed = False
+            for attr, new_kws in (("keywords_bn", kw_bn), ("keywords_hi", kw_hi), ("keywords_en", kw_en)):
+                have = [w for w in getattr(row, attr).split("|") if w]
+                missing = [w for w in new_kws if w not in have]
+                if missing:
+                    setattr(row, attr, "|".join(have + missing))
+                    changed = True
+            updated += changed
+        db.commit()
+    finally:
+        db.close()
+    return updated
 
 
 def migrate_booking_schema() -> dict:
@@ -441,10 +477,12 @@ def finish_booking_schema_setup() -> dict:
     """The half that needs `departments`/`doctors` to already have rows --
     call this AFTER seed() or backfill_i18n() has run, not before."""
     routes_added = seed_department_routes()
+    routes_backfilled = backfill_department_route_keywords()
     fees_filled = backfill_doctor_fees()
     policy_seeded = seed_default_cancellation_policy()
     return {
         "department_routes_added": routes_added,
+        "department_route_keywords_backfilled": routes_backfilled,
         "doctor_fees_filled": fees_filled,
         "cancellation_policy_seeded": policy_seeded,
         "doctor_full_names_filled": backfill_doctor_full_names(),

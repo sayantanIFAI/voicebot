@@ -275,13 +275,22 @@ def record_out_of_scope(db: Session, call_id: str, caller_question: str, reason_
 # ========================================================= KCD-398: callback
 
 
-def request_callback(db: Session, phone: str, call_id: str, requested_window: str, reason: str = "") -> dict:
+def request_callback(
+    db: Session, phone: str, call_id: str, requested_window: str, reason: str = "", call_summary: str = ""
+) -> dict:
+    """`call_summary`: a short, deterministic note of what the call was about (agent/call_summary.py builds it from
+    known facts, never an LLM paraphrase), so the human who calls back -- or opens a prescription photo the caller
+    was asked to send -- has the call's context next to the phone number. Optional and additive: a callback asked
+    for without one still works exactly as before."""
     twin = (
         db.query(CallbackRequest)
         .filter_by(phone=phone, call_id=call_id, requested_window=requested_window, status="scheduled")
         .first()
     )
     if twin is not None:  # the same callback asked for twice is one callback
+        if call_summary and not twin.call_summary:
+            twin.call_summary = call_summary  # never overwrite one already recorded, only fill a blank one
+            db.commit()
         return {"success": True, "id": twin.id, "requested_window": requested_window, "duplicate": True}
     row = CallbackRequest(
         phone=phone,
@@ -290,6 +299,7 @@ def request_callback(db: Session, phone: str, call_id: str, requested_window: st
         reason=reason,
         status="scheduled",
         created_at=_now(),
+        call_summary=call_summary,
     )
     db.add(row)
     db.commit()

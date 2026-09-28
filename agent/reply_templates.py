@@ -93,7 +93,13 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
             return f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
-        return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
+        # KCD-lay-terms: nothing at all matched -- a flat "no such test" tells the caller nothing useful next. If
+        # what they actually need is a general check-up rather than one named test, inviting that here, once, costs
+        # nothing and might save a second call; it never claims we HAVE something we do not.
+        return (
+            f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই। "
+            "কোনো সাধারণ স্বাস্থ্য পরীক্ষার (হেলথ চেকআপ) দরকার হলে বলুন, একজন সহকর্মী আপনাকে জানাবেন।"
+        )
 
     rate = result["rate_inr"]
     name = _spoken_test_name(slots, result)
@@ -118,7 +124,14 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
             return f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(suggestions)}?"
         if suggestions:
             return f"'{slots.get('doctor_name')}' নামে ডাক্তার খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
-        return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার আমাদের এখানে নেই।"
+        # KCD-lay-terms: no name matched at all -- inviting the caller to describe the PROBLEM instead composes with
+        # the existing department_query intent on their very next turn (no new state needed: the model already
+        # classifies a symptom description as department_query, which already returns BOTH departments when a
+        # symptom is genuinely ambiguous between them -- clinic-api/booking_service.route_department).
+        return (
+            f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার আমাদের এখানে নেই। "
+            "আপনার কী সমস্যা হচ্ছে বলুন, তাহলে ঠিক বিভাগের ডাক্তার বলতে পারব।"
+        )
 
     name = _spoken_doctor_name(slots, result)
     if result.get("available"):
@@ -321,6 +334,20 @@ def add_test_reply(result: dict, lang: str = "bn") -> str:
     if reason == "already_booked":
         return "এই টেস্টটা তো আগে থেকেই আপনার বুকিং-এ আছে।"
     return "দুঃখিত, টেস্টটা যোগ করা গেল না।"
+
+
+def blood_test_list_reply(names: list[str], lang: str = "bn") -> str:
+    """ "রক্ত পরীক্ষা" ("a blood test") on its own names nothing: the REAL list of blood tests, off the live catalogue
+    (main.py's lay-term handling, agent/lay_terms.py), read as their short codes (agent/catalogue_forms.lab_test_code)
+    rather than full clinical names -- "CBC" is what a caller says back, not "Complete Blood Count"."""
+    from agent.catalogue_forms import lab_test_code
+
+    spoken = [lab_test_code(n) for n in names]
+    if lang != "bn":
+        return _i18n.blood_test_list_reply(spoken, lang)
+    if not spoken:
+        return "দুঃখিত, এই মুহূর্তে আমাদের তালিকায় কোনো রক্ত পরীক্ষা নেই। কাউন্টারে খোঁজ নিতে পারেন।"
+    return f"আমাদের এখানে রক্তের যে পরীক্ষাগুলো হয় তা হল {', '.join(spoken)}। এর মধ্যে কোনটা করাতে চান?"
 
 
 def resend_reply(result: dict, lang: str = "bn") -> str:

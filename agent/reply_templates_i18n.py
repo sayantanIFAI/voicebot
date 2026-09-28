@@ -168,6 +168,7 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
             if lang == "hi"
             else f"I found more than one test -- which one did you mean: {' or '.join(sugg)}?"
         )
+    # KCD-lay-terms: see reply_templates.test_rate_reply's Bengali counterpart for why this invitation is here.
     if lang == "hi":
         if sugg:
             return (
@@ -175,14 +176,16 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
                 if q
                 else f"वह टेस्ट नहीं मिला। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
             )
-        return f"माफ़ कीजिए, '{q}' नाम का कोई टेस्ट हमारी सूची में नहीं है।" if q else "माफ़ कीजिए, वह टेस्ट हमारी सूची में नहीं है।"
+        base = f"माफ़ कीजिए, '{q}' नाम का कोई टेस्ट हमारी सूची में नहीं है।" if q else "माफ़ कीजिए, वह टेस्ट हमारी सूची में नहीं है।"
+        return f"{base} अगर कोई सामान्य हेल्थ चेकअप चाहिए तो बताइए, हमारा एक सहकर्मी आपको जानकारी देगा।"
     if sugg:
         return (
             f"I couldn't find a test called '{q}'. Did you mean: {', '.join(sugg)}?"
             if q
             else f"I couldn't find that test. Did you mean: {', '.join(sugg)}?"
         )
-    return f"Sorry, there is no test called '{q}' on our list." if q else "Sorry, that test is not on our list."
+    base = f"Sorry, there is no test called '{q}' on our list." if q else "Sorry, that test is not on our list."
+    return f"{base} If you need any general health check-up, let us know and a colleague will guide you."
 
 
 def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
@@ -196,6 +199,8 @@ def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
             if hi
             else f"I found more than one doctor -- did you mean {' or '.join(sugg)}?"
         )
+    # KCD-lay-terms: see reply_templates.doctor_availability_reply's Bengali counterpart for why this invitation
+    # is here, and why it needs no new state -- department_query already handles the caller's next turn.
     if hi:
         if sugg:
             return (
@@ -203,18 +208,20 @@ def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
                 if q
                 else f"वह डॉक्टर नहीं मिले। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
             )
-        return (
+        base = (
             f"माफ़ कीजिए, '{q}' नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।"
             if q
             else "माफ़ कीजिए, इस नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।"
         )
+        return f"{base} आपको क्या तकलीफ़ है बताइए, तो मैं सही विभाग के डॉक्टर बता सकूँगी।"
     if sugg:
         return (
             f"I couldn't find a doctor named '{q}'. Did you mean {', '.join(sugg)}?"
             if q
             else f"I couldn't find that doctor. Did you mean {', '.join(sugg)}?"
         )
-    return f"Sorry, we don't have a doctor named '{q}'." if q else "Sorry, we don't have a doctor by that name."
+    base = f"Sorry, we don't have a doctor named '{q}'." if q else "Sorry, we don't have a doctor by that name."
+    return f"{base} Tell me what's troubling you, and I can suggest the right doctor."
 
 
 def doctor_availability_reply(slots: dict, result: dict, lang: str) -> str:
@@ -575,6 +582,22 @@ def resend_reply(result: dict, lang: str) -> str:
         if hi
         else "Sorry, I couldn't find a booking with that confirmation number."
     )
+
+
+def blood_test_list_reply(spoken_names: list[str], lang: str) -> str:
+    """`spoken_names` are already the short codes (reply_templates.blood_test_list_reply calls
+    agent.catalogue_forms.lab_test_code before delegating here)."""
+    hi = lang == "hi"
+    if not spoken_names:
+        return (
+            "माफ़ कीजिए, अभी हमारी सूची में कोई ब्लड टेस्ट नहीं है। काउंटर पर पूछ सकते हैं।"
+            if hi
+            else "Sorry, we don't have any blood tests listed right now. You could ask at the counter."
+        )
+    joined = ", ".join(spoken_names)
+    if hi:
+        return f"हमारे यहाँ ये ब्लड टेस्ट होते हैं -- {joined}। इनमें से कौन सा करवाना है?"
+    return f"These are the blood tests we do -- {joined}. Which one would you like?"
 
 
 def department_route_reply(result: dict, symptom: str, lang: str) -> str:

@@ -770,6 +770,31 @@ def add_test_to_booking(db: Session, confirmation_id: str, test_name: str) -> di
 # ========================================================= notifications
 
 
+def send_payment_link(db: Session, confirmation_id: str) -> dict:
+    """Queue a payment-link message for a CONFIRMED DOCTOR appointment. Only a doctor appointment is payable by
+    phone (CLAUDE.md's truth boundary already keeps money out of the model's hands; this keeps it out of a lab test's
+    hands too -- a lab test's confirmation_id belongs to TestBooking, not Appointment, so it is never found here and
+    never gets a link. A lab test is paid and booked at the counter, never over the call.
+
+    The link is an EXPLICIT PLACEHOLDER on an RFC 2606 reserved, never-resolvable domain -- the same "log exactly
+    what WOULD be sent, never claim it was" discipline as queue_sms itself, which this calls. No payment gateway is
+    integrated; wiring one means building the real link in a new clinic-api/payments.py and calling it from here."""
+    appt = db.query(Appointment).filter_by(confirmation_id=confirmation_id, status="confirmed").first()
+    if not appt:
+        return {"success": False, "reason": "not_found"}
+    if appt.phone == NOT_PROVIDED_PHONE:
+        return {"success": False, "reason": "no_phone_on_file"}
+    doctor = db.get(Doctor, appt.doctor_id)
+    fee = (doctor.consultation_fee_inr if doctor else None) or 0
+    link = f"https://pay.kolkata-care-voice-agent.invalid/{confirmation_id}"
+    message = f"Pay Rs {fee} to confirm your appointment ({confirmation_id}): {link}"
+    result = queue_sms(db, appt.phone, "payment_link", message, confirmation_id)
+    out = {"success": result["queued"], "amount_inr": fee, "payment_link": link, "confirmation_id": confirmation_id}
+    if not result["queued"]:
+        out["reason"] = result.get("reason", "unknown")
+    return out
+
+
 def queue_sms(
     db: Session, to_phone: str, template_key: str, message: str, related_confirmation_id: str | None = None
 ) -> dict:

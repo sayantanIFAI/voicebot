@@ -309,6 +309,42 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"resend_confirmation({confirmation_id!r}): {e}") from e
 
+    async def request_callback(
+        self, phone: str, call_id: str, requested_window: str, reason: str = "", call_summary: str = ""
+    ) -> dict:
+        """Epic E27's callback queue (clinic-api/enquiry_service.request_callback): the durable half of "a human
+        colleague will call you back" -- there is no outbound-calling system, so this only records the promise, never
+        claims a call was placed. `call_summary` (agent/call_summary.py) rides along so the human has the call's
+        context next to the phone number."""
+        body = {
+            "phone": phone,
+            "call_id": call_id,
+            "requested_window": requested_window,
+            "reason": reason,
+            "call_summary": call_summary,
+        }
+        try:
+            r = await self._client.post("/api/v1/callbacks", json=body)
+            r.raise_for_status()
+            return validated(SuccessAnswer, r.json(), "request_callback")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"request_callback({body!r}): {e}") from e
+
+    async def send_payment_link(self, confirmation_id: str) -> dict:
+        """Only a confirmed DOCTOR appointment ever gets a link (clinic-api/booking_service.send_payment_link) -- a
+        lab test's confirmation_id belongs to a different table there and is never found, by design: a lab test is
+        paid and booked at the counter, never over the call."""
+        try:
+            r = await self._client.post(
+                "/api/v1/payments/send-link",
+                json={"confirmation_id": confirmation_id},
+                headers={"Idempotency-Key": uuid.uuid4().hex},
+            )
+            r.raise_for_status()
+            return validated(SuccessAnswer, r.json(), "send_payment_link")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"send_payment_link({confirmation_id!r}): {e}") from e
+
     async def save_draft_booking(self, caller_phone: str, call_id: str, slots_json: str) -> dict:
         body = {"caller_phone": caller_phone, "call_id": call_id, "slots_json": slots_json}
         try:

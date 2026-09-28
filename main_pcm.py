@@ -124,6 +124,7 @@ from agent.call_state import (
     apply_language,
     new_call_state,
 )
+from agent.call_summary import build_call_summary
 from agent.channel_quality import CHANNEL_CLEAN_16K, classify_channel
 from agent.clause_split import split_into_clauses
 from agent.code_switch import mixture_bucket
@@ -149,6 +150,7 @@ from agent.lang_select import speakable as _speakable
 from agent.language_policy import language_mismatch
 from agent.language_switch import detect_language_switch_request
 from agent.latency_metrics import turn_latency_by_language
+from agent.lay_terms import ABDOMEN, BLOOD, match_lay_term
 from agent.lid import (
     SUPPORTED_LANGUAGES,
     ASRLanguageRouter,
@@ -176,6 +178,7 @@ from agent.playback_gate import PlaybackGate
 from agent.reask_policy import ReaskTracker
 from agent.reply_templates import (
     add_test_reply,
+    blood_test_list_reply,
     booking_confirmation_readback,
     booking_reply,
     cancel_reply,
@@ -450,6 +453,21 @@ async def _fetch_catalogue() -> dict:
     if not isinstance(payload, dict) or "tests" not in payload:
         raise ValueError("clinic-api /api/v1/catalogue did not return a catalogue")
     return payload
+
+
+# The lay-term fast path (agent/lay_terms.py, below) is a deterministic, rare gate -- not every turn -- but still
+# reads the catalogue's sample_type, which the FastPath.Catalogue index does not keep. Cached separately, refetched
+# at most every CATALOGUE_CACHE_TTL_S, rather than hitting the network on every matching turn.
+CATALOGUE_CACHE_TTL_S = 300.0
+_catalogue_cache: dict = {"payload": None, "at": 0.0}
+
+
+async def _cached_catalogue() -> dict:
+    now = time.monotonic()
+    if _catalogue_cache["payload"] is None or now - _catalogue_cache["at"] > CATALOGUE_CACHE_TTL_S:
+        _catalogue_cache["payload"] = await _fetch_catalogue()
+        _catalogue_cache["at"] = now
+    return _catalogue_cache["payload"]
 
 
 # ---- the answers every caller asks for, rendered ahead of time -------------------------------------------------
@@ -1225,6 +1243,12 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
     that owns the SIP leg acts on it (this repo has no SIP transfer). The
     spoken notice is the human-readable half, said in every language when
     the caller's is not yet known.
+
+    Also QUEUES a callback (clinic-api/enquiry_service.request_callback) whenever a phone is already known
+    (session.identity.phone) -- this is what makes a handoff (including the reask policy's own 3rd-failure handoff,
+    agent/reask_policy.DEFAULT_MAX_REASKS) an actual actionable queue entry for a human, not only a spoken notice and
+    a websocket frame nothing durable is kept of. Without a phone there is nothing to call back on (no automatic
+    caller-ID exists in this stack), so nothing is queued -- silently, never a spoken complaint about it.
     """
     logger.warning("[%s] handoff to human: %s", session.call_id, reason)
     _note(
@@ -1237,6 +1261,11 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
     )
     session.outcome = "handed_off"
     _rec(session, "escalation", reason)
+    phone = session.identity.phone
+    if phone:
+        summary = build_call_summary(f"handoff:{reason}", lang=session.lang, phone=phone, call_id=session.call_id)
+        with contextlib.suppress(ToolCallError):
+            await _tools.request_callback(phone, session.call_id, "asap", f"handoff:{reason}", summary)
     with contextlib.suppress(Exception):
         await session.ws.send_text(json.dumps({"type": "handoff_human", "reason": reason}))
     total = 0.0
@@ -1697,6 +1726,54 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         result = await _tools.route_department(symptom, lang)
         return department_route_reply(result, symptom, lang)
     return None
+
+
+def _mentions_abdomen(test_name: str) -> bool:
+    return "abdomen" in test_name.lower()
+
+
+async def _queue_prescription_callback(session: CallSession, reason: str, text: str, lang: str) -> None:
+    """Every time the caller is asked to send a prescription over WhatsApp, a callback is queued with a factual
+    summary (agent/call_summary.py) so the human colleague who opens the photo has the call's context next to it --
+    KCD-lay-terms. Only queued when a phone is actually known (session.identity.phone): there is no automatic
+    caller-ID in this stack (see _handoff_to_human's own docstring), so without one there is nothing to call back on,
+    and a tool failure here must never interrupt the call -- the caller was already told what to do."""
+    phone = session.identity.phone
+    if not phone:
+        return
+    summary = build_call_summary(reason, lang=lang, transcript=text, phone=phone, call_id=session.call_id)
+    try:
+        await _tools.request_callback(phone, session.call_id, "asap", reason, summary)
+    except ToolCallError as e:
+        logger.warning("[%s] could not queue prescription callback (%s): %s", session.call_id, reason, e)
+
+
+async def _handle_lay_term(session: CallSession, category: str, text: str, lang: str) -> None:
+    """A rural lay term for a test CATEGORY (agent/lay_terms.py) -- "রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি" -- answered
+    from the REAL catalogue, never a hardcoded test name. Deterministic, no model call. See agent/lay_terms.py's
+    module docstring for why HEAD never names a specific test: the catalogue has none today, and naming one that
+    does not exist would be exactly the fabricated fact CLAUDE.md's truth boundary exists to prevent."""
+    reason = f"lay_term_{category}"
+    if category == BLOOD:
+        cat = await _cached_catalogue()
+        names = sorted({t["name"] for t in cat.get("tests", []) if t.get("sample_type") == "Blood"})
+        reply = blood_test_list_reply(names, lang)
+    elif category == ABDOMEN:
+        cat = await _cached_catalogue()
+        matches = sorted(
+            t["name"]
+            for t in cat.get("tests", [])
+            if t.get("sample_type") == "Imaging" and _mentions_abdomen(t["name"])
+        )
+        if matches:
+            result = await _tools.get_test_rate(matches[0])
+            reply = test_rate_reply({"test_name": matches[0]}, result, lang)
+        else:  # the catalogue changed and no longer has an abdomen imaging test: honest, not a guess
+            reply = phrase("head_imaging_not_listed", lang)
+    else:  # HEAD
+        reply = phrase("head_imaging_not_listed", lang)
+    await _speak(session, f"{reply} {phrase('send_prescription_whatsapp', lang)}", lang)
+    await _queue_prescription_callback(session, reason, text, lang)
 
 
 async def _finish_enquiry_turn(
@@ -2187,6 +2264,13 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # anything else: the question lapses and this turn is handled as a fresh one
 
         if not confirmed_entity:
+            # KCD-lay-terms: a rural lay term for a test category ("রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি"), matched
+            # deterministically before any model call -- but never while a booking is already actively in progress
+            # (session.booking is not None), so a lay-term-shaped word inside an unrelated answer never hijacks it.
+            lay_term = None if session.booking is not None else match_lay_term(text)
+            if lay_term is not None:
+                await _handle_lay_term(session, lay_term, text, lang)
+                return
             try:
                 data = await _resolve_intent(session, text, lang)
             except ExtractionError as e:
@@ -2427,33 +2511,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     await _speak(session, booking_confirmation_readback(st.slots, "book_appointment", lang), lang)
 
             elif intent == "book_test":
-                st = _enter_task(session, "book_test")
-                prior_slots = dict(st.slots)
-                changed = merge_slots(st, slots)
-                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
-                if ack:
-                    await _speak(session, ack, lang)
-                else:
-                    await _thank_for_answer(session, st, changed, prior_slots, lang)
-                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
-                st.slots["_test_names_display"] = st.test_names
-                missing = missing_required(st)
-                if missing:
-                    field_name = missing[0]
-                    if field_name == "phone" and st.note_retry("phone") >= 2:
-                        st.phone_declined = True
-                    else:
-                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
-                        return
-                    missing = missing_required(st)
-                    if missing:
-                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
-                        return
-                if is_ready_to_confirm(st):
-                    mark_confirming(st)
-                    if st.phone_declined:
-                        await _speak(session, phrase("no_confirmation_number", lang), lang)
-                    await _speak(session, booking_confirmation_readback(st.slots, "book_test", lang), lang)
+                # A lab test is paid and booked at the counter, never over the call (clinic-api/booking_service.
+                # send_payment_link's docstring says the same from the other side: a lab test's confirmation_id is
+                # never found there). No booking task is entered -- there is nothing to collect slots for.
+                await _speak(session, phrase("lab_test_counter_only", lang), lang)
 
             elif intent == "reschedule_appointment":
                 st = _enter_task(session, "reschedule_appointment")
@@ -2511,22 +2572,9 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     await _speak(session, booking_confirmation_readback(st.slots, "cancel_appointment", lang), lang)
 
             elif intent == "add_test_booking":
-                st = _enter_task(session, "add_test_booking")
-                prior_slots = dict(st.slots)
-                changed = merge_slots(st, slots)
-                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
-                if ack:
-                    await _speak(session, ack, lang)
-                else:
-                    await _thank_for_answer(session, st, changed, prior_slots, lang)
-                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
-                missing = missing_required(st)
-                if missing:
-                    await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
-                    return
-                if is_ready_to_confirm(st):
-                    mark_confirming(st)
-                    await _speak(session, booking_confirmation_readback(st.slots, "add_test_booking", lang), lang)
+                # Same counter-only rule as book_test above -- adding a test to an existing booking is still a lab
+                # test booking.
+                await _speak(session, phrase("lab_test_counter_only", lang), lang)
 
             elif intent == "lookup_booking":
                 if not (slots.get("phone") or slots.get("confirmation_id")):
@@ -2727,7 +2775,22 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
             if result.get("success"):
                 _record_action(session, "booking_confirmed", result, st.slots)
                 await _persist_senior(session, phone)
-            if result.get("success") or result.get("reason") != "hold_expired":
+                session.booking = None
+                # Only a DOCTOR appointment is paid and booked over the call at all; having reached here, this one
+                # just was. The agent calls the clinic API to send a payment link, then ends the call -- it never
+                # takes or states a payment itself (CLAUDE.md's truth boundary keeps money out of its hands the same
+                # way it keeps every other fact out of the model's). A failure sending the link is logged, never
+                # spoken over the confirmation the caller already heard: the appointment IS still confirmed either
+                # way, and the closing line says the link was sent regardless -- if it genuinely failed to queue,
+                # that is a clinic-api-side follow-up, not something the caller can act on by being told mid-call.
+                confirmation_id = result.get("confirmation_id")
+                if confirmation_id:
+                    with contextlib.suppress(ToolCallError):
+                        await _tools.send_payment_link(confirmation_id)
+                session.suspended = None  # nothing is offered back after the socket closes below
+                await _end_call(session, lang, "payment_link_sent")
+                return
+            if result.get("reason") != "hold_expired":
                 session.booking = None
             else:
                 st.hold_token, st.stage = None, "collecting"  # let a retry re-hold

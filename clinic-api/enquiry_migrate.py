@@ -43,6 +43,26 @@ def add_enquiry_columns() -> list[str]:
     return added
 
 
+# The lay-term / prescription-by-WhatsApp flow's call summary (models.CallbackRequest.call_summary): a NEW column on
+# a table `create_all()` may already have created without it on a database that was up before this column existed --
+# same "SQLAlchemy selects every mapped column" reason add_enquiry_columns() exists.
+CALLBACK_REQUEST_COLUMNS: dict[str, str] = {"call_summary": "TEXT NOT NULL DEFAULT ''"}
+
+
+def add_callback_request_columns() -> list[str]:
+    added = []
+    insp = inspect(engine)
+    if "callback_requests" not in insp.get_table_names():
+        return added  # create_all() has not made the table yet on a brand-new database; nothing to ALTER
+    have = {c["name"] for c in insp.get_columns("callback_requests")}
+    with engine.begin() as conn:
+        for col, decl in CALLBACK_REQUEST_COLUMNS.items():
+            if col not in have:
+                conn.execute(text(f"ALTER TABLE callback_requests ADD COLUMN {col} {decl}"))
+                added.append(f"callback_requests.{col}")
+    return added
+
+
 # Per-test structured prep facts, keyed by the exact LAB_TESTS name from
 # seed.py. Only tests with a genuine requirement get an override; every
 # other test keeps the ALTER TABLE defaults (no fasting, home-collection
