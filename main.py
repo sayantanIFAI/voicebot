@@ -70,7 +70,7 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent import abuse, call_end, slot_grouping, topic_flow
+from agent import abuse, action_gate, call_end, slot_grouping, topic_flow
 from agent import entity_confirmation as entity_text
 from agent import history_templates as history_text
 from agent import messages as agent_messages
@@ -112,13 +112,7 @@ from agent.channel_quality import CHANNEL_CLEAN_16K, classify_channel
 from agent.clause_split import split_into_clauses
 from agent.code_switch import mixture_bucket
 from agent.conditioning import condition as condition_audio
-from agent.confidence_gate import (
-    VERIFIED,
-    confidence_state,
-    is_low_confidence,
-    needs_entity_readback,
-    should_withhold_factual_answer,
-)
+from agent.confidence_gate import VERIFIED, confidence_state, is_low_confidence
 from agent.detector_budget import run_within_budget
 from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.disclosure import disclosure_for
@@ -2258,8 +2252,18 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # themselves. Checked before the tool call, not after: the point
         # is to never RUN the lookup on an unreliable entity, not merely
         # to hedge the reply once it comes back.
+        #
+        # One gate decides this (agent/action_gate.py), not two separate confidence checks -- it is proven
+        # (tests/test_action_gate.py) to give exactly the same answer should_withhold_factual_answer() and
+        # needs_entity_readback() gave here before; the entity itself is not yet resolved at this point in the
+        # turn (the lookup has not run), so it is not passed -- exactly as those two functions never took it either.
         decoder_used = getattr(asr_result, "decoder_used", None)
-        if not confirmed_entity and should_withhold_factual_answer(intent, asr_result.decoder_agreement, decoder_used):
+        gate_verdict = (
+            action_gate.decide(intent, decoder_used=decoder_used, decoder_agreement=asr_result.decoder_agreement)
+            if not confirmed_entity
+            else None
+        )
+        if gate_verdict is not None and gate_verdict.action == action_gate.REPEAT:
             logger.info(
                 "[%s] withholding %s answer: decoder_agreement=%.2f below floor",
                 session.call_id,
@@ -2282,7 +2286,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         # Only one decoder produced this text, so nothing vouches for it: read the entity back and
         # run the lookup only after a yes. Never let "no confidence figure" mean "trusted".
-        if not confirmed_entity and needs_entity_readback(intent, decoder_used, asr_result.decoder_agreement):
+        if gate_verdict is not None and gate_verdict.action == action_gate.READ_BACK:
             entity = entity_text.entity_to_confirm(intent, slots)
             if entity is not None:
                 slot, value = entity

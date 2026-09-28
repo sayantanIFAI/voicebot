@@ -380,7 +380,14 @@ def _tokens(text: str) -> list[str]:
 def _value_of(token: str) -> int | None:
     t = token.strip(".")
     if t.isdigit():
-        return int(t)
+        try:
+            return int(t)
+        except ValueError:
+            # str.isdigit() is true for some Unicode digits int() cannot parse (superscripts, circled numbers,
+            # ...) -- found by Hypothesis feeding this arbitrary text, not by any real ASR output: agent/gazetteer.py's
+            # normalise() and this module's own _norm() already turn every DIGIT an ASR actually emits (Bengali,
+            # Devanagari, ASCII) into a plain "0"-"9" character before this function ever sees it.
+            return None
     if t in _WORDS:
         return _WORDS[t]
     if len(t) > 1 and t[:-1] in _WORDS and t[-1] in "ই":  # বারোই

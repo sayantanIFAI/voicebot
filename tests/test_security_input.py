@@ -26,6 +26,16 @@ def dob(text):
     return None if d is None else (d.year, d.month, d.day)
 
 
+# Hypothesis (tests/test_nbest_rescore.py's fuzzing, which reaches this module through the number parser) found that
+# str.isdigit() is true for some Unicode "digits" int() cannot parse (superscripts, circled numbers, ...); a real ASR
+# never emits one (agent/security_input.py's own _norm() already turns every digit it recognises into plain "0"-"9"
+# first), but the parser must not crash on it either.
+@pytest.mark.parametrize("token", ["²", "②"])  # superscript 2, circled 2: isdigit() true, int() raises
+def test_a_unicode_digit_int_cannot_parse_is_not_a_number_not_a_crash(token):
+    assert si._value_of(token) is None
+    assert si._to_numbers([token]) == [token]
+
+
 # ------------------------------------------------------------------------------ dates of birth
 
 
