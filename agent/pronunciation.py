@@ -123,6 +123,20 @@ _ENTRIES: dict[str, tuple[str, str]] = {
     "paediatrics": ("পেডিয়াট্রিক্স", "पीडियाट्रिक्स"),
     "ortho": ("অর্থো", "ऑर्थो"),
     "ent": ("ইএনটি", "ईएनटी"),
+    # A live call (2026-09-28): the blood-test-list reply blocked outright --
+    # these mixed-case lab abbreviations ("Rh", "HBsAg", "IgG", "IgM") defeat
+    # the ALL-CAPS acronym spell-out below (KCD-455's other safety net), so
+    # without an explicit entry here they had no spoken form at all, not even
+    # a spelled-out one.
+    "grouping": ("গ্রুপিং", "ग्रुपिंग"),
+    "typing": ("টাইপিং", "टाइपिंग"),
+    "rh": ("আর এইচ", "आर एच"),
+    "widal": ("উইডাল", "विडाल"),
+    "antigen": ("অ্যান্টিজেন", "एंटीजन"),
+    "ns1": ("এন এস ওয়ান", "एन एस वन"),
+    "hbsag": ("এইচ বি এস এ জি", "एच बी एस ए जी"),
+    "igg": ("আই জি জি", "आई जी जी"),
+    "igm": ("আই জি এম", "आई जी एम"),
 }
 
 REVIEWED: set[tuple[str, str]] = set()  # (term, lang) pairs a native listener has approved

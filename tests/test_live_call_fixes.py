@@ -294,3 +294,48 @@ async def test_a_failed_engine_is_dropped_not_fatal(m, env, monkeypatch):
     )
     lang, _ = await m._route_and_transcribe(env.session, "x.wav")
     assert lang == "bn"
+
+
+# ================================================================================ 5. turn timing survives a filler
+
+
+@pytest.mark.asyncio
+async def test_turn_timing_is_logged_against_the_real_answer_not_swallowed_by_the_filler(m, env, monkeypatch, caplog):
+    """A live call (2026-09-28): a slow intent-extraction call speaks the "please hold" filler first, THEN the real
+    answer. _mark()/_log_timing() used to fire on whichever _speak() call came first in the turn -- the filler,
+    since it is spoken before the slow call returns -- clearing session.marks before the real answer's own
+    "reply"/"tts"/"send" marks could ever be recorded. The one "turn timing" line a turn like this produced looked
+    fast (just the filler's pre-cached synthesis) and the actual multi-second wait the caller sat through was
+    never logged at all -- exactly why the live ~8s gap had no breakdown to point at. Fixed in main.py's _speak()
+    by skipping the marks while session.speaking_filler is set, so they survive to be logged against the real reply."""
+    import asyncio
+
+    async def slow_resolve(session, text, lang):
+        # The real _resolve_intent's own filler-racing wrapper (agent/filler.py, via _await_with_filler), around a
+        # stand-in for the slow part (fast_path/cache/model) so this test exercises the genuine race, not a re-
+        # implementation of it -- only what a slow lookup returns is faked.
+        async def slow():
+            await asyncio.sleep(0.9)  # > FILLER_THRESHOLD_S (0.7s): forces the filler to speak first
+            return {
+                "secondary_intent": None,
+                "direct_reply_bn": None,
+                "intent": "test_rate",
+                "slots": {"test_name": "CBC"},
+            }
+
+        return await m._await_with_filler(session, slow(), lang)
+
+    monkeypatch.setattr(m, "_resolve_intent", slow_resolve)
+    with caplog.at_level("INFO"):
+        said = await env.say("what does the CBC cost", "test_rate", {"test_name": "CBC"})
+    assert said[0] == m.phrase("please_wait", "en")  # the filler really did speak first (env's route() reports "en")
+    assert said[-1] == env.state["reply"]  # ...and the real answer still followed it
+
+    timing_lines = [r.message for r in caplog.records if r.name == "main" and "turn timing" in r.message]
+    assert timing_lines, "no turn-timing line was logged at all -- the filler swallowed it again"
+    # The delta leading up to "intent" (when _resolve_intent's awaitable finally returns) must cover the ~0.9s
+    # the slow call took -- not 0/near-0, which is what it would be if the filler's own (pre-cached, near-
+    # instant) synthesis had already cleared the marks and reset the clock before "intent" was ever recorded.
+    assert "intent " in timing_lines[-1]
+    intent_ms = int(timing_lines[-1].split("intent ", 1)[1].split(" ms", 1)[0])
+    assert intent_ms >= 800

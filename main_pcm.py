@@ -1203,9 +1203,20 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
     for i, clause in enumerate(clauses):
         if session.speak_epoch != session.turn_epoch:
             break  # interrupted mid-reply: the rest is discarded, not sent
-        _mark(session, "reply")
+        # A live call (2026-09-28): the filler ("please hold") is itself spoken through this same
+        # function while the REAL answer is still being resolved (see _await_with_filler). Marking
+        # and logging it here used to consume and clear session.marks (_mark is first-occurrence-only,
+        # _log_timing clears the list) before the real answer's own "reply"/"tts"/"send" marks could
+        # ever be recorded -- so on exactly the slow turns worth measuring, the turn-timing log went
+        # dark right after the filler and the actual delay (the thing a caller waited through) was
+        # never logged at all. The filler's own latency is not interesting (it is pre-cached, near-
+        # instant); skip marking it so the marks recorded so far (lid/prep/asr) survive to be logged
+        # against the real reply that follows.
+        if not session.speaking_filler:
+            _mark(session, "reply")
         wav = await _synthesize_one_clause(session, clause, lang, fallback_reason)
-        _mark(session, "tts")
+        if not session.speaking_filler:
+            _mark(session, "tts")
         if session.speak_epoch != session.turn_epoch:
             break  # interrupted while this clause was being synthesised
 
@@ -1219,8 +1230,9 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
         await session.send_audio(wav)
         total_duration += duration
         if i == 0:
-            _mark(session, "send")
-            _log_timing(session)
+            if not session.speaking_filler:
+                _mark(session, "send")
+                _log_timing(session)
             if not session.reply_noted and not session.speaking_filler and session.turn_started_at is not None:
                 session.reply_noted = True
                 session.signals.note_reply(time.monotonic() - session.turn_started_at)
