@@ -300,7 +300,11 @@ FAQ_ENTRIES = [
     ),
     (
         "payment_methods",
-        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ"],
+        # "ক্যাশ" (the English loanword "cash") kept as its own short form: without it, that exact utterance
+        # fell through to "insurance"'s "ক্যাশলেস" (cashless) on character overlap, since "cashless" literally
+        # starts with "cash" and this topic had no form containing the word at all -- see i18n_content.py's
+        # matching Hindi/English fix for the same bug.
+        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ", "ক্যাশ", "গুগল পে", "পেটিএম", "ফোনপে"],
         "নগদ, সব ধরনের কার্ড এবং ইউপিআই -- সব মাধ্যমেই পেমেন্ট নেওয়া হয়।",
     ),
     (
@@ -308,7 +312,12 @@ FAQ_ENTRIES = [
         ["ইনসিওরেন্স", "ইন্সুরেন্স", "বিমা", "ক্যাশলেস", "মেডিক্লেম"],
         "প্রধান বিমা সংস্থাগুলোর ক্যাশলেস সুবিধা আছে। আপনার কার্ডের নাম বললে কাউন্টার থেকে নিশ্চিত করে দেওয়া হবে।",
     ),
-    ("parking", ["পার্কিং", "গাড়ি রাখার জায়গা", "গাড়ি কোথায় রাখব"], "ক্লিনিকের নিজস্ব পার্কিং আছে, কোনো চার্জ লাগে না।"),
+    (
+        "parking",
+        # Bike coverage added alongside car: the existing list only ever named "গাড়ি" (car).
+        ["পার্কিং", "গাড়ি রাখার জায়গা", "গাড়ি কোথায় রাখব", "গাড়ি রাখা যাবে", "বাইক রাখা যাবে", "বাইক রাখার জায়গা আছে", "বাইক পার্কিং"],
+        "ক্লিনিকের নিজস্ব পার্কিং আছে, কোনো চার্জ লাগে না।",
+    ),
     (
         "report_collection",
         ["রিপোর্ট কীভাবে পাব", "রিপোর্ট নিতে", "রিপোর্ট কোথা থেকে"],

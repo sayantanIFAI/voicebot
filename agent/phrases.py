@@ -26,6 +26,9 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "ঠিক আছে, আপনার অ্যাপয়েন্টমেন্টটা যেমন ছিল তেমনই আছে।",
         "no_confirmation_number": "ঠিক আছে, তাহলে বুকিংটা হয়ে যাবে, কিন্তু কোনো লিখিত কনফার্মেশন পাঠাতে পারব না।",
         "language_switched": "ঠিক আছে, এখন থেকে বাংলায় বলছি।",
+        # Asked only after two turns IN A ROW in this language, spoken in THIS language itself (the one the
+        # caller has actually been using) -- see main.py's offer-after-two-turns check, next to lang_history.
+        "offer_switch": "আমি কি বাংলায় কথা বলব?",
         # KCD-461: spoken only when the turn is STILL unanswered FILLER_THRESHOLD_S (0.7 s) after the caller stopped
         # (main.py's _await_with_filler); an answer that arrives sooner is given with no filler at all.
         # OWNER'S WORDING, 2026-09-25: "আচ্ছা বলছি" ("okay, I'm telling you"), in all three languages -- pre-warmed
@@ -72,6 +75,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
         "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
         "language_switched": "ठीक है, अब हिंदी में बात करती हूँ।",
+        "offer_switch": "क्या मैं हिंदी में बात करूँ?",
         "please_wait": "अच्छा, बताती हूँ।",
         "silence_prompt": "क्या आप कुछ और जानना चाहते हैं? नहीं तो मैं कॉल समाप्त कर दूँगी।",
         "silence_go_on": "जी, बताइए।",
@@ -99,6 +103,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "cancel_aborted": "Okay, your appointment is unchanged.",
         "no_confirmation_number": "Okay, I'll go ahead with the booking, but I won't be able to send you a written confirmation.",
         "language_switched": "Okay, switching to English now.",
+        "offer_switch": "Would you like me to continue in English?",
         "please_wait": "Alright, let me tell you.",
         "silence_prompt": "Is there anything else you would like to know? If not, I will end the call.",
         "silence_go_on": "Yes, please go ahead.",

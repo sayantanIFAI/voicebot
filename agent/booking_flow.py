@@ -195,7 +195,10 @@ def reopen_for_correction(state: BookingState, field_name: str, value: str) -> N
 
 _YES_WORDS = {
     "bn": ("হ্যাঁ", "হ্যা", "ঠিক আছে", "ওকে", "কনফার্ম", "হবে", "বুক করুন"),
-    "hi": ("हाँ", "हां", "ठीक है", "ओके", "कन्फर्म", "बुक कर दीजिए"),
+    # "हा" (no chandrabindu/anusvara at all) added alongside "हाँ"/"हां": a real call asked to switch to
+    # Hindi ("क्या मैं हिंदी में बात करूँ?") and the caller's "हा" went unrecognised, same gap Bengali's own
+    # "হ্যাঁ"/"হ্যা" pair already covers for the nasalised/non-nasalised spelling of its own yes-word.
+    "hi": ("हाँ", "हां", "हा", "ठीक है", "ओके", "कन्फर्म", "बुक कर दीजिए"),
     "en": ("yes", "yeah", "yep", "confirm", "ok", "okay", "correct", "right", "sure"),
 }
 # "cancel"/"ক্যানসেল"/"বাতিল"/"कैंसल"/"रद्द" are deliberately NOT here.

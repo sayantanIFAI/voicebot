@@ -129,7 +129,7 @@ from agent.golden_buckets import channel_buckets
 from agent.history_intent import detect_history_question
 from agent.human_request import asks_for_a_person
 from agent.identity import IdentityState
-from agent.lang_select import engines_needed, languages_to_verify, pick_candidate
+from agent.lang_select import engines_needed, fix_asr_confusables, languages_to_verify, pick_candidate
 from agent.lang_select import speakable as _speakable
 from agent.language_policy import language_mismatch
 from agent.language_switch import detect_language_switch_request
@@ -289,9 +289,13 @@ CONDITION_INPUT = os.environ.get("CONDITION_INPUT", "off")
 # warm LLM call's own "~9s across retries" evidence agent/llm.py's own
 # KCD-465 fix cites, short enough that a genuinely slow turn does not
 # leave the caller wondering whether the line is still open.
-# OWNER'S INSTRUCTION, 2026-09-25: a holding phrase only when the answer is taking MORE THAN 0.7 s, counted from the
-# moment the caller stopped speaking (so recognition time counts); an answer that comes sooner has no filler at all.
-FILLER_THRESHOLD_S = float(os.environ.get("FILLER_THRESHOLD_S", "0.7"))  # was 2.5 s of silence, then 0.9 s
+# OWNER'S INSTRUCTION, 2026-10-10 (supersedes the 0.7 s instruction below): a holding phrase only when the answer
+# is taking MORE THAN 1.0 s, counted from the moment the caller stopped speaking (so recognition time counts); an
+# answer that comes sooner has no filler at all. Raised from 0.7 s because a fast-path MISS (anything routed to
+# the semantic cache / LLM, which is the only path that can ever reach this filler at all -- a fast-path HIT
+# returns before this code runs) was crossing 0.7 s often enough to feel like "every turn", not an occasional
+# slow one.
+FILLER_THRESHOLD_S = float(os.environ.get("FILLER_THRESHOLD_S", "1.0"))  # was 2.5 s of silence, then 0.9 s, then 0.7 s
 # ...but the semantic cache is given this long to answer before the model is waited on at all, so a hit is never
 # announced by a filler that the answer was about to make pointless.
 FILLER_MIN_WAIT_S = float(os.environ.get("FILLER_MIN_WAIT_S", "0.25"))
@@ -1013,6 +1017,19 @@ class CallSession:
         # KCD-353: the disclosure was spoken in the greeting (Bengali); once more, in the
         # caller's own language, the first time it differs.
         self.disclosed_langs: set[str] = {"bn"}
+        # OWNER'S INSTRUCTION, 2026-10-10: the reply language is locked by design (see `lang` above) and only
+        # moves on an explicit "speak in Hindi" request -- a caller who just keeps answering in a different
+        # language than the call is locked to, without ever asking, stays stuck in the wrong one. After two
+        # turns IN A ROW in the same other language (session.lang_history, already tracked for the flip-detection
+        # signal below), ask ONCE whether to switch, in the language the caller has actually been using -- not
+        # before: a single stray word in another language (a name, a number) must not trigger this.
+        # `lang_switch_last_offered` makes the ask fire at most once per candidate language per call: a caller
+        # who says "no" (or ignores it and keeps talking) is not asked again for that same language, so this
+        # never nags. Confirming a switch does NOT replay the disclosure in the new language (see the offer's
+        # own handler) -- the owner's instruction is explicit that the opening introduction must not repeat.
+        self.awaiting_language_switch_offer = False
+        self.pending_language_switch: str | None = None
+        self.lang_switch_last_offered: str | None = None
         # KCD-053: who this call's near-end speaker is (level, pitch), to tell them from a
         # bystander. KCD-054/495: what we actually know about who is on the call, and the
         # voice reference that lets a change of speaker revoke a verification.
@@ -2088,6 +2105,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         logger.debug("[%s] call_state %s", session.call_id, session.call_state.to_log_dict())
 
         text = asr_result.text.strip()
+        if detected_lang == "en":
+            text = fix_asr_confusables(text)
         if not text:
             logger.info("[%s] ASR returned empty text", session.call_id)
             lang = _keep_language(session, prior_lang)
@@ -2173,6 +2192,25 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.silence_prompts = 0
         await session.send_json("User", text)
         session.turn_count += 1
+
+        # OWNER'S INSTRUCTION, 2026-10-10: exactly two turns in a row in the same OTHER language -- not one
+        # (a stray name/number), not already offered this call for this language (lang_switch_last_offered) --
+        # asks once, in that language, instead of answering this turn's content; the answer is read by
+        # _continue_language_switch_offer on the turn after. Checked before anything else can consume this turn.
+        if (
+            not session.awaiting_language_switch_offer
+            and detected_lang != session.lang
+            and detected_lang in _languages_active
+            and len(session.lang_history) >= 2
+            and session.lang_history[-1] == session.lang_history[-2] == detected_lang
+            and session.lang_switch_last_offered != detected_lang
+        ):
+            session.pending_language_switch = detected_lang
+            session.awaiting_language_switch_offer = True
+            session.lang_switch_last_offered = detected_lang
+            await _speak(session, phrase("offer_switch", detected_lang), detected_lang)
+            return
+
         after_prompt, session.awaiting_close_answer = session.awaiting_close_answer, False
         answer = classify_yes_no(text, lang) if after_prompt else None
         # "end the call", "শেষ করে দিন" (as the answer to "anything else?"): the call ends, decided by words, not the model
@@ -2211,6 +2249,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if session.awaiting_draft_answer and await _continue_draft_offer(session, text, lang):
             return
         if session.awaiting_pref_answer and await _continue_preference_offer(session, text, lang):
+            return
+        if session.awaiting_language_switch_offer and await _continue_language_switch_offer(session, text, lang):
             return
         if session.awaiting_handoff_offer or session.history_state:
             if await _continue_history_flow(session, text, lang):
@@ -3230,6 +3270,29 @@ async def _continue_preference_offer(session: CallSession, text: str, lang: str)
         await _speak(session, history_text.ok_anything_else(lang)[1], lang)
         return True
     return False
+
+
+async def _continue_language_switch_offer(session: CallSession, text: str, lang: str) -> bool:
+    """The caller's answer to "would you like me to continue in <language>?" -- asked by the two-in-a-row
+    check next to session.lang_history. `classify_yes_no` is tried in the OFFERED language first (that is what
+    the question was asked in, and what a caller answering naturally replies in), then the call's current
+    language as a fallback (a caller can simply keep answering in the language the call is locked to)."""
+    if not session.awaiting_language_switch_offer or session.pending_language_switch is None:
+        return False
+    session.awaiting_language_switch_offer = False
+    target, session.pending_language_switch = session.pending_language_switch, None
+    answer = classify_yes_no(text, target) or classify_yes_no(text, lang)
+    if answer == "yes":
+        _lock_reply_language(session, target)
+        session.lang_router.note_response_language(target)
+        # OWNER'S INSTRUCTION, 2026-10-10: a confirmed switch never repeats the opening disclosure/intro --
+        # pre-mark the new language as already disclosed so the check a few lines above this never fires for it.
+        session.disclosed_langs.add(target)
+        await _speak(session, phrase("language_switched", target), target)
+        return True
+    # "no", or an unclear answer that is not actually this call's real next question, is absorbed quietly: no
+    # re-ask, no nagging (lang_switch_last_offered already stops this exact offer from firing again this call).
+    return answer == "no"
 
 
 async def _continue_draft_offer(session: CallSession, text: str, lang: str) -> bool:

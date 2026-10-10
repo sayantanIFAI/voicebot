@@ -574,6 +574,20 @@ class FastPath:
             self._serve("smalltalk", lang)
             return FastPathResult("smalltalk", _empty_slots(), 1.0, direct_reply_bn=table.thanks_reply)
 
+        # OWNER'S INSTRUCTION, 2026-10-10: an abstain was previously invisible after the fact -- _abstain only
+        # ever recorded a bucketed REASON, never the transcript, so a turn that missed every cue and fell to the
+        # LLM could not be debugged without reproducing it live while watching logs. Logging the near-miss (the
+        # best FAQ candidate and its score, even though it did not reach the floor) costs nothing -- this branch
+        # is already the slow path -- and turns "why did this one go to the LLM" from a live-repro exercise into
+        # a grep.
+        logger.info(
+            "fast path abstain (no_cue_matched) [%s]: %r -- nearest faq candidate %r at %.2f (floor %.2f)",
+            lang,
+            text,
+            faq_topic,
+            faq_score,
+            FAQ_COMMIT_FLOOR,
+        )
         self._abstain("no_cue_matched", lang=lang)
         return None
 
