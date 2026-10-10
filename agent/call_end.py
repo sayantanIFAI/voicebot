@@ -44,6 +44,12 @@ _EXPLICIT = {
         "কেটে দাও",
         "কাটো",
         "কেটে দে",
+        # The English loanword "cut" (not the native verb "কাটা" above), as a caller actually code-mixes it in:
+        # "কল কাট করো", not just "কল কেটে দিন". Found missing in testing (2026-10-10), same gap in all 3 languages.
+        "কল কাট",
+        "কাট করো",
+        "কাট দিন",
+        "কাট করে দিন",
     ),
     "hi": (
         "कॉल खत्म",
@@ -64,6 +70,11 @@ _EXPLICIT = {
         "काट दीजिए",
         "काट दो",
         "काटो",
+        # The English loanword "कट" (not "काट" above) -- "कॉल कट कर दो" tested and missed (2026-10-10).
+        "कॉल कट",
+        "कट कर दो",
+        "कट कर दीजिए",
+        "कट करो",
     ),
     "en": (
         "end the call",
@@ -80,6 +91,13 @@ _EXPLICIT = {
         "i'm done",
         "im done",
         "i am done",
+        # "cut" was missing entirely for English despite being the exact example reported (2026-10-10) -- "end"/
+        # "hang up" above, never "cut", even though it is one of the most natural ways to phrase this.
+        "cut the call",
+        "cut this call",
+        "cut call",
+        "please cut the call",
+        "cut it off",
     ),
 }
 _WHEN_ASKED = {

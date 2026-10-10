@@ -32,8 +32,13 @@ REVIEW_STATUS = "pending_clinical_and_legal_review"
 # by the Bengali voice (agent/bn_normalize.py).
 DISCLOSURE = {
     "bn": "আপনি সোনোস্ক্যান বাণীর সঙ্গে কথা বলছেন। আমি একটি স্বয়ংক্রিয় সহকারী, মানুষ নই। চাইলে যেকোনো সময় স্টাফের সঙ্গে কথা বলতে পারবেন।",
-    "hi": "आप सोनोस्कैन वाणी से बात कर रहे हैं। मैं एक स्वचालित सहायक हूँ, इंसान नहीं। आप चाहें तो कभी भी स्टाफ़ से बात कर सकते हैं।",
-    "en": "You are speaking with Sonoscan Vaani. I am an automated assistant, not a person. You can ask for our staff at any time.",
+    # OWNER'S INSTRUCTION, 2026-10-10: Hindi and English shortened to identity + the help offer only, dropping
+    # the "automated assistant, not a person, ask for staff" sentence -- Bengali deliberately left exactly as
+    # it was. NOTE: this is the same wording the "automated, not human" notice existed to give the caller
+    # (REVIEW_STATUS below is "pending_clinical_and_legal_review" -- that review has not happened for this
+    # wording either, same as it had not for the text it replaces).
+    "hi": "आप सोनोस्कैन वाणी से बात कर रहे हैं। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
+    "en": "You are speaking with Sonoscan Vaani. Tell me, how may I help you?",
 }
 
 

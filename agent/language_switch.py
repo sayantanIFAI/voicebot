@@ -33,6 +33,12 @@ _SWITCH_PHRASES: dict[str, dict[str, str]] = {
         "ইংলিশে বল": "en",
         "বাংলায় বল": "bn",
         "বাংলায় কথা": "bn",
+        # OWNER'S INSTRUCTION, 2026-10-10 (real call): "আহ আমি হিন্দি জানি না তো বাংলাতে কথা বলবেন" went undetected --
+        # the hi/en targets just above already use the "-তে" postposition ("হিন্দিতে বল", "ইংরেজিতে বল"), but the
+        # bn target only ever had the "-য়" form. A caller who phrases it the SAME way as the other two targets
+        # was never covered. Adding the missing form, not inventing a new one.
+        "বাংলাতে বল": "bn",
+        "বাংলাতে কথা": "bn",
     },
     "hi": {
         "हिंदी में बोल": "hi",

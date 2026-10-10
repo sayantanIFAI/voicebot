@@ -1029,6 +1029,18 @@ class CallSession:
         # own handler) -- the owner's instruction is explicit that the opening introduction must not repeat.
         self.awaiting_language_switch_offer = False
         self.pending_language_switch: str | None = None
+        # OWNER'S INSTRUCTION, 2026-10-10: the turn that TRIGGERED the offer is not answered when the offer
+        # fires (it is replaced by the question "should I switch?", see the trigger next to lang_history) --
+        # stored here so that confirming the switch can answer it in the NEW language instead of leaving the
+        # caller to repeat themselves. A live call (2026-09-25-ish testing): "ये रिपोर्ट कैसे मिलेगा..." triggered
+        # the offer, "हाँ" confirmed it, and the caller had to ask the report question all over again before it
+        # was ever answered.
+        self.pending_language_switch_text: str | None = None
+        # The SAME turn's recognition result, not re-derived -- _answer_content_turn's confidence/action-gate
+        # check (CLAUDE.md's truth boundary: withhold a factual answer the recogniser's own decoders disagreed
+        # on) reads decoder_agreement off this. The question is being answered a turn later than it was asked,
+        # but how confidently it was HEARD does not change because of that -- it must not be re-guessed.
+        self.pending_language_switch_asr_result = None
         self.lang_switch_last_offered: str | None = None
         # KCD-053: who this call's near-end speaker is (level, pitch), to tell them from a
         # bystander. KCD-054/495: what we actually know about who is on the call, and the
@@ -2206,6 +2218,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             and session.lang_switch_last_offered != detected_lang
         ):
             session.pending_language_switch = detected_lang
+            session.pending_language_switch_text = text
+            session.pending_language_switch_asr_result = asr_result
             session.awaiting_language_switch_offer = True
             session.lang_switch_last_offered = detected_lang
             await _speak(session, phrase("offer_switch", detected_lang), detected_lang)
@@ -2213,8 +2227,18 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
 
         after_prompt, session.awaiting_close_answer = session.awaiting_close_answer, False
         answer = classify_yes_no(text, lang) if after_prompt else None
-        # "end the call", "শেষ করে দিন" (as the answer to "anything else?"): the call ends, decided by words, not the model
-        if call_end.wants_to_end(text, lang, after_prompt=after_prompt) or answer == "no":
+        # OWNER'S INSTRUCTION, 2026-10-10 (real call): "वो मेरे पास कैश तो नहीं है मैं ऑनलाइन पाय्मेंट कर दूंगा चलेगा"
+        # (a real question about paying online, "नहीं" only inside "कैश तो नहीं है" = "don't have cash") was heard as
+        # the answer to "anything else?", and classify_yes_no -- built to read a SHORT yes/no reply -- found "नहीं"
+        # as a token anywhere in the sentence and returned "no", ending the call before the question was ever
+        # answered. A bare "no" ends the call; a LONG sentence that merely contains a negation word, with real
+        # content around it, is a missed turn's worth of content, not a goodbye -- same "bare word vs. a real
+        # sentence" distinction agent/booking_flow.py already draws for a bare "cancel" (see its own docstring).
+        # SHORT_NO_WORDS: an ordinary short decline ("नहीं", "না না ধন্যবাদ", "no thanks") is at or under this many
+        # words; the caller's real question above was 11. Not a measured threshold -- reasoned from this one
+        # real miss, the same discipline this codebase already applies to its other reasoned-not-measured floors.
+        bare_no = answer == "no" and len(text.split()) <= 5
+        if call_end.wants_to_end(text, lang, after_prompt=after_prompt) or bare_no:
             _note(session, "ended_by_caller")
             await _end_call(session, lang, "silence_goodbye")
             return
@@ -2230,9 +2254,15 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _handoff_to_human(session, "caller_requested", (lang,))
             return
 
-        # KCD-353: the disclosure is in the greeting (Bengali); a caller who answers in another
-        # language hears it once, in theirs.
-        if lang not in session.disclosed_langs:
+        # KCD-353: the disclosure is in the greeting (Bengali); a caller who answers in another language
+        # hears it once, in theirs -- and ONLY once per call, total, same as a Bengali-only call hears it
+        # exactly once. OWNER'S INSTRUCTION, 2026-10-10: a call whose very FIRST utterance locks the reply
+        # language to Hindi/English (the common case; see _resolve_reply_language) was hearing the Bengali
+        # greeting's disclosure AND THEN this one again, back to back, on that first real turn -- a Bengali-
+        # only call never has that second line. `disclosed_langs - {"bn"}` empty means no OTHER-language
+        # disclosure has fired yet THIS CALL; once one has, this never fires again regardless of further
+        # switches, matching what a Bengali-only call already experiences.
+        if lang != "bn" and not (session.disclosed_langs - {"bn"}):
             session.disclosed_langs.add(lang)
             await _speak(session, disclosure_for(lang), lang)
 
@@ -2302,381 +2332,396 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 await _after_task_finished(session, lang)
                 return
 
-        confirmed_entity = False
-        pending, session.pending_entity = session.pending_entity, None
-        if pending is not None:
-            answer = classify_yes_no(text, lang)
-            if answer == "yes":
-                data, confirmed_entity = pending.data, True
-            elif answer == "no":
-                await _speak(session, entity_text.reask(lang), lang)
-                return
-            # anything else: the question lapses and this turn is handled as a fresh one
+        await _answer_content_turn(session, text, lang, asr_result)
+        return
 
-        if not confirmed_entity:
-            # KCD-lay-terms: a rural lay term for a test category ("রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি"), matched
-            # deterministically before any model call -- but never while a booking is already actively in progress
-            # (session.booking is not None), so a lay-term-shaped word inside an unrelated answer never hijacks it.
-            lay_term = None if session.booking is not None else match_lay_term(text)
-            if lay_term is not None:
-                await _handle_lay_term(session, lay_term, text, lang)
-                return
-            try:
-                data = await _resolve_intent(session, text, lang)
-            except ExtractionError as e:
-                logger.error("[%s] intent extraction failed: %s", session.call_id, e)
-                await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
-                return
 
-        intent = data["intent"]
-        slots = data["slots"]
-        pending, session.pending_enquiry = session.pending_enquiry, None
-        if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
-            intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
-        _mark(session, "intent")
-        _rec(session, "intent", intent)
-        _note_stated_age(session, slots, lang)
+async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_result) -> None:
+    """Resolve this utterance's content and speak the answer -- the SAME logic a normal turn uses
+    after every early-return special case (booking confirmation, pending entity, disclosure, etc.) has
+    already been checked. Extracted (2026-10-10) so a confirmed language switch can answer the turn
+    that TRIGGERED the offer, in the NEW language, instead of discarding it -- see
+    _continue_language_switch_offer. Callable only from inside session.dispatch_lock: both call sites
+    already hold it, and this function does not acquire it itself (asyncio.Lock is not reentrant).
 
-        if intent == "smalltalk":
-            reply = data.get("direct_reply_bn")
-            # The ONLY model-composed text a caller ever hears, so it passes the persona
-            # (register, no hedging, no reassurance or advice, sentence length) or is replaced.
-            # KCD-500: and it may not claim anything about THIS caller's past -- history is rendered
-            # from retrieved fields by agent/history_templates.py, never composed.
-            chosen = (
-                reply
-                if (
-                    _speakable(reply or "", lang)
-                    and persona_clean(reply or "", lang)
-                    and not history_text.mentions_personal_history(reply or "", lang)
-                )
-                else phrase("smalltalk_default", lang)
+    `asr_result` is an explicit parameter, not read off `session`: the confidence/action-gate check below
+    needs the recognition result for the TEXT actually being answered, which for a replayed turn (the
+    language-switch offer's own call site) is an EARLIER turn's result, not this turn's."""
+    confirmed_entity = False
+    pending, session.pending_entity = session.pending_entity, None
+    if pending is not None:
+        answer = classify_yes_no(text, lang)
+        if answer == "yes":
+            data, confirmed_entity = pending.data, True
+        elif answer == "no":
+            await _speak(session, entity_text.reask(lang), lang)
+            return
+        # anything else: the question lapses and this turn is handled as a fresh one
+
+    if not confirmed_entity:
+        # KCD-lay-terms: a rural lay term for a test category ("রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি"), matched
+        # deterministically before any model call -- but never while a booking is already actively in progress
+        # (session.booking is not None), so a lay-term-shaped word inside an unrelated answer never hijacks it.
+        lay_term = None if session.booking is not None else match_lay_term(text)
+        if lay_term is not None:
+            await _handle_lay_term(session, lay_term, text, lang)
+            return
+        try:
+            data = await _resolve_intent(session, text, lang)
+        except ExtractionError as e:
+            logger.error("[%s] intent extraction failed: %s", session.call_id, e)
+            await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
+            return
+
+    intent = data["intent"]
+    slots = data["slots"]
+    pending, session.pending_enquiry = session.pending_enquiry, None
+    if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
+        intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
+    _mark(session, "intent")
+    _rec(session, "intent", intent)
+    _note_stated_age(session, slots, lang)
+
+    if intent == "smalltalk":
+        reply = data.get("direct_reply_bn")
+        # The ONLY model-composed text a caller ever hears, so it passes the persona
+        # (register, no hedging, no reassurance or advice, sentence length) or is replaced.
+        # KCD-500: and it may not claim anything about THIS caller's past -- history is rendered
+        # from retrieved fields by agent/history_templates.py, never composed.
+        chosen = (
+            reply
+            if (
+                _speakable(reply or "", lang)
+                and persona_clean(reply or "", lang)
+                and not history_text.mentions_personal_history(reply or "", lang)
             )
-            await _speak(session, _with_resume(session, chosen, lang), lang)
+            else phrase("smalltalk_default", lang)
+        )
+        await _speak(session, _with_resume(session, chosen, lang), lang)
+        return
+
+    if (
+        intent == "unclear"
+        and session.booking is not None
+        and session.booking.stage in ("confirming", "awaiting_charge_confirm")
+    ):
+        if session.no_at_confirm:
+            await _reopen_after_no(session, session.booking, lang)  # a no with nothing to change in it
+        else:
+            await _speak(
+                session, booking_confirmation_readback(session.booking.slots, session.booking.action, lang), lang
+            )
+        return
+
+    if intent == "unclear":
+        # CodeRabbit-flagged, real gap: the "confirming"/
+        # "awaiting_charge_confirm" short-circuit above only covers
+        # the yes/no step. During ordinary "collecting"-stage slot
+        # filling, a bare answer with no sentence structure to key
+        # off ("Ravi Das", a bare 10-digit number) is exactly the
+        # kind of turn the LLM classifies "unclear" even when it DID
+        # correctly extract the slot into `slots` -- and nothing
+        # routed it back to the active booking, silently stalling
+        # the guided one-slot-per-turn flow on the minimal answers
+        # it is meant to collect. Re-attempt this turn as the active
+        # action instead of bailing, as long as the state is not
+        # stale (is_stale() -- previously never called anywhere,
+        # per CodeRabbit -- guards against resurrecting a booking
+        # the caller has plainly moved on from).
+        if session.booking is not None and session.booking.stage == "collecting" and not session.booking.is_stale():
+            intent = session.booking.action
+        else:
+            await _speak(session, phrase("unclear", lang), lang)
             return
 
-        if (
-            intent == "unclear"
-            and session.booking is not None
-            and session.booking.stage in ("confirming", "awaiting_charge_confirm")
-        ):
-            if session.no_at_confirm:
-                await _reopen_after_no(session, session.booking, lang)  # a no with nothing to change in it
+    # KCD-442/KCD-447: a turn the two ASR decoders disagreed on is not
+    # trusted to drive a factual lookup at all -- acting on a misheard
+    # test/doctor name would produce a confident, wrong answer about
+    # something else, which is worse than asking the caller to repeat
+    # themselves. Checked before the tool call, not after: the point
+    # is to never RUN the lookup on an unreliable entity, not merely
+    # to hedge the reply once it comes back.
+    #
+    # One gate decides this (agent/action_gate.py), not two separate confidence checks -- it is proven
+    # (tests/test_action_gate.py) to give exactly the same answer should_withhold_factual_answer() and
+    # needs_entity_readback() gave here before; the entity itself is not yet resolved at this point in the
+    # turn (the lookup has not run), so it is not passed -- exactly as those two functions never took it either.
+    decoder_used = getattr(asr_result, "decoder_used", None)
+    gate_verdict = (
+        action_gate.decide(intent, decoder_used=decoder_used, decoder_agreement=asr_result.decoder_agreement)
+        if not confirmed_entity
+        else None
+    )
+    if gate_verdict is not None and gate_verdict.action == action_gate.REPEAT:
+        logger.info(
+            "[%s] withholding %s answer: decoder_agreement=%.2f below floor",
+            session.call_id,
+            intent,
+            asr_result.decoder_agreement,
+        )
+        insufficient_information.record("low_decoder_agreement", intent, lang)
+        # A live call (2026-09-28): the model DID extract a name ("Roy") even though the two decoders
+        # disagreed on the sentence as a whole -- the caller heard a blank "sorry, I didn't catch the name,
+        # which doctor?" when what they actually needed was "do you mean Roy?", a yes/no that is faster to
+        # answer and confirms EXACTLY the uncertain part instead of asking them to repeat everything. This is
+        # the same read-back entity_text already does for UNAVAILABLE confidence (see the READ_BACK branch
+        # below) -- extended here to LOW confidence too, but ONLY when the model actually named something;
+        # nothing is invented, and the lookup still only runs after an explicit yes.
+        entity = entity_text.entity_to_confirm(intent, slots)
+        if entity is not None:
+            slot, value = entity
+            session.pending_entity = entity_text.PendingEntity(intent, slot, value, data)
+            insufficient_information.record("low_decoder_agreement_readback", intent, lang)
+            await _speak(session, entity_text.confirm_question(slot, value, lang), lang)
+            return
+        # Nothing at all was extracted: the caller said WHAT they want ("the price of ...") but not clearly
+        # enough to guess a name from. Ask for the name only, instead of "say that again" for the whole sentence.
+        name_slot = {"test_rate": "test_name", "test_prep": "test_name", "doctor_availability": "doctor_name"}.get(
+            intent
+        )
+        if name_slot:
+            session.pending_enquiry = (intent, session.turn_count)
+            await _speak(
+                session, f"{phrase('name_not_caught', lang)} {missing_slot_prompt(intent, name_slot, lang)}", lang
+            )
+        else:
+            await _speak(session, insufficient_information_reply(lang), lang)
+        return
+    # Only one decoder produced this text, so nothing vouches for it: read the entity back and
+    # run the lookup only after a yes. Never let "no confidence figure" mean "trusted".
+    if gate_verdict is not None and gate_verdict.action == action_gate.READ_BACK:
+        entity = entity_text.entity_to_confirm(intent, slots)
+        if entity is not None:
+            slot, value = entity
+            session.pending_entity = entity_text.PendingEntity(intent, slot, value, data)
+            insufficient_information.record("single_decoder_readback", intent, lang)
+            await _speak(session, entity_text.confirm_question(slot, value, lang), lang)
+            return
+
+    try:
+        if intent == "test_rate":
+            slots, _ = _followup(session, intent, slots, text, lang)
+            reply = await _answer_enquiry_intent(intent, slots, lang)
+            if reply is None:
+                session.pending_enquiry = (intent, session.turn_count)
+                await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
+                return
+            await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
+
+        elif intent == "doctor_availability":
+            slots, _ = _followup(session, intent, slots, text, lang)
+            reply = await _answer_enquiry_intent(intent, slots, lang)
+            if reply is None:
+                session.pending_enquiry = (intent, session.turn_count)
+                await _speak(session, missing_slot_prompt(intent, "doctor_name", lang), lang)
+                return
+            await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
+
+        elif intent == "test_prep":
+            slots, _ = _followup(session, intent, slots, text, lang)
+            reply = await _answer_enquiry_intent(intent, slots, lang)
+            if reply is None:
+                session.pending_enquiry = (intent, session.turn_count)
+                await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
+                return
+            await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
+
+        elif intent == "clinic_faq":
+            slots, _ = _followup(session, intent, slots, text, lang)
+            reply = await _answer_enquiry_intent(intent, slots, lang)
+            if reply is None:
+                session.pending_enquiry = (intent, session.turn_count)
+                await _speak(session, missing_slot_prompt(intent, "faq_topic", lang), lang)
+                return
+            await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
+
+        elif intent == "book_appointment":
+            st = _enter_task(session, "book_appointment")
+            prior_slots = dict(st.slots)
+            changed = merge_slots(st, slots)
+            if st.hold_token and {"doctor_name", "date", "time_slot"} & set(changed):
+                # KCD-104: the caller changed WHICH slot they want; the hold is on the old one. Drop it so
+                # the new doctor/date/time is held below (the old hold expires on its own).
+                st.hold_token, st.hold_doctor_id = None, None
+            ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+            if ack:
+                await _speak(session, ack, lang)
             else:
-                await _speak(
-                    session, booking_confirmation_readback(session.booking.slots, session.booking.action, lang), lang
+                await _thank_for_answer(session, st, changed, prior_slots, lang)
+                await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
+
+            # Secure the hold as soon as doctor+date+time are known, even
+            # if patient details are still missing -- KCD-376: the
+            # concurrency guard must run before the caller has spoken a
+            # patient name, not after.
+            if (
+                st.hold_token is None
+                and st.slots.get("doctor_name")
+                and st.slots.get("date")
+                and st.slots.get("time_slot")
+            ):
+                hold = await _tools.hold_slot(st.slots["doctor_name"], st.slots["date"], st.slots["time_slot"])
+                if not hold.get("success"):
+                    await _speak(session, booking_reply(st.slots, hold, lang), lang)
+                    st.slots.pop(_field_to_reclear_on_hold_failure(hold.get("reason")), None)
+                    return
+                st.hold_token, st.hold_doctor_id = hold["hold_token"], hold["doctor_id"]
+
+            # KCD-368: a caller may spell a name unprompted, or after
+            # being offered it below -- either way, letters heard this
+            # turn are assembled and used before anything else is
+            # asked, so an eager caller is never told to repeat
+            # themselves. Confirmed by readback like every other slot.
+            if not st.slots.get("patient_name") and slots.get("spelled_letters"):
+                spelled = merge_spelling(st, slots["spelled_letters"])
+                if spelled:
+                    st.slots["patient_name"] = spelled.capitalize()
+                    await _speak(session, spelling_readback(spelled, lang), lang)
+                    return
+
+            missing = missing_required(st)
+            if missing:
+                field_name = missing[0]
+                if field_name == "phone" and st.note_retry("phone") >= 2:
+                    # KCD-370: a caller who won't give a number still
+                    # gets the booking, told plainly what that costs
+                    # them, instead of being blocked here forever.
+                    st.phone_declined = True
+                elif field_name == "patient_name" and st.note_retry("patient_name") >= 2:
+                    # KCD-368: offered proactively after one failed
+                    # capture, not only when the caller asks for it.
+                    await _speak(session, spelling_prompt(lang), lang)
+                    return
+                else:
+                    await _speak(session, _next_question(session, st, intent, missing, lang), lang)
+                    return
+                missing = missing_required(st)
+                if missing:
+                    await _speak(session, _next_question(session, st, intent, missing, lang), lang)
+                    return
+
+            # Skipped when no real phone exists to check by -- the
+            # "not_provided" sentinel must never be used as a lookup
+            # key, or two different callers who both declined to give
+            # a number would appear to conflict with EACH OTHER.
+            if effective_phone(st) != "not_provided" and not st.slots.get("_conflict_checked"):
+                conflict = await _tools.booking_conflict(
+                    effective_phone(st), st.slots["date"], st.slots["time_slot"]
                 )
-            return
+                st.slots["_conflict_checked"] = "1"
+                if conflict.get("conflict"):
+                    await _speak(session, conflict_reply(conflict["existing"], lang), lang)
+                    return
 
-        if intent == "unclear":
-            # CodeRabbit-flagged, real gap: the "confirming"/
-            # "awaiting_charge_confirm" short-circuit above only covers
-            # the yes/no step. During ordinary "collecting"-stage slot
-            # filling, a bare answer with no sentence structure to key
-            # off ("Ravi Das", a bare 10-digit number) is exactly the
-            # kind of turn the LLM classifies "unclear" even when it DID
-            # correctly extract the slot into `slots` -- and nothing
-            # routed it back to the active booking, silently stalling
-            # the guided one-slot-per-turn flow on the minimal answers
-            # it is meant to collect. Re-attempt this turn as the active
-            # action instead of bailing, as long as the state is not
-            # stale (is_stale() -- previously never called anywhere,
-            # per CodeRabbit -- guards against resurrecting a booking
-            # the caller has plainly moved on from).
-            if session.booking is not None and session.booking.stage == "collecting" and not session.booking.is_stale():
-                intent = session.booking.action
+            if is_ready_to_confirm(st):
+                mark_confirming(st)
+                if st.phone_declined:
+                    await _speak(session, phrase("no_confirmation_number", lang), lang)
+                await _speak(session, booking_confirmation_readback(st.slots, "book_appointment", lang), lang)
+
+        elif intent == "book_test":
+            # A lab test is paid and booked at the counter, never over the call (clinic-api/booking_service.
+            # send_payment_link's docstring says the same from the other side: a lab test's confirmation_id is
+            # never found there). No booking task is entered -- there is nothing to collect slots for.
+            await _speak(session, phrase("lab_test_counter_only", lang), lang)
+
+        elif intent == "reschedule_appointment":
+            st = _enter_task(session, "reschedule_appointment")
+            prior_slots = dict(st.slots)
+            changed = merge_slots(st, slots)
+            ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+            if ack:
+                await _speak(session, ack, lang)
             else:
+                await _thank_for_answer(session, st, changed, prior_slots, lang)
+                await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
+            if not st.slots.get("confirmation_id") and slots.get("phone"):
+                found = await _tools.lookup_bookings(phone=slots["phone"])
+                bookings = found.get("bookings") or []
+                if len(bookings) > 1:
+                    # CodeRabbit-flagged: never silently act on
+                    # bookings[0] -- a caller with several bookings
+                    # names which one before anything proceeds.
+                    await _speak(session, multiple_bookings_reply(bookings, lang), lang)
+                    return
+                if bookings:
+                    st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
+            missing = missing_required(st)
+            if missing:
+                await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                return
+            if is_ready_to_confirm(st):
+                mark_confirming(st)
+                await _speak(session, booking_confirmation_readback(st.slots, "reschedule_appointment", lang), lang)
+
+        elif intent == "cancel_appointment":
+            st = _enter_task(session, "cancel_appointment")
+            prior_slots = dict(st.slots)
+            changed = merge_slots(st, slots)
+            ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
+            if ack:
+                await _speak(session, ack, lang)
+            else:
+                await _thank_for_answer(session, st, changed, prior_slots, lang)
+                await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
+            if not st.slots.get("confirmation_id") and slots.get("phone"):
+                found = await _tools.lookup_bookings(phone=slots["phone"])
+                bookings = found.get("bookings") or []
+                if len(bookings) > 1:
+                    await _speak(session, multiple_bookings_reply(bookings, lang), lang)
+                    return
+                if bookings:
+                    st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
+            missing = missing_required(st)
+            if missing:
+                await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
+                return
+            if is_ready_to_confirm(st):
+                mark_confirming(st)
+                await _speak(session, booking_confirmation_readback(st.slots, "cancel_appointment", lang), lang)
+
+        elif intent == "add_test_booking":
+            # Same counter-only rule as book_test above -- adding a test to an existing booking is still a lab
+            # test booking.
+            await _speak(session, phrase("lab_test_counter_only", lang), lang)
+
+        elif intent == "lookup_booking":
+            if not (slots.get("phone") or slots.get("confirmation_id")):
+                await _speak(session, missing_slot_prompt(intent, "phone", lang), lang)
+                return
+            result = await _tools.lookup_bookings(
+                phone=slots.get("phone"), confirmation_id=slots.get("confirmation_id")
+            )
+            await _speak(
+                session, _with_resume(session, lookup_reply(result.get("bookings") or [], lang), lang), lang
+            )
+
+        elif intent == "resend_confirmation":
+            confirmation_id = slots.get("confirmation_id")
+            if not confirmation_id and slots.get("phone"):
+                found = await _tools.lookup_bookings(phone=slots["phone"])
+                bookings = found.get("bookings") or []
+                if len(bookings) > 1:
+                    await _speak(session, multiple_bookings_reply(bookings, lang), lang)
+                    return
+                if bookings:
+                    confirmation_id = bookings[0]["confirmation_id"]
+            if not confirmation_id:
+                await _speak(session, missing_slot_prompt("cancel_appointment", "confirmation_id", lang), lang)
+                return
+            result = await _tools.resend_confirmation(confirmation_id)
+            await _speak(session, _with_resume(session, resend_reply(result, lang), lang), lang)
+
+        elif intent == "department_query":
+            reply = await _answer_enquiry_intent(intent, slots, lang)
+            if reply is None:
                 await _speak(session, phrase("unclear", lang), lang)
                 return
+            await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
-        # KCD-442/KCD-447: a turn the two ASR decoders disagreed on is not
-        # trusted to drive a factual lookup at all -- acting on a misheard
-        # test/doctor name would produce a confident, wrong answer about
-        # something else, which is worse than asking the caller to repeat
-        # themselves. Checked before the tool call, not after: the point
-        # is to never RUN the lookup on an unreliable entity, not merely
-        # to hedge the reply once it comes back.
-        #
-        # One gate decides this (agent/action_gate.py), not two separate confidence checks -- it is proven
-        # (tests/test_action_gate.py) to give exactly the same answer should_withhold_factual_answer() and
-        # needs_entity_readback() gave here before; the entity itself is not yet resolved at this point in the
-        # turn (the lookup has not run), so it is not passed -- exactly as those two functions never took it either.
-        decoder_used = getattr(asr_result, "decoder_used", None)
-        gate_verdict = (
-            action_gate.decide(intent, decoder_used=decoder_used, decoder_agreement=asr_result.decoder_agreement)
-            if not confirmed_entity
-            else None
-        )
-        if gate_verdict is not None and gate_verdict.action == action_gate.REPEAT:
-            logger.info(
-                "[%s] withholding %s answer: decoder_agreement=%.2f below floor",
-                session.call_id,
-                intent,
-                asr_result.decoder_agreement,
-            )
-            insufficient_information.record("low_decoder_agreement", intent, lang)
-            # A live call (2026-09-28): the model DID extract a name ("Roy") even though the two decoders
-            # disagreed on the sentence as a whole -- the caller heard a blank "sorry, I didn't catch the name,
-            # which doctor?" when what they actually needed was "do you mean Roy?", a yes/no that is faster to
-            # answer and confirms EXACTLY the uncertain part instead of asking them to repeat everything. This is
-            # the same read-back entity_text already does for UNAVAILABLE confidence (see the READ_BACK branch
-            # below) -- extended here to LOW confidence too, but ONLY when the model actually named something;
-            # nothing is invented, and the lookup still only runs after an explicit yes.
-            entity = entity_text.entity_to_confirm(intent, slots)
-            if entity is not None:
-                slot, value = entity
-                session.pending_entity = entity_text.PendingEntity(intent, slot, value, data)
-                insufficient_information.record("low_decoder_agreement_readback", intent, lang)
-                await _speak(session, entity_text.confirm_question(slot, value, lang), lang)
-                return
-            # Nothing at all was extracted: the caller said WHAT they want ("the price of ...") but not clearly
-            # enough to guess a name from. Ask for the name only, instead of "say that again" for the whole sentence.
-            name_slot = {"test_rate": "test_name", "test_prep": "test_name", "doctor_availability": "doctor_name"}.get(
-                intent
-            )
-            if name_slot:
-                session.pending_enquiry = (intent, session.turn_count)
-                await _speak(
-                    session, f"{phrase('name_not_caught', lang)} {missing_slot_prompt(intent, name_slot, lang)}", lang
-                )
-            else:
-                await _speak(session, insufficient_information_reply(lang), lang)
-            return
-        # Only one decoder produced this text, so nothing vouches for it: read the entity back and
-        # run the lookup only after a yes. Never let "no confidence figure" mean "trusted".
-        if gate_verdict is not None and gate_verdict.action == action_gate.READ_BACK:
-            entity = entity_text.entity_to_confirm(intent, slots)
-            if entity is not None:
-                slot, value = entity
-                session.pending_entity = entity_text.PendingEntity(intent, slot, value, data)
-                insufficient_information.record("single_decoder_readback", intent, lang)
-                await _speak(session, entity_text.confirm_question(slot, value, lang), lang)
-                return
-
-        try:
-            if intent == "test_rate":
-                slots, _ = _followup(session, intent, slots, text, lang)
-                reply = await _answer_enquiry_intent(intent, slots, lang)
-                if reply is None:
-                    session.pending_enquiry = (intent, session.turn_count)
-                    await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
-                    return
-                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
-
-            elif intent == "doctor_availability":
-                slots, _ = _followup(session, intent, slots, text, lang)
-                reply = await _answer_enquiry_intent(intent, slots, lang)
-                if reply is None:
-                    session.pending_enquiry = (intent, session.turn_count)
-                    await _speak(session, missing_slot_prompt(intent, "doctor_name", lang), lang)
-                    return
-                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
-
-            elif intent == "test_prep":
-                slots, _ = _followup(session, intent, slots, text, lang)
-                reply = await _answer_enquiry_intent(intent, slots, lang)
-                if reply is None:
-                    session.pending_enquiry = (intent, session.turn_count)
-                    await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
-                    return
-                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
-
-            elif intent == "clinic_faq":
-                slots, _ = _followup(session, intent, slots, text, lang)
-                reply = await _answer_enquiry_intent(intent, slots, lang)
-                if reply is None:
-                    session.pending_enquiry = (intent, session.turn_count)
-                    await _speak(session, missing_slot_prompt(intent, "faq_topic", lang), lang)
-                    return
-                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
-
-            elif intent == "book_appointment":
-                st = _enter_task(session, "book_appointment")
-                prior_slots = dict(st.slots)
-                changed = merge_slots(st, slots)
-                if st.hold_token and {"doctor_name", "date", "time_slot"} & set(changed):
-                    # KCD-104: the caller changed WHICH slot they want; the hold is on the old one. Drop it so
-                    # the new doctor/date/time is held below (the old hold expires on its own).
-                    st.hold_token, st.hold_doctor_id = None, None
-                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
-                if ack:
-                    await _speak(session, ack, lang)
-                else:
-                    await _thank_for_answer(session, st, changed, prior_slots, lang)
-                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
-
-                # Secure the hold as soon as doctor+date+time are known, even
-                # if patient details are still missing -- KCD-376: the
-                # concurrency guard must run before the caller has spoken a
-                # patient name, not after.
-                if (
-                    st.hold_token is None
-                    and st.slots.get("doctor_name")
-                    and st.slots.get("date")
-                    and st.slots.get("time_slot")
-                ):
-                    hold = await _tools.hold_slot(st.slots["doctor_name"], st.slots["date"], st.slots["time_slot"])
-                    if not hold.get("success"):
-                        await _speak(session, booking_reply(st.slots, hold, lang), lang)
-                        st.slots.pop(_field_to_reclear_on_hold_failure(hold.get("reason")), None)
-                        return
-                    st.hold_token, st.hold_doctor_id = hold["hold_token"], hold["doctor_id"]
-
-                # KCD-368: a caller may spell a name unprompted, or after
-                # being offered it below -- either way, letters heard this
-                # turn are assembled and used before anything else is
-                # asked, so an eager caller is never told to repeat
-                # themselves. Confirmed by readback like every other slot.
-                if not st.slots.get("patient_name") and slots.get("spelled_letters"):
-                    spelled = merge_spelling(st, slots["spelled_letters"])
-                    if spelled:
-                        st.slots["patient_name"] = spelled.capitalize()
-                        await _speak(session, spelling_readback(spelled, lang), lang)
-                        return
-
-                missing = missing_required(st)
-                if missing:
-                    field_name = missing[0]
-                    if field_name == "phone" and st.note_retry("phone") >= 2:
-                        # KCD-370: a caller who won't give a number still
-                        # gets the booking, told plainly what that costs
-                        # them, instead of being blocked here forever.
-                        st.phone_declined = True
-                    elif field_name == "patient_name" and st.note_retry("patient_name") >= 2:
-                        # KCD-368: offered proactively after one failed
-                        # capture, not only when the caller asks for it.
-                        await _speak(session, spelling_prompt(lang), lang)
-                        return
-                    else:
-                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
-                        return
-                    missing = missing_required(st)
-                    if missing:
-                        await _speak(session, _next_question(session, st, intent, missing, lang), lang)
-                        return
-
-                # Skipped when no real phone exists to check by -- the
-                # "not_provided" sentinel must never be used as a lookup
-                # key, or two different callers who both declined to give
-                # a number would appear to conflict with EACH OTHER.
-                if effective_phone(st) != "not_provided" and not st.slots.get("_conflict_checked"):
-                    conflict = await _tools.booking_conflict(
-                        effective_phone(st), st.slots["date"], st.slots["time_slot"]
-                    )
-                    st.slots["_conflict_checked"] = "1"
-                    if conflict.get("conflict"):
-                        await _speak(session, conflict_reply(conflict["existing"], lang), lang)
-                        return
-
-                if is_ready_to_confirm(st):
-                    mark_confirming(st)
-                    if st.phone_declined:
-                        await _speak(session, phrase("no_confirmation_number", lang), lang)
-                    await _speak(session, booking_confirmation_readback(st.slots, "book_appointment", lang), lang)
-
-            elif intent == "book_test":
-                # A lab test is paid and booked at the counter, never over the call (clinic-api/booking_service.
-                # send_payment_link's docstring says the same from the other side: a lab test's confirmation_id is
-                # never found there). No booking task is entered -- there is nothing to collect slots for.
-                await _speak(session, phrase("lab_test_counter_only", lang), lang)
-
-            elif intent == "reschedule_appointment":
-                st = _enter_task(session, "reschedule_appointment")
-                prior_slots = dict(st.slots)
-                changed = merge_slots(st, slots)
-                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
-                if ack:
-                    await _speak(session, ack, lang)
-                else:
-                    await _thank_for_answer(session, st, changed, prior_slots, lang)
-                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
-                if not st.slots.get("confirmation_id") and slots.get("phone"):
-                    found = await _tools.lookup_bookings(phone=slots["phone"])
-                    bookings = found.get("bookings") or []
-                    if len(bookings) > 1:
-                        # CodeRabbit-flagged: never silently act on
-                        # bookings[0] -- a caller with several bookings
-                        # names which one before anything proceeds.
-                        await _speak(session, multiple_bookings_reply(bookings, lang), lang)
-                        return
-                    if bookings:
-                        st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
-                missing = missing_required(st)
-                if missing:
-                    await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
-                    return
-                if is_ready_to_confirm(st):
-                    mark_confirming(st)
-                    await _speak(session, booking_confirmation_readback(st.slots, "reschedule_appointment", lang), lang)
-
-            elif intent == "cancel_appointment":
-                st = _enter_task(session, "cancel_appointment")
-                prior_slots = dict(st.slots)
-                changed = merge_slots(st, slots)
-                ack = correction_acknowledgement(changed, prior_slots, st.slots, lang)
-                if ack:
-                    await _speak(session, ack, lang)
-                else:
-                    await _thank_for_answer(session, st, changed, prior_slots, lang)
-                    await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
-                if not st.slots.get("confirmation_id") and slots.get("phone"):
-                    found = await _tools.lookup_bookings(phone=slots["phone"])
-                    bookings = found.get("bookings") or []
-                    if len(bookings) > 1:
-                        await _speak(session, multiple_bookings_reply(bookings, lang), lang)
-                        return
-                    if bookings:
-                        st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
-                missing = missing_required(st)
-                if missing:
-                    await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
-                    return
-                if is_ready_to_confirm(st):
-                    mark_confirming(st)
-                    await _speak(session, booking_confirmation_readback(st.slots, "cancel_appointment", lang), lang)
-
-            elif intent == "add_test_booking":
-                # Same counter-only rule as book_test above -- adding a test to an existing booking is still a lab
-                # test booking.
-                await _speak(session, phrase("lab_test_counter_only", lang), lang)
-
-            elif intent == "lookup_booking":
-                if not (slots.get("phone") or slots.get("confirmation_id")):
-                    await _speak(session, missing_slot_prompt(intent, "phone", lang), lang)
-                    return
-                result = await _tools.lookup_bookings(
-                    phone=slots.get("phone"), confirmation_id=slots.get("confirmation_id")
-                )
-                await _speak(
-                    session, _with_resume(session, lookup_reply(result.get("bookings") or [], lang), lang), lang
-                )
-
-            elif intent == "resend_confirmation":
-                confirmation_id = slots.get("confirmation_id")
-                if not confirmation_id and slots.get("phone"):
-                    found = await _tools.lookup_bookings(phone=slots["phone"])
-                    bookings = found.get("bookings") or []
-                    if len(bookings) > 1:
-                        await _speak(session, multiple_bookings_reply(bookings, lang), lang)
-                        return
-                    if bookings:
-                        confirmation_id = bookings[0]["confirmation_id"]
-                if not confirmation_id:
-                    await _speak(session, missing_slot_prompt("cancel_appointment", "confirmation_id", lang), lang)
-                    return
-                result = await _tools.resend_confirmation(confirmation_id)
-                await _speak(session, _with_resume(session, resend_reply(result, lang), lang), lang)
-
-            elif intent == "department_query":
-                reply = await _answer_enquiry_intent(intent, slots, lang)
-                if reply is None:
-                    await _speak(session, phrase("unclear", lang), lang)
-                    return
-                await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
-
-        except ToolCallError as e:
-            logger.error("[%s] clinic API call failed: %s", session.call_id, e)
-            await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
+    except ToolCallError as e:
+        logger.error("[%s] clinic API call failed: %s", session.call_id, e)
+        await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
 
 
 async def _reopen_after_no(session: CallSession, st, lang: str) -> None:
@@ -3281,6 +3326,8 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
         return False
     session.awaiting_language_switch_offer = False
     target, session.pending_language_switch = session.pending_language_switch, None
+    pending_text, session.pending_language_switch_text = session.pending_language_switch_text, None
+    pending_asr, session.pending_language_switch_asr_result = session.pending_language_switch_asr_result, None
     answer = classify_yes_no(text, target) or classify_yes_no(text, lang)
     if answer == "yes":
         _lock_reply_language(session, target)
@@ -3289,6 +3336,11 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
         # pre-mark the new language as already disclosed so the check a few lines above this never fires for it.
         session.disclosed_langs.add(target)
         await _speak(session, phrase("language_switched", target), target)
+        # OWNER'S INSTRUCTION, 2026-10-10: answer the question that TRIGGERED the offer, now in the new
+        # language, instead of leaving the caller to repeat it -- that question was set aside, not answered,
+        # when the offer itself was asked (see the two-in-a-row check next to session.lang_history).
+        if pending_text and pending_asr is not None:
+            await _answer_content_turn(session, pending_text, target, pending_asr)
         return True
     # "no", or an unclear answer that is not actually this call's real next question, is absorbed quietly: no
     # re-ask, no nagging (lang_switch_last_offered already stops this exact offer from firing again this call).
