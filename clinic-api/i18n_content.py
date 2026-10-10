@@ -137,7 +137,7 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
         "Our clinic is in New Town, Rajarhat, Kolkata, near City Centre 2.",
     ),
     "payment_methods": (
-        "नकद, सभी तरह के कार्ड और यूपीआई, सभी से भुगतान लिया जाता है।",
+        "यहाँ नकद, सभी प्रमुख कार्ड, और ऑनलाइन पेमेंट भी हो जाता है।",
         "We accept cash, all kinds of cards, and UPI.",
     ),
     "insurance": (
@@ -150,7 +150,7 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
         "The clinic has its own parking, and there is no charge.",
     ),
     "report_collection": (
-        "रिपोर्ट सीधे काउंटर से ले सकते हैं, या हम इसे व्हाट्सऐप और ईमेल पर भी भेजते हैं।",
+        "आप रिपोर्ट सीधे लैब काउंटर से प्राप्त कर सकते हैं, या हम इसे आपके व्हाट्सएप और ईमेल पर भी भेज सकते हैं।",
         "You can collect your report directly from the counter, or we can also send it on WhatsApp and email.",
     ),
     "contact_number": (
@@ -158,7 +158,7 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
         "You can call our helpdesk number and speak to us directly. We will also SMS you the number after this call.",
     ),
     "home_collection": (
-        "ज़्यादातर ब्लड टेस्ट के लिए घर आकर सैंपल लेने की सुविधा है। बुकिंग के समय बता दीजिए।",
+        "ज़्यादातर ब्लड टेस्ट के लिए घर पर ही सैंपल कलेक्शन की सुविधा उपलब्ध है। कृपया बुकिंग करते समय इसकी जानकारी दे दें।",
         "Home sample collection is available for most blood tests. Please mention it when you book.",
     ),
 }
@@ -192,10 +192,50 @@ FAQ_KEYWORDS_I18N: dict[str, tuple[list[str], list[str]]] = {
             "how do i get there",
             "how to reach",
             "where are you located",
+            "where is it",
+            "where is it located",
+            "where is it situated",
+            "where is it exactly",
+            "where is the address",
+            "what is the address",
+            "what is the location",
+            "location please",
+            "where to go",
+            "where to go for your clinic",
+            "where is this place",
+            "where are you situated",
+            "location please",
+            "where is your clinic",
+            "where is your clinic located",
         ],
     ),
     "payment_methods": (
-        ["पेमेंट कैसे", "भुगतान कैसे", "कार्ड चलता है", "यूपीआई", "नकद"],
+        [
+            "पेमेंट कैसे",
+            "भुगतान कैसे",
+            "कार्ड चलता है",
+            "यूपीआई",
+            "नकद",
+            # Colloquial loanword for cash, kept as its OWN short form so it
+            # has a dedicated cue to win on, rather than falling through to
+            # "insurance"'s "कैशलेस" (cashless) on character overlap alone --
+            # "कैशलेस" literally starts with "कैश", so a bare "कैश" utterance
+            # scored closer to "cashless" than to anything in this topic's
+            # own list, which had no form containing that word at all.
+            "कैश",
+            "गूगल पे",
+            "पेटीएम",
+            "फोन पे",
+            # "पेमेंट ऑप्शन क्या है" was committing to "location" instead (0.78 vs the 0.72 floor) on the shared
+            # "क्या है" ("what is") tail alone, overlapping location's "पता क्या है" -- these own forms outscore
+            # that collision directly. "पाय्मेंट" is kept as its own form too: the live ASR transcript spelled
+            # "payment" that way (an extra य vowel sign), not as "पेमेंट", so the correctly-spelled form alone
+            # never matched what the recogniser actually produced.
+            "पेमेंट ऑप्शन क्या है",
+            "पाय्मेंट ऑप्शन क्या है",
+            "पाय्मेंट ऑप्शन",
+            "पेमेंट ऑप्शन",
+        ],
         [
             "payment methods",
             "pay by card",
@@ -204,6 +244,13 @@ FAQ_KEYWORDS_I18N: dict[str, tuple[list[str], list[str]]] = {
             "can i pay in cash",
             "how can i pay",
             "payment options",
+            # Same reasoning as the Hindi "कैश" above -- a dedicated short
+            # form for the bare word, not just inside a longer phrase.
+            "cash",
+            "google pay",
+            "paytm",
+            "phonepe",
+            "phone pe",
         ],
     ),
     "insurance": (
@@ -211,17 +258,75 @@ FAQ_KEYWORDS_I18N: dict[str, tuple[list[str], list[str]]] = {
         ["insurance", "cashless", "mediclaim", "health insurance"],
     ),
     "parking": (
-        ["पार्किंग", "गाड़ी कहाँ खड़ी", "गाड़ी कहां खड़ी"],
-        ["parking", "car parking", "where can i park", "park my car"],
+        [
+            "पार्किंग",
+            "गाड़ी कहाँ खड़ी",
+            "गाड़ी कहां खड़ी",
+            # "गाड़ी" (car) and "जगह"/"जायेगा" are near-identical to their Bengali equivalents ("গাড়ি", "জায়গা") --
+            # a Bengali caller asking this exact question is a live risk of the LANGUAGE detector itself
+            # picking Hindi for the audio (a separate, known issue), so these forms need their own coverage in
+            # the HINDI table too, not just Bengali's -- the utterance never reaches Bengali's cues at all when
+            # that happens. Covers both the standard phrasing and what live ASR actually produced once.
+            "गाड़ी रखने की जगह",
+            "गाड़ी रखने के लिए जगह है",
+            "गाड़ी रखा जा सकता है",
+            "गाड़ी रखने को मिलेगा",
+            "बाइक रखा जा सकता है",
+            "बाइक रखने की जगह",
+            "बाइक पार्किंग",
+            "दोपहिया पार्किंग",
+        ],
+        [
+            "parking",
+            "car parking",
+            "where can i park",
+            "park my car",
+            "bike parking",
+            "is there parking",
+            "do you have parking",
+            "parking available",
+            "parking space",
+            "two wheeler parking",
+            "motorcycle parking",
+            "where do i park",
+        ],
     ),
     "report_collection": (
-        ["रिपोर्ट कैसे मिलेगी", "रिपोर्ट कहाँ से", "रिपोर्ट कहां से", "रिपोर्ट लेने"],
+        ["रिपोर्ट कैसे मिलेगी",
+    "रिपोर्ट कहाँ से",
+    "रिपोर्ट कहां से",
+    "रिपोर्ट लेने",
+    "रिपोर्ट कब मिलेगी",
+    "रिपोर्ट कहा से मिलेगी",
+    "रिपोर्ट दे दो",
+    "रिपोर्ट चाहिए",
+    "रिपोर्ट भेजो",
+    "रिपोर्ट कहा है",
+    "रिपोर्ट कैसे देखे",
+    "रिपोर्ट डाउनलोड",
+    "रिपोर्ट कैसे डाउनलोड करें",
+    "रिपोर्ट व्हाट्सएप पर भेज दो",
+    "रिपोर्ट लेने कब आऊ",
+    "मेरी रिपोर्ट कहा है",],
         [
             "collect my report",
-            "report collection",
-            "how do i get my report",
-            "where to collect the report",
-            "get the report",
+    "report collection",
+    "how do i get my report",
+    "where to collect the report",
+    "get the report",
+    "report please",
+    "need my report",
+    "send my report",
+    "where report",
+    "give report",
+    "report status",
+    "where is my report",
+    "how to view report",
+    "download report",
+    "report download",
+    "send report pdf",
+    "get report on whatsapp",
+    "when will I get report",
         ],
     ),
     "contact_number": (
@@ -229,7 +334,36 @@ FAQ_KEYWORDS_I18N: dict[str, tuple[list[str], list[str]]] = {
         ["phone number", "contact number", "helpline number", "how can i contact you", "your number"],
     ),
     "home_collection": (
-        ["होम कलेक्शन", "घर से सैंपल", "घर आकर", "घर पर सैंपल"],
-        ["home collection", "sample from home", "collect at home", "come to my house", "home visit for sample"],
+        [
+        "होम कलेक्शन",
+        "घर से सैंपल",
+        "घर आकर",
+        "घर पर सैंपल",
+        "घर से ब्लड टेस्ट",
+        "घर पर सैंपल कलेक्शन",
+        "घर आ जाओ",
+        "घर पर आकर ले लो",
+        "सैंपल घर से",
+        "घर पर टेस्ट",
+        "घर से रिपोर्ट कलेक्शन",
+        "घर पर सुविधा है",
+        "ब्लड टेस्ट घर पर",
+    ],
+        [
+        "home collection",
+        "sample from home",
+        "collect at home",
+        "come to my house",
+        "home visit for sample",
+        "home test",
+        "blood test at home",
+        "home sample",
+        "come home",
+        "home collection available",
+        "collect sample home",
+        "home service",
+        "send person home",
+        "doorstep sample",
+    ],
     ),
 }

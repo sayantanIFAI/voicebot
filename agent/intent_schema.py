@@ -194,6 +194,15 @@ def parse_extraction(data: Any, slots_optional: bool = False) -> tuple[IntentExt
         return None, [f"expected a JSON object, got {type(data).__name__}"]
     errors: list[str] = []
     intent = data.get("intent")
+    if isinstance(intent, str) and intent in FAQ_TOPICS and intent not in VALID_INTENTS:
+        # The model occasionally writes a FAQ TOPIC key ("parking", "home_collection") straight into "intent",
+        # confusing the topic with the one intent ("clinic_faq") that carries it. Repair rather than reject:
+        # a bare topic name can only ever mean "clinic_faq" with that topic, and rejecting it burns the full
+        # retry budget for nothing -- observed live: "बाइक रखा जाएगा अच्छे" (bike parking) returned
+        # intent="parking", exhausted all 4 retries and the 12s deadline, and only then fell back to the
+        # generic "please hold" apology instead of the parking answer it had already correctly identified.
+        data = {**data, "intent": "clinic_faq", "slots": {**(data.get("slots") or {}), "faq_topic": intent}}
+        intent = "clinic_faq"
     if not isinstance(intent, str) or intent not in VALID_INTENTS:  # (a list is unhashable: never `in` a set)
         errors.append(f"invalid intent: {intent!r}")
     slots = data.get("slots")

@@ -17,6 +17,7 @@ without a GPU:
 
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 from agent.speech_norm import unspeakable_spans
@@ -82,7 +83,21 @@ def languages_to_verify(language: str, scores: dict[str, float], active: tuple[s
 # A second Indic language is only worth running a recogniser for when language ID is genuinely torn between the two.
 # Below this it cannot win anyway (pick_candidate: an Indic engine other than language ID's favourite needs SWITCH_MIN_LID
 # to overrule it, and needs INDIC_MIN_LID just to be considered), so its ~0.6 s of GPU time buys nothing.
-OTHER_INDIC_MIN_LID = 0.30
+#
+# Lowered from 0.30. Three real calls, same caller, all genuinely Bengali but LID's top label was Hindi, never
+# got a Bengali recognition pass at all: Bengali's LID score was 0.16, 0.26 and 0.29 each time, all below the old
+# 0.30 floor. The symmetric case already has a pinned regression test just below here (a genuinely BENGALI call
+# where Hindi scored 0.15) showing that running the OTHER engine at 0.15 bought nothing and was deliberately
+# skipped -- so this floor cannot simply drop to "whatever the lowest real miss was" without re-breaking that
+# measured case. 0.16 is the exact boundary that satisfies both: it is the lowest of the three new misses, and
+# it is still above the 0.15 the existing test requires excluded. There is no margin either side of this value --
+# both constraints are drawn from real, specific pod incidents, not a round number -- so treat 0.16 as a point
+# this module's thresholds pass through today, not a value the model is confident sits in a wide "obviously
+# correct" range; recalibrate properly once there is enough real-call LID data to fit a floor with actual margin,
+# per this module's own docstring on measuring vs. reasoning. Trade-off: the other Indic recogniser now runs
+# somewhat more often on ambiguous turns (~0.6s GPU time each time it does) -- justified here by a correctness
+# bug, not assumed free; watch GPU headroom if admitted call volume grows.
+OTHER_INDIC_MIN_LID = 0.16
 
 
 def engines_needed(language: str, scores: dict[str, float], active: tuple[str, ...]) -> list[str]:
@@ -153,6 +168,30 @@ def english_word_share(text: str) -> float:
     if not tokens:
         return 0.0
     return sum(t in _ENGLISH_WORDS for t in tokens) / len(tokens)
+
+
+# OWNER'S INSTRUCTION, 2026-10-10: "time" was reported heard back as "tame" -- the English recogniser's own
+# vowel confusion, not a language-ID or matching problem, so the fix belongs here, on the ENGLISH transcript
+# text, not in any keyword list. REASONED from one reported word, not measured against a set of real calls:
+# "tame" has no legitimate meaning in a diagnostics-clinic call (no test, doctor, or FAQ topic involves it),
+# while "time" is one of the most common words in this domain (hours, report time, appointment slot), so
+# correcting it is safe by construction even without more evidence -- there is no real caller sentence this
+# substitution could break. Add further entries here only on the same evidence (a reported word, not a guess),
+# and only for a wrong word that has no legitimate reading of its own.
+_EN_ASR_CONFUSABLES = {
+    "tame": "time",
+}
+_RE_EN_CONFUSABLE = re.compile(
+    r"\b(" + "|".join(re.escape(w) for w in _EN_ASR_CONFUSABLES) + r")\b", re.IGNORECASE
+)
+
+
+def fix_asr_confusables(text: str) -> str:
+    """Correct known English-recogniser mishearings in a transcript already decided to be English. Whole-word,
+    case-preserving on the replacement's case (the table is already lower-case, matching normal ASR output)."""
+    if not text:
+        return text
+    return _RE_EN_CONFUSABLE.sub(lambda m: _EN_ASR_CONFUSABLES[m.group(0).lower()], text)
 
 
 # Leaving the language the call has been in needs language ID to believe the new one, not merely allow it.

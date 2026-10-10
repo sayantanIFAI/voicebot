@@ -74,7 +74,16 @@ INTENTS (exactly one):
 - "resend_confirmation": caller wants the confirmation message sent again (they lost it, didn't get it, etc.).
 - "department_query": caller describes a symptom or problem and needs to be routed to the right department, without naming a doctor or department themselves. Fill "symptom_description" with what they said, verbatim.
 - "test_prep": caller is asking how to prepare for a test (fasting, before/after instructions).
-- "clinic_faq": caller is asking a general clinic question with no specific test or doctor -- hours, location, payment methods, insurance, parking, report collection, contact number, or home sample collection. Fill "faq_topic" with exactly one of: {faq_topics}. If the question doesn't clearly match one of those topics, use "unclear" instead of guessing a topic.
+- "clinic_faq": caller is asking a general clinic question with no specific test or doctor -- hours, location, payment methods, insurance, parking, report collection, contact number, or home sample collection. Fill "faq_topic" with exactly one of: {faq_topics}. Topic hints, because callers never say the topic word itself:
+  * "hours" = opening or closing time, open/closed on a given day, visiting hours
+  * "location" = where the clinic IS, its address, how to reach/get there, "where is it", "where are you", "where to go" -- a short question with no other subject ("where is it?", "where is it located/situated?", "where exactly?", "location please") defaults to the clinic's location, not a test or doctor
+  * "payment_methods" = cash, card, UPI, how to pay
+  * "insurance" = cashless, mediclaim, a named insurer
+  * "parking" = car/bike parking
+  * "report_collection" = collecting or receiving the test report
+  * "contact_number" = a phone/helpline number
+  * "home_collection" = sample collection at home
+  Only use "unclear" when the question genuinely does not fit any topic above, including by the hints -- not merely because it lacks the topic's own keyword.
 - "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself for this case only, in {language_name}, in that language's own script.
 - "unclear": you cannot confidently tell what the caller wants, or the utterance is empty/garbled ASR noise.
 
