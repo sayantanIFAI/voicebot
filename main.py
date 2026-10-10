@@ -2227,8 +2227,18 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
 
         after_prompt, session.awaiting_close_answer = session.awaiting_close_answer, False
         answer = classify_yes_no(text, lang) if after_prompt else None
-        # "end the call", "শেষ করে দিন" (as the answer to "anything else?"): the call ends, decided by words, not the model
-        if call_end.wants_to_end(text, lang, after_prompt=after_prompt) or answer == "no":
+        # OWNER'S INSTRUCTION, 2026-10-10 (real call): "वो मेरे पास कैश तो नहीं है मैं ऑनलाइन पाय्मेंट कर दूंगा चलेगा"
+        # (a real question about paying online, "नहीं" only inside "कैश तो नहीं है" = "don't have cash") was heard as
+        # the answer to "anything else?", and classify_yes_no -- built to read a SHORT yes/no reply -- found "नहीं"
+        # as a token anywhere in the sentence and returned "no", ending the call before the question was ever
+        # answered. A bare "no" ends the call; a LONG sentence that merely contains a negation word, with real
+        # content around it, is a missed turn's worth of content, not a goodbye -- same "bare word vs. a real
+        # sentence" distinction agent/booking_flow.py already draws for a bare "cancel" (see its own docstring).
+        # SHORT_NO_WORDS: an ordinary short decline ("नहीं", "না না ধন্যবাদ", "no thanks") is at or under this many
+        # words; the caller's real question above was 11. Not a measured threshold -- reasoned from this one
+        # real miss, the same discipline this codebase already applies to its other reasoned-not-measured floors.
+        bare_no = answer == "no" and len(text.split()) <= 5
+        if call_end.wants_to_end(text, lang, after_prompt=after_prompt) or bare_no:
             _note(session, "ended_by_caller")
             await _end_call(session, lang, "silence_goodbye")
             return
