@@ -246,6 +246,7 @@ DEPARTMENT_FEE_INR: dict[str, int] = {
     "Dermatology": 600,
     "Paediatrics": 500,
     "Diabetology & Endocrinology": 800,
+    "Dentistry": 600,
 }
 
 
@@ -328,7 +329,78 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
         ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब", "हाथ में दर्द", "शरीर में दर्द"],
         ["fever", "cold and cough", "weakness", "stomach upset", "hand pain", "body ache"],
     ),
+    (
+        "Dentistry",
+        ["দাঁতে ব্যথা", "দাঁতের সমস্যা", "মাড়িতে ব্যথা", "দাঁত ব্যথা"],
+        ["दांत में दर्द", "दांत का दर्द", "मसूड़ों में दर्द", "दांतों की समस्या"],
+        ["tooth pain", "toothache", "teeth pain", "gum pain"],
+    ),
 ]
+
+
+# Department names added to seed.DEPARTMENTS after the catalogue's original 8-department launch. Deliberately
+# an explicit, named list rather than "every DEPARTMENTS key the database lacks": a real clinic's own database
+# can legitimately have a different, smaller or renamed set of departments than this fictional default catalogue,
+# and treating any name mismatch as "missing, so add it" would inject the wrong departments into THEIR data. Add
+# a name here only when a department is deliberately being introduced after launch, same as this one.
+NEW_DEPARTMENTS_SINCE_LAUNCH = ["Dentistry"]  # KCD-dentistry, 2026-10-12: tooth/gum pain had no destination at all
+
+
+def seed_new_departments() -> int:
+    """Additive-only counterpart to seed.seed()'s destructive drop_all: a department named in
+    NEW_DEPARTMENTS_SINCE_LAUNCH needs its department, doctors and weekly schedule inserted into a clinic's
+    LIVE database instead of a reseed, which would wipe every appointment booked since the last boot. Only ever
+    adds one of THOSE named departments, and only if the database does not already have it; an existing
+    department (or a doctor a clinician has since edited) is never touched. Mirrors seed.seed()'s own
+    per-doctor loop exactly, scoped to just the departments above."""
+    from i18n_content import SURNAME_HI
+    from models import Department, Doctor, DoctorSchedule
+    from seed import DEPARTMENTS, SHIFT_TEMPLATES, SURNAME_BN, doctor_full_names
+
+    db = SessionLocal()
+    added = 0
+    try:
+        existing_names = {d.name for d in db.query(Department).all()}
+        doctor_index = db.query(Doctor).count()  # continue the same shift rotation new doctors elsewhere use
+        for dept_name in NEW_DEPARTMENTS_SINCE_LAUNCH:
+            doctors = DEPARTMENTS.get(dept_name)
+            if not doctors or dept_name in existing_names:
+                continue
+            dept = Department(name=dept_name)
+            db.add(dept)
+            db.flush()
+            for doc_name, quals in doctors:
+                surname = doc_name.split()[-1]
+                latin, full_bn, full_hi = doctor_full_names().get(doc_name, ("", "", ""))
+                doc = Doctor(
+                    name=doc_name,
+                    full_name=latin,
+                    full_name_bn=full_bn,
+                    full_name_hi=full_hi,
+                    qualifications=quals,
+                    aliases_bn="|".join(SURNAME_BN.get(surname, [])),
+                    aliases_hi="|".join(SURNAME_HI.get(surname, [])),
+                    department_id=dept.id,
+                    consultation_fee_inr=DEPARTMENT_FEE_INR.get(dept_name, 500),
+                )
+                db.add(doc)
+                db.flush()
+                template = SHIFT_TEMPLATES[doctor_index % len(SHIFT_TEMPLATES)]
+                for weekday in template["days"]:
+                    db.add(
+                        DoctorSchedule(
+                            doctor_id=doc.id,
+                            weekday=weekday,
+                            start_time=template["start"],
+                            end_time=template["end"],
+                        )
+                    )
+                doctor_index += 1
+            added += 1
+        db.commit()
+    finally:
+        db.close()
+    return added
 
 
 def seed_department_routes() -> int:
@@ -476,11 +548,15 @@ def backfill_doctor_full_names() -> int:
 def finish_booking_schema_setup() -> dict:
     """The half that needs `departments`/`doctors` to already have rows --
     call this AFTER seed() or backfill_i18n() has run, not before."""
+    # MUST run before seed_department_routes(): a department added to seed.DEPARTMENTS after this database was
+    # first seeded (e.g. Dentistry) has no route row to add until its Department row exists.
+    new_departments = seed_new_departments()
     routes_added = seed_department_routes()
     routes_backfilled = backfill_department_route_keywords()
     fees_filled = backfill_doctor_fees()
     policy_seeded = seed_default_cancellation_policy()
     return {
+        "new_departments_added": new_departments,
         "department_routes_added": routes_added,
         "department_route_keywords_backfilled": routes_backfilled,
         "doctor_fees_filled": fees_filled,

@@ -163,6 +163,15 @@ _HI_RATE = (
     "कितने का",
     "कितना खर्च",
     "कितना पड़ेगा",
+    # OWNER'S INSTRUCTION, real call 2026-10-12: "लिपिड प्रोफाइले का कितना पैसा लगेगा" abstained
+    # (no_cue_matched) because none of the above matched "कितना पैसा"/"...लगेगा" -- the Bengali table
+    # already has the cognate verb form ("কত লাগবে"), Hindi's was simply missing it. Falling through
+    # to the LLM for an ordinary rate question is what let it mis-extract the test name as the
+    # previous turn's topic (CBC) instead of Lipid Profile -- fast-path coverage is the guard against
+    # that, not a prompt fix, since this path never guesses an entity the caller did not name.
+    "कितना पैसा",
+    "कितना लगेगा",
+    "पैसा लगेगा",
 )
 _HI_AVAIL = (
     "कब",

@@ -315,7 +315,7 @@ async def test_turn_timing_is_logged_against_the_real_answer_not_swallowed_by_th
         # stand-in for the slow part (fast_path/cache/model) so this test exercises the genuine race, not a re-
         # implementation of it -- only what a slow lookup returns is faked.
         async def slow():
-            await asyncio.sleep(0.9)  # > FILLER_THRESHOLD_S (0.7s): forces the filler to speak first
+            await asyncio.sleep(1.2)  # > FILLER_THRESHOLD_S (1.0s, owner change 2026-10-10): forces the filler first
             return {
                 "secondary_intent": None,
                 "direct_reply_bn": None,

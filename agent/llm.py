@@ -72,7 +72,7 @@ INTENTS (exactly one):
 - "lookup_booking": caller is asking what they already have booked ("what's my appointment", "do I have anything booked").
 - "add_test_booking": caller wants to add a test to a booking they already have, rather than book a new, separate one.
 - "resend_confirmation": caller wants the confirmation message sent again (they lost it, didn't get it, etc.).
-- "department_query": caller describes a symptom or problem and needs to be routed to the right department, without naming a doctor or department themselves. Fill "symptom_description" with what they said, verbatim.
+- "department_query": caller describes a MEDICAL symptom (a bodily complaint -- pain, fever, an injury, a problem with how they feel) and needs to be routed to the right department, without naming a doctor or department themselves. Fill "symptom_description" with what they said, verbatim. Never this intent for a complaint about payment, parking, timing, or anything administrative -- "I can't pay online, cash only" is "clinic_faq" (payment_methods) or "smalltalk", never a symptom, even though it is also a kind of "problem" in the everyday sense of the word.
 - "test_prep": caller is asking how to prepare for a test (fasting, before/after instructions).
 - "clinic_faq": caller is asking a general clinic question with no specific test or doctor -- hours, location, payment methods, insurance, parking, report collection, contact number, or home sample collection. Fill "faq_topic" with exactly one of: {faq_topics}. Topic hints, because callers never say the topic word itself:
   * "hours" = opening or closing time, open/closed on a given day, visiting hours
@@ -109,9 +109,10 @@ SLOT RULES:
 - "contact_phone": a phone number the caller gives that is DIFFERENT from the number they are calling from, for the confirmation message -- only when they say so explicitly (e.g. "send it to a different number").
 - "relationship": only when the caller says who the patient is to them and it is not themselves, e.g. "mother", "son", "wife" -- copy the relationship word as said, in {language_name}. Leave null if they are booking for themselves.
 - "patient_age": only if an age is explicitly spoken, as a number.
-- "confirmation_id" / "new_time_slot": only if explicitly spoken/known this turn.
+- "time_slot" / "new_time_slot": only if explicitly spoken/known this turn, resolved to 24-hour "HH:MM" (e.g. "ten o'clock"/"দশটা"/"দশটার সময়"/"दस बजे" -> "10:00"; "6 PM"/"সন্ধ্যা ছটা"/"शाम छह बजे" -> "18:00"). The clinic is open 8:00-20:00, so a bare hour with no AM/PM said (e.g. "ten o'clock") resolves to the daytime hour (10:00), never the 22:00/night reading, unless the caller said "night"/"evening"/রাত/शाम/सन्ध्या for an hour from 1-7.
+- "confirmation_id": only if explicitly spoken/known this turn.
 - "spelled_letters": if the caller is spelling a name letter by letter (e.g. "R, A, V, I"), a list of the individual letters in order, lowercase. Otherwise null.
-- "symptom_description": only for "department_query" -- the caller's own words describing the problem, never your own paraphrase or a diagnosis.
+- "symptom_description": for "department_query", or for "book_appointment" when the caller wants an appointment but does not know/say a doctor's name and instead describes a MEDICAL problem ("my ear hurts", "a tooth is paining") -- their own words describing it, never your own paraphrase or a diagnosis. Leave "doctor_name" null in that case; never guess a doctor from a symptom yourself. Never fill this from a non-medical complaint (payment, parking, timing, "I don't know" with no symptom named) -- leave it null and use "clinic_faq", "smalltalk" or "unclear" instead; a department route built from a payment complaint is a wrong answer, not merely an unhelpful one.
 - Never invent a patient name, phone number, confirmation number, or date that was not said.
 
 Output ONLY a single valid JSON object, no other text, in exactly this shape:

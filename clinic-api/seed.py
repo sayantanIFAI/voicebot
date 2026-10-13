@@ -1,5 +1,6 @@
-"""Populates dummy clinic data: 8 departments, 32 doctors (4 each), a
-weekly chamber schedule per doctor, and a ~32-row lab test price list.
+"""Populates dummy clinic data: 9 departments, 36 doctors (4 each -- Dentistry added 2026-10-12, KCD-dentistry;
+see booking_migrate.seed_new_departments for how it reaches a database seeded before that date), a weekly
+chamber schedule per doctor, and a ~32-row lab test price list.
 
 All fictional -- names, quals, prices, and schedule patterns are
 representative of a real Kolkata polyclinic but invented for this
@@ -23,8 +24,8 @@ from i18n_content import (
 from models import FAQ, Base, Department, Doctor, DoctorSchedule, LabTest
 
 # ---------------------------------------------------------------------------
-# 8 departments, 4 doctors each = 32 doctors.
-# Schedule pattern rotates across 4 shift templates so the 32 doctors don't
+# 9 departments, 4 doctors each = 36 doctors.
+# Schedule pattern rotates across 4 shift templates so the doctors don't
 # all sit at the same time -- a caller asking "is anyone free this evening"
 # gets a realistic mixed answer.
 # ---------------------------------------------------------------------------
@@ -64,6 +65,10 @@ SURNAME_BN = {
     "Ray": ["রায়"],
     "Sarkar": ["সরকার"],
     "Chakraborty": ["চক্রবর্তী"],
+    "Kundu": ["কুন্ডু"],
+    "Mallick": ["মল্লিক"],
+    "Pramanik": ["প্রামাণিক"],
+    "Bhowmik": ["ভৌমিক"],
 }
 
 SHIFT_TEMPLATES = [
@@ -109,6 +114,10 @@ DOCTOR_FULL_NAMES = {
     "Dr. P. Ray": "Dr. Partha Ray",
     "Dr. A. Sarkar": "Dr. Abhijit Sarkar",
     "Dr. S. Chakraborty": "Dr. Snehasish Chakraborty",
+    "Dr. S. Kundu": "Dr. Sudip Kundu",
+    "Dr. M. Mallick": "Dr. Moumita Mallick",
+    "Dr. R. Pramanik": "Dr. Rajesh Pramanik",
+    "Dr. T. Bhowmik": "Dr. Trisha Bhowmik",
 }
 
 # How the given names above are written and said in Bengali and Hindi (placeholders like the names themselves).
@@ -145,6 +154,10 @@ _GIVEN_BN_HI = {
     "Partha": ("পার্থ", "पार्थ"),
     "Abhijit": ("অভিজিৎ", "अभिजीत"),
     "Snehasish": ("স্নেহাশিস", "स्नेहाशीष"),
+    "Sudip": ("সুদীপ", "सुदीप"),
+    "Moumita": ("মৌমিতা", "मौमिता"),
+    "Rajesh": ("রাজেশ", "राजेश"),
+    "Trisha": ("তৃষা", "तृषा"),
 }
 
 
@@ -213,6 +226,12 @@ DEPARTMENTS = {
         ("Dr. A. Sarkar", "MBBS, DM (Endocrinology)"),
         ("Dr. S. Chakraborty", "MBBS, MD (Diabetology)"),
     ],
+    "Dentistry": [
+        ("Dr. S. Kundu", "BDS, MDS (Oral & Maxillofacial Surgery)"),
+        ("Dr. M. Mallick", "BDS, MDS (Orthodontics)"),
+        ("Dr. R. Pramanik", "BDS"),
+        ("Dr. T. Bhowmik", "BDS, MDS (Periodontics)"),
+    ],
 }
 
 # (name, [Bengali aliases], rate_inr, sample_type, report_time_hours)
@@ -245,8 +264,13 @@ LAB_TESTS = [
     ("HCV", ["এইচসিভি", "হেপাটাইটিস সি"], 600, "Blood", 24),
     ("ECG", ["ইসিজি", "ইলেক্ট্রোকার্ডিওগ্রাম"], 300, "Cardiac", 1),
     ("Chest X-Ray (PA view)", ["বুকের এক্স-রে", "চেস্ট এক্সরে"], 400, "Imaging", 4),
-    ("USG Whole Abdomen", ["পেটের আলট্রাসাউন্ড", "হোল অ্যাবডোমেন ইউএসজি", "পেটের ইউএসজি"], 1500, "Imaging", 4),
-    ("USG Pregnancy Profile", ["প্রেগন্যান্সি আলট্রাসাউন্ড", "প্রেগনেন্সি ইউএসজি"], 1600, "Imaging", 4),
+    # "ইউএসজি" (bare USG, no qualifier) added to BOTH rows 2026-10-12 -- a caller who says only "USG test
+    # price" with neither "পেটের"/"হোল অ্যাবডোমেন" nor "প্রেগন্যান্সি" was matching NEITHER alias and falling
+    # through to a phonetic near-miss (Uric Acid), not the two real USG tests this clinic actually has. Added
+    # to both deliberately: the existing two-tests-fit ambiguity path (clinic-api booking_service) is what a
+    # genuinely ambiguous bare "USG" should hit, asking which one, never silently picking one or misrouting.
+    ("USG Whole Abdomen", ["পেটের আলট্রাসাউন্ড", "হোল অ্যাবডোমেন ইউএসজি", "পেটের ইউএসজি", "ইউএসজি"], 1500, "Imaging", 4),
+    ("USG Pregnancy Profile", ["প্রেগন্যান্সি আলট্রাসাউন্ড", "প্রেগনেন্সি ইউএসজি", "ইউএসজি"], 1600, "Imaging", 4),
     ("2D Echocardiography", ["ইকো টেস্ট", "একোকার্ডিওগ্রাফি", "ইকোকার্ডিওগ্রাম"], 2000, "Cardiac", 4),
     ("TMT (Treadmill Test)", ["টিএমটি", "ট্রেডমিল টেস্ট"], 2200, "Cardiac", 4),
     ("Pap Smear", ["প্যাপ স্মিয়ার"], 900, "Sample (Cervical)", 72),
@@ -290,7 +314,19 @@ def _prep_for(test_name: str) -> tuple[bool, str]:
 FAQ_ENTRIES = [
     (
         "hours",
-        ["সময়", "কখন খোলে", "কখন বন্ধ", "খোলা থাকে", "ভিজিটিং আওয়ার্স", "ক্লিনিকের সময়"],
+        # OWNER'S INSTRUCTION, 2026-10-12: "টেস্ট করাতে কখন আসব" ("what time should I come to do the test?") --
+        # the clinic's own hours answer this the same way, just needed the phrasing recognised.
+        [
+            "সময়",
+            "কখন খোলে",
+            "কখন বন্ধ",
+            "খোলা থাকে",
+            "ভিজিটিং আওয়ার্স",
+            "ক্লিনিকের সময়",
+            "টেস্ট করাতে কখন আসব",
+            "কখন আসতে হবে",
+            "কটার মধ্যে আসতে হবে",
+        ],
         "আমাদের ক্লিনিক প্রতিদিন সকাল আটটা থেকে রাত আটটা পর্যন্ত খোলা থাকে, রবিবার সকাল আটটা থেকে দুপুর দুটো পর্যন্ত।",
     ),
     (
@@ -304,7 +340,11 @@ FAQ_ENTRIES = [
         # fell through to "insurance"'s "ক্যাশলেস" (cashless) on character overlap, since "cashless" literally
         # starts with "cash" and this topic had no form containing the word at all -- see i18n_content.py's
         # matching Hindi/English fix for the same bug.
-        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ", "ক্যাশ", "গুগল পে", "পেটিএম", "ফোনপে"],
+        # Real call 2026-10-12: the ASR dropped the "্য" conjunct and wrote "কাশ" (no match) for what the caller
+        # said as "ক্যাশ" -- the statement ("online e dite parbo na, kash e dibo") then matched NO keyword here
+        # at all and went to the LLM, which misread it as a symptom ("department_query") instead of a payment
+        # question. Added as its own bare form, same reasoning as the "ক্যাশ" vs "ক্যাশলেস" fix just below.
+        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ", "ক্যাশ", "কাশ", "গুগল পে", "পেটিএম", "ফোনপে"],
         "নগদ, সব ধরনের কার্ড এবং ইউপিআই -- সব মাধ্যমেই পেমেন্ট নেওয়া হয়।",
     ),
     (
@@ -409,6 +449,64 @@ def backfill_i18n(db=None) -> dict:
         if own:
             db.close()
     return {"columns_added": added, "values_filled": filled}
+
+
+def backfill_test_alias_keywords() -> int:
+    """KCD-dentistry, real-call bug 2026-10-12 (bare "USG" matched neither USG test's aliases and fell through
+    to a phonetic near-miss, "Uric Acid"): appends any alias from LAB_TESTS (Bengali) or TEST_ALIASES_HI
+    (Hindi) a live row does not already have. Unlike backfill_i18n above (which only fills a column that is
+    still completely EMPTY), this must reach a row that already has SOME aliases -- every seeded test already
+    does -- so it appends to what is there instead, same discipline as booking_migrate.
+    backfill_department_route_keywords. Never removes or reorders a clinician's own edit, including a
+    deliberate removal; safe to run on every boot."""
+    bn_by_name = {name: aliases for name, aliases, *_ in LAB_TESTS}
+    db = SessionLocal()
+    updated = 0
+    try:
+        for t in db.query(LabTest).all():
+            for attr, new_aliases in (
+                ("aliases_bn", bn_by_name.get(t.name, [])),
+                ("aliases_hi", TEST_ALIASES_HI.get(t.name, [])),
+            ):
+                have = [a for a in (getattr(t, attr) or "").split("|") if a]
+                missing = [a for a in new_aliases if a not in have]
+                if missing:
+                    setattr(t, attr, "|".join(have + missing))
+                    updated += 1
+        db.commit()
+        return updated
+    finally:
+        db.close()
+
+
+def backfill_faq_keywords() -> int:
+    """Real call 2026-10-12: a caller's payment statement ("online e dite parbo na, kash e dibo") matched NO
+    keyword in the "payment_methods" topic -- the ASR dropped a conjunct and wrote "কাশ" where the seeded
+    keyword list only ever had "ক্যাশ" -- so it went to the LLM, which misread it as a symptom instead of a
+    payment question. Same discipline as backfill_test_alias_keywords just above: appends any keyword from
+    FAQ_ENTRIES (Bengali) or FAQ_KEYWORDS_I18N (Hindi/English) a live FAQ row does not already have, rather
+    than requiring a destructive reseed to pick up a keyword list edit. Never removes or reorders a
+    clinician's own edit; safe to run on every boot."""
+    bn_by_topic = {topic: keywords for topic, keywords, _answer in FAQ_ENTRIES}
+    db = SessionLocal()
+    updated = 0
+    try:
+        for f in db.query(FAQ).all():
+            kw_hi, kw_en = FAQ_KEYWORDS_I18N.get(f.topic, ([], []))
+            for attr, new_keywords in (
+                ("keywords_bn", bn_by_topic.get(f.topic, [])),
+                ("keywords_hi", kw_hi),
+                ("keywords_en", kw_en),
+            ):
+                have = [k for k in (getattr(f, attr) or "").split("|") if k]
+                missing = [k for k in new_keywords if k not in have]
+                if missing:
+                    setattr(f, attr, "|".join(have + missing))
+                    updated += 1
+        db.commit()
+        return updated
+    finally:
+        db.close()
 
 
 def seed():

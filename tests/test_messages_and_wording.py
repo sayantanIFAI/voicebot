@@ -77,13 +77,13 @@ def test_the_cache_goes_stale_and_asks_for_a_refresh():
 
 
 def test_the_disclosure_follows_the_database():
-    messages.load(payload(disclosure={"en": "You are speaking with Sonoscan Vaani, an automated helper."}))
-    assert disclosure.disclosure_for("en") == "You are speaking with Sonoscan Vaani, an automated helper."
+    messages.load(payload(disclosure={"en": "You are speaking with Manorama Vaani, an automated helper."}))
+    assert disclosure.disclosure_for("en") == "You are speaking with Manorama Vaani, an automated helper."
     assert disclosure.version_label().endswith("db:3")
 
 
 def test_the_greeting_identity_line_follows_the_database_and_the_112_pointer_appears_only_when_set():
-    messages.load(payload(greeting_identity={"en": "You are speaking with Sonoscan Vaani, our automated helper."}))
+    messages.load(payload(greeting_identity={"en": "You are speaking with Manorama Vaani, our automated helper."}))
     assert "our automated helper" in greeting_text("en") and "our automated helper" in phrase("greeting", "en")
     assert "112" not in greeting_text("en")
     messages.load(payload(emergency_hint={"en": "In an emergency, please call 112 directly."}))
@@ -94,12 +94,12 @@ def test_the_greeting_is_only_the_welcome_who_you_are_speaking_with_and_the_ques
     """DELIBERATE SPEC CHANGE (owner's instruction after the first live call, 2026-09-25): the KCD-353 opening that
     also said "I am an automated assistant", "staff at any time" and pointed to 112 is no longer spoken in the
     greeting. The full disclosure text is unchanged and still used elsewhere; see agent/phrases.py."""
-    assert phrase("greeting", "bn") == "নমস্কার। আপনি সোনোস্ক্যান বাণীর সঙ্গে কথা বলছেন। বলুন, কীভাবে সাহায্য করতে পারি?"
+    assert phrase("greeting", "bn") == "নমস্কার। আমি মনোরমা বাণী। বলুন, কীভাবে সাহায্য করতে পারি?"
     en = phrase("greeting", "en")
-    assert en.startswith("Hello.") and "Sonoscan Vaani" in en and en.rstrip().endswith("How can I help you?")
+    assert en.startswith("Hello.") and "Manorama Vaani" in en and en.rstrip().endswith("How can I help you?")
     assert "automated" not in en and "112" not in en and "staff" not in en
     hi = phrase("greeting", "hi")
-    assert "सोनोस्कैन वाणी" in hi and hi.rstrip().endswith("?") and "112" not in hi
+    assert "मनोरमा वाणी" in hi and hi.rstrip().endswith("?") and "112" not in hi
 
 
 def test_any_phrase_can_be_overridden_by_its_key():
@@ -371,9 +371,9 @@ def test_the_message_checker_passes_the_built_in_wording_and_catches_a_bad_edit(
         "thanks_ack": {
             "en": {"text": "Sorry, sorry. Don't worry, it is probably nothing, and you should take rest 2 times."}
         },
-        "disclosure": {"en": {"text": "Welcome to the clinic."}},
+        "disclosure": {"en": {"text": "You are speaking with extension 2."}},
     }
     found = cm.check_all(bad)
     text = " ".join(p for v in found.values() for p in v)
     assert ("thanks_ack", "en") in found and ("disclosure", "en") in found
-    assert "apologies" in text and "digit" in text and "automated" in text and "staff" in text
+    assert "apologies" in text and "digit" in text

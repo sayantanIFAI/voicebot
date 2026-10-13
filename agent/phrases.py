@@ -138,16 +138,25 @@ EMERGENCY_HINT = {
 
 
 # OWNER'S INSTRUCTION, 2026-09-25 (after the first live call): the first thing a caller hears is only
-#   "Namaskar. You are speaking with Sonoscan Vaani. Tell me, how can I help you?"
+#   "Namaskar. I am Manorama Vaani. Tell me, how can I help you?"
 # so the spoken greeting is the welcome, this one identity sentence, and the question. It replaces the longer
 # KCD-353 opening (that it is an automated assistant, that staff are available at any time, and the pointer to 112).
-# The full disclosure text still exists (the text-message notice, and the once-only re-statement when a caller
-# switches language) and both removed parts can be brought back with no deploy: change the `greeting_identity`
-# row to the longer text, or add an `emergency_hint` row (the pointer is spoken only when such a row exists).
+# The full disclosure text still exists (the text-message notice) and can be brought back with no deploy: change
+# the `greeting_identity` row to the longer text, or add an `emergency_hint` row (the pointer is spoken only when
+# such a row exists).
+#
+# OWNER'S INSTRUCTION, 2026-10-12: reversed the above for Bengali only, for one day -- see the owner's 2026-10-13
+# instruction below, which reverses it back.
+#
+# OWNER'S INSTRUCTION, 2026-10-13: restores the 2026-09-25 short wording for ALL THREE languages -- the opening
+# greeting (Bengali) and the once-only language-switch restatement (Hindi/English, agent/disclosure.py's
+# DISCLOSURE) say ONLY the identity sentence and the question, nothing about being automated or staff being
+# reachable. Kept verbatim-identical per language with DISCLOSURE so the two call sites never say two different
+# things about what the agent is.
 GREETING_IDENTITY = {
-    "bn": "আপনি সোনোস্ক্যান বাণীর সঙ্গে কথা বলছেন।",
-    "hi": "आप सोनोस्कैन वाणी से बात कर रहे हैं।",
-    "en": "You are speaking with Sonoscan Vaani.",
+    "bn": "আমি মনোরমা বাণী।",
+    "hi": "मैं मनोरमा वाणी हूँ।",
+    "en": "I am Manorama Vaani.",
 }
 
 
@@ -202,6 +211,34 @@ PHRASES["hi"]["send_prescription_whatsapp"] = (
 PHRASES["en"]["send_prescription_whatsapp"] = (
     "Please send a photo of the prescription to this WhatsApp number, 9635588306. A colleague will look at it "
     "and call you back."
+)
+
+# OWNER'S INSTRUCTION, 2026-10-12: a caller asked for a test's price/prep but does not know the test's name at
+# all (agent/lay_terms.expresses_not_knowing_test_name). Asked ONCE, before giving up -- a caller who at least
+# knows the broad kind still gets a real, catalogue-backed answer (main.py's new category-answer handling); only
+# a caller who cannot say even this gets the safety-check message below. No guessing past this point.
+PHRASES["bn"]["ask_test_category"] = "ঠিক আছে, এটা কি রক্ত পরীক্ষা, মূত্র পরীক্ষা, নাকি স্ক্যান/এক্স-রে/আল্ট্রাসাউন্ডের মতো কিছু?"
+PHRASES["hi"]["ask_test_category"] = "ठीक है, क्या यह ब्लड टेस्ट है, यूरिन टेस्ट है, या स्कैन/एक्स-रे/अल्ट्रासाउंड जैसा कुछ?"
+PHRASES["en"]["ask_test_category"] = (
+    "Okay, is it a blood test, a urine test, or something like a scan, X-ray, or ultrasound?"
+)
+
+# Spoken when the caller does not know even the broad category -- CLAUDE.md's truth boundary: never guess a
+# test name, hand off to a human with the prescription instead. Same WhatsApp number as send_prescription_
+# whatsapp above (kept as a separate phrase, not a rewrite of that one, so the existing lay-term/head-imaging
+# flows that already use it are untouched); this version adds the "or come to the counter" option the owner
+# asked for, which that older phrase never offered.
+PHRASES["bn"]["test_unknown_safety_check"] = (
+    "ঠিক আছে, এখন ঠিক করে বলা সম্ভব নয়। প্রেসক্রিপশনের একটা ছবি এই হোয়াটসঅ্যাপ নম্বরে পাঠিয়ে দিন, ৯৬৩৫৫৮৮৩০৬। "
+    "অথবা প্রেসক্রিপশন নিয়ে সরাসরি আমাদের কাউন্টারে চলে আসুন।"
+)
+PHRASES["hi"]["test_unknown_safety_check"] = (
+    "ठीक है, अभी ठीक से बता पाना संभव नहीं है। पर्चे की एक फोटो इस व्हाट्सऐप नंबर पर भेज दीजिए, 9635588306। "
+    "या पर्चा लेकर सीधे हमारे काउंटर पर आ जाइए।"
+)
+PHRASES["en"]["test_unknown_safety_check"] = (
+    "I'm not able to say without the exact test name. Please send a photo of the prescription to this WhatsApp "
+    "number, 9635588306. Or come directly to our clinic counter with the prescription."
 )
 
 # The catalogue has no head/brain imaging test today (agent/lay_terms.py's module docstring); this says so plainly

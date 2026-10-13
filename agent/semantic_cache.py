@@ -94,7 +94,14 @@ DEFAULT_THRESHOLD = 0.78
 # fuzzy-similar question ("কোথায় গাড়ি রাখব" vs "ক্লিনিকটা কোথায়") must not
 # let a cached "parking" answer get served for a "location" question just
 # because the sentence shapes are close in embedding space.
-_ENTITY_SLOTS = ("test_name", "doctor_name", "faq_topic")
+#
+# symptom_description added (real call 2026-10-12): it names WHICH complaint decides the department, exactly
+# the same "identity decides the lookup" shape as a test or doctor name -- a department_query entry was being
+# reused across different rephrasings with no character-overlap check at all, since this slot was missing here
+# (department_query wasn't even wrong because of that reuse this time -- the rephrasings really were the same
+# complaint -- but nothing stopped a DIFFERENT, unrelated complaint from reusing it had the embeddings landed
+# close, which is the exact risk this guard exists to close for every other entity slot).
+_ENTITY_SLOTS = ("test_name", "doctor_name", "faq_topic", "symptom_description")
 
 # Bengali-vs-Bengali character similarity, so ASR garble ("ইউরিক এসিদ" vs
 # "ইউরিক অ্যাসিড") still matches while a genuinely different test does not.
@@ -193,9 +200,24 @@ class SemanticCache:
         self._exact.pop(key, None)
         self._vectors = [(v, k) for v, k in self._vectors if k != key]
 
+    # OWNER'S INSTRUCTION, real call 2026-10-12: a Hindi "I don't know Hindi, speak Bengali" utterance missed
+    # the explicit-switch detector (agent/language_switch.py's own gap, fixed separately) and fell through to
+    # here, where it scored 0.826 cosine against a DIFFERENT caller's earlier "speak Bengali, not Hindi" turn
+    # from a PRIOR call -- this cache is one process-wide store, not per-call. That earlier turn had been
+    # classified "unclear"/"smalltalk" and cached with a generic reply. _entity_guard cannot catch this: an
+    # entity-less intent has no test/doctor/faq_topic to check the new utterance against, so it always passes
+    # (by design, for intents where that is actually safe -- see the entity_guard docstring). But "no entity to
+    # get wrong" is not the same as "safe to reuse across an unrelated utterance from a different caller and a
+    # different call" -- a confidently wrong generic reply is still a wrong reply in the caller's ear. Unlike
+    # the PII slots below (a correctness problem for ONE field), this is a correctness problem for the WHOLE
+    # reply, so smalltalk/unclear entries are L1 (exact-text)-only, same restriction as PII.
+    _NO_FACT_TO_VERIFY_INTENTS = ("smalltalk", "unclear")
+
     @staticmethod
     def _is_l2_eligible(value: dict) -> bool:
         slots = (value or {}).get("slots") or {}
+        if (value or {}).get("intent") in SemanticCache._NO_FACT_TO_VERIFY_INTENTS:
+            return False
         return not any(slots.get(field) for field in _PII_SLOTS)
 
     @staticmethod

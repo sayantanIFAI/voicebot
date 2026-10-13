@@ -109,8 +109,9 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     sentence = sample_sentence(sample, "bn")
     if sentence:
         reply += f" {sentence}"
-    if hours:
-        reply += f" রিপোর্ট {hours} ঘণ্টার মধ্যে পাবেন।"
+    time_sentence = _i18n.report_time_phrase(hours, "bn")
+    if time_sentence:
+        reply += f" {time_sentence} {_i18n.report_time_safety_note('bn')}"
     return reply
 
 
@@ -143,6 +144,23 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
     if next_date:
         return f"{name} ওই দিন বসবেন না। পরবর্তী উপলব্ধ দিন: {next_date}।"
     return f"{name} এখন কোনো নির্দিষ্ট দিন বসছেন না। আমাদের কাউন্টারে খোঁজ নিতে পারেন।"
+
+
+# Owner's instruction, 2026-10-12: a caller who names a real doctor during booking was asked straight for a
+# date with no idea when that doctor actually sits -- they could easily name a day the doctor is not in, just
+# to be corrected and asked again. Spoken ONCE, right after a real doctor is first named this booking (main.py/
+# main_pcm.py gate on `"date" not in st.asked_fields`), from the SAME live availability lookup
+# doctor_availability_reply above uses -- never invented, same truth boundary.
+def booking_doctor_sitting_hint(result: dict, lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.booking_doctor_sitting_hint(result, lang)
+    name = _spoken_doctor_name({}, result)
+    if not result.get("found") or not result.get("available"):
+        return "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?"
+    return (
+        f"{name} সাধারণত {result.get('date')} তারিখে, সময় {result.get('chamber_hours', '')}-এর মধ্যে বসেন। "
+        "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?"
+    )
 
 
 def test_prep_reply(slots: dict, result: dict, lang: str = "bn") -> str:
@@ -363,6 +381,24 @@ def blood_test_list_reply(names: list[str], lang: str = "bn") -> str:
     return f"আমাদের এখানে রক্তের যে পরীক্ষাগুলো হয় তা হল {listed}। এর মধ্যে কোনটা করাতে চান?"
 
 
+# OWNER'S INSTRUCTION, 2026-10-12: a caller who said they don't know the test name, then said "urine" or
+# "imaging"/"scan" when asked the broad category (agent/lay_terms.match_category_answer). Same "list the REAL
+# catalogue, never invent a name" discipline blood_test_list_reply above already follows -- this generalises it
+# to any sample_type rather than duplicating that function for each one. BLOOD itself still goes through
+# blood_test_list_reply (unchanged, same wording every existing test already pins).
+def category_test_list_reply(names: list[str], category: str, lang: str = "bn") -> str:
+    from agent.catalogue_forms import lab_test_code
+
+    spoken = [lab_test_code(n) for n in names]
+    if lang != "bn":
+        return _i18n.category_test_list_reply(spoken, category, lang)
+    label = {"urine": "মূত্রের", "imaging": "স্ক্যান/এক্স-রে/আল্ট্রাসাউন্ড জাতীয়"}.get(category, "এই ধরনের")
+    if not spoken:
+        return f"দুঃখিত, এই মুহূর্তে আমাদের তালিকায় {label} কোনো পরীক্ষা নেই। কাউন্টারে খোঁজ নিতে পারেন।"
+    listed = "। ".join(", ".join(g) for g in _grouped(spoken))
+    return f"আমাদের এখানে {label} যে পরীক্ষাগুলো হয় তা হল {listed}। এর মধ্যে কোনটা করাতে চান?"
+
+
 def resend_reply(result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.resend_reply(result, lang)
@@ -396,6 +432,29 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
             parts.append(f"{name} ({', '.join(docs)})" if docs else name)
         return f"এটা {' অথবা '.join(parts)} -- দুটোর যেকোনো একটা বিভাগ হতে পারে। কোনটা বলবেন?"
     return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
+
+
+# KCD-dentistry: the caller is ALREADY inside book_appointment (they said so) and gave a symptom instead of a
+# doctor's name -- unlike department_route_reply above, this never asks "shall I book an appointment?" again
+# (they already said yes to that) and never ends the turn; the booking flow's own _next_question immediately
+# follows asking for the date. Same truth boundary as department_route_reply: doctors is a live query result.
+def booking_department_suggestion_reply(department_name: str, doctors: list[str], lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.booking_department_suggestion_reply(department_name, doctors, lang)
+    who = f" {' ও '.join(doctors)} আছেন।" if doctors else " ডাক্তার আছেন।"
+    return f"তাহলে {department_name} বিভাগে দেখানো ভালো হবে।{who}"
+
+
+# KCD-dentistry, owner's instruction 2026-10-12: no symptom was given, or it did not clearly point to one
+# department (route_department found nothing, or found two) -- rather than guessing or asking the caller to
+# pick between two departments they cannot judge, default to a general checkup: the GP decides and refers
+# onward if needed. `doctors` is General Medicine's real doctors (clinic-api booking_service.department_doctors),
+# never invented.
+def booking_general_checkup_first_reply(doctors: list[str], lang: str = "bn") -> str:
+    if lang != "bn":
+        return _i18n.booking_general_checkup_first_reply(doctors, lang)
+    who = f" {doctors[0]} আছেন।" if doctors else ""
+    return f"ঠিক কোন সমস্যা, সেটা স্পষ্ট বোঝা যাচ্ছে না, তাই প্রথমে জেনারেল মেডিসিনে একটা চেকআপ করিয়ে নেওয়া ভালো।{who} প্রয়োজন হলে তিনি বিশেষজ্ঞ ডাক্তারের কাছে পাঠিয়ে দেবেন।"
 
 
 def conflict_reply(conflict: dict, lang: str = "bn") -> str:

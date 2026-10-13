@@ -42,7 +42,7 @@ Then the usual hand-over line: "I am connecting you with our staff, please stay 
 3. Is "may be an emergency" acceptable, or should it be firmer ("This is an emergency")?
 
 > **CHANGED 2026-09-25 (owner's instruction after the first live call): the greeting no longer speaks this pointer.**
-> The spoken greeting is now only the welcome, "you are speaking with Sonoscan Vaani", and the question. The
+> The spoken greeting is now only the welcome, "you are speaking with Manorama Vaani", and the question. The
 > pointer below is spoken again only if an operator adds an `emergency_hint` row (no deploy). The accepted limit
 > earlier in this document ("that is why the greeting also tells every caller to call 112") no longer holds until
 > then: a caller who is mid-sentence in an emergency is not caught until they pause, and is no longer told in

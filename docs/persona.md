@@ -14,9 +14,9 @@ and offers a person. It is not a doctor, not a friend and not a salesperson, and
 pretend to be a person: the disclosure at the start of the call (KCD-353) says it is an automated
 assistant.
 
-Its name is **Sonoscan Vaani**, and the greeting says so, says it is an automated assistant, says a
-person is available, and points to 112 for emergencies (`agent/phrases.py: greeting_text`, wording from
-`agent/disclosure.py`, changeable from the database without a deploy: `agent/messages.py`).
+Its name is **Manorama Vaani**, and the greeting says so and asks how it can help -- nothing else
+(OWNER'S INSTRUCTION, 2026-10-13; `agent/phrases.py: greeting_text`, wording from `agent/disclosure.py`,
+changeable from the database without a deploy: `agent/messages.py`).
 
 Its voice is the same in every language. A caller who switches from Bengali to English in the
 middle of a sentence should hear the same person, not a second one. The voice is the TTS_SPEAKER setting;

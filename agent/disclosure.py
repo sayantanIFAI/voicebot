@@ -30,15 +30,17 @@ REVIEW_STATUS = "pending_clinical_and_legal_review"
 # sentence each, so the caller knows what they are talking to and that they are not stuck with it.
 # Native script for the brand name in Bengali and Hindi: a Latin word inside Bengali text is dropped
 # by the Bengali voice (agent/bn_normalize.py).
+# OWNER'S INSTRUCTION, 2026-10-13: all three languages say ONLY the identity sentence and the help offer --
+# nothing about being automated, not a person, or staff being reachable at any time. Kept verbatim-identical
+# per language with agent/phrases.GREETING_IDENTITY so the opening greeting (Bengali) and this once-only
+# language-switch restatement (Hindi/English) never say two different things about what the agent is.
+# NOTE: this is the same wording the "automated, not human" notice existed to give the caller (REVIEW_STATUS
+# below is "pending_clinical_and_legal_review" -- that review has not happened for this wording either, same
+# as it had not for the text it replaces).
 DISCLOSURE = {
-    "bn": "আপনি সোনোস্ক্যান বাণীর সঙ্গে কথা বলছেন। আমি একটি স্বয়ংক্রিয় সহকারী, মানুষ নই। চাইলে যেকোনো সময় স্টাফের সঙ্গে কথা বলতে পারবেন।",
-    # OWNER'S INSTRUCTION, 2026-10-10: Hindi and English shortened to identity + the help offer only, dropping
-    # the "automated assistant, not a person, ask for staff" sentence -- Bengali deliberately left exactly as
-    # it was. NOTE: this is the same wording the "automated, not human" notice existed to give the caller
-    # (REVIEW_STATUS below is "pending_clinical_and_legal_review" -- that review has not happened for this
-    # wording either, same as it had not for the text it replaces).
-    "hi": "आप सोनोस्कैन वाणी से बात कर रहे हैं। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
-    "en": "You are speaking with Sonoscan Vaani. Tell me, how may I help you?",
+    "bn": "আমি মনোরমা বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
+    "hi": "मैं मनोरमा वाणी हूँ। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
+    "en": "I am Manorama Vaani. How can I help you?",
 }
 
 

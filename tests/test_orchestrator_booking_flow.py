@@ -38,6 +38,10 @@ class FakeTools:
 
     def __init__(self):
         self.holds, self.confirms, self.cancels, self.conflicts = [], [], [], []
+        # KCD-dentistry: what route_department/department_doctors should answer with, set per test.
+        self.route_department_result = {"matched": False}
+        self.department_doctors_result = {"matched": True, "doctors": ["Dr. S. Mukherjee"]}
+        self.routed_symptoms = []
 
     async def hold_slot(self, doctor, date, slot):
         self.holds.append((doctor, date, slot))
@@ -75,6 +79,13 @@ class FakeTools:
 
     async def set_patient_senior(self, phone, value):
         return None
+
+    async def route_department(self, query_text, lang="bn"):
+        self.routed_symptoms.append(query_text)
+        return self.route_department_result
+
+    async def department_doctors(self, department_name):
+        return self.department_doctors_result
 
 
 @pytest.fixture(scope="module")

@@ -41,10 +41,18 @@ otherwise all-Python pod. Swap it for the real hospital backend later
 without touching `main.py` or `agent/tools_client.py` at all; only this
 service's queries would change.
 
-Seeded with fictional dummy data for bench testing: **8 departments, 32
-doctors (4 each), a rotating weekly chamber schedule per doctor, and 34
-lab tests with realistic Kolkata pricing.** See `clinic-api/seed.py` for
-the exact data.
+Seeded with fictional dummy data for bench testing: **9 departments, 36
+doctors (4 each -- Dentistry added 2026-10-12, KCD-dentistry), a rotating
+weekly chamber schedule per doctor, and 34 lab tests with realistic
+Kolkata pricing.** See `clinic-api/seed.py` for the exact data.
+
+A caller who wants an appointment but does not know which doctor, and
+describes a symptom instead, is routed to a real department and doctor
+via `clinic-api`'s clinician-approved keyword table (never a model
+guess) -- see `main_pcm.py:_resolve_doctor_from_symptom`. A symptom that
+is unclear or matches more than one department defaults to a General
+Medicine checkup rather than asking the caller to choose a specialist
+they cannot judge.
 
 ```bash
 cd clinic-api

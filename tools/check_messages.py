@@ -9,13 +9,19 @@ owns that wording, and this is the check that keeps a well-meant edit from break
     * never-say    no hedging on a fact ("probably"), no reassurance about health ("don't worry"),
                    no clinical direction ("you should take"), no talk about being a language model;
     * shape        no digits, colons or brackets inside a message that is spoken (a number must come
-                   from a live answer, not from a message), and a disclosure must say it is automated
-                   and offer staff.
+                   from a live answer, not from a message).
 
     python tools/check_messages.py --url http://localhost:8080 [--token-file /workspace/.clinic_api_token]
 
 Exit status 0 when every message passes, 1 otherwise. Run it after changing a message and before
 relying on it.
+
+OWNER'S INSTRUCTION, 2026-10-13: the "disclosure" key used to also have to say the assistant is automated
+and offer staff (KCD-353's original ask). The owner has now shortened that spoken line, in all three
+languages, to the identity sentence and the help offer only -- see agent/disclosure.py. That check is
+removed here to match; REVIEW_STATUS in agent/disclosure.py still correctly says this wording (old or
+new) has never had clinical/legal sign-off, so this tool deliberately does not re-impose its own opinion
+of what a compliant disclosure must contain.
 """
 
 import argparse
@@ -31,9 +37,6 @@ import re
 from agent.apology import count_apologies, ends_on_bare_apology
 from agent.persona import violations
 
-AUTOMATED = {"bn": "স্বয়ংক্রিয়", "hi": "स्वचालित", "en": "automated"}
-STAFF = {"bn": "স্টাফ", "hi": "स्टाफ़", "en": "staff"}
-
 
 def check_message(key: str, lang: str, text: str) -> list[str]:
     """Problems with one message; empty means it passes."""
@@ -45,11 +48,6 @@ def check_message(key: str, lang: str, text: str) -> list[str]:
         problems.append("ends on a bare apology, leaving the caller with no next step")
     if re.search(r"\d|[:\[\]{}]", text) and key not in ("emergency_notice", "emergency_hint"):
         problems.append("contains a digit, colon or bracket (numbers come from live answers, not messages)")
-    if key == "disclosure":
-        if AUTOMATED[lang] not in text:
-            problems.append("a disclosure must say the assistant is automated")
-        if STAFF[lang].split("़")[0] not in text:
-            problems.append("a disclosure must offer staff")
     return problems
 
 

@@ -148,9 +148,11 @@ def test_the_holding_phrase_is_the_owners_wording_in_every_language():
     assert phrase("please_wait", "en") == "Alright, let me tell you."
 
 
-def test_the_holding_phrase_comes_only_after_700_ms(m):
-    """DELIBERATE SPEC CHANGE (owner, 2026-09-25): 0.7 s (was 0.9 s), counted from when the caller stopped speaking."""
-    assert m.FILLER_THRESHOLD_S == 0.7
+def test_the_holding_phrase_comes_only_after_1_0_s(m):
+    """DELIBERATE SPEC CHANGE (owner, 2026-10-10): 1.0 s (was 0.9 s, then 0.7 s), counted from when the caller
+    stopped speaking -- a fast-path MISS (the only path that can ever reach this filler) was crossing 0.7 s often
+    enough to feel like "every turn", not an occasional slow one."""
+    assert m.FILLER_THRESHOLD_S == 1.0
 
 
 # =============================================================================================== pinned audio clips

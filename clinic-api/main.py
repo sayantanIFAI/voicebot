@@ -75,9 +75,12 @@ def _warn_if_open():
 def _ensure_seeded():
     """Create the schema, and seed it only if it is EMPTY.
 
-    The catalogue is derived data -- 8 departments, 32 doctors, 34 tests,
+    The catalogue is derived data -- 9 departments, 36 doctors, 34 tests,
     all defined in seed.py -- so regenerating it costs nothing and removes
-    the manual reseed step that every pod restart used to require.
+    the manual reseed step that every pod restart used to require. (A
+    department added to seed.py AFTER this database was first seeded, e.g.
+    Dentistry, is not covered by this guard -- see booking_migrate.
+    seed_new_departments, called every boot regardless of emptiness.)
 
     Guarded on emptiness because seed() itself is destructive (drop_all
     then create_all). Running it unconditionally at startup would wipe
@@ -124,9 +127,11 @@ def _ensure_seeded():
             seed()
         else:
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
-            from seed import backfill_i18n
+            from seed import backfill_faq_keywords, backfill_i18n, backfill_test_alias_keywords
 
             logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
+            logging.getLogger("clinic-api").info("test alias keywords backfilled: %s", backfill_test_alias_keywords())
+            logging.getLogger("clinic-api").info("FAQ keywords backfilled: %s", backfill_faq_keywords())
 
         # Only now do departments/doctors/tests definitely have rows --
         # either seed() just created them, or they already existed.
@@ -542,6 +547,23 @@ _TITLE_WORDS = frozenset({"dr", "doctor", "doc", "ডাক্তার", "ড�
 MIN_SUBSTRING_CHARS = 3
 
 
+def _bn_vowel_variants(s: str) -> set[str]:
+    """Real call 2026-10-12: "ডাক্তার মুখার্জির সাথে" ("with Doctor Mukherjee's...") was extracted as doctor_name
+    "মুখার্জি" -- the LLM copies the caller's words verbatim (SLOT RULES: never normalize), and Bengali's own
+    possessive declension shortens a name stem's final "ী" to "ি" before the (here already-stripped) case
+    suffix "-র" -- but the doctor was seeded under the dictionary surname "মুখার্জী" (long ী). Same length, one
+    character different at the very end, so neither direction's substring check in the alias loop below ever
+    matched, and a real, unambiguous doctor came back "not found". Trying both vowel forms of the WORD'S LAST
+    character is still an exact, character-for-character written-form comparison afterwards (CLAUDE.md "Doctor
+    Nobody": never a sound-alike guess) -- it just stops a single grammatical vowel shortening from hiding an
+    otherwise-exact match."""
+    if s.endswith("ি"):  # ি (short i)
+        return {s, s[:-1] + "ী"}  # ী (long i)
+    if s.endswith("ী"):
+        return {s, s[:-1] + "ি"}
+    return {s}
+
+
 def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
     """Doctors whose WRITTEN name or alias contains what the caller said ("Sen", "Dr Sen", a Bengali
     or Hindi alias). Several matches are returned as several: choosing among them is the caller's job."""
@@ -550,6 +572,7 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
     if not needle:
         return []
     doctors = db.query(Doctor).all()
+    name_variants = _bn_vowel_variants(name or "")
 
     def tokens(d):
         # the short name's words and the whole name's words ("dr", "a", "sen" and "ashok"): both are written forms
@@ -562,7 +585,11 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
         return whole
     # The whole name in Bengali or Devanagari ("অশোক সেন") is more specific than the surname alias every Sen shares:
     # when it was said in full, that doctor and no other.
-    said_in_full = [d for d in doctors if any(fn and fn in name for fn in (d.full_name_bn, d.full_name_hi))]
+    said_in_full = [
+        d
+        for d in doctors
+        if any(fn and any(fn in nv for nv in name_variants) for fn in (d.full_name_bn, d.full_name_hi))
+    ]
     if said_in_full:
         return said_in_full
     out = []
@@ -576,7 +603,7 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
         ]
         # a one- or two-letter fragment ("ry") sits inside far too many names to identify any of them
         if (len(needle) >= MIN_SUBSTRING_CHARS and needle in d.name.lower()) or any(
-            name in a or a in name for a in aliases
+            nv in a or a in nv for a in aliases for nv in name_variants
         ):
             out.append(d)
     return out
@@ -668,10 +695,20 @@ def _find_doctor_candidates(db: Session, name: str) -> list[Doctor]:
     return [d for r, d in scored if top - r <= 0.05]
 
 
+def _looks_like_a_name(candidate: str) -> bool:
+    """CLAUDE.md "Doctor Nobody" guard, at the data layer: a suggestion is spoken aloud as "did you mean
+    <this>?" straight from the Doctor.name column, so a stray non-name value edited into that column (a
+    qualification string, a pasted fragment) must never reach a caller's ear just because it cleared the
+    fuzzy-match floor. Real doctor names here are always properly-cased ("Dr. Samir Sen"); a token that is
+    not capitalised is never one, and is the cheapest signal that the column holds something else."""
+    words = [w for w in _strip_title(candidate).split() if w]
+    return bool(words) and all(w[:1].isupper() for w in words)
+
+
 def _doctor_suggestions(db: Session, name: str) -> list[str]:
     """Who the caller MIGHT have meant: sound-alikes (including one- and two-consonant surnames such as Sen,
     Das, Roy) and near-spellings, best first (KCD-436/096). Never acted on -- see _find_doctor."""
-    return [sg.canonical for sg in _gazetteer(db, "doctor").suggest(name, limit=3)]
+    return [sg.canonical for sg in _gazetteer(db, "doctor").suggest(name, limit=3) if _looks_like_a_name(sg.canonical)]
 
 
 def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSchedule | None:
@@ -1160,6 +1197,11 @@ def doctor_earliest(name: str = Query(...), db: Session = Depends(get_db)):
 @app.get("/api/v1/departments/route")
 def department_route(query: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
     return bs.route_department(db, query, lang)
+
+
+@app.get("/api/v1/departments/doctors")
+def department_doctors(name: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
+    return bs.department_doctors(db, name, lang)
 
 
 class SmsRequest(BaseModel):

@@ -98,6 +98,21 @@ _EXPLICIT = {
         "cut call",
         "please cut the call",
         "cut it off",
+        # Real call 2026-10-13: a caller code-switches the English loanword "call" into an otherwise Bengali
+        # sentence, and that sentence came back from ASR/translation in ROMANISED form -- "call kete den" (কল
+        # কেটে দিন, "cut the call"), "call rakhun" (কল রাখুন, "hang up"), "call rakh diye"/"call rakh dicche"
+        # (কল রেখে দিয়ে/দিচ্ছি, "having hung up the call") -- none of which matched the Bengali-script cues
+        # above. Same verb, same three conjugation endings (-den/-dao/-de, -diye/-dicche) already covered in
+        # Bengali script higher up in this tuple.
+        "call kete den",
+        "call kete dao",
+        "call kete de",
+        "call rakhun",
+        "call rakho",
+        "call rakh diye",
+        "call rakh dicche",
+        "call rekhe diye",
+        "call rekhe den",
     ),
 }
 _WHEN_ASKED = {

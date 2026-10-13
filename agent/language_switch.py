@@ -48,6 +48,18 @@ _SWITCH_PHRASES: dict[str, dict[str, str]] = {
         "अंग्रेजी में बात": "en",
         "बंगाली में बोल": "bn",
         "बांग्ला में बोल": "bn",
+        # OWNER'S INSTRUCTION, real call 2026-10-12: "बेंगोली में बात कीजिए हिंदी नहीं है" went undetected --
+        # the hi/en targets just above already have a "-में बात" form alongside "-में बोल", but the bn
+        # target only ever had "-में बोल". Same class of gap as the bn-table fix on 2026-10-10 (one
+        # phrasing of a target was covered, its sibling was not); adding the missing "-में बात" form, and
+        # the "बेंगोली"/"बेंगॉली" spellings the ASR actually produced for "bengali" (alongside the
+        # dictionary "बंगाली"/"बांग्ला"), not inventing a new phrasing.
+        "बंगाली में बात": "bn",
+        "बांग्ला में बात": "bn",
+        "बेंगोली में बोल": "bn",
+        "बेंगोली में बात": "bn",
+        "बेंगॉली में बोल": "bn",
+        "बेंगॉली में बात": "bn",
     },
     "en": {
         "speak in hindi": "hi",

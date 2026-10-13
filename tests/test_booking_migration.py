@@ -101,7 +101,11 @@ def test_old_appointments_table_gains_columns_without_losing_the_existing_row(ol
         db.close()
 
     finish = booking_migrate.finish_booking_schema_setup()
-    assert finish["department_routes_added"] == 1  # the fixture's one department
+    # KCD-dentistry, 2026-10-12: Dentistry is now also added to ANY database missing it, old fixtures included
+    # (booking_migrate.seed_new_departments, run before seed_department_routes) -- so this old DB's own route
+    # (its one raw-SQL department) plus Dentistry's is 2, not 1 as it was before that department existed.
+    assert finish["new_departments_added"] == 1  # Dentistry, added to this old database too
+    assert finish["department_routes_added"] == 2  # the fixture's one department, plus Dentistry's
 
 
 def test_old_blanket_unique_constraint_is_rebuilt_into_a_partial_index(old_db):

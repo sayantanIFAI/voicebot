@@ -297,6 +297,17 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"route_department({params!r}): {e}") from e
 
+    # KCD-dentistry: the real doctors in a NAMED department -- used for the caller who gave no usable symptom
+    # (route_department found nothing to match) and no doctor name either, routed to a general checkup instead.
+    async def department_doctors(self, department_name: str, lang: str = "bn") -> dict:
+        params = {"name": department_name, "lang": lang}
+        try:
+            r = await self._client.get("/api/v1/departments/doctors", params=params)
+            r.raise_for_status()
+            return validated(RouteAnswer, r.json(), "department_doctors")
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"department_doctors({params!r}): {e}") from e
+
     async def resend_confirmation(self, confirmation_id: str) -> dict:
         try:
             r = await self._client.post(

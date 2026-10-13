@@ -124,6 +124,26 @@ def test_department_route_reply_names_real_doctors_when_given_them():
         assert "Dr. K. Bhattacharya" in r2 and "Dr. S. Mukherjee" in r2
 
 
+def test_booking_department_suggestion_reply_names_real_doctors_never_asks_to_book_again():
+    """KCD-dentistry: unlike department_route_reply, the caller already said they want an appointment --
+    this must never re-ask "shall I book one?"."""
+    for lang in ("bn", "hi", "en"):
+        r = rt.booking_department_suggestion_reply("ENT", ["Dr. R. Pal", "Dr. K. Halder"], lang)
+        assert "Dr. R. Pal" in r and "Dr. K. Halder" in r
+        assert "ENT" in r
+        assert "?" not in r  # states the department/doctors, does not ask a closing question
+
+
+def test_booking_general_checkup_first_reply_names_a_real_gp_and_never_diagnoses():
+    for lang in ("bn", "hi", "en"):
+        r = rt.booking_general_checkup_first_reply(["Dr. S. Mukherjee"], lang)
+        assert "Dr. S. Mukherjee" in r
+        assert "diagnos" not in r.lower()
+        # Still produces a sentence with no real doctor data at all (defensive -- route_department/
+        # department_doctors always returns at least one in this catalogue, but must never crash if not).
+        assert rt.booking_general_checkup_first_reply([], lang)
+
+
 def test_conflict_reply_states_the_existing_booking():
     conflict = {"doctor_name": "Dr. P. Ghosh", "date": "2026-10-03", "time_slot": "10:15"}
     for lang in ("bn", "hi", "en"):

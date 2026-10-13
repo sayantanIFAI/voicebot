@@ -100,14 +100,25 @@ def languages_to_verify(language: str, scores: dict[str, float], active: tuple[s
 OTHER_INDIC_MIN_LID = 0.16
 
 
-def engines_needed(language: str, scores: dict[str, float], active: tuple[str, ...]) -> list[str]:
+def engines_needed(
+    language: str, scores: dict[str, float], active: tuple[str, ...], prior: str | None = None
+) -> list[str]:
     """The recognisers that can still change the answer, best language-ID score first (ties keep that order, so the
     LID-preferred language wins them). Measured on the pod: running all three took ~0.64 s; English took 0.21 s.
 
       * unknown language, or no scores: all of them, as before;
       * otherwise language ID's favourite, plus the OTHER Indic language only if LID is torn (>= OTHER_INDIC_MIN_LID);
       * English ALWAYS: it is cheap and concurrent, and language ID mislabels accented English as Bengali or Hindi
-        (measured: English speech came back as bn 0.83 / hi 0.16 / en 0.01), so its probability cannot rule it out."""
+        (measured: English speech came back as bn 0.83 / hi 0.16 / en 0.01), so its probability cannot rule it out;
+      * the call's OWN established language (`prior`) ALWAYS, for the identical reason, extended to Bengali/Hindi:
+        a real call 2026-10-12 gave Bengali only 0.07 (confidently, wrongly, favouring Hindi at 0.93) on a call
+        already well past its first turn and established as Bengali -- below EVERY floor OTHER_INDIC_MIN_LID has
+        been lowered to chasing real misses (0.30 -> 0.16; this one would not have cleared 0.16 either). The
+        caller's own recognised language cannot be ruled out by a LID score any more than English can. This
+        costs nothing extra: `_route_and_transcribe` already starts `prior`'s recogniser in parallel with LID
+        itself (the same early-start this module's own docstring describes for English) -- omitting it from
+        `need` only threw away a result already being computed for free, which is what actually happened here:
+        the Bengali decoder ran, and its transcript was discarded in favour of Hindi's phonetic guess at it."""
     ranked = [lang for lang, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True) if lang in active]
     for lang in active:
         if lang not in ranked:
@@ -116,7 +127,7 @@ def engines_needed(language: str, scores: dict[str, float], active: tuple[str, .
         return ranked
     need = []
     for lang in ranked:
-        if lang == "en" or lang == language or scores.get(lang, 0.0) >= OTHER_INDIC_MIN_LID:
+        if lang == "en" or lang == language or lang == prior or scores.get(lang, 0.0) >= OTHER_INDIC_MIN_LID:
             need.append(lang)
     if language in active and language not in need:
         need.insert(0, language)
@@ -181,9 +192,7 @@ def english_word_share(text: str) -> float:
 _EN_ASR_CONFUSABLES = {
     "tame": "time",
 }
-_RE_EN_CONFUSABLE = re.compile(
-    r"\b(" + "|".join(re.escape(w) for w in _EN_ASR_CONFUSABLES) + r")\b", re.IGNORECASE
-)
+_RE_EN_CONFUSABLE = re.compile(r"\b(" + "|".join(re.escape(w) for w in _EN_ASR_CONFUSABLES) + r")\b", re.IGNORECASE)
 
 
 def fix_asr_confusables(text: str) -> str:
@@ -236,8 +245,17 @@ def pick_candidate(
         rest = believed or rest
     best = max(rest, key=lambda t: (round(script_share(t[1].text, t[0]), 1), t[1].decoder_agreement))
     if lid_scores and not prior:
-        # First turn: no call language yet, so language ID's own favourite among these is the one to stay with.
-        prior = max((lang for lang, _ in rest), key=lambda lang: lid_scores.get(lang, 0.0))
+        # First turn: no established call language yet. Real call 2026-10-12: LID split hi 0.52 / bn 0.48 --
+        # essentially a coin flip -- and the old line here ("language ID's own favourite among these is the
+        # one to stay with") turned that coin flip into a protected prior, which then overrode `best` (hi
+        # 0.57 vs bn 1.00 decoder agreement, on genuinely Bengali speech) via the switch-guard below, exactly
+        # the class of bug this whole function exists to prevent. Anchoring to "bn" instead -- the same
+        # default CallSession.lang itself starts at, never a value computed from the same shaky LID scores
+        # this function is built to not fully trust -- means the switch-guard only overturns `best` when the
+        # challenger's OWN score clears SWITCH_MIN_LID, the identical bar an ALREADY-established call must
+        # clear to move away from Bengali (see the test just above this one). A first turn is held to the
+        # same standard as every later one, not a weaker one a near-tied LID score could slip under.
+        prior = "bn"
     if lid_scores and prior and best[0] != prior and lid_scores.get(best[0], 0.0) < SWITCH_MIN_LID:
         stay = [(lang, r) for lang, r in rest if lang == prior]
         if stay:

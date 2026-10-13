@@ -134,7 +134,15 @@ from agent.lang_select import speakable as _speakable
 from agent.language_policy import language_mismatch
 from agent.language_switch import detect_language_switch_request
 from agent.latency_metrics import turn_latency_by_language
-from agent.lay_terms import ABDOMEN, BLOOD, match_lay_term
+from agent.lay_terms import (
+    ABDOMEN,
+    BLOOD,
+    HEAD,
+    URINE,
+    expresses_not_knowing_test_name,
+    match_category_answer,
+    match_lay_term,
+)
 from agent.lid import (
     SUPPORTED_LANGUAGES,
     ASRLanguageRouter,
@@ -164,8 +172,12 @@ from agent.reply_templates import (
     add_test_reply,
     blood_test_list_reply,
     booking_confirmation_readback,
+    booking_department_suggestion_reply,
+    booking_doctor_sitting_hint,
+    booking_general_checkup_first_reply,
     booking_reply,
     cancel_reply,
+    category_test_list_reply,
     clinic_faq_reply,
     conflict_reply,
     department_route_reply,
@@ -1074,6 +1086,10 @@ class CallSession:
         self.suspended = None
         self.awaiting_resume = False
         self.pending_enquiry = None  # (intent, turn) when we just asked "which test / which doctor"
+        # OWNER'S INSTRUCTION, 2026-10-12: set when the caller said they do not know the test's name at all and
+        # was just asked "is it blood, urine, or imaging?" -- the NEXT turn is read as the answer to that
+        # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
+        self.awaiting_test_category = False
         self.last_enquiry_turn = 0  # turn_count when the last test/doctor answer was given (agent/enquiry_followup.py)
         self.no_at_confirm = False  # the caller said "no, ..." at the confirmation step and it was not a bare no
         # KCD-499: stored preferences, offered after the answer and applied only if the caller says yes.
@@ -1814,6 +1830,25 @@ async def _handle_lay_term(session: CallSession, category: str, text: str, lang:
     await _queue_prescription_callback(session, reason, text, lang)
 
 
+async def _handle_test_category_answer(session: CallSession, category: str, text: str, lang: str) -> None:
+    """OWNER'S INSTRUCTION, 2026-10-12: the caller's answer to "is it blood, urine, or imaging?" (asked when
+    they said they do not know the test's name at all -- see the dispatch site next to
+    agent.lay_terms.expresses_not_knowing_test_name). BLOOD/ABDOMEN/HEAD are handled EXACTLY as they already
+    are for a direct lay-term mention (_handle_lay_term above) -- reused outright, not reimplemented, so there
+    is only ever one place that decides what each of those three says. URINE/IMAGING are new: same "list the
+    real catalogue, never invent a name" discipline, generalised (agent.reply_templates.category_test_list_reply)
+    rather than duplicating blood_test_list_reply for each one."""
+    if category in (BLOOD, ABDOMEN, HEAD):
+        await _handle_lay_term(session, category, text, lang)
+        return
+    cat = await _cached_catalogue()
+    sample_type = "Urine" if category == URINE else "Imaging"
+    names = sorted({t["name"] for t in cat.get("tests", []) if t.get("sample_type") == sample_type})
+    reply = category_test_list_reply(names, category, lang)
+    await _speak(session, f"{reply} {phrase('send_prescription_whatsapp', lang)}", lang)
+    await _queue_prescription_callback(session, f"lay_term_{category}", text, lang)
+
+
 async def _finish_enquiry_turn(
     session: CallSession, text: str, lang: str, intent: str, slots: dict, base_reply: str, data: dict
 ) -> None:
@@ -1896,10 +1931,17 @@ def _log_timing(session: CallSession) -> None:
 
 
 async def _route_and_transcribe(session: CallSession, utterance_wav: str):
-    """LID -> routing decision -> ASR. Returns (language, ASRResult), or
-    (None, None) when the router says a human should take the call."""
+    """LID -> routing decision -> ASR. Returns (language, ASRResult, decisive), or
+    (None, None, True) when the router says a human should take the call.
+
+    `decisive` (real call 2026-10-12): False only for the tie-break fallback below, when LID itself could not
+    settle on a language and this turn's language was picked by decoder agreement among what was tried. On a
+    short, noisy or badly-timed first utterance that is often just whichever engine hallucinated the most
+    confident-sounding garbage ("hano parking a chair", chosen over Bengali's own 1.00 decoder agreement on a
+    later, clearly Bengali turn) -- not a real signal of what language the caller speaks. The caller
+    (_resolve_reply_language) uses this to avoid LOCKING the whole call's reply language off a guess like that."""
     if _lid is None or len(_languages_active) < 2:
-        return "bn", await _asr_router.transcribe("bn", utterance_wav)
+        return "bn", await _asr_router.transcribe("bn", utterance_wav), True
 
     # Language ID (CPU, ~0.19 s) and recognition used to run one after the other. They now overlap: the recognisers
     # that are almost always needed -- the language this call has been in, and English (cheap, and never ruled out by
@@ -1955,7 +1997,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
     # the one whose decoders agree AND whom language ID believes.
     verify = languages_to_verify(lid.language, lid.scores, _languages_active) if lid.scores else None
     if verify:
-        need = engines_needed(lid.language, lid.scores, _languages_active)
+        need = engines_needed(lid.language, lid.scores, _languages_active, prior)
         outcomes = await outcomes_for(need)
         lang, result = pick_candidate(outcomes, lid.scores, session.lang_router.previous_language)
         logger.info(
@@ -1968,7 +2010,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             ", ".join(f"{lg}:{r.decoder_agreement:.2f}" for lg, r in outcomes),
         )
         session.lang_router.note_response_language(lang)
-        return lang, result
+        return lang, result, False
 
     decision = session.lang_router.route(lid)
     logger.info(
@@ -1982,16 +2024,18 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
     )
 
     if decision.action == "handoff_human":
-        return None, None
+        return None, None, True
 
     if decision.action == "dual_asr" and decision.secondary_language:
         primary, secondary = decision.language, decision.secondary_language
         both = await outcomes_for([primary, secondary])
         if len(both) == 2:
-            return pick_candidate(both, lid.scores, session.lang_router.previous_language)
-        return both[0]
+            lang, result = pick_candidate(both, lid.scores, session.lang_router.previous_language)
+            return lang, result, True
+        lang, result = both[0]
+        return lang, result, True
 
-    return decision.language, (await outcomes_for([decision.language]))[0][1]
+    return decision.language, (await outcomes_for([decision.language]))[0][1], True
 
 
 async def _dispatch_turn(session: CallSession, utterance_wav: str):
@@ -2034,7 +2078,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     temp_wavs.append(conditioned)
                     asr_wav = conditioned
             _mark(session, "prep")
-            lang, asr_result = await _route_and_transcribe(session, asr_wav)
+            lang, asr_result, lang_decisive = await _route_and_transcribe(session, asr_wav)
             _mark(session, "asr")
             # KCD-075/KCD-076: measured inside its own budget slice, on
             # the SAME clip ASR already read, before the finally below
@@ -2109,7 +2153,9 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         detected_lang = lang  # what the CALLER actually spoke this turn -- kept for analytics; never overridden
         _rec(session, "language", detected_lang)
-        lang = _resolve_reply_language(session, lang)  # what the AGENT replies in -- sticky; see the function
+        lang = _resolve_reply_language(
+            session, lang, lang_decisive
+        )  # what the AGENT replies in -- sticky; see the function
         confidence = confidence_state(getattr(asr_result, "decoder_used", None), asr_result.decoder_agreement)
         apply_confidence(session.call_state, confidence != VERIFIED)
         apply_channel_quality(session.call_state, channel_quality)
@@ -2359,12 +2405,39 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # anything else: the question lapses and this turn is handled as a fresh one
 
     if not confirmed_entity:
+        # OWNER'S INSTRUCTION, 2026-10-12: the answer to "is it blood, urine, or imaging?" (asked below, in the
+        # "does not know the name at all" branch) is read here, FIRST -- before anything else gets a chance to
+        # treat this turn as a fresh question. A category answer that doesn't match any of the three, or is
+        # unclear, goes straight to the safety-check message: no guessing past this point, ever.
+        if session.awaiting_test_category:
+            session.awaiting_test_category = False
+            category = match_category_answer(text)
+            if category is not None:
+                await _handle_test_category_answer(session, category, text, lang)
+            else:
+                await _speak(session, phrase("test_unknown_safety_check", lang), lang)
+            return
         # KCD-lay-terms: a rural lay term for a test category ("রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি"), matched
         # deterministically before any model call -- but never while a booking is already actively in progress
         # (session.booking is not None), so a lay-term-shaped word inside an unrelated answer never hijacks it.
         lay_term = None if session.booking is not None else match_lay_term(text)
         if lay_term is not None:
             await _handle_lay_term(session, lay_term, text, lang)
+            return
+        # OWNER'S INSTRUCTION, 2026-10-12: "wo test ka naam toh nhi pta" -- the caller was just asked which test
+        # (session.pending_enquiry, set when test_rate/test_prep had no test_name) and says they do not know its
+        # name at all, not even a category word match_lay_term above would have already caught. Scoped tightly
+        # to that exact context (a recent test_rate/test_prep ask) so an unrelated "I don't know" elsewhere in
+        # the call is never mistaken for this.
+        pending_peek = session.pending_enquiry
+        if (
+            pending_peek is not None
+            and pending_peek[0] in ("test_rate", "test_prep")
+            and session.turn_count - pending_peek[1] <= 1
+            and expresses_not_knowing_test_name(text)
+        ):
+            session.awaiting_test_category = True
+            await _speak(session, phrase("ask_test_category", lang), lang)
             return
         try:
             data = await _resolve_intent(session, text, lang)
@@ -2381,6 +2454,47 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     _mark(session, "intent")
     _rec(session, "intent", intent)
     _note_stated_age(session, slots, lang)
+
+    # Real call 2026-10-12, three turns from one call: "वो तो नहीं पता मतलब क्या सिंप्टम्स वगैरह वो नहीं मालूम"
+    # ("I don't know, I mean I don't know the symptoms") -> classified "department_query"; a bare "डॉक्टर सेन"
+    # meant to correct a garbled doctor name -> classified "doctor_availability" (answered as a one-off
+    # enquiry that never writes back into the booking, so the bogus name was NEVER overwritten and only
+    # surfaced as "no doctor found" at the very end); a bare "अः ग्यारह बजे" ("eleven o'clock") answering
+    # "which time?" -> classified "smalltalk", drawing the generic greeting filler. All three are the SAME
+    # root cause: the per-utterance classifier has no notion of "we are mid-booking, waiting specifically for
+    # X" and reads a terse, context-dependent answer on its own unrelated terms. Checked here, BEFORE the
+    # smalltalk short-circuit just below (which would otherwise return first) and before any of these three
+    # intents' own standalone handlers further down -- re-routing into book_appointment lets the SAME
+    # merge_slots() that handles a direct answer pick up whatever this turn actually said (a doctor name, or
+    # nothing at all for genuine smalltalk, which just re-asks the same pending question -- never a worse
+    # outcome than a random reply that ignores where the caller actually is). Same discipline as the
+    # "unclear" re-route a little further down, extended to the other intents real calls have now shown take
+    # the exact same shortcut around it.
+    if (
+        intent in ("department_query", "doctor_availability", "smalltalk")
+        and session.booking is not None
+        and session.booking.action == "book_appointment"
+        and session.booking.stage == "collecting"
+        and not session.booking.is_stale()
+    ):
+        intent = "book_appointment"
+
+    # Real call 2026-10-12: "ten o'clock" / "दस बजे" answering "what time do you want?" has no booking verb
+    # in it and reads exactly like the generic "what are your hours?" FAQ -- misclassified "clinic_faq", it
+    # spoke the hours disclaimer and re-asked the same time question, which from the caller's side looks
+    # exactly like the time they just gave was rejected. Narrowly re-routed only when the booking is
+    # actively waiting on time_slot specifically, so a genuine hours question asked at any other point in
+    # the call is answered normally, not swallowed into the booking.
+    if (
+        intent == "clinic_faq"
+        and session.booking is not None
+        and session.booking.action == "book_appointment"
+        and session.booking.stage == "collecting"
+        and not session.booking.is_stale()
+        and "time_slot" in session.booking.asked_fields
+        and "time_slot" in missing_required(session.booking)
+    ):
+        intent = "book_appointment"
 
     if intent == "smalltalk":
         reply = data.get("direct_reply_bn")
@@ -2550,6 +2664,64 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 await _thank_for_answer(session, st, changed, prior_slots, lang)
                 await _echo_new_slots(session, changed, prior_slots, st.slots, lang)
 
+            # KCD-dentistry, real-call bug 2026-10-12: the caller may have named a DEPARTMENT/specialty
+            # ("ENT doctor", "I need a dentist"), not a real doctor -- the LLM has nowhere else to put that
+            # but doctor_name (it is never allowed to guess a department from a symptom itself). Checked only
+            # the turn doctor_name is freshly given, before it is ever treated as a real doctor's name and
+            # silently carried all the way to the confirmation readback.
+            if "doctor_name" in changed:
+                try:
+                    dept = await _tools.department_doctors(st.slots["doctor_name"], lang)
+                except ToolCallError as e:
+                    logger.warning("[%s] department_doctors failed (%s)", session.call_id, e)
+                    dept = {"matched": False}
+                if dept.get("matched"):
+                    doctors = dept.get("doctors") or []
+                    if doctors:
+                        st.slots["doctor_name"] = doctors[0].removeprefix("Dr. ")
+                        await _speak(
+                            session, booking_department_suggestion_reply(dept["department_name"], doctors, lang), lang
+                        )
+
+            # KCD-dentistry: the caller does not know a doctor's name but described a problem instead --
+            # resolve it to a real department/doctor (or a General Medicine checkup) before asking for a
+            # doctor's name the caller has already said they do not have.
+            if not st.slots.get("doctor_name") and st.slots.get("symptom_description"):
+                await _resolve_doctor_from_symptom(session, st, lang)
+
+            # Owner's instruction, 2026-10-12: naming a real doctor should say when that doctor actually sits
+            # before asking which day the caller wants -- otherwise they can easily name a day the doctor is
+            # not in and have to be corrected and asked again. Gated on `"doctor_name" in changed` -- the
+            # caller actively named a doctor or department THIS turn (covers the department-redirect above
+            # too, which still overwrites st.slots this same turn) -- never on the symptom/GP-default path
+            # just above, which already asks its own "which day" as part of its own reply; speaking this one
+            # too in the same turn would stack two different "which day" questions back to back.
+            #
+            # Real call 2026-10-12: a garbled first-turn name ("Doctor Shene" from mangled ASR) was never
+            # validated here at all -- missing_required only checks for EMPTINESS, so the bogus name sat in
+            # st.slots untouched through five more turns (the caller correctly saying "Dr. Sen" later only
+            # answered a one-off standalone availability question, never overwriting it -- see the
+            # doctor_availability re-route below) and only surfaced as "no doctor found" at the very end,
+            # after the caller had already given a date, a time and their patient details for nothing. Using
+            # the SAME availability lookup both ways: found -> the sitting-time hint; not found (or
+            # genuinely ambiguous) -> doctor_availability_reply's own "not found"/"did you mean" messaging,
+            # clearing the slot so the caller is asked again NOW, not after the rest of the booking is moot.
+            if "doctor_name" in changed and st.slots.get("doctor_name") and not st.slots.get("date"):
+                try:
+                    avail = await _tools.get_doctor_availability(st.slots["doctor_name"], None)
+                except ToolCallError as e:
+                    logger.warning("[%s] get_doctor_availability failed (%s)", session.call_id, e)
+                    avail = None
+                if avail is not None:
+                    if avail.get("found"):
+                        st.asked_fields.add("date")
+                        await _speak(session, booking_doctor_sitting_hint(avail, lang), lang)
+                        return
+                    not_found_reply = doctor_availability_reply(st.slots, avail, lang)
+                    st.slots["doctor_name"] = None
+                    await _speak(session, not_found_reply, lang)
+                    return
+
             # Secure the hold as soon as doctor+date+time are known, even
             # if patient details are still missing -- KCD-376: the
             # concurrency guard must run before the caller has spoken a
@@ -2592,6 +2764,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     # capture, not only when the caller asks for it.
                     await _speak(session, spelling_prompt(lang), lang)
                     return
+                elif field_name == "doctor_name" and st.note_retry("doctor_name") >= 2:
+                    # KCD-dentistry, real-call bug 2026-10-12: a caller who says they do not know the doctor
+                    # (and gives no symptom either, or route_department already tried and failed above) was
+                    # asked "which doctor?" forever. Same retry-then-degrade discipline as phone/patient_name
+                    # above -- asked normally once, defaulted on the second miss.
+                    await _default_to_general_medicine(session, st, lang)
                 else:
                     await _speak(session, _next_question(session, st, intent, missing, lang), lang)
                     return
@@ -2605,9 +2783,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             # key, or two different callers who both declined to give
             # a number would appear to conflict with EACH OTHER.
             if effective_phone(st) != "not_provided" and not st.slots.get("_conflict_checked"):
-                conflict = await _tools.booking_conflict(
-                    effective_phone(st), st.slots["date"], st.slots["time_slot"]
-                )
+                conflict = await _tools.booking_conflict(effective_phone(st), st.slots["date"], st.slots["time_slot"])
                 st.slots["_conflict_checked"] = "1"
                 if conflict.get("conflict"):
                     await _speak(session, conflict_reply(conflict["existing"], lang), lang)
@@ -2687,14 +2863,21 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
 
         elif intent == "lookup_booking":
             if not (slots.get("phone") or slots.get("confirmation_id")):
+                # Real call 2026-10-12: a bare, content-free utterance mid-booking (e.g. just a patient
+                # name) can get misclassified as "lookup_booking" instead of continuing the open
+                # book_appointment task -- caught here before it asks the wrong "what number did you
+                # book with" question and silently drops the booking already in progress.
+                open_task = session.booking
+                if open_task is not None and open_task.stage == "collecting" and open_task.action != "lookup_booking":
+                    missing = missing_required(open_task)
+                    await _speak(session, _next_question(session, open_task, open_task.action, missing, lang), lang)
+                    return
                 await _speak(session, missing_slot_prompt(intent, "phone", lang), lang)
                 return
             result = await _tools.lookup_bookings(
                 phone=slots.get("phone"), confirmation_id=slots.get("confirmation_id")
             )
-            await _speak(
-                session, _with_resume(session, lookup_reply(result.get("bookings") or [], lang), lang), lang
-            )
+            await _speak(session, _with_resume(session, lookup_reply(result.get("bookings") or [], lang), lang), lang)
 
         elif intent == "resend_confirmation":
             confirmation_id = slots.get("confirmation_id")
@@ -2784,6 +2967,55 @@ def _enter_task(session: CallSession, action: str):
         session.suspended = current
     session.booking = new_state(action)
     return session.booking
+
+
+async def _default_to_general_medicine(session: CallSession, st, lang: str) -> None:
+    """KCD-dentistry, owner's instruction 2026-10-12: neither a usable doctor name nor a symptom -- the GP
+    decides and refers onward, rather than asking the caller to choose a specialist they cannot judge. Shared
+    by _resolve_doctor_from_symptom (symptom given but unmatched/ambiguous) and the doctor_name retry fallback
+    below (caller explicitly does not know, or simply never gives one after being asked twice)."""
+    try:
+        gp = await _tools.department_doctors("General Medicine", lang)
+    except ToolCallError as e:
+        logger.warning("[%s] department_doctors failed (%s)", session.call_id, e)
+        gp = {}
+    gp_doctors = gp.get("doctors") or []
+    if gp_doctors:
+        # booking_confirmation_readback's own English template prepends "Dr." itself (the same convention as
+        # a caller-given name: slots["doctor_name"] is always the BARE name clinic-api's fuzzy matching
+        # resolves, never pre-formatted) -- storing the "Dr. " prefix too would read back "Dr. Dr. X". A no-op
+        # for bn/hi: the spoken-name form (full_name_bn/full_name_hi) never carries a "Dr." prefix to begin
+        # with, and _find_doctor already matches on those fields, so the booking lookup still resolves it.
+        st.slots["doctor_name"] = gp_doctors[0].removeprefix("Dr. ")
+    await _speak(session, booking_general_checkup_first_reply(gp_doctors, lang), lang)
+
+
+async def _resolve_doctor_from_symptom(session: CallSession, st, lang: str) -> None:
+    """KCD-dentistry, owner's instruction 2026-10-12: the caller wants an appointment but does not know which
+    doctor to see, and gave a symptom instead ("mera kaan mein dard hai") -- resolve it via clinic-api's real,
+    clinician-approved department routing (never a model guess at which doctor or department) and name a real
+    doctor, so the booking continues straight to the date instead of re-asking for a name the caller does not
+    have. Genuinely ambiguous (route_department matched two departments) or unmatched (the symptom matched
+    nothing) both default to a General Medicine checkup (_default_to_general_medicine).
+
+    `symptom_description` is consumed (popped) once here either way -- it must never be re-resolved on a later
+    turn once a doctor is picked, and must never leak into booking_confirmation_readback's slot dump."""
+    symptom = st.slots.pop("symptom_description", None)
+    if not symptom:
+        return
+    try:
+        result = await _tools.route_department(symptom, lang)
+    except ToolCallError as e:
+        logger.warning("[%s] route_department failed (%s) -- defaulting to General Medicine", session.call_id, e)
+        result = {"matched": False}
+    if result.get("matched"):
+        doctors = result.get("doctors") or []
+        if doctors:
+            # See _default_to_general_medicine's own comment: never store the "Dr. " prefix twice.
+            st.slots["doctor_name"] = doctors[0].removeprefix("Dr. ")
+            await _speak(session, booking_department_suggestion_reply(result["department_name"], doctors, lang), lang)
+            return
+    await _default_to_general_medicine(session, st, lang)
 
 
 async def _after_task_finished(session: CallSession, lang: str) -> None:
@@ -3321,7 +3553,15 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
     """The caller's answer to "would you like me to continue in <language>?" -- asked by the two-in-a-row
     check next to session.lang_history. `classify_yes_no` is tried in the OFFERED language first (that is what
     the question was asked in, and what a caller answering naturally replies in), then the call's current
-    language as a fallback (a caller can simply keep answering in the language the call is locked to)."""
+    language as a fallback (a caller can simply keep answering in the language the call is locked to).
+
+    2026-10-12, real-call bug: the question that triggered the offer used to be answered ONLY on a clear
+    "yes" -- a "no", or any reply that is not a clean yes/no (a caller who simply repeats or rephrases their
+    original question instead of literally saying "yes"), silently dropped it, leaving the caller to repeat
+    themselves with no better luck the second time (confirmed live: the rephrase itself then went unanswered
+    too). The offer's outcome decides the SPOKEN LANGUAGE only; whether the question gets answered must not
+    depend on it, so it is now answered either way -- in the new language on "yes", in whatever language this
+    turn is already in otherwise."""
     if not session.awaiting_language_switch_offer or session.pending_language_switch is None:
         return False
     session.awaiting_language_switch_offer = False
@@ -3329,6 +3569,7 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
     pending_text, session.pending_language_switch_text = session.pending_language_switch_text, None
     pending_asr, session.pending_language_switch_asr_result = session.pending_language_switch_asr_result, None
     answer = classify_yes_no(text, target) or classify_yes_no(text, lang)
+    reply_lang = lang
     if answer == "yes":
         _lock_reply_language(session, target)
         session.lang_router.note_response_language(target)
@@ -3336,15 +3577,25 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
         # pre-mark the new language as already disclosed so the check a few lines above this never fires for it.
         session.disclosed_langs.add(target)
         await _speak(session, phrase("language_switched", target), target)
-        # OWNER'S INSTRUCTION, 2026-10-10: answer the question that TRIGGERED the offer, now in the new
-        # language, instead of leaving the caller to repeat it -- that question was set aside, not answered,
-        # when the offer itself was asked (see the two-in-a-row check next to session.lang_history).
-        if pending_text and pending_asr is not None:
-            await _answer_content_turn(session, pending_text, target, pending_asr)
+        reply_lang = target
+    elif not session.lang_locked:
+        # Real call 2026-10-12: a "no", or any reply that isn't a clean yes/no (e.g. a caller answering in
+        # a THIRD language), used to leave session.lang_locked False. _resolve_reply_language then treats the
+        # very next turn with a decisive LID result -- in ANY language -- as the first-ever decisive signal
+        # and locks the whole rest of the call to it, which is how a caller who just confirmed/declined
+        # staying in `lang` could have the call silently and permanently flip back to Bengali a turn or two
+        # later. The offer itself is the decisive signal for this call's language: lock it here either way.
+        _lock_reply_language(session, lang)
+    # OWNER'S INSTRUCTION, 2026-10-10: answer the question that TRIGGERED the offer, now resolved, instead of
+    # leaving the caller to repeat it -- that question was set aside, not answered, when the offer itself was
+    # asked (see the two-in-a-row check next to session.lang_history). This now runs on "no" and on an unclear
+    # reply too, not only "yes" -- see the docstring above for why.
+    if pending_text and pending_asr is not None:
+        await _answer_content_turn(session, pending_text, reply_lang, pending_asr)
         return True
-    # "no", or an unclear answer that is not actually this call's real next question, is absorbed quietly: no
-    # re-ask, no nagging (lang_switch_last_offered already stops this exact offer from firing again this call).
-    return answer == "no"
+    # No question was actually stashed (should not happen -- the offer always stashes one) and this reply was
+    # not a clean yes/no either: let it fall through as this turn's own content rather than doing nothing.
+    return answer in ("yes", "no")
 
 
 async def _continue_draft_offer(session: CallSession, text: str, lang: str) -> bool:
@@ -3509,7 +3760,7 @@ def _caller_thanked(text: str, lang: str) -> bool:
     return bool(table and table.any(_cues.normalise_cue(text), table.thanks))
 
 
-def _resolve_reply_language(session: CallSession, detected_lang: str) -> str:
+def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True) -> str:
     """The language to REPLY in this turn (KCD-lay-terms, a live call 2026-09-28) -- locked to the first language
     established for the call, not re-derived from this turn's own language ID. `detected_lang` is what THIS turn's
     LID/ASR-verification actually settled on (used to select the ASR engine already, by the time this runs) --
@@ -3520,8 +3771,16 @@ def _resolve_reply_language(session: CallSession, detected_lang: str) -> str:
     site calls _lock_reply_language directly, since that decision is made later in the same turn than this
     function runs). A detected different voice after identity verification revokes verification and asks to
     re-verify (agent/speaker_change.py) but does not, on its own, reopen the language lock -- a new voice
-    re-verifying is free to explicitly ask for a different language like any caller can."""
-    if not session.lang_locked:
+    re-verifying is free to explicitly ask for a different language like any caller can.
+
+    `decisive` (real call 2026-10-12): a garbled, noisy first utterance ("hano parking a chair") made LID give
+    up and fall back to decoder-agreement tie-breaking, which landed on "en" -- then, because it was the FIRST
+    turn, that guess LOCKED the entire rest of the call to English, so a crystal-clear Bengali question two
+    turns later (LID confidence 1.00) still got an English reply. An inconclusive guess must never be the one
+    thing that decides a whole call's language: on a not-decisive first turn, this leaves the lock OPEN
+    (session.lang stays at its "bn" default for just this turn) so the next turn -- decisive or not -- still
+    gets a fair first shot at locking it, instead of a coin-flip from noise becoming permanent."""
+    if not session.lang_locked and decisive:
         _lock_reply_language(session, detected_lang)
     session.lang_router.note_response_language(session.lang)
     apply_language(session.call_state, session.lang)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from agent.report_time_wording import report_time_phrase, report_time_safety_note
 from agent.sample_wording import sample_sentence
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
@@ -145,15 +146,17 @@ def test_rate_reply(slots: dict, result: dict, lang: str) -> str:
         sentence = sample_sentence(sample, "hi")
         if sentence:
             reply += f" {sentence}"
-        if hours:
-            reply += f" रिपोर्ट {hours} घंटे में मिल जाएगी।"
+        time_sentence = report_time_phrase(hours, "hi")
+        if time_sentence:
+            reply += f" {time_sentence} {report_time_safety_note('hi')}"
         return reply
     reply = f"The price of the {name} test is {rate} rupees."
     sentence = sample_sentence(sample, "en")
     if sentence:
         reply += f" {sentence}"
-    if hours:
-        reply += f" You will get the report within {hours} hours."
+    time_sentence = report_time_phrase(hours, "en")
+    if time_sentence:
+        reply += f" {time_sentence} {report_time_safety_note('en')}"
     return reply
 
 
@@ -247,6 +250,17 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str) -> str:
     if hi:
         return f"{name} अभी किसी तय दिन नहीं बैठ रहे हैं। आप हमारे काउंटर पर पूछ सकते हैं।"
     return f"{name} is not sitting on any fixed day right now. You can ask at our counter."
+
+
+def booking_doctor_sitting_hint(result: dict, lang: str) -> str:
+    hi = lang == "hi"
+    if not result.get("found") or not result.get("available"):
+        return "किस दिन के लिए अपॉइंटमेंट चाहिए?" if hi else "Which day would you like the appointment for?"
+    name = _doctor_name({}, result, lang)
+    date, hours = result.get("date"), result.get("chamber_hours", "")
+    if hi:
+        return f"{name} आम तौर पर {date} को, {hours} के बीच बैठते हैं। किस दिन के लिए अपॉइंटमेंट चाहिए?"
+    return f"{name} usually sits on {date}, between {hours}. Which day would you like the appointment for?"
 
 
 def test_prep_reply(slots: dict, result: dict, lang: str) -> str:
@@ -609,6 +623,32 @@ def blood_test_list_reply(spoken_names: list[str], lang: str) -> str:
     return f"These are the blood tests we do -- {listed}. Which one would you like?"
 
 
+_CATEGORY_LABEL = {
+    "urine": ("यूरिन", "urine"),
+    "imaging": ("स्कैन/एक्स-रे/अल्ट्रासाउंड जैसे", "scan/X-ray/ultrasound type"),
+}
+
+
+def category_test_list_reply(spoken_names: list[str], category: str, lang: str) -> str:
+    """Generalises blood_test_list_reply above to any sample_type -- see
+    agent.reply_templates.category_test_list_reply's own docstring for why this exists as a sibling rather
+    than a rewrite of that one."""
+    hi = lang == "hi"
+    hi_label, en_label = _CATEGORY_LABEL.get(category, ("इस तरह के", "this kind of"))
+    if not spoken_names:
+        return (
+            f"माफ़ कीजिए, अभी हमारी सूची में कोई {hi_label} टेस्ट नहीं है। काउंटर पर पूछ सकते हैं।"
+            if hi
+            else f"Sorry, we don't have any {en_label} tests listed right now. You could ask at the counter."
+        )
+    groups = [spoken_names[i : i + _NAMES_PER_GROUP] for i in range(0, len(spoken_names), _NAMES_PER_GROUP)]
+    if hi:
+        listed = "। ".join(", ".join(g) for g in groups)
+        return f"हमारे यहाँ ये {hi_label} टेस्ट होते हैं -- {listed}। इनमें से कौन सा करवाना है?"
+    listed = ". ".join(", ".join(g) for g in groups)
+    return f"These are the {en_label} tests we do -- {listed}. Which one would you like?"
+
+
 def department_route_reply(result: dict, symptom: str, lang: str) -> str:
     hi = lang == "hi"
     if result.get("matched"):
@@ -640,6 +680,33 @@ def department_route_reply(result: dict, symptom: str, lang: str) -> str:
         "माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर पूछ सकते हैं।"
         if hi
         else "Sorry, I couldn't quite tell which department this needs. You could ask at the counter."
+    )
+
+
+def booking_department_suggestion_reply(department_name: str, doctors: list[str], lang: str) -> str:
+    hi = lang == "hi"
+    who = (f" हमारे यहाँ {', '.join(doctors)} हैं।" if hi else f" We have {', '.join(doctors)} here.") if doctors else ""
+    base = (
+        f"तो इसके लिए {department_name} विभाग में दिखाना ठीक रहेगा।"
+        if hi
+        else f"Then it would be best to see the {department_name} department for this."
+    )
+    return base + who
+
+
+def booking_general_checkup_first_reply(doctors: list[str], lang: str) -> str:
+    hi = lang == "hi"
+    who = (f" {doctors[0]} हैं।" if hi else f" {doctors[0]} is available.") if doctors else ""
+    if hi:
+        return (
+            "ठीक से समझ नहीं आया कि कौन सी समस्या है, इसलिए पहले जनरल मेडिसिन में एक चेकअप करा लेना अच्छा रहेगा।"
+            + who
+            + " ज़रूरत पड़ने पर वो आगे किसी विशेषज्ञ डॉक्टर के पास भेज देंगे।"
+        )
+    return (
+        "It isn't quite clear what the problem is, so it would be best to first get a general checkup done."
+        + who
+        + " They will refer you to a specialist if needed."
     )
 
 

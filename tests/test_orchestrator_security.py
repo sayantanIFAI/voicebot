@@ -480,7 +480,7 @@ async def test_the_greeting_carries_the_database_identity_line_and_the_call_reco
         json={
             "key": "greeting_identity",
             "lang": "en",
-            "text": "You are speaking with Sonoscan Vaani, our automated helper.",
+            "text": "You are speaking with Manorama Vaani, our automated helper.",
             "updated_by": "clinic-lead",
         },
     )
@@ -499,7 +499,7 @@ async def test_the_greeting_carries_the_database_identity_line_and_the_call_reco
                 "key": "greeting_identity",
                 "lang": "en",
                 "updated_by": "test-cleanup",
-                "text": "You are speaking with Sonoscan Vaani.",
+                "text": "You are speaking with Manorama Vaani.",
             },
         )
 
@@ -514,7 +514,7 @@ async def test_an_unreachable_messages_api_leaves_the_built_in_wording_in_place(
     await m._refresh_messages()
     from agent.phrases import phrase
 
-    assert "Sonoscan Vaani" in phrase("greeting", "en")
+    assert "Manorama Vaani" in phrase("greeting", "en")
 
 
 # ============================================================ "did you mean ...?" -> "yes" runs the lookup

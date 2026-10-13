@@ -881,11 +881,29 @@ def resend_confirmation(db: Session, confirmation_id: str) -> dict:
 MAX_SUGGESTED_DOCTORS = 3
 
 
-def _department_doctor_names(db: Session, department_id: int, limit: int = MAX_SUGGESTED_DOCTORS) -> list[str]:
-    """The real, currently-seeded doctors in a department, short-name form -- never a name the model made up
+def _doctor_spoken_name(d: Doctor, lang: str) -> str:
+    """The short name in a script this caller's TTS voice can actually say. "Dr. S. Mukherjee" is Latin --
+    the bn/hi vocoders drop Latin script outright (agent/pronunciation.py, agent/tts.py KCD-455), and a live
+    call on 2026-10-12 showed exactly that: the reply text was correct but the doctor's name came out as
+    silence, three separate "unspeakable spans blocked this reply" log lines (one per word, since clause_split
+    also breaks on the periods in "Dr." and "S."). full_name_bn / full_name_hi are native-script, no "Dr."
+    prefix to strip -- falling back to the Latin short name only if a localisation is somehow missing, which
+    is still better than crashing even though it reproduces the silent-name bug for that one doctor."""
+    if lang == "bn":
+        return d.full_name_bn or d.name
+    if lang == "hi":
+        return d.full_name_hi or d.name
+    return d.name
+
+
+def _department_doctor_names(
+    db: Session, department_id: int, lang: str = "bn", limit: int = MAX_SUGGESTED_DOCTORS
+) -> list[str]:
+    """The real, currently-seeded doctors in a department, spoken-name form -- never a name the model made up
     (CLAUDE.md's truth boundary): this is a live query, the same table booking_service's own doctor search reads."""
     return [
-        d.name for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).limit(limit).all()
+        _doctor_spoken_name(d, lang)
+        for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).limit(limit).all()
     ]
 
 
@@ -908,14 +926,36 @@ def route_department(db: Session, query_text: str, lang: str) -> dict:
             "matched": False,
             "ambiguous": True,
             "candidates": [d.name for d in depts],
-            "doctors_by_department": {d.name: _department_doctor_names(db, d.id) for d in depts},
+            "doctors_by_department": {d.name: _department_doctor_names(db, d.id, lang) for d in depts},
         }
     dept = db.get(Department, matches[0])
     return {
         "matched": True,
         "department_name": dept.name,
         "department_id": dept.id,
-        "doctors": _department_doctor_names(db, dept.id),
+        "doctors": _department_doctor_names(db, dept.id, lang),
+    }
+
+
+def department_doctors(db: Session, department_name: str, lang: str = "bn", limit: int = MAX_SUGGESTED_DOCTORS) -> dict:
+    """KCD-dentistry: the real doctors in a NAMED department. Two callers, both real:
+    (1) no usable symptom at all (route_department had nothing to match) and no doctor name either -- a
+        general checkup first, same real-doctor-not-a-guess discipline as route_department.
+    (2) a caller who names a DEPARTMENT/specialty instead of a doctor ("ENT doctor", "I need a dentist") --
+        the LLM has nowhere else to put that but doctor_name, since it is never allowed to guess a department
+        from a symptom itself (CLAUDE.md's truth boundary); this is deliberately case-insensitive and tolerant
+        of a word or two around the department's own name ("ENT doctor" must still match "ENT") for exactly
+        that reason -- a real doctor's name never collides with one of this clinic's ~9 department names."""
+    q = department_name.strip().lower()
+    dept = next(
+        (d for d in db.query(Department).all() if d.name.lower() == q or phrase_matches(d.name.lower(), q)), None
+    )
+    if not dept:
+        return {"matched": False}
+    return {
+        "matched": True,
+        "department_name": dept.name,
+        "doctors": _department_doctor_names(db, dept.id, lang, limit),
     }
 
 
