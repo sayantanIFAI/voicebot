@@ -140,8 +140,8 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
         "Our clinic is open every day from 8 AM to 8 PM, and on Sundays from 8 AM to 2 PM.",
     ),
     "location": (
-        "हमारा क्लिनिक कोलकाता के राजारहाट न्यू टाउन में है, सिटी सेंटर टू के पास।",
-        "Our clinic is in New Town, Rajarhat, Kolkata, near City Centre 2.",
+        "हमारे क्लिनिक का पता १७२, बेहारामपुर रोड, ज़िला नदिया, रानाघाट है।",
+        "Our clinic is at 172, Beharampur Road, District Nadia, Ranaghat.",
     ),
     "payment_methods": (
         "यहाँ नकद, सभी प्रमुख कार्ड, और ऑनलाइन पेमेंट भी हो जाता है।",
