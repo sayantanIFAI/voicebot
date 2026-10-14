@@ -44,6 +44,7 @@ from typing import Any
 import httpx
 
 from agent.clause_split import split_into_clauses
+from agent import bn_respell
 from agent.speech_norm import unspeakable_spans, verbalize
 
 logger = logging.getLogger("tts")
@@ -176,7 +177,7 @@ class TTSClient:
         ProsodyParams fields), forwarded as-is so delivery can be tuned
         against a real handset without a redeploy. Part of the cache key --
         the same text with different pauses is different audio."""
-        spoken = verbalize(text, lang)
+        spoken = bn_respell.apply(verbalize(text, lang), lang)  # words the Bengali voice says badly (agent/bn_respell.py)
 
         # KCD-455: anything the voice cannot pronounce is dropped by its
         # tokenizer entirely -- not mispronounced, ABSENT -- so this must
