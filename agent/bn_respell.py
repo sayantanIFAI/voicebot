@@ -30,7 +30,45 @@ _RESPELL: dict[str, str] = {
     "সাড়া": "শাঁড়া",  # candidate 4 of 4
     "সময়টা": "শমোইটা",  # candidate 4 of 5 (the earlier machine-chosen সমোইটা is replaced)
     "নেওয়া": "নেওয়াা",  # candidate 5 of 5; listener: better, "not perfect"
+    # Same ড়া sound as সাড়া, so it gets the same treatment (nasal mark after শা). NOT yet heard by the listener.
+    "সাড়ে": "শাঁড়ে",
 }
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The "sh" rule. The Bengali voice reads a plain স as Hindi "s" where Bengali says "sh" (ʃ), which is what makes সাড়া,
+# সময়টা and the rest sound Hindi. Two of the four words a native listener fixed were fixed by starting them with শ.
+#
+# THE RULE: in a NATIVE Bengali word, every স that is not the first half of a conjunct (স্ত, স্প, স্থ ...) is written শ.
+#
+# WHY A LIST AND NOT EVERY WORD: Bengalis say English-origin words with a real "s" (সিবিসি, সেন্টার, সিটি, ক্যালসিয়াম,
+# প্রেসক্রিপশন, সোনোস্ক্যান, অ্যাসিড ...), so a blanket rule would break exactly the lab vocabulary the bot speaks most.
+# _NATIVE_SH is every Bengali word with a plain স in the bot's OWN sentences (phrases, reply templates, FAQ answers, test
+# names, doctor names, number words), classified by hand, native only. A word the bot says that is not in the list is left alone.
+#
+# STATUS: the rule rests on two words the listener fixed this way; the rest of the list is applied on that evidence and is
+# open to veto word by word (tools/respell_audit.py prints every word the rule changes). BN_RESPELL_RULES=0 turns the
+# rule off and keeps only the explicit table above.
+# ---------------------------------------------------------------------------------------------------------------------
+_NATIVE_SH = frozenset(
+    """
+    সময় সময়ে সময়ের সময়গুলো সাহায্য সেটা সাথে সরাসরি সব সবচেয়ে সমস্যা সমস্যার সেন সেনগুপ্ত সঙ্গে সকাল সকালে সঠিক
+    সম্ভবত সম্ভব সুবিধা অসুবিধার সহকর্মী সাধারণত সপ্তাহে আসন্ন সেখান সম্পর্ক সংস্থাগুলোর সংগ্রহ সত্যিই সন্ধ্যা
+    এসে এসো আসব আসবেন আসতে আসুন বসেন বসবেন বসছেন উপবাস জিজ্ঞেস মাস মাসের সাল হাসপাতাল হাসপাতালে
+    বসু দাস সাহা সিনহা সরকার সৌরভ সুব্রত মানস সুতপা সঞ্জয় সমীর সুদীপ দেবাশিস স্নেহাশিস বিশ্বাস
+    সাত সাতটা সাতাশ সাতাশি সাতান্ন সাঁইত্রিশ সাতচল্লিশ সাতষট্টি সাতাত্তর সাতানব্বই সাতশো সতেরো সত্তর ঊনসত্তর সাড়ে সোয়া
+    """.split()
+)
+_PLAIN_SA = re.compile("স(?!\u09cd)")  # a স that is not followed by the virama: not the start of a conjunct
+
+
+def _sh(word: str) -> str:
+    return _PLAIN_SA.sub("শ", word)
+
+
+def rule_changes() -> dict[str, str]:
+    """Every word the sh rule changes, for review (tools/respell_audit.py)."""
+    return {w: _sh(w) for w in sorted(_NATIVE_SH) if w not in _RESPELL and _sh(w) != w}
+
 
 REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা"}  # approved by a native listener (নেওয়া: better, not perfect)
 
@@ -43,12 +81,17 @@ def _key(word: str) -> str:
 
 def respell(word: str) -> str:
     """The spelling to send to the voice for one Bengali word; the word itself when it needs no help."""
-    return _RESPELL.get(_key(word), word)
+    w = _key(word)
+    if w in _RESPELL:
+        return _RESPELL[w]
+    if w in _NATIVE_SH and os.environ.get("BN_RESPELL_RULES", "1") != "0":
+        return _sh(w)
+    return word
 
 
 def apply(text: str, lang: str) -> str:
     """Respell every whole Bengali word in `text` that the table knows. Only the Bengali voice is touched."""
-    if lang != "bn" or not _RESPELL or not text or os.environ.get("BN_RESPELL", "1") == "0":
+    if lang != "bn" or not text or os.environ.get("BN_RESPELL", "1") == "0":
         return text
     return _BENGALI_WORD.sub(lambda m: respell(m.group(0)), text)
 
