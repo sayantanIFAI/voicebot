@@ -304,3 +304,41 @@ def test_the_answer_to_the_switch_offer_is_understood_in_any_script(heard, expec
     namespace = {"re": re, "classify_yes_no": classify_yes_no}
     exec(compile(ast.Module(body=chunk, type_ignores=[]), "main.py", "exec"), namespace)
     assert namespace["_answer_to_switch_offer"](heard, "en", "bn") == expected
+
+
+# ------------------------------------------------ 7. "price AND fasting?" in one sentence: both answered
+
+
+def test_a_price_question_that_also_asks_about_fasting_gets_its_second_question_added():
+    from agent.combined_question import add_implied_second_question
+
+    data = {"intent": "test_rate", "slots": {"test_name": "সিবিসি"}, "secondary_intent": None, "secondary_slots": None}
+    out = add_implied_second_question("সিবিসি টেস্টের দাম কত ফাস্টিং করতে হবে", data)
+    assert out["secondary_intent"] == "test_prep" and out["secondary_slots"] == {"test_name": "সিবিসি"}
+    assert data["secondary_intent"] is None  # the original is not edited
+
+
+@pytest.mark.parametrize(
+    "text, intent, expected",
+    [
+        ("CBC test price and do I need to fast", "test_rate", "test_prep"),
+        ("सीबीसी का रेट क्या है और खाली पेट आना है", "test_rate", "test_prep"),
+        ("how should I prepare for the CBC test and how much is it", "test_prep", "test_rate"),
+        ("সিবিসি টেস্টের দাম কত", "test_rate", None),  # price only: nothing added
+        ("what is the CBC test rate", "test_rate", None),
+    ],
+)
+def test_the_second_question_is_added_only_when_the_sentence_asks_it(text, intent, expected):
+    from agent.combined_question import add_implied_second_question
+
+    out = add_implied_second_question(text, {"intent": intent, "slots": {"test_name": "CBC"}})
+    assert out.get("secondary_intent") == expected
+
+
+def test_an_existing_second_question_is_never_replaced_and_no_test_means_no_addition():
+    from agent.combined_question import add_implied_second_question
+
+    keep = {"intent": "test_rate", "slots": {"test_name": "CBC"}, "secondary_intent": "clinic_faq", "secondary_slots": {}}
+    assert add_implied_second_question("price and fasting", keep) is keep
+    none = {"intent": "test_rate", "slots": {}}
+    assert add_implied_second_question("price and fasting", none) is none

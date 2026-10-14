@@ -81,6 +81,10 @@ cat > /workspace/bin/_run_pcm.sh <<'EOF'
 #!/bin/bash
 source /workspace/kolkata-care-voice-agent/deploy/env.sh
 cd /workspace/kolkata-care-voice-agent
+# Barge-in: the caller can talk over the agent and be heard (agent/echo_cancel.py + agent/barge_in.py, KCD-051/052). In
+# production callers interrupt constantly. Thresholds are validated on synthetic echo only -- watch for the agent cutting
+# itself off on speakerphone, and set AEC_BARGE_IN=0 here to return to the half-duplex gate if it does.
+export AEC_BARGE_IN=${AEC_BARGE_IN:-1}
 exec /workspace/venv/bin/python3 -m uvicorn main_pcm:app --host 0.0.0.0 --port 8101
 EOF
 # English ASR -- its OWN venv (mainline NeMo, cannot share an environment

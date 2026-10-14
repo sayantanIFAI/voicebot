@@ -142,6 +142,7 @@ from agent.endpointing import decide as decide_turn_end
 from agent.enquiry_followup import entities_from_turn, recent_unique, resolve_followup_slot
 from agent import cart_tally  # sourav 2026-10-14: running list of priced tests + remove/total
 from agent import test_availability  # real call 2026-10-14: "is the X test done here?" is a question, not a booking
+from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent.slot_grounding import ground_slots  # a test/doctor name the model made up is dropped before any lookup
 from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a sentence actually names
 from agent.fast_path import Catalogue, FastPath
@@ -2637,6 +2638,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
 
     if not confirmed_entity:
         data = await _ground_model_slots(session, text, lang, data)
+        # Real call 2026-10-14: "সিবিসি টেস্টের দাম কত ফাস্টিং করতে হবে" got only the price; the fasting half was dropped.
+        data = add_implied_second_question(text, data)
     intent = data["intent"]
     slots = data["slots"]
     pending, session.pending_enquiry = session.pending_enquiry, None

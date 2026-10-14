@@ -299,13 +299,17 @@ def endpointing_env(pcm, monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_finished_transcript_ends_the_turn_at_the_shorter_threshold(endpointing_env, session, monkeypatch):
+async def test_a_finished_transcript_no_longer_shortens_the_wait(endpointing_env, session, monkeypatch):
+    # SPEC CHANGE, 2026-10-14 (deliberate): this test used to assert that a transcript which reads as finished ends the
+    # turn at the SHORTER threshold (0.5 s of silence). Real calls showed that shortcut cutting people off mid-thought
+    # ("...एक चीज बोलिए इधर"), so semantic endpointing may now only ADD patience (main.py, _decide_turn): a finished
+    # transcript waits the baseline, never less. The verdict is still computed (one speculative transcription).
     pcm = endpointing_env
     monkeypatch.setattr(pcm, "SEMANTIC_ENDPOINTING", True)
     pcm._asr_router = FakeRouter("what is the price of a CBC test?")
     session.lang = "en"
     d = await pcm._decide_turn(session, None, 16000)  # 0.5 s of confirmed silence: under the 1.0 s baseline
-    assert d.utterance_end_s == 1.0 and pcm._asr_router.calls == 1
+    assert d.utterance_end_s is None and d.confirm_s >= EndpointConfig().silence_confirm_s and pcm._asr_router.calls == 1
 
 
 @pytest.mark.asyncio
