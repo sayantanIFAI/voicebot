@@ -22,13 +22,17 @@ import re
 import unicodedata
 
 # spoken word (as written everywhere else in the repo) -> spelling that makes the voice say it right.
-# Filled from the round-trip measurement; every entry is DRAFT until a native listener approves it.
 _RESPELL: dict[str, str] = {
-    # 3 of 3 round-trip reads (alone, and in two sentences); the plain spelling read back 0 of 3 ("সজোতা", "সূর্যটা").
-    "সময়টা": "সমোইটা",
+    # CHOSEN BY A NATIVE LISTENER, 2026-10-15, from numbered audio candidates (the round-trip recogniser was too forgiving
+    # to judge: it read back words a Bengali ear still hears as Hindi-accented or wrong). The pattern in the winners: the voice
+    # reads স as Hindi "s" where Bengali says "sh", so native words start with শ.
+    "প্রয়োজন": "প্রোজোন",  # was candidate 3 of 5
+    "সাড়া": "শাঁড়া",  # candidate 4 of 4
+    "সময়টা": "শমোইটা",  # candidate 4 of 5 (the earlier machine-chosen সমোইটা is replaced)
+    "নেওয়া": "নেওয়াা",  # candidate 5 of 5; listener: better, "not perfect"
 }
 
-REVIEWED: set[str] = set()  # words a native listener has approved
+REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা"}  # approved by a native listener (নেওয়া: better, not perfect)
 
 _BENGALI_WORD = re.compile(r"[ঀ-৿]+")
 
