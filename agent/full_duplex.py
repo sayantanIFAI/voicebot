@@ -48,20 +48,6 @@ TAIL_S = 0.4
 # recovers within about 2 s. Barge-in is not acted on until then; the caller still has the
 # manual interrupt.
 VOICE_CHANGE_INHIBIT_S = 2.0
-# Real call 2026-10-15: a caller on headphones talked over the agent and was IGNORED. Replaying it (a scripted caller, a real
-# human recording over the greeting) showed the detector fired 9 times and every event was discarded, because the trust rule
-# above needs ERLE >= 5 dB -- and a canceller cannot improve on an echo that is not there, so with no echo ERLE stays at 0 dB
-# forever. The rule was written to stop an UNCONVERGED filter's residual echo passing for a caller; with no echo at all there
-# is nothing to confuse. So: once the agent has been speaking for this long and its voice has NEVER appeared in the
-# microphone (the delay estimator's confidence stayed below its threshold), the line is echo-free and events are trusted.
-# Real echo (laptop speaker, speakerphone) is unchanged: it is seen, and keeps the ERLE rule. Until this much agent speech has
-# been heard, nothing changes: events stay suppressed, which is the safe side. Synthetic-echo behaviour is pinned by tests.
-NO_ECHO_AFTER_S = 1.5
-# How clearly the agent's voice must show up in the microphone to count as "echo is present". The delay estimator's own
-# acceptance threshold (6) is NOT usable for this: MEASURED on synthetic scenes, an echo-free line reaches 5.7-8.5 by chance
-# (the far-end speech is harmonic, so unrelated signals still correlate), while real echo -- even a faint one, 26 dB down --
-# never fell below 24. 15 sits between the two with room on both sides. Real handsets are untested (tools/echo_eval.py).
-ECHO_PRESENT_CONFIDENCE = 15.0
 
 
 @dataclasses.dataclass
@@ -90,8 +76,6 @@ class FullDuplexProcessor:
         self._inhibit_until = 0  # mic sample before which barge-in is not acted on
         self.barge_ins = 0
         self.suppressed = 0
-        self._agent_samples = 0  # mic samples that arrived while the agent was speaking
-        self._echo_seen = False  # the agent's voice has been found in the microphone at least once
 
     # -- agent side ---------------------------------------------------
     def place_reference(self, pcm: np.ndarray, voice: str | None = None) -> int:
@@ -111,10 +95,6 @@ class FullDuplexProcessor:
     def agent_speaking(self) -> bool:
         return self._mic_pos < self._ref_end + int(TAIL_S * self.sr)
 
-    def echo_free(self) -> bool:
-        """True once the agent has spoken for NO_ECHO_AFTER_S and its voice never showed up in the microphone."""
-        return not self._echo_seen and self._agent_samples >= int(NO_ECHO_AFTER_S * self.sr)
-
     def cancel_pending(self) -> None:
         """The caller interrupted: whatever was queued after now will not be
         played, so it must not be expected as echo either."""
@@ -126,18 +106,14 @@ class FullDuplexProcessor:
         cleaned, echo = self.echo.process_ex(mic)
         self._mic_pos += len(mic)
         speaking = self.agent_speaking()
-        if speaking:
-            self._agent_samples += len(mic)
-            if self.echo.delay_confidence >= ECHO_PRESENT_CONFIDENCE:
-                self._echo_seen = True
         event = self.detector.process(cleaned, echo) if cleaned.size else None
         acted = None
         suppressed = False
         if event is not None:
-            echo_free = self.echo_free()
-            trusted = speaking and (
-                (self.echo.canceller.erle_db >= self.min_trusted_erle_db and self._mic_pos >= self._inhibit_until)
-                or echo_free  # nothing to cancel, nothing to confuse with the caller (see NO_ECHO_AFTER_S)
+            trusted = (
+                speaking
+                and self.echo.canceller.erle_db >= self.min_trusted_erle_db
+                and self._mic_pos >= self._inhibit_until
             )
             if trusted:
                 acted = event
