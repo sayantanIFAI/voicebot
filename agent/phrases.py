@@ -15,13 +15,13 @@ from __future__ import annotations
 
 PHRASES: dict[str, dict[str, str]] = {
     "bn": {
-        "greeting": "নমস্কার। বলুন, কীভাবে সাহায্য করতে পারি?",
+        "greeting": "বলুন, কীভাবে সাহায্য করতে পারি?",
         "asr_empty": "দুঃখিত। আমি শুনতে পাইনি। আবার বলবেন?",
         "unclear": "দুঃখিত। আমি বুঝতে পারিনি। আবার বলবেন?",
         "llm_failure": "একটু সমস্যা হচ্ছে, একটু ধরুন।",
         "tool_failure": "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
         "idle_close": "লাইনে কোনো সাড়া পাচ্ছি না, কল শেষ করছি। ধন্যবাদ।",
-        "smalltalk_default": "নমস্কার, কী সাহায্য করতে পারি?",
+        "smalltalk_default": "সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
         "handoff": "আমি আপনাকে আমাদের স্টাফের সাথে যুক্ত করছি, দয়া করে লাইনে থাকুন।",
         "cancel_aborted": "ঠিক আছে, আপনার অ্যাপয়েন্টমেন্টটা যেমন ছিল তেমনই আছে।",
         "no_confirmation_number": "ঠিক আছে, তাহলে বুকিংটা হয়ে যাবে, কিন্তু কোনো লিখিত কনফার্মেশন পাঠাতে পারব না।",
@@ -64,13 +64,13 @@ PHRASES: dict[str, dict[str, str]] = {
         "reask_final": "দুঃখিত। আমি আপনাকে বুঝতে পারলাম না।",
     },
     "hi": {
-        "greeting": "नमस्कार। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
+        "greeting": "बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
         "asr_empty": "माफ़ कीजिए। मैं सुन नहीं पाई। क्या आप फिर बोलेंगे?",
         "unclear": "माफ़ कीजिए। मैं समझ नहीं पाई। क्या आप फिर बताएँगे?",
         "llm_failure": "थोड़ी दिक्कत आ रही है, कृपया एक पल रुकिए।",
         "tool_failure": "अभी मैं यह देख नहीं पा रही हूँ। कृपया काउंटर पर संपर्क करें।",
         "idle_close": "लाइन पर कोई आवाज़ नहीं आ रही, कॉल समाप्त कर रही हूँ। धन्यवाद।",
-        "smalltalk_default": "नमस्कार, मैं आपकी क्या मदद कर सकती हूँ?",
+        "smalltalk_default": "सोनोस्कैन वाणी। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
         "handoff": "मैं आपको हमारे स्टाफ़ से जोड़ रही हूँ, कृपया लाइन पर बने रहिए।",
         "cancel_aborted": "ठीक है, आपकी अपॉइंटमेंट जैसी थी वैसी ही है।",
         "no_confirmation_number": "ठीक है, बुकिंग हो जाएगी, लेकिन मैं कोई लिखित कन्फ़र्मेशन नहीं भेज पाऊँगी।",
@@ -92,13 +92,13 @@ PHRASES: dict[str, dict[str, str]] = {
         "reask_final": "माफ़ कीजिए। मैं आपको समझ नहीं पाई।",
     },
     "en": {
-        "greeting": "Hello. How can I help you?",
+        "greeting": "How can I help you?",
         "asr_empty": "Sorry. I did not catch that. Could you say it again?",
         "unclear": "Sorry. I did not understand. Could you say that again?",
         "llm_failure": "We're having a small problem, please hold for a moment.",
         "tool_failure": "I can't check that right now. Please contact the counter.",
         "idle_close": "I can't hear anything on the line, so I'm ending the call. Thank you.",
-        "smalltalk_default": "Hello, how can I help you?",
+        "smalltalk_default": "Sonoscan Vaani. How can I help you?",
         "handoff": "Let me connect you to our staff, please stay on the line.",
         "cancel_aborted": "Okay, your appointment is unchanged.",
         "no_confirmation_number": "Okay, I'll go ahead with the booking, but I won't be able to send you a written confirmation.",
@@ -153,10 +153,16 @@ EMERGENCY_HINT = {
 # DISCLOSURE) say ONLY the identity sentence and the question, nothing about being automated or staff being
 # reachable. Kept verbatim-identical per language with DISCLOSURE so the two call sites never say two different
 # things about what the agent is.
+#
+# OWNER'S INSTRUCTION, 2026-10-14 (sourav): the brand is "Sonoscan Vaani" and the opening is ONLY
+#   "Sonoscan Vaani. How can I help you?"  -- no "Namaskar/Hello", no "you are speaking with ...", nothing about being
+# automated. Same sentence, in each language, for the opening greeting, the bare-greeting reply (agent/fast_path_cues.py)
+# and the smalltalk fallback (PHRASES["smalltalk_default"]). The language-switch path no longer repeats it at all
+# (main.py / main_pcm.py: the once-only disclosure line was removed from the turn loop).
 GREETING_IDENTITY = {
-    "bn": "আমি মনোরমা বাণী।",
-    "hi": "मैं मनोरमा वाणी हूँ।",
-    "en": "I am Manorama Vaani.",
+    "bn": "সোনোস্ক্যান বাণী।",
+    "hi": "सोनोस्कैन वाणी।",
+    "en": "Sonoscan Vaani.",
 }
 
 
@@ -171,7 +177,9 @@ def greeting_text(lang: str) -> str:
     if _messages.has("emergency_hint", lang):
         middle.append(_messages.text("emergency_hint", lang, EMERGENCY_HINT.get(lang) or EMERGENCY_HINT["bn"]))
     if len(parts) < 2:
-        return " ".join(parts + middle)
+        # sourav: the built-in greeting is now ONE sentence (the question), so the identity goes FIRST:
+        # "Sonoscan Vaani. How can I help you?" -- never "How can I help you? Sonoscan Vaani."
+        return " ".join(middle + parts)
     return " ".join([parts[0]] + middle + parts[1:])
 
 

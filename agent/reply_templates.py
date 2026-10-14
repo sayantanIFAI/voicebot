@@ -115,6 +115,32 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     return reply
 
 
+def multi_test_rate_reply(results: list[tuple[str, dict]], lang: str = "bn") -> str:
+    """Several tests NAMED IN ONE TURN, each asking for the combined total (real call 2026-10-13: "uric
+    acid ar cbc test total koto hobe" only ever got the LAST test's single price, no total at all, the
+    earlier one silently dropped). `results` is [(name the caller said, that test's own get_test_rate
+    result)] -- one real tool call per test, same as test_rate_reply's single-test path; the total here is
+    a plain sum of what was actually found, NEVER a composed or estimated figure. A test that was not found
+    is named as such and left OUT of the total, never guessed into it -- same truth-boundary discipline as
+    every other reply in this file."""
+    if lang != "bn":
+        return _i18n.multi_test_rate_reply(results, lang)
+    priced, not_found, total = [], [], 0
+    for requested_name, result in results:
+        if result.get("found"):
+            name = _spoken_test_name({"test_name": requested_name}, result)
+            total += result["rate_inr"]
+            priced.append(f"{name} টেস্টের রেট {result['rate_inr']} টাকা")
+        else:
+            not_found.append(requested_name)
+    if not priced:
+        return "দুঃখিত, এই টেস্টগুলোর কোনোটাই আমাদের তালিকায় খুঁজে পাইনি। অন্য কোনো টেস্ট বলবেন?"
+    reply = "। ".join(priced) + f"। সব মিলিয়ে টোটাল {total} টাকা।"
+    if not_found:
+        reply += f" '{', '.join(not_found)}' নামে টেস্ট খুঁজে পাইনি, তাই এটা টোটালে নেই।"
+    return reply
+
+
 def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.doctor_availability_reply(slots, result, lang)

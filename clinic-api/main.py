@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 from idempotency import idempotent
 from idempotency import set_key_from_header as set_idempotency_key
 from models import FAQ, Appointment, AuditLog, Department, Doctor, DoctorSchedule, LabTest
+from i18n_content import TEST_ALIASES_EN
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -207,6 +208,7 @@ def catalogue(db: Session = Depends(get_db)):
                 "name": t.name,
                 "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a],
                 "aliases_hi": [a for a in (t.aliases_hi or "").split("|") if a],
+                "aliases_en": list(TEST_ALIASES_EN.get(t.name, [])),
                 # The lay-term fast path (agent/lay_terms.py) reads this to answer "রক্ত পরীক্ষা" ("blood test") with
                 # the REAL list of blood tests, off the same cached catalogue fetch every other lookup already uses --
                 # never a second endpoint, never a hardcoded list that could drift from what the lab actually runs.
@@ -264,6 +266,14 @@ def _norm_name(s: str) -> str:
     return " ".join(t for t in toks if t and t not in _GENERIC_WORDS)
 
 
+def _alias_blob(t: LabTest) -> str:
+    """sourav, 2026-10-14: every alias of a test as one "|"-joined string: Bengali + Hindi (database columns) + the
+    English table in i18n_content.TEST_ALIASES_EN. Why: the name search used to build `t.aliases_bn + "|" +
+    t.aliases_hi` in five places, so English lay words ("typhoid test") could never match; this is the one place that
+    knows all three, so every place that matches a name sees the same forms."""
+    return (t.aliases_bn or "") + "|" + (t.aliases_hi or "") + "|" + "|".join(TEST_ALIASES_EN.get(t.name, []))
+
+
 def _find_test(db: Session, name: str) -> LabTest | None:
     """The exact / alias / containment cascade search_test() and the prep endpoint both need --
     factored out so "which test did they mean" has exactly one implementation.
@@ -278,7 +288,7 @@ def _find_test(db: Session, name: str) -> LabTest | None:
 
     all_tests = db.query(LabTest).all()
     for t in all_tests:
-        aliases = [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+        aliases = [a for a in _alias_blob(t).split("|") if a]
         if any(name in alias or alias in name for alias in aliases):
             return t
 
@@ -288,7 +298,7 @@ def _find_test(db: Session, name: str) -> LabTest | None:
     q = _norm_name(name)
     if q:
         for t in all_tests:
-            forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+            forms = [t.name] + [a for a in _alias_blob(t).split("|") if a]
             for form in forms:
                 n = _norm_name(form)
                 if n and (q in n or n in q):
@@ -322,7 +332,7 @@ def _test_forms(t: LabTest) -> list[str]:
     forms = [t.name]
     if "(" in t.name and ")" in t.name:
         forms += [t.name.split("(")[0].strip(), t.name.split("(")[1].split(")")[0].strip()]
-    forms += [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a.strip()]
+    forms += [a for a in _alias_blob(t).split("|") if a.strip()]
     return [f for f in forms if f]
 
 
@@ -387,7 +397,7 @@ def _find_test_candidates(db: Session, name: str) -> list[LabTest]:
 
     alias_matches = []
     for t in all_tests:
-        aliases = [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+        aliases = [a for a in _alias_blob(t).split("|") if a]
         if any(name in alias or alias in name for alias in aliases):
             alias_matches.append(t)
     if alias_matches:
@@ -397,7 +407,7 @@ def _find_test_candidates(db: Session, name: str) -> list[LabTest]:
     norm_matches = []
     if q:
         for t in all_tests:
-            forms = [t.name] + [a for a in (t.aliases_bn + "|" + (t.aliases_hi or "")).split("|") if a]
+            forms = [t.name] + [a for a in _alias_blob(t).split("|") if a]
             if any(_norm_name(f) and (q in _norm_name(f) or _norm_name(f) in q) for f in forms):
                 norm_matches.append(t)
     if norm_matches:

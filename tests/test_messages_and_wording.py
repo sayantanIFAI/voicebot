@@ -94,12 +94,14 @@ def test_the_greeting_is_only_the_welcome_who_you_are_speaking_with_and_the_ques
     """DELIBERATE SPEC CHANGE (owner's instruction after the first live call, 2026-09-25): the KCD-353 opening that
     also said "I am an automated assistant", "staff at any time" and pointed to 112 is no longer spoken in the
     greeting. The full disclosure text is unchanged and still used elsewhere; see agent/phrases.py."""
-    assert phrase("greeting", "bn") == "নমস্কার। আমি মনোরমা বাণী। বলুন, কীভাবে সাহায্য করতে পারি?"
+    # OWNER'S INSTRUCTION, 2026-10-14 (sourav): the greeting is now ONLY "Sonoscan Vaani. How can I help you?" in
+    # all three languages -- no "Namaskar"/"Hello" welcome, nothing else.
+    assert phrase("greeting", "bn") == "সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?"
     en = phrase("greeting", "en")
-    assert en.startswith("Hello.") and "Manorama Vaani" in en and en.rstrip().endswith("How can I help you?")
+    assert en == "Sonoscan Vaani. How can I help you?"
     assert "automated" not in en and "112" not in en and "staff" not in en
     hi = phrase("greeting", "hi")
-    assert "मनोरमा वाणी" in hi and hi.rstrip().endswith("?") and "112" not in hi
+    assert hi == "सोनोस्कैन वाणी। बताइए, मैं आपकी क्या मदद कर सकती हूँ?"
 
 
 def test_any_phrase_can_be_overridden_by_its_key():

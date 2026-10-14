@@ -63,7 +63,7 @@ Today's date is {today_iso} ({today_weekday}), Asia/Kolkata.
 YOUR ONLY JOB is to classify intent and pull out slots that are LITERALLY present in the utterance. You do NOT know test prices, doctor schedules, test preparation instructions, or clinic FAQ answers -- do not guess or state any of those; that data comes from a separate lookup after you run.
 
 INTENTS (exactly one):
-- "test_rate": caller is asking the price/rate of a diagnostic test.
+- "test_rate": caller is asking the price/rate of a diagnostic test, or, when they name MORE THAN ONE test and ask for a combined/TOTAL figure ("uric acid ar cbc test total koto hobe", "CBC and ECG total price", "सीबीसी और यूरिक एसिड मिलाकर कितना लगेगा") -- not booking, just the combined price -- fill "test_names" (see SLOT RULES) instead of "test_name".
 - "doctor_availability": caller is asking whether/when a named doctor is available.
 - "book_appointment": caller wants to book a NEW appointment with a doctor.
 - "book_test": caller wants to book a lab test (or several), as opposed to just asking its price or prep.
@@ -103,7 +103,7 @@ SLOT RULES:
 - Only fill a slot if the caller's words support it. Leave it null rather than inferring.
 - "date" / "new_date": resolve relative time words (Bengali আজ/কাল/পরশু and "আগামী <weekday>", Hindi आज/कल/परसों and "अगले <weekday>", English today/tomorrow/day after tomorrow/"this <weekday>"/"next <weekday>") to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today". If the resolved date is clearly in the past, still return it as stated -- the system rejects and corrects past dates itself; you must never silently roll a date forward.
 - "test_name" / "doctor_name": copy the term as the caller said it (in {language_name} script, or English if they said it in English), do not translate or normalize it -- the lookup service handles matching.
-- "test_names": for "book_test", a list of every test name mentioned this turn, each copied as the caller said it, same rule as "test_name".
+- "test_names": for "book_test", or for "test_rate" when the caller names more than one test and asks for a combined/TOTAL price (see the "test_rate" intent note above) -- a list of every test name mentioned this turn, each copied as the caller said it, same rule as "test_name". For "test_rate" with only ONE test named, fill "test_name" instead, not this.
 - "faq_topic": only for "clinic_faq" -- one of the fixed topic keys above, never free text.
 - "phone": the number to send the confirmation to, only if explicitly spoken, digits only.
 - "contact_phone": a phone number the caller gives that is DIFFERENT from the number they are calling from, for the confirmation message -- only when they say so explicitly (e.g. "send it to a different number").

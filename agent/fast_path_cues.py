@@ -544,7 +544,7 @@ register(
         relative_days=_BN_RELATIVE_DAYS,
         date_words=_BN_DATE_WORDS,
         function_words=_BN_FUNCTION_WORDS,
-        greeting_reply="নমস্কার, কী সাহায্য করতে পারি?",
+        greeting_reply="সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
         thanks_reply="ধন্যবাদ। আর কিছু জানতে চান?",
         match="substring",
         exact_below_chars=0,
@@ -565,7 +565,7 @@ register(
         relative_days={"आज": 0},
         date_words=_HI_DATE_WORDS,
         function_words=_HI_FUNCTION_WORDS,
-        greeting_reply="नमस्ते, मैं आपकी क्या मदद कर सकती हूँ?",
+        greeting_reply="सोनोस्कैन वाणी। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
         thanks_reply="धन्यवाद। क्या आप कुछ और जानना चाहेंगे?",
     )
 )
@@ -582,7 +582,7 @@ register(
         relative_days={"day after tomorrow": 2, "tomorrow": 1, "today": 0},
         date_words=_EN_DATE_WORDS,
         function_words=_EN_FUNCTION_WORDS,
-        greeting_reply="Hello, how can I help you?",
+        greeting_reply="Sonoscan Vaani. How can I help you?",
         thanks_reply="You are welcome. Is there anything else you would like to know?",
     )
 )

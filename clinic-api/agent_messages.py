@@ -29,9 +29,9 @@ MAX_TEXT_CHARS = 600
 # asserts these equal the agent's built-in text, so the two cannot drift apart.
 DEFAULTS: dict[str, dict[str, str]] = {
     "disclosure": {
-        "bn": "আমি মনোরমা বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
-        "hi": "मैं मनोरमा वाणी हूँ। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
-        "en": "I am Manorama Vaani. How can I help you?",
+        "bn": "সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
+        "hi": "सोनोस्कैन वाणी। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
+        "en": "Sonoscan Vaani. How can I help you?",
     },
     "cannot_find": {
         "bn": "দুঃখিত। আমি তথ্যটা খুঁজে পাচ্ছি না। আপনি কি আমাকে একটু বলবেন, যাতে আমি সাহায্য করতে পারি?",

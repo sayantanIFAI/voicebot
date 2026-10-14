@@ -120,13 +120,20 @@ def test_bengali_decisions_match_the_frozen_pre_change_module_except_where_a_gen
     new = FastPath(Catalogue(catalogue_payload), today=TODAY)
     corpus = _bengali_corpus(catalogue_payload)
     assert len(corpus) > 1000
-    identical = lower = abstained = 0
+    identical = lower = abstained = multi = 0
     generic = {"টেস্ট", "টেস্টের"}
     for u in corpus:
         a, b = old.resolve(u), new.resolve(u, "bn")
         if a is None and b is None:
             identical += 1
         elif a is None or b is None:
+            # DELIBERATE SPEC CHANGE, marked (sourav, 2026-10-14): a test whose own NAME contains a cue word ("ব্লাড সুগার
+            # ফাস্টিং") used to abstain because the name looked like a preparation cue. The cue is now read from the
+            # rest of the sentence, so the new module may ANSWER there -- but only a price/prep answer about the very
+            # form the caller said, never a different test.
+            if a is None and b is not None and b.intent in ("test_rate", "test_prep") and any(c in (b.matched_form or "") for c in ("ফাস্টিং", "খালি পেট", "ফাস্ট")):
+                identical += 1
+                continue
             assert b is None, (u, "the new module must never ANSWER where the old one abstained")
             # DELIBERATE SPEC CHANGE, marked (2026-09-25, fourth live call): also an abstain when the old answer was NOT an
             # exact match and a second test fit within AMBIGUITY_MARGIN of it (agent/fast_path.py): the model's turn asks
@@ -135,6 +142,11 @@ def test_bengali_decisions_match_the_frozen_pre_change_module_except_where_a_gen
             # belongs to more than one doctor ("রায়" is both Dr. Roy and Dr. Ray): the clinic API asks "which one?".
             if a.intent == "doctor_availability" and new.catalogue.doctor_owner_count("bn", a.matched_form) > 1:
                 abstained += 1
+                continue
+            # DELIBERATE SPEC CHANGE, marked (sourav, 2026-10-14): also an abstain when the sentence names a SECOND catalogue
+            # test ("প্রেগনেন্সি ইউএসজি": the old module answered with only the bare "ইউএসজি" and dropped the rest).
+            if new.looks_multi_test(u, "bn"):
+                multi += 1
                 continue
             if not any(g in (a.matched_form or "").split() for g in generic):
                 text = new._without_cues(_normalize_text(u), cues.table_for("bn"))
@@ -150,6 +162,11 @@ def test_bengali_decisions_match_the_frozen_pre_change_module_except_where_a_gen
                 a.slots["faq_topic"],
                 a.direct_reply_bn,
             ) == (b.intent, b.slots["test_name"], b.slots["doctor_name"], b.slots["faq_topic"], b.direct_reply_bn)
+            # sourav, 2026-10-14: the owner changed the greeting wording to "Sonoscan Vaani. ...", so for a smalltalk
+            # greeting the spoken reply text is allowed to differ from the frozen module; the decision must not.
+            if a.intent == "smalltalk" and b.intent == "smalltalk":
+                same_answer = (a.intent, a.slots["test_name"], a.slots["doctor_name"], a.slots["faq_topic"]) == (
+                    b.intent, b.slots["test_name"], b.slots["doctor_name"], b.slots["faq_topic"])
             assert same_answer, (u, a.slots, b.slots)  # never a different answer
             if round(a.confidence, 6) == round(b.confidence, 6):
                 identical += 1
@@ -157,6 +174,7 @@ def test_bengali_decisions_match_the_frozen_pre_change_module_except_where_a_gen
                 assert b.confidence < a.confidence and any(g in (a.matched_form or "").split() for g in generic)
                 lower += 1
     assert identical > 1500 and (lower + abstained) < 0.05 * len(corpus), (identical, lower, abstained)
+    assert multi < 0.03 * len(corpus), multi  # sourav: multi-test abstains are a separate, bounded budget
     assert new.stats["served"] > 300
 
 

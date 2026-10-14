@@ -38,9 +38,9 @@ REVIEW_STATUS = "pending_clinical_and_legal_review"
 # below is "pending_clinical_and_legal_review" -- that review has not happened for this wording either, same
 # as it had not for the text it replaces).
 DISCLOSURE = {
-    "bn": "আমি মনোরমা বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
-    "hi": "मैं मनोरमा वाणी हूँ। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
-    "en": "I am Manorama Vaani. How can I help you?",
+    "bn": "সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
+    "hi": "सोनोस्कैन वाणी। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
+    "en": "Sonoscan Vaani. How can I help you?",
 }
 
 

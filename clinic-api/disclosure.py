@@ -9,7 +9,7 @@ The wording is DRAFT and pending clinical and legal review (see agent/disclosure
 
 DISCLOSURE_VERSION = "2.1-draft"
 
-TEXT_NOTICE = "Sent by Manorama Vaani, an automated assistant. To speak to a person, call the counter."
+TEXT_NOTICE = "Sent by Sonoscan Vaani, an automated assistant. To speak to a person, call the counter."
 
 
 def with_notice(message: str) -> str:

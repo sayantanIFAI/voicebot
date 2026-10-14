@@ -514,7 +514,7 @@ async def test_an_unreachable_messages_api_leaves_the_built_in_wording_in_place(
     await m._refresh_messages()
     from agent.phrases import phrase
 
-    assert "Manorama Vaani" in phrase("greeting", "en")
+    assert "Sonoscan Vaani" in phrase("greeting", "en")
 
 
 # ============================================================ "did you mean ...?" -> "yes" runs the lookup

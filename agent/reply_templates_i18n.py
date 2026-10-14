@@ -160,6 +160,37 @@ def test_rate_reply(slots: dict, result: dict, lang: str) -> str:
     return reply
 
 
+def multi_test_rate_reply(results: list[tuple[str, dict]], lang: str) -> str:
+    """Hindi/English counterpart of reply_templates.multi_test_rate_reply -- see its docstring for why this
+    exists and the truth-boundary rule (a test not found is named and left OUT of the total, never
+    guessed)."""
+    hi = lang == "hi"
+    priced, not_found, total = [], [], 0
+    for requested_name, result in results:
+        if result.get("found"):
+            name = _test_name({"test_name": requested_name}, result, lang)
+            rate = result["rate_inr"]
+            total += rate
+            priced.append(f"{name} टेस्ट की कीमत {rate} रुपये" if hi else f"the {name} test is {rate} rupees")
+        else:
+            not_found.append(requested_name)
+    if not priced:
+        return (
+            "माफ़ कीजिए, इनमें से कोई भी टेस्ट हमारी लिस्ट में नहीं मिला। कोई और टेस्ट बताएँगे?"
+            if hi
+            else "Sorry, I could not find any of these tests in our list. Would you like to ask about a different one?"
+        )
+    if hi:
+        reply = "; ".join(priced) + f"। सब मिलाकर टोटल {total} रुपये है।"
+        if not_found:
+            reply += f" '{', '.join(not_found)}' नाम का टेस्ट नहीं मिला, इसलिए यह टोटल में शामिल नहीं है।"
+        return reply
+    reply = "; ".join(priced) + f". The total comes to {total} rupees."
+    if not_found:
+        reply += f" I could not find '{', '.join(not_found)}', so that is not included in the total."
+    return reply
+
+
 def _not_found_test(slots: dict, result: dict, lang: str) -> str:
     q = _query(slots, "test_name", lang)
     sugg = _suggestions(result, lang)

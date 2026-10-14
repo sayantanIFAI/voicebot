@@ -62,6 +62,10 @@ fast-path answer has no model behind it, and a sound-alike is a suggestion for t
 from __future__ import annotations
 
 import datetime
+import difflib
+
+from agent.location_cues import ALL_LOCATION_PHRASES as _LOCATION_PHRASES  # sourav 2026-10-14
+from agent import cart_tally as _cart_tally  # sourav 2026-10-14: shared 'total' cue words
 import logging
 import re
 import unicodedata
@@ -251,8 +255,16 @@ class Catalogue:
 
     @staticmethod
     def _faq_rows(payload: dict, lang: str):
+        # sourav, 2026-10-14: the topic "location" also gets the agent's own phrase list (agent/location_cues.py) in EVERY
+        # language, so a stale clinic-api copy cannot leave a Bengali/Hindi/English/mixed/mis-spelt direction question unmatched.
         return [
-            (f["topic"], _dedupe(_normalize(k) for k in f.get(f"keywords_{lang}", [])))
+            (
+                f["topic"],
+                _dedupe(
+                    _normalize(k)
+                    for k in list(f.get(f"keywords_{lang}", [])) + (_LOCATION_PHRASES if f["topic"] == "location" else [])
+                ),
+            )
             for f in payload.get("faq_topics", [])
         ]
 
@@ -431,6 +443,59 @@ class FastPath:
         other, _form2, other_score = self.catalogue.match(body, "test", lang, COMMIT_FLOOR, skip_name=first)
         return other is not None and first_score - other_score < AMBIGUITY_MARGIN
 
+    @staticmethod
+    def _drop_window(text: str, form: str) -> str:
+        """sourav, 2026-10-14: `text` with the words that best match the catalogue spoken form `form` taken out.
+        Why: the fast path needs to ask "what is LEFT after the test I found?" -- for a second test (multi-test
+        sentence) and for cue words that are really part of the test's own name ("fasting" in "fasting blood sugar").
+        Flow: slide a window of len(form)+-1 words over the text, drop the one with the best character similarity."""
+        words = text.split()
+        span = len(form.split())
+        best_ratio, best_i, best_w = 0.0, None, 0
+        for width in {max(1, span - 1), span, span + 1}:
+            for i in range(max(1, len(words) - width + 1)):
+                r = difflib.SequenceMatcher(None, form, " ".join(words[i : i + width])).ratio()
+                if r > best_ratio:
+                    best_ratio, best_i, best_w = r, i, width
+        if best_i is None:
+            return text
+        return " ".join(words[:best_i] + words[best_i + best_w :])
+
+    def _names_second_test(self, text: str, lang: str, table: cues.CueTable, name: str, form: str | None) -> bool:
+        """sourav, 2026-10-14 (live defect, found by tests/test_lab_price_multilingual.py): "price of CBC uric acid" /
+        "CBC, uric acid price" has TWO tests in it, but the best match (CBC) was served alone and the other test was
+        silently dropped. True when, after the cue words and the first test's own words are taken out, a DIFFERENT
+        test still matches at the commit floor. The only failure mode is an abstain (the turn goes to the model, which
+        returns every name), never a wrong answer."""
+        body = self._without_cues(text, table)
+        left = self._drop_window(body, form) if form else body
+        if not left.strip():
+            return False
+        other, _f, other_score = self.catalogue.match(left, "test", lang, COMMIT_FLOOR, skip_name=name)
+        return other is not None and other_score >= COMMIT_FLOOR
+
+    def looks_multi_test(self, transcript: str, lang: str = "bn") -> bool:
+        """sourav, 2026-10-14: public yes/no -- does this sentence name more than one catalogue test? Used by
+        main.py so such a sentence is never answered from the saved-answer cache (which can only hold ONE test's
+        answer and was serving "Uric Acid" for a three-test question)."""
+        table = cues.table_for(lang)
+        text = _normalize(transcript)
+        if table is None or not text:
+            return False
+        name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
+        return bool(name and score >= COMMIT_FLOOR and self._names_second_test(text, lang, table, name, form))
+
+    def _without_test_name_cues(self, text: str, lang: str, table: cues.CueTable) -> tuple[bool, bool, bool] | None:
+        """sourav, 2026-10-14: (wants_rate, wants_avail, wants_prep) re-read on the text WITHOUT the test's own name,
+        or None when no test is named. Why: a test whose NAME contains a cue word ("Blood Sugar FASTING", "খালি পেটে
+        সুগার", "खाली पेट शुगर") looked like a rate question AND a preparation question at once, so it always
+        abstained to the model. The name is not a cue; the rest of the sentence decides."""
+        name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
+        if not (name and form and score >= COMMIT_FLOOR):
+            return None
+        rest = self._drop_window(text, form)
+        return table.any(rest, table.rate), table.any(rest, table.avail), table.any(rest, table.prep)
+
     def _names_nothing(self, text: str, table: cues.CueTable) -> bool:
         """True when, once the rate/preparation cue phrases are taken out, everything left is a little function word or
         a pointing word ("the same", "that", "test"): the caller asked about the topic, they did not name a test. One
@@ -472,10 +537,22 @@ class FastPath:
         wants_avail = table.any(text, table.avail)
         wants_prep = table.any(text, table.prep)
 
+        # sourav, 2026-10-14: "what is the total for CBC" / "सीबीसी का टोटल कितना होगा" has no rate cue word, so it fell to the
+        # FAQ table and was answered with the clinic's address or opening hours (found by tests/test_lab_price_multilingual.py).
+        # A total word next to a NAMED test is a price question about that test; with nothing named it stays as it was.
+        if not (wants_rate or wants_avail or wants_prep) and _cart_tally.wants_total_or_remove(text)[0]:
+            _n, _f, _s = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
+            if _n and _s >= COMMIT_FLOOR:
+                wants_rate = True
+
         # More than one cue set firing means an utterance asking about more
         # than one thing (or genuinely ambiguous between them -- "what must I
         # observe" alone can read as prep, but combined with a rate/avail cue
         # it is not this module's call to make). Let the model decide.
+        if sum((wants_rate, wants_avail, wants_prep)) > 1 and (wants_rate or wants_prep) and not wants_avail:  # sourav: only a price-vs-prep clash is re-read; a doctor-timing cue always abstains as before
+            reread = self._without_test_name_cues(text, lang, table)
+            if reread is not None and sum(reread) <= 1:
+                wants_rate, wants_avail, wants_prep = reread
         if sum((wants_rate, wants_avail, wants_prep)) > 1:
             self._abstain("ambiguous_multi_cue", lang=lang)
             return None
@@ -501,6 +578,9 @@ class FastPath:
             if name and score >= COMMIT_FLOOR and self._ambiguous_test(text, lang, table, score):
                 self._abstain("ambiguous_test", "test_rate", lang)
                 return None
+            if name and score >= COMMIT_FLOOR and self._names_second_test(text, lang, table, name, form):
+                self._abstain("multi_test", "test_rate", lang)
+                return None
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_rate", lang)
                 logger.info("fast path: test_rate %r (%.2f) [%s] from %r", name, score, lang, transcript)
@@ -512,6 +592,9 @@ class FastPath:
             name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
             if name and score >= COMMIT_FLOOR and self._ambiguous_test(text, lang, table, score):
                 self._abstain("ambiguous_test", "test_prep", lang)
+                return None
+            if name and score >= COMMIT_FLOOR and self._names_second_test(text, lang, table, name, form):
+                self._abstain("multi_test", "test_prep", lang)
                 return None
             if name and score >= COMMIT_FLOOR:
                 self._serve("test_prep", lang)

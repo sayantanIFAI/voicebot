@@ -17,6 +17,10 @@ from i18n_content import (
     DEFAULT_PREP_HI,
     FAQ_I18N,
     FAQ_KEYWORDS_I18N,
+    LOCATION_BN_NATIVE,
+    LOCATION_CROSS_SCRIPT,
+    LOCATION_HI_NATIVE,
+    LOCATION_ROMAN,
     PREP_I18N,
     SURNAME_HI,
     TEST_ALIASES_HI,
@@ -238,13 +242,13 @@ DEPARTMENTS = {
 # Aliases are what a real caller says, not a transliteration of the
 # English column -- e.g. nobody says "কমপ্লিট ব্লাড কাউন্ট", they say "সিবিসি".
 LAB_TESTS = [
-    ("Complete Blood Count (CBC)", ["সিবিসি", "সি বি সি"], 400, "Blood", 6),
+    ("Complete Blood Count (CBC)", ["সিবিসি", "সি বি সি", "কমপ্লিট ব্লাড কাউন্ট", "ব্লাড কাউন্ট"], 400, "Blood", 6),
     ("ESR", ["ইএসআর", "ই এস আর"], 150, "Blood", 6),
     ("Blood Sugar Fasting", ["ব্লাড সুগার ফাস্টিং", "সুগার ফাস্টিং", "খালি পেটে সুগার"], 120, "Blood", 4),
     ("Blood Sugar PP", ["সুগার পিপি", "পিপি সুগার", "খাওয়ার পরে সুগার"], 120, "Blood", 4),
     ("HbA1c", ["এইচবিএ১সি", "হিমোগ্লোবিন এ১সি"], 650, "Blood", 24),
     ("Lipid Profile", ["লিপিড প্রোফাইল", "কোলেস্টেরল টেস্ট"], 650, "Blood", 24),
-    ("Liver Function Test (LFT)", ["লিভার ফাংশন টেস্ট", "এলএফটি", "লিভার টেস্ট"], 800, "Blood", 24),
+    ("Liver Function Test (LFT)", ["লিভার ফাংশন টেস্ট", "এলএফটি", "লিভার টেস্ট", "জন্ডিসের টেস্ট", "জন্ডিস টেস্ট"], 800, "Blood", 24),
     ("Kidney Function Test (KFT)", ["কিডনি ফাংশন টেস্ট", "কেএফটি", "কিডনি টেস্ট"], 750, "Blood", 24),
     ("Thyroid Profile (T3 T4 TSH)", ["থাইরয়েড প্রোফাইল", "থাইরয়েড টেস্ট"], 700, "Blood", 24),
     ("TSH", ["টিএসএইচ"], 350, "Blood", 24),
@@ -263,7 +267,7 @@ LAB_TESTS = [
     ("HBsAg", ["এইচবিএসএজি", "হেপাটাইটিস বি"], 400, "Blood", 24),
     ("HCV", ["এইচসিভি", "হেপাটাইটিস সি"], 600, "Blood", 24),
     ("ECG", ["ইসিজি", "ইলেক্ট্রোকার্ডিওগ্রাম"], 300, "Cardiac", 1),
-    ("Chest X-Ray (PA view)", ["বুকের এক্স-রে", "চেস্ট এক্সরে"], 400, "Imaging", 4),
+    ("Chest X-Ray (PA view)", ["বুকের এক্স-রে", "চেস্ট এক্সরে", "বুকের ছবি", "বুকের এক্সরে"], 400, "Imaging", 4),
     # "ইউএসজি" (bare USG, no qualifier) added to BOTH rows 2026-10-12 -- a caller who says only "USG test
     # price" with neither "পেটের"/"হোল অ্যাবডোমেন" nor "প্রেগন্যান্সি" was matching NEITHER alias and falling
     # through to a phonetic near-miss (Uric Acid), not the two real USG tests this clinic actually has. Added
@@ -271,7 +275,7 @@ LAB_TESTS = [
     # genuinely ambiguous bare "USG" should hit, asking which one, never silently picking one or misrouting.
     ("USG Whole Abdomen", ["পেটের আলট্রাসাউন্ড", "হোল অ্যাবডোমেন ইউএসজি", "পেটের ইউএসজি", "ইউএসজি"], 1500, "Imaging", 4),
     ("USG Pregnancy Profile", ["প্রেগন্যান্সি আলট্রাসাউন্ড", "প্রেগনেন্সি ইউএসজি", "ইউএসজি"], 1600, "Imaging", 4),
-    ("2D Echocardiography", ["ইকো টেস্ট", "একোকার্ডিওগ্রাফি", "ইকোকার্ডিওগ্রাম"], 2000, "Cardiac", 4),
+    ("2D Echocardiography", ["ইকো টেস্ট", "একোকার্ডিওগ্রাফি", "ইকোকার্ডিওগ্রাম", "হার্টের ছবি", "হার্টের আলট্রাসাউন্ড"], 2000, "Cardiac", 4),
     ("TMT (Treadmill Test)", ["টিএমটি", "ট্রেডমিল টেস্ট"], 2200, "Cardiac", 4),
     ("Pap Smear", ["প্যাপ স্মিয়ার"], 900, "Sample (Cervical)", 72),
     ("PSA (Prostate Specific Antigen)", ["পিএসএ"], 900, "Blood", 48),
@@ -331,7 +335,9 @@ FAQ_ENTRIES = [
     ),
     (
         "location",
-        ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব"],
+        ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব"] + LOCATION_BN_NATIVE + LOCATION_ROMAN + LOCATION_CROSS_SCRIPT + LOCATION_HI_NATIVE,  # sourav 2026-10-14: every accent, see i18n_content.LOCATION_ROMAN
+        # OWNER'S INSTRUCTION, 2026-10-13: clinic address changed to this one, all three languages (see the
+        # matching Hindi/English change in i18n_content.py's FAQ_I18N["location"]).
         "আমাদের ক্লিনিকের ঠিকানা ১৭২, বেহারামপুর রোড, জেলা নদিয়া, রানাঘাট।",
     ),
     (
@@ -344,7 +350,7 @@ FAQ_ENTRIES = [
         # said as "ক্যাশ" -- the statement ("online e dite parbo na, kash e dibo") then matched NO keyword here
         # at all and went to the LLM, which misread it as a symptom ("department_query") instead of a payment
         # question. Added as its own bare form, same reasoning as the "ক্যাশ" vs "ক্যাশলেস" fix just below.
-        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ", "ক্যাশ", "কাশ", "গুগল পে", "পেটিএম", "ফোনপে"],
+        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ", "ক্যাশ", "কাশ", "গুগল পে", "পেটিএম", "ফোনপে", "জি পে", "জিপে", "অনলাইন পেমেন্ট", "অনলাইনে পেমেন্ট", "অনলাইনে দেব", "পেমেন্ট অনলাইনে"],
         "নগদ, সব ধরনের কার্ড এবং ইউপিআই -- সব মাধ্যমেই পেমেন্ট নেওয়া হয়।",
     ),
     (

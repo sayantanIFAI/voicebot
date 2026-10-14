@@ -122,6 +122,7 @@ from agent.emergency import detect_emergency
 from agent.endpointing import classify_completeness
 from agent.endpointing import decide as decide_turn_end
 from agent.enquiry_followup import entities_from_turn, recent_unique, resolve_followup_slot
+from agent import cart_tally  # sourav 2026-10-14: running list of priced tests + remove/total
 from agent.fast_path import Catalogue, FastPath
 from agent.filler import await_with_filler
 from agent.full_duplex import FullDuplexProcessor, wav_to_pcm16k
@@ -185,6 +186,7 @@ from agent.reply_templates import (
     insufficient_information_reply,
     lookup_reply,
     missing_slot_prompt,
+    multi_test_rate_reply,
     multi_test_reply,
     multiple_bookings_reply,
     reschedule_reply,
@@ -990,6 +992,10 @@ class CallSession:
         # Booking turns neither read nor write this -- it is scoped to
         # the stateless enquiry intents only.
         self.last_enquiry_entities: list = []
+        # sourav, 2026-10-14: every test a price was FOUND for this call, in the order asked (names as the caller said
+        # them). last_enquiry_entities above holds ONE test, so "remove that and tell the total" had nothing to work on.
+        # Only names live here -- prices are always re-asked of the clinic API (agent/cart_tally.py).
+        self.priced_tests: list[str] = []
 
         # KCD-061: the single, versioned carrier of caller signals
         # (Blueprint 4.5) -- language and confirmation_required are kept
@@ -1640,6 +1646,16 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
     except Exception as e:  # noqa: BLE001 - the semantic cache is optional
         logger.warning("[%s] intent cache lookup failed (%s): treated as a miss", session.call_id, e)
         cached, how = None, "error"
+    # sourav, 2026-10-14: a sentence that names SEVERAL tests is never answered from the saved-answer cache. An entry
+    # holds one test's intent, and a similar-sounding sentence ("uric acid, lipid profile, CBC total") was served the
+    # saved "Uric Acid" answer, silently dropping the other two. Skipping the hit sends it to the model as a miss.
+    if cached is not None and _fast_path is not None:
+        try:
+            if _fast_path.looks_multi_test(text, lang):
+                logger.info("[%s] intent cache %s hit skipped: sentence names several tests", session.call_id, how)
+                cached = None
+        except Exception:  # noqa: BLE001 - this guard must never take a turn down
+            pass
     if cached is not None:
         logger.info("[%s] intent cache %s hit", session.call_id, how)
         return cached
@@ -1733,6 +1749,9 @@ def _field_to_reclear_on_hold_failure(reason: str | None) -> str:
 # remembered for the turn, so a "yes" runs the lookup with that name -- otherwise the question would lead
 # nowhere. Set by the lookups below, read by _finish_enquiry_turn.
 _suggested: contextvars.ContextVar[dict | None] = contextvars.ContextVar("suggested", default=None)
+# sourav, 2026-10-14: names a price was found for during THIS turn's _answer_enquiry_intent calls; _finish_enquiry_turn
+# moves them onto session.priced_tests. A ContextVar (like _suggested) so the answer function keeps its signature.
+_priced_names: contextvars.ContextVar[list | None] = contextvars.ContextVar("priced_names", default=None)
 
 
 def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
@@ -1751,10 +1770,34 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
     question is answered with, so there is exactly one place each
     intent's tool call and reply template are wired together."""
     if intent == "test_rate":
+        # Real call 2026-10-13: "uric acid ar cbc test total koto hobe" (more than one test named, a
+        # combined TOTAL asked for) got only the last-named test's single price, with no total at all --
+        # the LLM already extracts every test named in a turn into "test_names" for book_test (agent/
+        # llm.py); doing the same real per-test lookup here, one call each, and summing what was actually
+        # found (never an estimate) is the fix. A single named test keeps the existing path below,
+        # unchanged, including its own suggestion-tracking for a one-name "did you mean" follow-up.
+        # Real call 2026-10-13: three tests named in one noisy/garbled turn ("লিপিড প্রোফাইল সী বী সী
+        # টেস্ট এবং ... জামটা কৌতো") came back from the model with ONE of the three put in the singular
+        # "test_name" and the other two in the plural "test_names" -- reproduced live against the pod's
+        # own model (not a one-off: it is NOT consistent across identical calls either, model sampling
+        # variance). Reading only "test_names" when it is a list of 2+ silently dropped whichever test the
+        # model happened to put in "test_name" instead -- no price, no "not found" either, it simply never
+        # appeared. Merging both fields here, deduplicated, means no test named this turn can be dropped
+        # regardless of which of the two fields the model chose to put it in.
+        test_names = list(slots.get("test_names") or [])
+        single = slots.get("test_name")
+        if single and single not in test_names:
+            test_names.append(single)
+        if len(test_names) > 1:
+            results = [(name, await _tools.get_test_rate(name)) for name in test_names]
+            _priced_names.set((_priced_names.get() or []) + [n for n, r in results if r.get("found")])
+            return multi_test_rate_reply(results, lang)
         if not slots.get("test_name"):
             return None
         result = await _tools.get_test_rate(slots["test_name"])
         _note_suggestion(intent, "test_name", slots, result)
+        if result.get("found"):
+            _priced_names.set((_priced_names.get() or []) + [slots["test_name"]])
         return test_rate_reply(slots, result, lang)
     if intent == "doctor_availability":
         if not slots.get("doctor_name"):
@@ -1849,6 +1892,46 @@ async def _handle_test_category_answer(session: CallSession, category: str, text
     await _queue_prescription_callback(session, f"lay_term_{category}", text, lang)
 
 
+async def _answer_from_priced_list(session: CallSession, text: str, lang: str) -> bool:
+    """sourav, 2026-10-14: True when this turn was a "remove" and/or "total" over session.priced_tests and has been
+    answered. The list holds NAMES only; every price spoken is a fresh clinic-API lookup summed by
+    multi_test_rate_reply, so a stale or invented figure is impossible. Returns False (turn untouched) when unsure."""
+    total, remove = cart_tally.wants_total_or_remove(text)
+    if not (total or remove) or _tools is None:
+        return False
+    fp = _fast_path
+    canon = None
+    several = False
+    if fp is not None:
+        def canon(s: str) -> str | None:  # noqa: E306 - the catalogue test a phrase names, in this call's language
+            try:
+                from agent.fast_path import COMMIT_FLOOR as _floor, _normalize as _fpn
+
+                name, _form, score = fp.catalogue.match(_fpn(s), "test", lang, _floor)
+            except Exception:  # noqa: BLE001
+                return None
+            return name if name and score >= _floor else None
+        try:
+            several = fp.looks_multi_test(text, lang)
+        except Exception:  # noqa: BLE001
+            several = False
+    plan = cart_tally.plan(text, session.priced_tests, canon, several)
+    if plan is None:
+        return False
+    gone = [session.priced_tests[i] for i in plan.remove]
+    kept = [n for i, n in enumerate(session.priced_tests) if i not in set(plan.remove)]
+    try:
+        results = [(n, await _tools.get_test_rate(n)) for n in kept]
+    except ToolCallError as e:
+        logger.warning("[%s] priced-list lookup failed (%s) -- leaving the turn to the normal path", session.call_id, e)
+        return False
+    session.priced_tests = kept
+    parts = [cart_tally.removed_text(gone, lang)] if gone else []
+    parts.append(multi_test_rate_reply(results, lang) if kept else cart_tally.empty_text(lang))
+    await _speak(session, " ".join(parts), lang)
+    return True
+
+
 async def _finish_enquiry_turn(
     session: CallSession, text: str, lang: str, intent: str, slots: dict, base_reply: str, data: dict
 ) -> None:
@@ -1886,6 +1969,11 @@ async def _finish_enquiry_turn(
             base_reply = f"{base_reply} {addendum or phrase('unclear', lang)}"
     session.last_enquiry_entities = entities_from_turn(*turn_entities)
     session.last_enquiry_turn = session.turn_count
+    # sourav, 2026-10-14: remember every test priced this turn (once each) for "remove X" / "total" later.
+    for _n in _priced_names.get() or []:
+        if _n and _n.strip().lower() not in [x.strip().lower() for x in session.priced_tests]:
+            session.priced_tests.append(_n)
+    _priced_names.set(None)
     suggestion, _ = _suggested.get(), _suggested.set(None)
     if suggestion is not None and session.pending_entity is None:
         replay = {
@@ -2251,6 +2339,25 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         await session.send_json("User", text)
         session.turn_count += 1
 
+        # KCD-438: an explicit "speak in Hindi/Bengali/English" request, detected deterministically (no LLM
+        # call) against the SCRIPT this utterance was actually said in (`detected_lang`) -- NOT `lang`
+        # (_resolve_reply_language's STICKY result), which once the call is locked no longer reflects what
+        # this turn actually said and would check the wrong language's phrase table entirely. Checked, and
+        # if matched LOCKED, before the two-consecutive-turns offer just below: real call 2026-10-13, a
+        # caller who had already said "speak in Hindi" was still asked "shall I speak in Hindi?", and that
+        # offer's own confirmation step then mis-fired on an unrelated filler reply (see
+        # _continue_language_switch_offer) -- an explicit request must never be made to wait for a second
+        # turn or a separate yes/no. `lang` is updated here too, so the offer's own trigger condition
+        # (`detected_lang != session.lang`, now false) and every check below this point -- the disclosure-
+        # once line, a pending security/draft/history continuation -- already see the caller's requested
+        # language. The actual "okay, switching" acknowledgement is spoken further down (KCD-438, unchanged
+        # position), once it is clear nothing else already consumed this turn.
+        switch_target = detect_language_switch_request(text, detected_lang)
+        if switch_target:
+            _lock_reply_language(session, switch_target)
+            session.lang_router.note_response_language(switch_target)
+            lang = switch_target
+
         # OWNER'S INSTRUCTION, 2026-10-10: exactly two turns in a row in the same OTHER language -- not one
         # (a stray name/number), not already offered this call for this language (lang_switch_last_offered) --
         # asks once, in that language, instead of answering this turn's content; the answer is read by
@@ -2308,9 +2415,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # only call never has that second line. `disclosed_langs - {"bn"}` empty means no OTHER-language
         # disclosure has fired yet THIS CALL; once one has, this never fires again regardless of further
         # switches, matching what a Bengali-only call already experiences.
+        # OWNER'S INSTRUCTION, 2026-10-14 (sourav): changing the language must NOT repeat the greeting/identity
+        # sentence -- the call simply carries on with the context it already has. So the once-only spoken
+        # disclosure that used to be said here is gone; the language is still recorded as seen
+        # (session.disclosed_langs) so nothing else treats it as new. (disclosure_for() is still used for text channels.)
         if lang != "bn" and not (session.disclosed_langs - {"bn"}):
             session.disclosed_langs.add(lang)
-            await _speak(session, disclosure_for(lang), lang)
 
         # KCD-054: after verification, a different voice revokes it. The agent cannot know who
         # is speaking -- only that the voice differs from the one that was verified -- so it
@@ -2347,17 +2457,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             session.turn_acknowledged = True
             await _speak(session, ack, lang)
 
-        # KCD-438: an explicit "speak in Hindi/Bengali/English" request,
-        # detected deterministically (no LLM call, same zero-extra-latency
-        # reasoning as the yes/no check below). Acknowledged immediately in
-        # the requested language. KCD-lay-terms: this is now the (only)
-        # way the sticky reply language (_resolve_reply_language) changes
-        # mid-call -- an explicit request LOCKS it, unlike ambient per-turn
-        # language ID, which no longer moves it at all.
-        switch_target = detect_language_switch_request(text, lang)
+        # KCD-438, continued from the top of this function: the explicit switch request detected and
+        # LOCKED up there is acknowledged here, now that nothing earlier (a pending security/draft/history
+        # continuation) has already consumed this turn with its own reply.
         if switch_target:
-            _lock_reply_language(session, switch_target)
-            session.lang_router.note_response_language(switch_target)
             await _speak(session, phrase("language_switched", switch_target), switch_target)
             return
 
@@ -2438,6 +2541,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         ):
             session.awaiting_test_category = True
             await _speak(session, phrase("ask_test_category", lang), lang)
+            return
+        # sourav, 2026-10-14: "remove X", "remove that one", "what is the total" over the tests priced earlier in this
+        # call -- decided here, before the model (which only ever sees this one sentence), and answered from live
+        # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
+        if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
         try:
             data = await _resolve_intent(session, text, lang)
@@ -3578,24 +3686,44 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
         session.disclosed_langs.add(target)
         await _speak(session, phrase("language_switched", target), target)
         reply_lang = target
-    elif not session.lang_locked:
-        # Real call 2026-10-12: a "no", or any reply that isn't a clean yes/no (e.g. a caller answering in
-        # a THIRD language), used to leave session.lang_locked False. _resolve_reply_language then treats the
-        # very next turn with a decisive LID result -- in ANY language -- as the first-ever decisive signal
-        # and locks the whole rest of the call to it, which is how a caller who just confirmed/declined
-        # staying in `lang` could have the call silently and permanently flip back to Bengali a turn or two
-        # later. The offer itself is the decisive signal for this call's language: lock it here either way.
-        _lock_reply_language(session, lang)
+    elif answer == "no":
+        # Real call 2026-10-12: a "no", or any reply that isn't a clean yes/no, used to leave
+        # session.lang_locked False, letting the very next turn's decisive LID silently relock the whole
+        # call. An explicit "no" IS reliable evidence of what language the caller is speaking (it is a
+        # real word, correctly language-ID'd) -- lock the call to it so that trap cannot fire later.
+        if not session.lang_locked:
+            _lock_reply_language(session, lang)
+    else:
+        # Real call 2026-10-13: the offer only fires after the caller has ALREADY spoken two consecutive
+        # turns in `target` -- stronger, repeated evidence than this one reply. A filler/hesitation sound
+        # ("ah ah") that classify_yes_no cannot read as yes OR no is NOT a "no", and must never be resolved
+        # by locking to `lang` -- this turn's OWN language-ID, which is unreliable precisely because the
+        # utterance had no real linguistic content to ID in the first place. Treating "unrecognised" the
+        # same as "declined" (the 2026-10-12 fix's mistake) is how a caller who had just asked twice to
+        # speak Hindi ended up permanently locked to Bengali instead. Read as not having declined what the
+        # caller already twice demonstrated, and complete the switch.
+        _lock_reply_language(session, target)
+        session.lang_router.note_response_language(target)
+        session.disclosed_langs.add(target)
+        await _speak(session, phrase("language_switched", target), target)
+        reply_lang = target
     # OWNER'S INSTRUCTION, 2026-10-10: answer the question that TRIGGERED the offer, now resolved, instead of
     # leaving the caller to repeat it -- that question was set aside, not answered, when the offer itself was
     # asked (see the two-in-a-row check next to session.lang_history). This now runs on "no" and on an unclear
     # reply too, not only "yes" -- see the docstring above for why.
+    # sourav, 2026-10-14: the stashed sentence can itself BE the language-switch request ("Speak in Bangla" was said
+    # twice, so the offer was asked). Replaying it as an ordinary question sent it to the model, which answered
+    # "what's wrong with you? I can talk to you" right after the switch was confirmed. A switch request is already
+    # acted on (above), so it is not replayed -- the call just continues in the new language with its context.
+    if pending_text and answer != "no" and any(detect_language_switch_request(pending_text, l) for l in ("bn", "hi", "en")):
+        return True
     if pending_text and pending_asr is not None:
         await _answer_content_turn(session, pending_text, reply_lang, pending_asr)
         return True
-    # No question was actually stashed (should not happen -- the offer always stashes one) and this reply was
-    # not a clean yes/no either: let it fall through as this turn's own content rather than doing nothing.
-    return answer in ("yes", "no")
+    # No question was actually stashed (should not happen -- the offer always stashes one). "yes" and the
+    # now-completed-switch "unclear" case already spoke a reply above and must not fall through to a second
+    # one for the same turn; only a bare "no" (which speaks nothing here) falls through as fresh content.
+    return answer != "no"
 
 
 async def _continue_draft_offer(session: CallSession, text: str, lang: str) -> bool:
