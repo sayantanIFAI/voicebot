@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import dataclasses
 import contextvars
 import datetime
@@ -2380,7 +2381,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             or session.awaiting_draft_answer
             or session.awaiting_pref_answer
             or session.awaiting_resume
-            or session.awaiting_close_answer,
+            or session.awaiting_close_answer
+            # Real call 2026-10-14: "Would you like me to continue in English?" -- the caller said a clear "yes" and it
+            # was logged "jumbled transcript (fragment)" and thrown away before the offer handler ever saw it. A bare
+            # yes/no is the whole point of that question.
+            or session.awaiting_language_switch_offer,
         )  # KCD-104; "anything else?" -> a bare no: a bare yes or no to "shall I go back to it" is an answer
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
@@ -3742,6 +3747,28 @@ async def _continue_preference_offer(session: CallSession, text: str, lang: str)
     return False
 
 
+# What a caller's "yes" / "no" looks like to the recogniser that happened to hear it. The offer is asked in one language
+# but a one-word reply is language-identified on half a second of audio, so the same "yes" can come back in Latin,
+# Bengali or Devanagari letters. Only used for THIS question, where a yes/no is the only thing expected.
+_SPOKEN_YES = frozenset("yes yeah yep yup ok okay sure ইয়েস ইয়া ইয়াহ ওকে জি জী হ্যাঁ হ্যা হা যস यस येस यैस यप ओके जी हाँ हां हा".split())
+_SPOKEN_NO = frozenset("no nope nah নো না নয় নাহ नो नहीं नही ना".split())
+
+
+def _answer_to_switch_offer(text: str, target: str, lang: str) -> str | None:
+    """"yes" / "no" / None for the answer to "shall I continue in <language>?", in any of the three languages' words."""
+    for table in dict.fromkeys((target, lang, "en", "hi", "bn")):
+        answer = classify_yes_no(text, table)
+        if answer:
+            return answer
+    words = [w for w in re.split(r"[\s,.!?।|]+", (text or "").lower()) if w]
+    if words and len(words) <= 3:
+        if any(w in _SPOKEN_NO for w in words):
+            return "no"
+        if any(w in _SPOKEN_YES for w in words):
+            return "yes"
+    return None
+
+
 async def _continue_language_switch_offer(session: CallSession, text: str, lang: str) -> bool:
     """The caller's answer to "would you like me to continue in <language>?" -- asked by the two-in-a-row
     check next to session.lang_history. `classify_yes_no` is tried in the OFFERED language first (that is what
@@ -3761,7 +3788,7 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
     target, session.pending_language_switch = session.pending_language_switch, None
     pending_text, session.pending_language_switch_text = session.pending_language_switch_text, None
     pending_asr, session.pending_language_switch_asr_result = session.pending_language_switch_asr_result, None
-    answer = classify_yes_no(text, target) or classify_yes_no(text, lang)
+    answer = _answer_to_switch_offer(text, target, lang)
     reply_lang = lang
     if answer == "yes":
         _lock_reply_language(session, target)

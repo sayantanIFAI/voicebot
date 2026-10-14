@@ -258,3 +258,49 @@ def test_a_low_agreement_english_switch_command_still_wins_the_language_choice()
 )
 def test_the_keyword_alone_is_the_request_in_a_short_utterance(text, recognised_as, target):
     assert detect_language_switch_request(text, recognised_as) == target
+
+
+# ------------------------------------------------ 6. "Would you like me to continue in English?" -- "yes" was ignored
+
+
+@pytest.mark.parametrize("word", ["yes", "Yes", "हाँ", "हा", "হ্যাঁ", "ওকে", "ok", "no", "না", "नहीं"])
+def test_a_one_word_yes_or_no_is_never_a_stray_fragment_however_long_the_clip(word):
+    """Pod log, call b3aea9d2: a clear English "yes" (all three recognisers agreed) was logged `jumbled transcript
+    (fragment)` and dropped, because the clip was over 2.5 s and the word is under 4 letters."""
+    from agent.audio_quality import transcript_problem
+
+    assert transcript_problem(word, "en", 3.4, 1.0) is None
+
+
+def test_a_real_stray_syllable_is_still_a_fragment():
+    from agent.audio_quality import transcript_problem
+
+    assert transcript_problem("ক", "bn", 3.4, 1.0) == "fragment"
+
+
+@pytest.mark.parametrize(
+    "heard, expected",
+    [
+        ("yes", "yes"), ("Yes please", "yes"), ("হ্যাঁ", "yes"), ("हाँ", "yes"), ("ইয়েস", "yes"), ("यस", "yes"),
+        ("জি", "yes"), ("ok", "yes"), ("no", "no"), ("না", "no"), ("नहीं", "no"), ("নো", "no"),
+        ("what is the price", None), ("", None),
+    ],
+)
+def test_the_answer_to_the_switch_offer_is_understood_in_any_script(heard, expected):
+    import ast
+    import pathlib
+
+    # main.py cannot be imported off the pod (it needs torch / NeMo), so pull the two small names out of its source.
+    source = pathlib.Path(__file__).resolve().parents[1].joinpath("main.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    wanted = {"_SPOKEN_YES", "_SPOKEN_NO", "_answer_to_switch_offer"}
+    chunk = [n for n in tree.body if (isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in wanted)
+             or (isinstance(n, ast.FunctionDef) and n.name in wanted)]
+    assert len(chunk) == 3
+    import re
+
+    from agent.booking_flow import classify_yes_no
+
+    namespace = {"re": re, "classify_yes_no": classify_yes_no}
+    exec(compile(ast.Module(body=chunk, type_ignores=[]), "main.py", "exec"), namespace)
+    assert namespace["_answer_to_switch_offer"](heard, "en", "bn") == expected

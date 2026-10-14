@@ -361,6 +361,13 @@ _SCRIPT = {
 }
 
 
+# A one-word yes / no / ok is a complete answer, however long the clip around it is (a loud, slow, clear "yes" with a
+# pause after it was being thrown away as a stray syllable -- real call 2026-10-14).
+_BARE_ANSWERS = frozenset(
+    "yes yeah yep yup no nope ok okay sure হ্যাঁ হ্যা হা না নয় ওকে জি জী ইয়েস নো हाँ हां हा नहीं नही ना जी ओके यस नो".split()
+)
+
+
 def transcript_problem(
     text: str,
     lang: str,
@@ -387,7 +394,13 @@ def transcript_problem(
         return "empty" if not tokens else None
     if not tokens:
         return "empty"
-    if audio_duration_s and audio_duration_s >= 2.5 and len(tokens) == 1 and len(tokens[0]) <= 3:
+    if (
+        audio_duration_s
+        and audio_duration_s >= 2.5
+        and len(tokens) == 1
+        and len(tokens[0]) <= 3
+        and tokens[0].lower() not in _BARE_ANSWERS
+    ):
         return "fragment"  # seconds of audio, one stray syllable
     script = _SCRIPT.get(lang)
     letters = [c for c in text if c.isalpha()]
