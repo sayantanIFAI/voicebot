@@ -167,6 +167,12 @@ booking cancel reschedule time timing timings open close hours today tomorrow mo
 wednesday thursday friday saturday sunday fasting fast empty stomach report reports result results sample blood urine
 clinic address location parking insurance payment card cash number phone confirm confirmation need want tell give
 know check see get take come go available sit sits sitting chamber counter staff person help
+# Real call 2026-10-14: "Reply in English" was heard by the English recogniser with full agreement, but only 1 of its 3
+# words was in this list, so the gate below (ENGLISH_MIN_WORD_SHARE) threw the transcript away and the caller got a
+# Bengali mis-hearing. A request to change language is the one sentence an English speaker is certain to say in a
+# call that is not in English yet, so its vocabulary belongs here.
+speak speaking spoke talk talking reply replying respond say answer english hindi bengali bangla language
+switch change continue
 """.split()
 )
 
@@ -214,6 +220,15 @@ class _Recognition(Protocol):
     decoder_agreement: float
 
 
+ENGLISH_SWITCH_MIN_AGREEMENT = 0.2
+
+
+def _is_switch_request(text: str) -> bool:
+    from agent.language_switch import detect_language_switch_request
+
+    return detect_language_switch_request(text, "en") is not None
+
+
 def pick_candidate(
     candidates: list[tuple[str, _Recognition]], lid_scores: dict[str, float] | None = None, prior: str | None = None
 ):
@@ -230,6 +245,17 @@ def pick_candidate(
     usable = [(lang, r) for lang, r in candidates if getattr(r, "text", "").strip()]
     if not usable:
         return candidates[0]
+    # A short English COMMAND to change language wins even at low decoder agreement: pod-tested 2026-10-14, the English engine
+    # heard "Reply in English" as "apply in english" (agreement 0.25), below ENGLISH_MIN_AGREEMENT, and a Bengali mis-hearing
+    # won -- so the request itself was lost. Only a transcript that parses as a switch request, in Latin script, qualifies.
+    for lang, r in usable:
+        if (
+            lang == "en"
+            and r.decoder_agreement >= ENGLISH_SWITCH_MIN_AGREEMENT
+            and script_share(r.text, "en") >= 0.9
+            and _is_switch_request(r.text)
+        ):
+            return lang, r
     for lang, r in usable:
         if lang == "en" and r.decoder_agreement >= ENGLISH_MIN_AGREEMENT and script_share(r.text, "en") >= 0.9:
             # With language ID scores in hand, "English" must also be English (see ENGLISH_MIN_WORD_SHARE).

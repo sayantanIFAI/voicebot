@@ -22,6 +22,9 @@ data once that refactor can be verified live.
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 _SWITCH_PHRASES: dict[str, dict[str, str]] = {
     # utterance language -> {phrase substring: target language code}
     "bn": {
@@ -180,4 +183,87 @@ def detect_language_switch_request(text: str, lang: str) -> str | None:
                 continue
             if phrase.lower() in t:
                 return target
-    return None
+    return _generic_switch_request(text, lang)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Generic detector. Real call 2026-10-14 (debug transcript): "speaking in English", "Reply in English" and "Speak in
+# english" were never recognised, while the same request in Hindi and Bengali was. Not one bug but a coverage gap in
+# the phrase tables above: the English table knew "speak in english" but not "reply in english" / "speaking
+# in english", and the Hindi recogniser's spelling of the same words ("स्पेकिंग इंग्लिश") is in no table at all. A
+# table of exact phrases can never keep up with how people ask, so the rule below is the general one: the caller
+# NAMES a language (in any script or spelling) AND says a speak/reply/talk word (or "in <language>", or says just
+# the language's name). It runs only after every exact phrase above has had its say, so nothing that worked changes.
+# ---------------------------------------------------------------------------------------------------------------
+
+# Written nukta-free and lower-case, matched as substrings of the same normalisation of the caller's words.
+_LANGUAGE_NAMES: dict[str, tuple[str, ...]] = {
+    "en": (
+        "english", "inglish", "ingrezi", "angrezi", "angreji",
+        "इंग्लिश", "इंग्लीश", "इंगलिश", "अंग्रेजी", "अंग्रेज", "अंग्रेजि",
+        "ইংলিশ", "ইংরেজি", "ইংরেজী", "ইংরাজি", "ইংলিস",
+    ),
+    "hi": ("hindi", "हिंदी", "हिन्दी", "हिंदि", "হিন্দি", "হিন্দী"),
+    "bn": (
+        "bengali", "bangla", "bengoli", "bangali",
+        "बंगाली", "बांग्ला", "बांगला", "बंगला", "बेंगोली", "बेंगाली", "बंगोली", "बेंगॉली",
+        "বাংলা", "বাঙলা", "বেঙ্গলি", "বেঙ্গালি",
+    ),
+}
+# "Bangladesh" is a place, not the language.
+_NOT_A_LANGUAGE = ("bangladesh", "বাংলাদেশ", "बांग्लादेश", "बंगलादेश")
+
+# Words that mean "speak / reply / talk / switch". Latin ones are whole words; native-script ones are stems.
+_VERB_WORDS_LATIN = frozenset(
+    "speak speaking spoke reply replying respond talk talking say answer switch change convert continue "
+    "bolo bolun boliye boliyo bolie bolna bolen bol kotha katha baat jawab uttar karo kariye kijiye".split()
+)
+_VERB_STEMS_NATIVE = (
+    "বল", "কথা", "উত্তর", "জবাব", "স্পিক", "রিপ্লাই", "রিপ্লে", "টক", "চেঞ্জ", "সুইচ", "পরিবর্তন", "কন্টিনিউ",
+    "बोल", "बात", "जवाब", "उत्तर", "स्पीक", "स्पिक", "स्पेक", "रिप्लाई", "रिपलाई", "बदल", "चेंज", "स्विच", "कंटिन्यू",
+    "टॉक", "कहिए", "कहो",
+)
+# A language named and then negated ("हिंदी नहीं", "hindi nahi") is the language NOT wanted.
+_NEGATIONS = frozenset("nahi nahin nai not no na নয় না নেই নেই। नहीं नही ना".split())
+_MAX_WORDS = 12
+
+
+def _norm_words(text: str) -> str:
+    s = unicodedata.normalize("NFC", text or "").lower().replace("\u093c", "")
+    return " ".join(re.sub(r"[.,;:!?\"'()\[\]{}।॥\-–—_/]+", " ", s).split())
+
+
+def _generic_switch_request(text: str, lang: str) -> str | None:
+    t = _norm_words(text)
+    words = t.split()
+    if not words or len(words) > _MAX_WORDS:
+        return None
+    # The long-standing rule (tests/test_language_switch.py): a request that is pure Latin script is read against the
+    # English recogniser's output only. A Latin sentence the Hindi or Bengali recogniser produced is not trusted.
+    if t.isascii() and lang != "en":
+        return None
+    if any(bad in t for bad in _NOT_A_LANGUAGE):
+        return None
+    named: dict[str, int] = {}
+    for code, names in _LANGUAGE_NAMES.items():
+        positions = [t.find(n) for n in names if n in t]
+        if positions:
+            named[code] = min(positions)
+    if not named:
+        return None
+    if len(named) > 1:
+        # "bengali please, not hindi": drop a language that is followed (within two words) by a negation.
+        for code, pos in list(named.items()):
+            tail = t[pos:].split()[1:3]
+            if any(w in _NEGATIONS for w in tail):
+                named.pop(code)
+        if len(named) != 1:
+            return None
+    target = next(iter(named))
+    has_verb = any(w in _VERB_WORDS_LATIN for w in words) or any(stem in t for stem in _VERB_STEMS_NATIVE)
+    # Owner, 2026-10-14: "Reply in English" and "apply in english" mean the same thing -- when the call is in another
+    # language, the KEYWORD "English" is the request, whatever verb the recogniser made of it. So a SHORT utterance (up to
+    # four words) that names exactly one language is a request to speak it; a longer one still needs a speak/reply word,
+    # so "my report is in english and long" is left alone.
+    short = len(words) <= 4
+    return target if (has_verb or short) else None

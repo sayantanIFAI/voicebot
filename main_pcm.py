@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import contextvars
 import datetime
 import io
@@ -81,6 +82,7 @@ import wave
 
 import numpy as np
 import torchaudio
+from agent.pcm_buffer import PcmCallBuffer, SAMPLE_RATE
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -138,6 +140,9 @@ from agent.endpointing import classify_completeness
 from agent.endpointing import decide as decide_turn_end
 from agent.enquiry_followup import entities_from_turn, recent_unique, resolve_followup_slot
 from agent import cart_tally  # sourav 2026-10-14: running list of priced tests + remove/total
+from agent import test_availability  # real call 2026-10-14: "is the X test done here?" is a question, not a booking
+from agent.slot_grounding import ground_slots  # a test/doctor name the model made up is dropped before any lookup
+from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a sentence actually names
 from agent.fast_path import Catalogue, FastPath
 from agent.filler import await_with_filler
 from agent.full_duplex import FullDuplexProcessor, wav_to_pcm16k
@@ -180,7 +185,6 @@ from agent.outcome_metrics import (
     senior_detections,
 )
 from agent.pause_profile import PauseProfile
-from agent.pcm_buffer import SAMPLE_RATE, PcmCallBuffer
 from agent.persona import is_clean as persona_clean
 from agent.phrases import HANDOFF_ALL_LANGUAGES, phrase, prewarm_lines
 from agent.playback_gate import PlaybackGate
@@ -270,7 +274,13 @@ WAKE_SLACK_S = 0.005
 # spends one extra speculative ASR call per candidate turn end, and shortens the
 # silence needed after a "finished" transcript, which changes how the agent
 # feels to talk to. That needs an A/B on the pod before it is anyone's default.
-SEMANTIC_ENDPOINTING = os.environ.get("SEMANTIC_ENDPOINTING", "0") == "1"
+SEMANTIC_ENDPOINTING = os.environ.get("SEMANTIC_ENDPOINTING", "1") == "1"
+# Real call 2026-10-14: "ठीक है मेरे को एक चीज बोलिए इधर" and "ঠিক আছে আমাকে বলুন তো এই ক্ব টেস্ট" were cut off at the
+# baseline pause and the rest of the sentence was lost. Semantic endpointing (agent/endpointing.py) can wait LONGER when
+# the words so far are plainly unfinished. It is now on, but it may only ever add patience: a transcript that reads
+# finished no longer shortens the wait below the baseline (that shortcut cut people off), and an unfinished one waits
+# ENDPOINT_INCOMPLETE_S. Set SEMANTIC_ENDPOINTING=0 to return to the fixed baseline.
+ENDPOINT_INCOMPLETE_S = float(os.environ.get("ENDPOINT_INCOMPLETE_S", "2.0"))
 SPECULATIVE_ASR_TIMEOUT_S = 1.5
 MAX_SPECULATIONS_PER_TURN = 3
 SPECULATION_MATCH_TOLERANCE_S = 0.25
@@ -1770,6 +1780,62 @@ def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
         _suggested.set({"intent": intent, "slot": slot, "slots": dict(slots), "name": names[0]})
 
 
+_alias_table_cache: tuple[int, AliasTable] | None = None
+
+
+async def _catalogue_mentions(text: str, lang: str) -> tuple[bool, bool]:
+    """(names a test, names a doctor): does the catalogue know a test / doctor in this sentence by any spoken form?
+    When it cannot tell (no catalogue, any error) it says True for both, so nothing is ever dropped on a guess."""
+    global _alias_table_cache
+    try:
+        cat = await _cached_catalogue()
+        if _alias_table_cache is None or _alias_table_cache[0] != id(cat):
+            _alias_table_cache = (id(cat), AliasTable(cat))
+        kinds = {e.kind for e in _alias_table_cache[1].entities(text, lang)}
+        return "test" in kinds, "doctor" in kinds
+    except Exception:  # noqa: BLE001 - grounding is a safety net, never a reason to fail a turn
+        return True, True
+
+
+async def _ground_model_slots(session: CallSession, text: str, lang: str, data: dict) -> dict:
+    """Real call 2026-10-14: "reply in english" came back from the intent model as test_names=["CBC", "ECG"], and the
+    agent priced both and added a total nobody asked for. A test or doctor name the sentence gives no support for is
+    dropped here (agent/slot_grounding.py has the exact rule). Returns `data` with cleaned slots; never mutates the
+    dict it is given (it may be the semantic cache's own copy)."""
+    names_test, names_doctor = await _catalogue_mentions(text, lang)
+    cleaned = dict(data)
+    total_dropped = 0
+    for key in ("slots", "secondary_slots"):
+        value = data.get(key)
+        if isinstance(value, dict) and value:
+            new, dropped = ground_slots(text, value, names_a_test=names_test, names_a_doctor=names_doctor)
+            if dropped:
+                cleaned[key] = new
+                total_dropped += len(dropped)
+    if total_dropped:
+        logger.info(
+            "[%s] dropped %d name(s) the model produced that the caller never said", session.call_id, total_dropped
+        )
+    return cleaned
+
+
+async def _answer_test_availability(slots: dict, lang: str) -> tuple[str, dict]:
+    """"Is the lipid profile test done here?": YES (from the clinic's own table) and an invitation to ask more. The lookup
+    comes first -- "yes" is only said for a test the catalogue found -- and the reply carries no price, no preparation
+    and no time. A test the table does not hold gets the ordinary not-found / did-you-mean answer, unchanged."""
+    names = [n for n in (slots.get("test_names") or []) if n]
+    single = slots.get("test_name")
+    if single and single not in names:
+        names.insert(0, single)
+    results = [(n, await _tools.get_test_rate(n)) for n in names[:3]]
+    found = [n for n, r in results if r.get("found")]
+    if not found:
+        name, result = results[0]
+        _note_suggestion("test_rate", "test_name", {"test_name": name}, result)
+        return test_rate_reply({"test_name": name}, result, lang), {"test_name": name}
+    return test_availability.availability_reply(found, lang), {"test_name": found[0]}
+
+
 async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | None:
     """Tool call + reply-template for one of the stateless enquiry
     intents (agent.enquiry_followup.ENQUIRY_INTENTS). Returns None when
@@ -2564,6 +2630,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
             return
 
+    if not confirmed_entity:
+        data = await _ground_model_slots(session, text, lang, data)
     intent = data["intent"]
     slots = data["slots"]
     pending, session.pending_enquiry = session.pending_enquiry, None
@@ -2731,7 +2799,18 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             return
 
     try:
-        if intent == "test_rate":
+        if (
+            intent in ("book_test", "test_rate")
+            and (slots.get("test_name") or slots.get("test_names"))
+            and test_availability.asks_if_test_is_available(text, lang)
+        ):
+            # Real call 2026-10-14: "লিপিড প্রোফাইল টেস্ট হয়" / "लिपिड प्रोफाइल टेस्ट होता है" was classified book_test and
+            # answered "bookings and payment are at the counter". It is a yes/no question about the clinic: answer it,
+            # then ask what else the caller wants to know. A caller who actually asks to BOOK still gets the counter reply.
+            reply, follow_slots = await _answer_test_availability(slots, lang)
+            await _finish_enquiry_turn(session, text, lang, "test_rate", follow_slots, reply, data)
+
+        elif intent == "test_rate":
             slots, _ = _followup(session, intent, slots, text, lang)
             reply = await _answer_enquiry_intent(intent, slots, lang)
             if reply is None:
@@ -3366,6 +3445,12 @@ async def _decide_turn(session: CallSession, tail, sr: int):
     completeness verdict is reused for as long as the speech end has not moved."""
     spans, duration_s = await asyncio.to_thread(_turn_detector.spans, tail, sr)
     cfg = session.pause.config(_turn_detector.config) if ADAPTIVE_PAUSE != "off" else _turn_detector.config
+    if SEMANTIC_ENDPOINTING:  # add patience for an unfinished sentence; never shorten the wait for a finished-looking one
+        cfg = dataclasses.replace(
+            cfg,
+            complete_confirm_s=max(cfg.complete_confirm_s, cfg.silence_confirm_s),
+            incomplete_confirm_s=max(cfg.incomplete_confirm_s, ENDPOINT_INCOMPLETE_S),
+        )
     if spans and not session.commit_checked and session.last_commit_end_abs is not None:
         # speech resumed after the last turn was cut: was that cut too early for THIS caller?
         resumed_after = max(0.0, float(spans[0]["start"]) - session.last_confirm_s)
@@ -4085,18 +4170,14 @@ async def _handle_control(session: CallSession, raw: str):
         session.declared_rate = rate
         session.audio.sample_rate = rate
         if rate != SAMPLE_RATE and session.duplex is not None:
-            logger.warning(
-                "[%s] client at %dHz: echo cancellation needs 16kHz, disabled for this call", session.call_id, rate
-            )
+            logger.warning("[%s] client at %dHz: echo cancellation needs 16kHz, disabled for this call",
+                           session.call_id, rate)
             session.duplex = None
         if rate != SAMPLE_RATE:
-            logger.warning(
-                "[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
-                session.call_id,
-                rate,
-                SAMPLE_RATE,
-            )
-        logger.info("[%s] transport: %s @ %dHz", session.call_id, msg.get("format", "pcm_s16le"), rate)
+            logger.warning("[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
+                           session.call_id, rate, SAMPLE_RATE)
+        logger.info("[%s] transport: %s @ %dHz", session.call_id,
+                    msg.get("format", "pcm_s16le"), rate)
     elif msg.get("type") == "interrupt":
         await _interrupt_playback(session, "manual")
 

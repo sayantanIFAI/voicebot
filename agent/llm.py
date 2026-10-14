@@ -66,7 +66,7 @@ INTENTS (exactly one):
 - "test_rate": caller is asking the price/rate of a diagnostic test, or, when they name MORE THAN ONE test and ask for a combined/TOTAL figure ("uric acid ar cbc test total koto hobe", "CBC and ECG total price", "सीबीसी और यूरिक एसिड मिलाकर कितना लगेगा") -- not booking, just the combined price -- fill "test_names" (see SLOT RULES) instead of "test_name".
 - "doctor_availability": caller is asking whether/when a named doctor is available.
 - "book_appointment": caller wants to book a NEW appointment with a doctor.
-- "book_test": caller wants to book a lab test (or several), as opposed to just asking its price or prep.
+- "book_test": caller says they WANT to book, schedule or get a lab test (or several) done, as opposed to just asking its price or prep. A question that only asks whether a test is done or available here ("do you do the lipid profile test?", "is the CBC test available?", "লিপিড প্রোফাইল টেস্ট হয়?", "लिपिड प्रोफाइल टेस्ट होता है?") is NOT a booking: use "test_rate" for it, with the test in "test_name".
 - "reschedule_appointment": caller wants to MOVE an appointment they already have to a different date/time. Fill "confirmation_id" if they state one, otherwise leave it null -- the system looks it up by phone instead.
 - "cancel_appointment": caller wants to cancel an appointment or test booking they already have.
 - "lookup_booking": caller is asking what they already have booked ("what's my appointment", "do I have anything booked").
@@ -114,6 +114,7 @@ SLOT RULES:
 - "spelled_letters": if the caller is spelling a name letter by letter (e.g. "R, A, V, I"), a list of the individual letters in order, lowercase. Otherwise null.
 - "symptom_description": for "department_query", or for "book_appointment" when the caller wants an appointment but does not know/say a doctor's name and instead describes a MEDICAL problem ("my ear hurts", "a tooth is paining") -- their own words describing it, never your own paraphrase or a diagnosis. Leave "doctor_name" null in that case; never guess a doctor from a symptom yourself. Never fill this from a non-medical complaint (payment, parking, timing, "I don't know" with no symptom named) -- leave it null and use "clinic_faq", "smalltalk" or "unclear" instead; a department route built from a payment complaint is a wrong answer, not merely an unhelpful one.
 - Never invent a patient name, phone number, confirmation number, or date that was not said.
+- Never put a test name or doctor name in a slot unless the caller actually said it. A sentence about something else (for example "reply in english", "speak in hindi", "thank you") has NO test and NO doctor: leave those slots null.
 
 Output ONLY a single valid JSON object, no other text, in exactly this shape:
 {{

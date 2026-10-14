@@ -344,6 +344,55 @@ def _digit_count(tokens: Iterable[str], lang: str) -> tuple[int, bool]:
     return count, only_digits
 
 
+# Real call 2026-10-14: "ठीक है मेरे को एक चीज बोलिए इधर" ("tell me one thing, here") and "ঠিক আছে আমাকে বলুন তো এই ক্ব
+# টেস্ট" ("tell me about this ... test") were cut at the baseline pause, and the rest of each sentence -- the actual
+# question -- was lost; the agent then answered the fragment (a greeting; "which test's preparation?"). Both end on words
+# that announce MORE to come. These are sentence ENDINGS that mean "I am about to ask / say something".
+_CONTINUATION_TAIL = {
+    "en": re.compile(
+        r"(?:one (?:more )?(?:thing|question)|a (?:quick )?question|tell me (?:one|something)|let me (?:ask|think)"
+        r"|i (?:want|would like) to (?:ask|know|say)|can i ask|hold on|just a (?:minute|second|moment)|one second|wait)\s*$"
+    ),
+    "hi": re.compile(
+        r"(?:एक (?:चीज|बात|सवाल|प्रश्न)(?: (?:बोलिए|बताइए|बताओ|बोलो|पूछनी|पूछना|कहनी|कहना))?(?: है)?"
+        r"|कुछ (?:पूछना|जानना|बताना|कहना) (?:है|चाहता हूँ|चाहती हूँ|चाहता हूं|चाहती हूं)"
+        r"|बोलिए|बताइए|रुकिए|रुको|एक मिनट)(?: (?:इधर|उधर|यहाँ|यहां|जरा|ना|न|तो))*\s*$"
+    ),
+    "bn": re.compile(
+        r"(?:একটা (?:কথা|জিনিস|প্রশ্ন)(?: (?:বলুন|বলবেন|বলো|জিজ্ঞেস করব|জিজ্ঞাসা করব))?"
+        r"|কিছু (?:জিজ্ঞেস|জানতে|বলতে) (?:করব|চাই|চাইছি)|বলুন তো|একটু দাঁড়ান|এক মিনিট)\s*$"
+    ),
+}
+# A sentence that ends on the bare noun "test"/"scan" after "this/that" has named the subject but not asked about it.
+_TEST_NOUNS = {"test", "টেস্ট", "टेस्ट", "scan", "স্ক্যান", "स्कैन"}
+_POINTING = {"this", "that", "এই", "ওই", "সেই", "এটা", "ওটা", "ये", "यह", "वो", "वह", "इस", "उस"}
+_QUESTION_WORDS = {
+    "কত", "কি", "কী", "কখন", "কোথায়", "কেন", "কীভাবে", "কিভাবে", "रेट", "रेट", "क्या", "कितना", "कितने", "कब", "कहाँ",
+    "कहां", "कैसे", "how", "what", "when", "where", "which", "price", "rate", "cost", "দাম", "রেট", "दाम", "कीमत",
+}
+
+
+def _bare(text: str) -> str:
+    t = text.lower().replace("़", "").replace("়", "")
+    return " ".join(re.sub(r"[.,;:!?\"'()\[\]{}।॥\-–—_/]+", " ", t).split())
+
+
+def _announces_more(raw: str, lang: str) -> bool:
+    """True when the words so far end on an announcement of a coming question, or name a test with no question about it."""
+    t = _bare(raw)
+    if not t:
+        return False
+    for pattern in (_CONTINUATION_TAIL.get(lang), *_CONTINUATION_TAIL.values()):
+        if pattern is not None and pattern.search(t):
+            return True
+    tokens = t.split()
+    if tokens and tokens[-1] in _TEST_NOUNS and len(tokens) >= 2:
+        if any(tok in _POINTING for tok in tokens[-4:-1]) and not any(tok in _QUESTION_WORDS for tok in tokens):
+            return True
+    return False
+
+
+
 def classify_completeness(text: str, lang: str = "en") -> str:
     """'complete' | 'incomplete' | 'unknown' for a partial transcript.
 
@@ -368,6 +417,9 @@ def classify_completeness(text: str, lang: str = "en") -> str:
         return "complete" if n_digits >= 10 else "incomplete"
     if raw.lower().rstrip("।.?!॥ ") in _YES_NO:
         return "complete"
+
+    if not _TERMINAL.search(raw) and _announces_more(raw, lang):
+        return "incomplete"
 
     if last_bare in _INCOMPLETE_TAIL.get(lang, set()) | _INCOMPLETE_TAIL["en"] and not _TERMINAL.search(raw):
         return "incomplete"
