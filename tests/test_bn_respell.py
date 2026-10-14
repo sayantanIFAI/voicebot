@@ -78,3 +78,14 @@ def test_the_rule_can_be_switched_off_without_losing_the_chosen_words(monkeypatc
 def test_a_whole_sentence_is_respelled_word_by_word():
     out = bn_respell.apply("সাত দিনের মধ্যে সময়ের সাথে সিবিসি রিপোর্ট পাবেন।", "bn")
     assert out == "শাত দিনের মধ্যে শময়ের শাথে সিবিসি রিপোর্ট পাবেন।"
+
+
+def test_days_numbers_and_inflected_forms_are_covered_too():
+    # found missing by scanning every source file, not only the template files
+    assert bn_respell.apply("সোমবার সকাল সাড়ে সাতটায় সময়টায় জিনিস সর্দি", "bn") == "শোমবার শকাল শাঁড়ে শাতটায় শময়টায় জিনিশ শর্দি"
+    assert bn_respell.respell("সোমবারে") == "শোমবারে"
+
+
+def test_the_reviewed_list_never_contains_an_english_origin_word():
+    loans = {"সিবিসি", "সিটি", "সুগার", "সেন্টার", "ক্যালসিয়াম", "প্রেসক্রিপশন", "সোনোস্ক্যান", "সিরাম", "অ্যাসিড", "সরি", "সিরিয়াল", "সেপ্টেম্বর", "ডিসেম্বর"}
+    assert not (loans & bn_respell._NATIVE_SH)

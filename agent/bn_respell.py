@@ -56,8 +56,17 @@ _NATIVE_SH = frozenset(
     এসে এসো আসব আসবেন আসতে আসুন বসেন বসবেন বসছেন উপবাস জিজ্ঞেস মাস মাসের সাল হাসপাতাল হাসপাতালে
     বসু দাস সাহা সিনহা সরকার সৌরভ সুব্রত মানস সুতপা সঞ্জয় সমীর সুদীপ দেবাশিস স্নেহাশিস বিশ্বাস
     সাত সাতটা সাতাশ সাতাশি সাতান্ন সাঁইত্রিশ সাতচল্লিশ সাতষট্টি সাতাত্তর সাতানব্বই সাতশো সতেরো সত্তর ঊনসত্তর সাড়ে সোয়া
+    সোম সোমবার সেই সেটার সেটি সেটায় সবগুলো সবমিলিয়ে একসাথে একসঙ্গে জিনিস সর্দি সরান সরাও সরিয়ে জিজ্ঞাসা উপোস ইতিহাস
+    আসল আসি অসুবিধা সম্পর্কে বয়সটা সড়ক সময়সূচি সুনীতা সত্যিকারের
     """.split()
 )
+_INFLECTABLE = (
+    "সময় সাহায্য সেটা সব সকাল সুবিধা অসুবিধা সোম সোমবার সাত সাতটা সঠিক সমস্যা সম্পর্ক সপ্তাহ সন্ধ্যা সাল মাস "
+    "সরকার সম্ভব সাধারণ সংগ্রহ সময়সূচি জিনিস সর্দি আসল উপবাস উপোস"
+).split()
+_ENDINGS = ("ে", "ের", "টা", "টি", "টায়", "টার", "টাকে", "গুলো", "গুলোর", "কে", "ও", "ই", "য়", "র", "েও", "ে", "তে")
+_NATIVE_BASE = _NATIVE_SH  # the reviewed words themselves (what tools/respell_audit.py lists)
+_NATIVE_SH = _NATIVE_SH | frozenset(unicodedata.normalize("NFC", b + e) for b in _INFLECTABLE for e in _ENDINGS)
 _PLAIN_SA = re.compile("স(?!\u09cd)")  # a স that is not followed by the virama: not the start of a conjunct
 
 
@@ -67,7 +76,7 @@ def _sh(word: str) -> str:
 
 def rule_changes() -> dict[str, str]:
     """Every word the sh rule changes, for review (tools/respell_audit.py)."""
-    return {w: _sh(w) for w in sorted(_NATIVE_SH) if w not in _RESPELL and _sh(w) != w}
+    return {w: _sh(w) for w in sorted(_NATIVE_BASE) if w not in _RESPELL and _sh(w) != w}
 
 
 REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা"}  # approved by a native listener (নেওয়া: better, not perfect)
