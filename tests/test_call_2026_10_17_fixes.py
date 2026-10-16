@@ -243,3 +243,43 @@ def test_a_failing_test_count_never_lets_the_shortcut_answer_a_total():
         raise RuntimeError("catalogue not ready")
 
     assert fastpath_guards.veto("test_rate", {"test_name": "CBC"}, "CBC and ECG total", boom)
+
+
+# ---- a test lost entirely: "all three together" but fewer names understood -> ask back, never price a partial list
+from agent import multi_test_confirm as _mtc
+
+
+def _found(name, bn=None, hi=None):
+    return {"found": True, "test_name": name, "test_name_bn": bn or name, "test_name_hi": hi or name}
+
+
+def test_expected_count_needs_a_total_cue():
+    assert _mtc.expected_count("cbc uric acid thyroid all three together price") == 3
+    assert _mtc.expected_count("মেরে को बोलिए सीबीसी यूरिक एसिड थाइरॉइड तीनों का भाव एक साथ कितना") == 3
+    assert _mtc.expected_count("এই তিনটের টোটাল কত টাকা পড়বে") == 3
+    assert _mtc.expected_count("book me in three days") is None  # no total asked for
+    assert _mtc.expected_count("what is the total") is None
+
+
+def test_shortfall_asks_back_when_a_test_was_lost():
+    results = [("uric acid", _found("Uric Acid")), ("thyroid", _found("Thyroid Profile (T3 T4 TSH)"))]
+    q = _mtc.shortfall(results, 3, "en")
+    assert q and "Uric Acid" in q and "Thyroid" in q and "three" in q
+    assert _mtc.shortfall(results, 3, "hi") and _mtc.shortfall(results, 3, "bn")
+
+
+def test_shortfall_none_when_everything_understood_or_no_count():
+    results = [("a", _found("Uric Acid")), ("b", _found("Thyroid Profile"))]
+    assert _mtc.shortfall(results, 2, "en") is None
+    assert _mtc.shortfall(results, None, "en") is None
+
+
+def test_shortfall_with_no_understood_name_still_asks():
+    q = _mtc.shortfall([("zzz", {"found": False})], 3, "en")
+    assert q and "three" in q
+
+
+def test_shortfall_counts_a_sound_alike_as_understood():
+    r = [("ক্রিকাসিড", {"found": False, "did_you_mean": ["Uric Acid"]}), ("থাইরাইড", {"found": False, "did_you_mean": ["Thyroid Profile"]})]
+    assert _mtc.shortfall(r, 2, "en") is None
+    assert _mtc.shortfall(r, 3, "en")

@@ -1817,6 +1817,8 @@ _suggested: contextvars.ContextVar[dict | None] = contextvars.ContextVar("sugges
 _priced_names: contextvars.ContextVar[list | None] = contextvars.ContextVar("priced_names", default=None)
 # sourav, 2026-10-14: set by _answer_enquiry_intent when a doctor-availability lookup FOUND the doctor; _finish_enquiry_turn stores it.
 _doctor_enquiry_found: contextvars.ContextVar[dict | None] = contextvars.ContextVar("doctor_enquiry_found", default=None)
+# The caller's words for this turn, so a total can be checked against how many tests they SAID they meant ("all three together").
+_turn_text: contextvars.ContextVar[str | None] = contextvars.ContextVar("turn_text", default=None)
 
 
 def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
@@ -1942,8 +1944,18 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if single and single not in test_names:
             test_names.append(single)
         test_names = [n for n in test_names if is_plausible_test_name(n)]  # never look up "র" or "ওই" as a test
+        # Real call 2026-10-17: "all three together" but the recogniser lost the CBC entirely. When the caller said how many tests they meant
+        # and fewer were understood, say what was caught and ask for all the names again; nothing is priced from a partial list.
+        meant = multi_test_confirm.expected_count(_turn_text.get() or "")
+        if meant and test_names and len(test_names) < meant:
+            _short = multi_test_confirm.shortfall([(n, await _tools.get_test_rate(n)) for n in test_names], meant, lang)
+            if _short:
+                return _short
         if len(test_names) > 1:
             results = [(name, await _tools.get_test_rate(name)) for name in test_names]
+            meant_short = multi_test_confirm.shortfall(results, meant, lang)
+            if meant_short:
+                return meant_short
             # Real call 2026-10-17: names the recogniser garbled ("ক্রিকাসিড", "থাইরাইড টেস্ট") have sound-alikes the clinic knows. They are
             # READ BACK once, and priced only after a yes (a near match suggests, it never resolves).
             confirm = multi_test_confirm.plan(results, lang)
@@ -3011,6 +3023,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
 
         elif intent == "test_rate":
             slots, _ = _followup(session, intent, slots, text, lang)
+            _turn_text.set(text)
             reply = await _answer_enquiry_intent(intent, slots, lang)
             if reply is None:
                 session.pending_enquiry = (intent, session.turn_count)
