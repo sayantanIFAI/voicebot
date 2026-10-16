@@ -283,3 +283,35 @@ def test_shortfall_counts_a_sound_alike_as_understood():
     r = [("ক্রিকাসিড", {"found": False, "did_you_mean": ["Uric Acid"]}), ("থাইরাইড", {"found": False, "did_you_mean": ["Thyroid Profile"]})]
     assert _mtc.shortfall(r, 2, "en") is None
     assert _mtc.shortfall(r, 3, "en")
+
+
+# ---- a test code said letter by letter that the Bengali recogniser wrote as a made-up word (agent/spelled_letters.py)
+from agent import spelled_letters as _sl
+
+_CODES = {"CBC": "Complete Blood Count (CBC)", "HIV": "HIV Test (ELISA)", "ESR": "ESR", "TSH": "TSH"}
+
+
+def test_spelled_letters_become_a_code_candidate():
+    assert _sl.match_codes("c b c tasted them", _CODES) == [("CBC", "Complete Blood Count (CBC)", True)]
+    assert _sl.match_codes("amar c b c tist coroth", _CODES)[0][0] == "CBC"
+
+
+def test_a_near_spelled_code_is_a_suggestion_not_exact():
+    # real English-recogniser output for a spoken "H I V" was "h i b"
+    assert _sl.match_codes("h i b test kot", _CODES) == [("HIB", "HIV Test (ELISA)", False)]
+
+
+def test_ordinary_english_words_never_match_a_code():
+    assert _sl.match_codes("he hit them", _CODES) == []
+    assert _sl.match_codes("his test", _CODES) == []
+    assert _sl.match_codes("tasted them", _CODES) == []
+
+
+def test_a_whole_token_code_matches_only_exactly():
+    assert _sl.match_codes("what is the esr", _CODES)[0][:3:2] == ("ESR", True)
+    assert _sl.match_codes("what is the esp", _CODES) == []
+
+
+def test_a_code_close_to_two_tests_is_no_evidence():
+    codes = {"HIV": "A", "HIB": "B"}
+    assert _sl.match_codes("h i c", codes) == [] or len(_sl.match_codes("h i c", codes)) == 0

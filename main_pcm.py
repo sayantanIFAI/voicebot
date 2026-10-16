@@ -145,6 +145,8 @@ from agent import cart_tally  # sourav 2026-10-14: running list of priced tests 
 from agent import test_availability  # real call 2026-10-14: "is the X test done here?" is a question, not a booking
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
+from agent import spelled_letters  # a spelled test code ("C B C") the Bengali recogniser wrote as a made-up word
+from agent.catalogue_forms import lab_test_code
 from agent import multi_test_confirm  # garbled test names in a total: read back once, price after a yes
 from agent.slot_grounding import ground_slots, is_plausible_test_name  # a test/doctor name the model made up is dropped before any lookup
 from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a sentence actually names
@@ -2243,6 +2245,32 @@ def _log_timing(session: CallSession) -> None:
     )
 
 
+async def _with_spelled_tests(session: CallSession, lang: str, result, english_text: str):
+    """A test code said letter by letter that the Bengali/Hindi recogniser wrote as a made-up word ("সি বি সি" -> "ক্বক"): the English
+    recogniser (already run on this turn) keeps the letters apart. If it heard a catalogue code the Bengali/Hindi text does not name,
+    that code is appended to the text the model reads (agent/spelled_letters.py). Never fails the turn."""
+    try:
+        if not english_text or not result.text:
+            return result
+        cat = await _cached_catalogue()
+        by_code: dict[str, set[str]] = {}
+        for t in cat.get("tests", []):
+            code = lab_test_code(str(t["name"]))
+            if code.isalnum() and code.upper() == code and any(c.isalpha() for c in code):
+                by_code.setdefault(code, set()).add(str(t["name"]))
+        codes = {c: next(iter(names)) for c, names in by_code.items() if len(names) == 1}  # a code two tests share names neither
+        already = set(_fast_path.named_tests(result.text, lang)) if _fast_path is not None else set()
+        add = [cand for cand, name, _exact in spelled_letters.match_codes(english_text, codes) if name not in already]
+        if not add:
+            return result
+        logger.info("[%s] spelled test code(s) %s heard by the English recogniser (%r) but not in the %s text (%r)",
+                    session.call_id, add, english_text, lang, result.text)
+        return dataclasses.replace(result, text=f"{result.text} {' '.join(add)}")
+    except Exception as e:  # noqa: BLE001 - advisory: the turn proceeds on the Bengali/Hindi text alone
+        logger.warning("[%s] spelled-code rescue skipped: %s", session.call_id, e)
+        return result
+
+
 async def _route_and_transcribe(session: CallSession, utterance_wav: str):
     """LID -> routing decision -> ASR. Returns (language, ASRResult, decisive), or
     (None, None, True) when the router says a human should take the call.
@@ -2367,6 +2395,8 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             )
             session.lang_router.note_response_language("en")
             return "en", en_result, True
+        if en_result is not None:
+            result = await _with_spelled_tests(session, chosen, result, en_result.text)
     return chosen, result, True
 
 
