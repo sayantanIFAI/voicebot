@@ -27,6 +27,19 @@ _WRONG_SCRIPT = {"bn": ("ऀ", "ॿ"), "hi": ("ঀ", "৿")}
 _SHARED_PUNCTUATION = frozenset(chr(0x0964) + chr(0x0965))
 
 
+def language_of_script(text: str, fallback: str) -> str:
+    """The language a transcript is WRITTEN in, judged by script: Devanagari -> hi, Bengali script -> bn, Latin -> en, and `fallback`
+    when it is mixed or has no letters. The REPLY language of a call is sticky (it is locked for the whole call); the language of one
+    sentence is not, and the shortcut that answers routine questions has one cue table per language. Real call 2026-10-17: a Hindi
+    sentence in a call whose reply language was Bengali was matched against the BENGALI cues and answered with the clinic's address."""
+    if not any(c.isalpha() for c in (text or "")):
+        return fallback
+    for lang in ("hi", "bn", "en"):
+        if script_share(text, lang) >= 0.6:
+            return lang
+    return fallback
+
+
 def script_share(text: str, lang: str) -> float:
     """Fraction of the letters in `text` written in `lang`'s own script."""
     letters = [c for c in text if c.isalpha()]
@@ -211,6 +224,29 @@ def fix_asr_confusables(text: str) -> str:
 
 # Leaving the language the call has been in needs language ID to believe the new one, not merely allow it.
 SWITCH_MIN_LID = 0.50
+
+# Real call 2026-10-17: "what's your location" was answered in Hindi. Language ID said Hindi at 0.99 -- and it says Hindi at 0.72-0.99
+# for Indian-accented English in general (7 of 7 English questions tried on the pod) -- so the code committed to Hindi and used only
+# the Hindi recogniser, which wrote the English out in Devanagari ("वाट्स योर लोकेशन"). The English recogniser had run in parallel
+# and understood every one of them. The old double-check only fired when language ID was UNSURE (a second language with real
+# probability); here it was confidently wrong, so a clean English sentence from the English recogniser must be allowed to overrule it.
+# The bar is the same one that already lets English win elsewhere (decoder agreement, Latin script, mostly real English words),
+# plus enough words that a stray syllable cannot do it: Bengali or Hindi speech was measured at agreement 0.00-0.43 on this engine.
+OVERRULE_MIN_WORDS = 3
+OVERRULE_MIN_WORD_SHARE = 0.6
+
+
+def english_overrules_language_id(result) -> bool:
+    """True when the English recogniser's own result is a clean English sentence, so it beats a confident Bengali/Hindi language ID."""
+    text = (getattr(result, "text", "") or "").strip()
+    words = text.split()
+    agreement = float(getattr(result, "decoder_agreement", 0.0) or 0.0)
+    if len(words) < 2 or agreement < ENGLISH_MIN_AGREEMENT or script_share(text, "en") < 0.9:
+        return False
+    share = english_word_share(text)
+    if len(words) >= OVERRULE_MIN_WORDS:
+        return share >= OVERRULE_MIN_WORD_SHARE
+    return share == 1.0 and agreement >= 0.8  # two words ("you take"): every word real English and the decoders agree
 
 
 class _Recognition(Protocol):

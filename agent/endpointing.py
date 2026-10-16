@@ -377,6 +377,17 @@ def _bare(text: str) -> str:
     return " ".join(re.sub(r"[.,;:!?\"'()\[\]{}।॥\-–—_/]+", " ", t).split())
 
 
+def _ends_mid_word(raw: str) -> bool:
+    """The last thing heard is a half-spoken syllable: a consonant joined to another with the virama and nothing after it
+    ("এই ক্ব", "इस ट्र"). Real call 2026-10-17: the caller hesitated mid-word on the way to "CBC", the recogniser wrote the
+    broken-off start, and the sentence was cut at the pause. A whole word is never this short with a virama in it."""
+    tokens = _bare(raw).split()
+    if not tokens:
+        return False
+    last = tokens[-1]
+    return len(last) <= 3 and ("\u09cd" in last or "\u094d" in last)
+
+
 def _announces_more(raw: str, lang: str) -> bool:
     """True when the words so far end on an announcement of a coming question, or name a test with no question about it."""
     t = _bare(raw)
@@ -385,6 +396,8 @@ def _announces_more(raw: str, lang: str) -> bool:
     for pattern in (_CONTINUATION_TAIL.get(lang), *_CONTINUATION_TAIL.values()):
         if pattern is not None and pattern.search(t):
             return True
+    if _ends_mid_word(raw):
+        return True
     tokens = t.split()
     if tokens and tokens[-1] in _TEST_NOUNS and len(tokens) >= 2:
         if any(tok in _POINTING for tok in tokens[-4:-1]) and not any(tok in _QUESTION_WORDS for tok in tokens):
@@ -468,6 +481,20 @@ def energy_spans(
 
 
 # ------------------------------------------------------------- calibration
+
+
+def never_shorter_than(cfg: EndpointConfig, base: EndpointConfig, incomplete_s: float) -> EndpointConfig:
+    """The turn-end configuration with patience only ever ADDED. The per-caller adaptive pause (agent/pause_profile.py) learns from
+    the short pauses INSIDE a caller's sentences, so a fast speaker is given as little as 0.6 s -- and a thinking pause
+    ("tell me ... the CBC") is longer than that, so the sentence is cut (real calls 2026-10-16 and 2026-10-17). So: the wait
+    for a finished-sounding sentence is never below the baseline, and one that sounds unfinished waits at least `incomplete_s`."""
+    silence = max(cfg.silence_confirm_s, base.silence_confirm_s)
+    return dataclasses.replace(
+        cfg,
+        silence_confirm_s=silence,
+        complete_confirm_s=max(cfg.complete_confirm_s, silence),
+        incomplete_confirm_s=max(cfg.incomplete_confirm_s, incomplete_s),
+    )
 
 
 def config_from_json(path: str, base: EndpointConfig = EndpointConfig()) -> EndpointConfig:

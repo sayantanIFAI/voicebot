@@ -59,6 +59,26 @@ def _has_any(norm_text: str, cues: tuple[str, ...]) -> bool:
     return False
 
 
+# Real call 2026-10-17: the model returned test_names=["ক্রিকাসিড", "র", "ওই", "থাইরাইড টেস্ট"] -- "র" is a letter and "ওই" means "that".
+# Looked up as tests, "র" even matched ESR / Blood Sugar by sound and polluted the reply. A word of one or two letters, or a
+# function word, or the bare word "test", is never a test name.
+_NOT_A_TEST_NAME = frozenset(
+    "র ওই এই আর যে তো টা টি এটা ওটা সেটা আমাকে আমার আপনাদের আপনার আছে হয় হবে কত টাকা টোটাল মোট টেস্ট টেস্টটা টেস্টের পরীক্ষা "
+    "ये वो और का की के है हैं कितना टोटल कुल टेस्ट आपके मेरा "
+    "the and of is it this that test tests total price rate cost".split()
+)
+
+
+def is_plausible_test_name(name) -> bool:
+    if not isinstance(name, str):
+        return False
+    n = _norm(name)
+    if n in _NOT_A_TEST_NAME:
+        return False
+    letters = [c for c in n if c.isalpha()]
+    return len(letters) >= 3
+
+
 def has_test_context(text: str) -> bool:
     return _has_any(_norm(text), _TEST_CONTEXT)
 
@@ -99,6 +119,18 @@ def ground_slots(text: str, slots: dict | None, *, names_a_test: bool = False, n
     norm_text = _norm(text)
     out = dict(slots)
     dropped: list[str] = []
+
+    # a junk "name" is dropped whatever the sentence is about
+    for key in ("test_name", "test_names"):
+        value = out.get(key)
+        if isinstance(value, str) and not is_plausible_test_name(value):
+            dropped.append(value)
+            out[key] = None
+        elif isinstance(value, list):
+            good = [v for v in value if is_plausible_test_name(v)]
+            if len(good) != len(value):
+                dropped.extend(v for v in value if v not in good)
+                out[key] = good or None
 
     if not (names_a_test or has_test_context(text)):
         for key in ("test_name", "test_names"):

@@ -138,13 +138,15 @@ from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.disclosure import disclosure_for
 from agent.disclosure import version_label as disclosure_version_label
 from agent.emergency import detect_emergency
-from agent.endpointing import classify_completeness
+from agent.endpointing import classify_completeness, never_shorter_than
 from agent.endpointing import decide as decide_turn_end
 from agent.enquiry_followup import entities_from_turn, recent_unique, resolve_followup_slot
 from agent import cart_tally  # sourav 2026-10-14: running list of priced tests + remove/total
 from agent import test_availability  # real call 2026-10-14: "is the X test done here?" is a question, not a booking
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
-from agent.slot_grounding import ground_slots  # a test/doctor name the model made up is dropped before any lookup
+from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
+from agent import multi_test_confirm  # garbled test names in a total: read back once, price after a yes
+from agent.slot_grounding import ground_slots, is_plausible_test_name  # a test/doctor name the model made up is dropped before any lookup
 from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a sentence actually names
 from agent import booking_capture  # sourav 2026-10-16: deterministic phone / name / ordinal-slot capture + safe confirm recovery for the doctor booking
 from agent import booking_carryover  # sourav 2026-10-14: 'book him / that day' after a doctor-availability answer
@@ -155,7 +157,14 @@ from agent.golden_buckets import channel_buckets
 from agent.history_intent import detect_history_question
 from agent.human_request import asks_for_a_person
 from agent.identity import IdentityState
-from agent.lang_select import engines_needed, fix_asr_confusables, languages_to_verify, pick_candidate
+from agent.lang_select import (
+    engines_needed,
+    english_overrules_language_id,
+    fix_asr_confusables,
+    language_of_script,
+    languages_to_verify,
+    pick_candidate,
+)
 from agent.lang_select import speakable as _speakable
 from agent.language_policy import language_mismatch
 from agent.language_switch import detect_language_switch_request
@@ -285,7 +294,7 @@ SEMANTIC_ENDPOINTING = os.environ.get("SEMANTIC_ENDPOINTING", "1") == "1"
 # the words so far are plainly unfinished. It is now on, but it may only ever add patience: a transcript that reads
 # finished no longer shortens the wait below the baseline (that shortcut cut people off), and an unfinished one waits
 # ENDPOINT_INCOMPLETE_S. Set SEMANTIC_ENDPOINTING=0 to return to the fixed baseline.
-ENDPOINT_INCOMPLETE_S = float(os.environ.get("ENDPOINT_INCOMPLETE_S", "2.0"))
+ENDPOINT_INCOMPLETE_S = float(os.environ.get("ENDPOINT_INCOMPLETE_S", "2.5"))
 SPECULATIVE_ASR_TIMEOUT_S = 1.5
 MAX_SPECULATIONS_PER_TURN = 3
 SPECULATION_MATCH_TOLERANCE_S = 0.25
@@ -1728,17 +1737,26 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # for a language it has none for, so the turn goes to the LLM -- safe by
     # construction, just not free.
     await _maybe_reload_fast_path()
+    # Real call 2026-10-17: `lang` is the call's sticky REPLY language, not the language of THIS sentence. A Hindi sentence in a call
+    # whose reply language was Bengali was matched against the Bengali cue table and answered with the clinic's address. The shortcut,
+    # the cache and the model are all given the language the sentence is actually written in; `lang` stays what the reply is spoken in.
+    text_lang = language_of_script(text, lang)
     if _fast_path is not None:
         gap = session.turn_count - session.last_enquiry_turn if session.last_enquiry_entities else None
         topic = recent_unique(session.last_enquiry_entities, "test_name", gap)
-        hit = await asyncio.to_thread(_fast_path.resolve, text, lang, topic)
+        hit = await asyncio.to_thread(_fast_path.resolve, text, text_lang, topic)
+        if hit is not None:
+            refusal = fastpath_guards.veto(hit.intent, hit.slots, text, lambda: len(_fast_path.named_tests(text, text_lang)))
+            if refusal:
+                logger.info("[%s] fast path %s refused (%s) -- the model decides", session.call_id, hit.intent, refusal)
+                hit = None
         if hit is not None:
             logger.info("[%s] fast path resolved %s (%.2f) -- no LLM call", session.call_id, hit.intent, hit.confidence)
             return hit.as_llm_shape()
 
     # The cache stores the whole intent object (smalltalk carries reply
     # text in the caller's language), so the language is part of the key.
-    key = text if lang == "bn" else f"[{lang}] {text}"
+    key = text if text_lang == "bn" else f"[{text_lang}] {text}"
 
     # KCD-459: the filler race used to wrap ONLY the LLM call, so a slow
     # embedding lookup (agent/semantic_cache.py's L2 tier, a live call to
@@ -1753,14 +1771,14 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # not die because the model failed or did not understand: the doctor is recognised from the clinic's own catalogue
     # (FastPath.doctor_booking_hint) and the turn enters the normal booking flow. The model is still the first choice; this only fills its gap.
     try:
-        data = await _await_with_filler(session, _resolve_intent_uncached(session, text, lang, key), lang)
+        data = await _await_with_filler(session, _resolve_intent_uncached(session, text, text_lang, key), lang)
     except ExtractionError:
-        hint = _doctor_booking_hint(text, lang)
+        hint = _doctor_booking_hint(text, text_lang)
         if hint is None:
             raise
         return hint
     if isinstance(data, dict) and data.get("intent") == "unclear":
-        hint = _doctor_booking_hint(text, lang)
+        hint = _doctor_booking_hint(text, text_lang)
         if hint is not None:
             return hint
     return data
@@ -1933,8 +1951,16 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         single = slots.get("test_name")
         if single and single not in test_names:
             test_names.append(single)
+        test_names = [n for n in test_names if is_plausible_test_name(n)]  # never look up "র" or "ওই" as a test
         if len(test_names) > 1:
             results = [(name, await _tools.get_test_rate(name)) for name in test_names]
+            # Real call 2026-10-17: names the recogniser garbled ("ক্রিকাসিড", "থাইরাইড টেস্ট") have sound-alikes the clinic knows. They are
+            # READ BACK once, and priced only after a yes (a near match suggests, it never resolves).
+            confirm = multi_test_confirm.plan(results, lang)
+            if confirm is not None and _suggested.get() is None:
+                question, canonical = confirm
+                _suggested.set({"intent": "test_rate", "slot": "test_names", "slots": {}, "name": canonical})
+                return question
             _priced_names.set((_priced_names.get() or []) + [n for n, r in results if r.get("found")])
             return multi_test_rate_reply(results, lang)
         if not slots.get("test_name"):
@@ -2285,7 +2311,11 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             ", ".join(f"{lg}:{r.decoder_agreement:.2f}" for lg, r in outcomes),
         )
         session.lang_router.note_response_language(lang)
-        return lang, result, False
+        # Real call 2026-10-17: language ID wobbles on accented English (Hindi 0.97 / English 0.03 is typical), so this branch ran,
+        # picked English correctly, and returned "not decisive" -- which left the call's reply language unset, so an English question
+        # got a Bengali answer. A CLEAN English sentence from the English recogniser (the same bar as the overrule below) is decisive.
+        # A garbled first utterance that merely tie-breaks to English is still not (real call 2026-10-12).
+        return lang, result, (lang == "en" and english_overrules_language_id(result))
 
     decision = session.lang_router.route(lid)
     logger.info(
@@ -2310,7 +2340,22 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         lang, result = both[0]
         return lang, result, True
 
-    return decision.language, (await outcomes_for([decision.language]))[0][1], True
+    chosen, result = decision.language, (await outcomes_for([decision.language]))[0][1]
+    if chosen in ("bn", "hi") and "en" in _languages_active and tasks.get("en") is not None:
+        # The English recogniser was started at the same moment as language ID (see the top of this function), so its answer is
+        # already here or nearly. A confident but wrong language ID must not hide it (agent/lang_select.py has the evidence).
+        try:
+            en_result = await asyncio.wait_for(asyncio.shield(tasks["en"]), timeout=1.5)
+        except Exception:  # noqa: BLE001 - the English recogniser is optional here; its absence changes nothing
+            en_result = None
+        if en_result is not None and english_overrules_language_id(en_result):
+            logger.info(
+                "[%s] English recogniser overruled a confident LID %s (%d words, decoder agreement %.2f)",
+                session.call_id, chosen, len(en_result.text.split()), en_result.decoder_agreement,
+            )
+            session.lang_router.note_response_language("en")
+            return "en", en_result, True
+    return chosen, result, True
 
 
 async def _dispatch_turn(session: CallSession, utterance_wav: str):
@@ -3689,11 +3734,10 @@ async def _decide_turn(session: CallSession, tail, sr: int):
     spans, duration_s = await asyncio.to_thread(_turn_detector.spans, tail, sr)
     cfg = session.pause.config(_turn_detector.config) if ADAPTIVE_PAUSE != "off" else _turn_detector.config
     if SEMANTIC_ENDPOINTING:  # add patience for an unfinished sentence; never shorten the wait for a finished-looking one
-        cfg = dataclasses.replace(
-            cfg,
-            complete_confirm_s=max(cfg.complete_confirm_s, cfg.silence_confirm_s),
-            incomplete_confirm_s=max(cfg.incomplete_confirm_s, ENDPOINT_INCOMPLETE_S),
-        )
+        # Real calls 2026-10-16 and 2026-10-17: a caller was cut off mid-sentence again. The per-caller adaptive pause learns from
+        # the pauses INSIDE a caller's sentences, so a fast speaker is given as little as 0.6 s (pause_profile.SILENCE_MIN_S) -- and a
+        # thinking pause ("tell me ... the CBC") is longer than that. The adaptive pause may now only LENGTHEN the baseline wait.
+        cfg = never_shorter_than(cfg, _turn_detector.config, ENDPOINT_INCOMPLETE_S)
     if spans and not session.commit_checked and session.last_commit_end_abs is not None:
         # speech resumed after the last turn was cut: was that cut too early for THIS caller?
         resumed_after = max(0.0, float(spans[0]["start"]) - session.last_confirm_s)
