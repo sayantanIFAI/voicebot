@@ -208,7 +208,7 @@ def env(m, monkeypatch, tmp_path):
     }
 
     async def route(session, wav):
-        return state["lang"], ASRResult(state["text"], state["agreement"], state["decoder"])
+        return state["lang"], ASRResult(state["text"], state["agreement"], state["decoder"]), True  # sourav 2026-10-14: 3rd value = decisive
 
     async def resolve(session, text, lang):
         state["resolved"] += 1

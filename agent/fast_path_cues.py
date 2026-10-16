@@ -181,6 +181,8 @@ _HI_AVAIL = (
     "बैठेंगे",
     "चैंबर",
     "उपलब्ध",
+    "टाइम",
+    "समय",
     "मिलेंगे",
     "मिलते",
     "विज़िट",
@@ -475,9 +477,17 @@ class CueTable:
     # True: an availability cue ("when", "what time") with no doctor named falls through to the FAQ topics, so "what
     # time do you open" is answered as opening hours. False is the original Bengali behaviour (give up at once).
     faq_after_failed_avail: bool = True
+    # sourav, 2026-10-16 (doctor intents, all three languages + romanised + mixed): see the block above _DOC_SCHEDULE. Empty = the
+    # table behaves exactly as before. They only ever matter when a doctor is NAMED (agent/fast_path.py), so a price / preparation / FAQ
+    # sentence is read exactly as it was.
+    doctor_schedule: tuple[str, ...] = ()  # makes a sentence that names a doctor a schedule question ("come", "which day", "Monday")
+    doctor_see: tuple[str, ...] = ()  # see / meet / consult / show (my reports to) the doctor
+    doctor_want: tuple[str, ...] = ()  # "I want", "I would like", "chai", "chahiye", "dikhana hai"
+    doctor_question: tuple[str, ...] = ()  # "can I", "could I", "क्या", "কি": the sentence asks, it does not state a wish
+    book_verbs: tuple[str, ...] = ()  # an explicit booking verb: book, reserve, बुक, বুক, laga do
 
     def contains(self, text: str, cue: str) -> bool:
-        if self.match == "substring":
+        if self.match == "substring" and not cue.isascii():  # sourav 2026-10-14: Latin cues are whole words even here
             return cue in text
         return f" {cue} " in f" {text} "
 
@@ -507,6 +517,11 @@ def _table(**kw) -> CueTable:
         "complexity",
         "date_words",
         "function_words",
+        "doctor_schedule",
+        "doctor_see",
+        "doctor_want",
+        "doctor_question",
+        "book_verbs",
     ):
         if key in kw:
             kw[key] = _norm_all(kw[key])
@@ -516,6 +531,97 @@ def _table(**kw) -> CueTable:
 
 
 _TABLES: dict[str, CueTable] = {}
+
+
+# sourav, 2026-10-14: ROMANISED (Latin-script) Bengali/Hindi doctor-availability words and day words. A caller's "sen kobe bosben",
+# "x doctor ki aj bosbe", "aaj baithenge kya" reaches the fast path in Latin letters (the recogniser romanises a code-switched
+# sentence, or the call is locked to another language), and none of the three tables knew those words, so the question went to
+# the slow model. They are added to ALL THREE tables (the call language says nothing about which script comes back). Latin cues are
+# matched as whole words even in the Bengali "substring" table (see CueTable.contains), so "aj" never fires inside "rajarhat".
+_ROM_AVAIL = (
+    "bosben", "bosbe", "boshen", "boshe", "bosche", "bosen", "boshben", "boshbe", "kobe", "kokhon", "kakhon", "achhen", "achen",
+    "aschen", "asben", "asbe", "ashben", "kab", "kitne baje", "kitne bje", "baithenge", "baithte", "baithti", "baithegi", "milenge",
+    "milte", "upalabdh", "timing", "timings", "chamber", "chember", "chaimber",
+)
+_ROM_DAYS = {"aj": 0, "aaj": 0, "ajke": 0, "aajke": 0, "ajker": 0, "aaj ka": 0, "today": 0, "agamikal": 1, "aagamikal": 1,
+             "tomorrow": 1, "porshu": 2, "parso": 2, "parson": 2}
+
+
+# sourav, 2026-10-14: the recogniser may write the SAME spoken doctor question in any script whatever language the call is locked to
+# (Bengali speech in Devanagari, a Hindi sentence in English letters ...), so every table also knows the other languages' availability
+# words and day words. This only lets a doctor question be recognised; the doctor named still has to match the catalogue, and a
+# date the fast path cannot read still sends the turn to the model (see FastPath._resolve_date).
+_ALL_AVAIL = tuple(dict.fromkeys(_BN_AVAIL + _HI_AVAIL + _EN_AVAIL + _ROM_AVAIL))
+_ALL_DAYS = {**_BN_RELATIVE_DAYS, "आज": 0, "day after tomorrow": 2, "tomorrow": 1, "today": 0, **_ROM_DAYS}
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# sourav, 2026-10-16 -- DOCTOR INTENTS. A live call said "does Dr Sen come on Monday", "show my reports to Dr Sen", "Dr Sen kis din clinic
+# mein aate hain" and was answered with the clinic's opening hours (the FAQ table), or sent to the slow model. These words are used ONLY
+# when a doctor is named in the sentence and no price / preparation cue is present (agent/fast_path.py), so no other sentence changes.
+# Like _ALL_AVAIL they hold English + Hindi + Bengali + romanised words in ALL three tables: the call language says nothing about which
+# script or mix comes back, and this must not (and does not) touch which language the call speaks or answers in.
+_DOC_SCHEDULE = (
+    # English
+    "come", "comes", "coming", "visit", "visits", "visiting", "present", "free", "off", "working", "weekly", "weekend", "weekends", "days",
+    "which day", "what days", "which days", "next", "earliest", "soonest", "first available", "accepting", "see patients", "sees patients",
+    "morning", "afternoon", "evening", "tonight", "this evening", "this morning", "this week", "again", "in the clinic", "at the clinic", "opd",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mondays", "tuesdays", "wednesdays", "thursdays",
+    "fridays", "saturdays", "sundays", "time",
+    # Hindi
+    "आते", "आती", "आएंगे", "आएँगे", "आयेंगे", "आएंगी", "आएगी", "आएंगी", "किस दिन", "कौन से दिन", "कौन सा दिन", "अगला", "अगली", "अगले",
+    "जल्द", "मौजूद", "रहेंगे", "रहते", "होंगे", "सुबह", "शाम", "दोपहर", "सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार",
+    "रविवार", "वीकेंड", "टाइमिंग", "टाइमिंग्स", "बैठने", "बैठना", "सप्ताह", "हफ्ते",
+    # Bengali
+    "আসেন", "আসবেন", "আসছেন", "থাকেন", "কোন দিন", "কোন কোন দিন", "পরের", "পরবর্তী", "সকালে", "বিকালে", "বিকেলে", "সন্ধ্যায়", "দুপুরে",
+    "সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার", "রবিবার", "সপ্তাহে", "বসার",
+    # romanised Hindi / Bengali
+    "aate", "aati", "aayenge", "aayengi", "aaenge", "aayegi", "kis din", "kaun se din", "kaunse din", "agla", "agli", "agle", "honge", "rahenge",
+    "rahte", "subah", "shaam", "dopahar", "somvar", "mangalvar", "budhvar", "guruvar", "guruwar", "shukravar", "shanivar", "ravivar",
+    "baithne", "baithna", "hafte", "saptah",
+    "ashen", "asen", "ashben", "asben", "aschen", "thaken", "thakben", "kon din", "porer", "sokale", "bikele", "sondhye", "dupure", "shombar",
+    "mongolbar", "budhbar", "brihospotibar", "shukrobar", "shonibar", "robibar", "boshar", "shoptahe",
+)  # fmt: skip
+_DOC_SEE = (
+    "see", "meet", "consult", "consulting", "consultation", "show", "visit",
+    "दिखाना", "दिखाने", "दिखाऊं", "दिखाऊँ", "दिखानी", "मिलना", "मिलने", "कंसल्ट", "परामर्श",
+    "dikhana", "dikhane", "dikhani", "dikhaun", "milna", "milne", "dekhana", "dekhna", "dekhne", "konsult", "dikhao",
+    "দেখাতে", "দেখাব", "দেখাবো", "দেখানো", "দেখানোর", "দেখব", "দেখবো", "দেখা করতে", "দেখা করব", "কনসাল্ট", "মিলতে",
+    "dekhate", "dekhabo", "dekhabobo", "dekhano", "dekhbo", "dekha korte", "dekha korbo", "dekhabo",
+)  # fmt: skip
+_DOC_WANT = (
+    "want", "wants", "wish", "need", "needs", "would like", "like to", "looking to", "have to", "must", "got to",
+    "चाहिए", "चाहता", "चाहती", "चाहते", "चाहूंगा", "चाहूंगी", "करना है", "दिखाना है", "दिखानी है", "मिलना है", "है",
+    "chai", "chahiye", "chahta", "chahti", "karna hai", "dikhana hai", "dikhani hai", "milna hai", "hai", "hobe", "korbo", "korte chai",
+    "চাই", "চাইছি", "হবে", "করব", "করবো", "করতে চাই", "দেখাতে চাই", "হয়", "দেখাব", "দেখাবো", "দেখব", "দেখবো",
+    "dekhabo", "dekhabobo", "dekhbo",
+)  # fmt: skip
+_DOC_QUESTION = (
+    "can i", "could i", "may i", "is it possible", "am i able", "will i be able", "can we", "could we",
+    "क्या", "सकता", "सकती", "सकते", "पाऊंगा", "पाऊंगी", "kya", "sakta", "sakti", "sakte", "paunga", "paungi",
+    "কি", "পারব", "পারবো", "পাব", "পাবো", "যাবে", "সম্ভব", "ki", "parbo", "pabo", "jabe",
+)  # fmt: skip
+_BOOK_VERBS = (
+    "book", "booking", "reserve", "reservation", "arrange", "fix an appointment", "make an appointment", "take an appointment",
+    "schedule a", "schedule an", "schedule me", "schedule my",
+    "बुक", "बुकिंग", "लगा दो", "लगवा", "लगाओ", "लगा दीजिए", "लगा दें", "सीरियल", "नाम लिखवा",
+    "laga do", "laga dijiye", "lagao", "lagwa", "buk",
+    "বুক", "বুকিং", "লাগিয়ে", "সিরিয়াল", "নাম লেখা", "লিখে দিন",
+)  # fmt: skip
+# The booking NOUNS in every language (the call language does not decide which script comes back): used only for the booking hint.
+BOOK_NOUNS_ALL = (
+    "appointment", "appointments", "apointment", "appoinment", "serial", "अपॉइंटमेंट", "अपॉइन्टमेंट", "अपोइंटमेंट", "सीरियल",
+    "অ্যাপয়েন্টমেন্ট", "অ্যাপয়েনমেন্ট", "সিরিয়াল",
+)  # fmt: skip
+# Weekday name -> Python weekday (Monday = 0). The only date words the fast path resolves by itself (see FastPath._resolve_date).
+WEEKDAYS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6,
+    "mondays": 0, "tuesdays": 1, "wednesdays": 2, "thursdays": 3, "fridays": 4, "saturdays": 5, "sundays": 6,
+    "सोमवार": 0, "मंगलवार": 1, "बुधवार": 2, "गुरुवार": 3, "शुक्रवार": 4, "शनिवार": 5, "रविवार": 6,
+    "somvar": 0, "mangalvar": 1, "budhvar": 2, "guruvar": 3, "guruwar": 3, "shukravar": 4, "shanivar": 5, "ravivar": 6,
+    "সোমবার": 0, "মঙ্গলবার": 1, "বুধবার": 2, "বৃহস্পতিবার": 3, "শুক্রবার": 4, "শনিবার": 5, "রবিবার": 6,
+    "shombar": 0, "mongolbar": 1, "budhbar": 2, "brihospotibar": 3, "shukrobar": 4, "shonibar": 5, "robibar": 6,
+}  # fmt: skip
 
 
 def register(table: CueTable) -> None:
@@ -535,13 +641,18 @@ register(
     _table(
         lang="bn",
         rate=_BN_RATE,
-        avail=_BN_AVAIL,
+        avail=_ALL_AVAIL,
         book=_BN_BOOK,
+        doctor_schedule=_DOC_SCHEDULE,
+        doctor_see=_DOC_SEE,
+        doctor_want=_DOC_WANT,
+        doctor_question=_DOC_QUESTION,
+        book_verbs=_BOOK_VERBS,
         prep=_BN_PREP,
         greeting=_BN_GREETING,
         thanks=_BN_THANKS,
         complexity=_BN_COMPLEXITY,
-        relative_days=_BN_RELATIVE_DAYS,
+        relative_days=_ALL_DAYS,
         date_words=_BN_DATE_WORDS,
         function_words=_BN_FUNCTION_WORDS,
         greeting_reply="সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?",
@@ -556,13 +667,18 @@ register(
     _table(
         lang="hi",
         rate=_HI_RATE,
-        avail=_HI_AVAIL,
+        avail=_ALL_AVAIL,
         book=_HI_BOOK,
+        doctor_schedule=_DOC_SCHEDULE,
+        doctor_see=_DOC_SEE,
+        doctor_want=_DOC_WANT,
+        doctor_question=_DOC_QUESTION,
+        book_verbs=_BOOK_VERBS,
         prep=_HI_PREP,
         greeting=_HI_GREETING,
         thanks=_HI_THANKS,
         complexity=_HI_COMPLEXITY,
-        relative_days={"आज": 0},
+        relative_days=_ALL_DAYS,
         date_words=_HI_DATE_WORDS,
         function_words=_HI_FUNCTION_WORDS,
         greeting_reply="सोनोस्कैन वाणी। बताइए, मैं आपकी क्या मदद कर सकती हूँ?",
@@ -573,13 +689,18 @@ register(
     _table(
         lang="en",
         rate=_EN_RATE,
-        avail=_EN_AVAIL,
+        avail=_ALL_AVAIL,
         book=_EN_BOOK,
+        doctor_schedule=_DOC_SCHEDULE,
+        doctor_see=_DOC_SEE,
+        doctor_want=_DOC_WANT,
+        doctor_question=_DOC_QUESTION,
+        book_verbs=_BOOK_VERBS,
         prep=_EN_PREP,
         greeting=_EN_GREETING,
         thanks=_EN_THANKS,
         complexity=_EN_COMPLEXITY,
-        relative_days={"day after tomorrow": 2, "tomorrow": 1, "today": 0},
+        relative_days=_ALL_DAYS,
         date_words=_EN_DATE_WORDS,
         function_words=_EN_FUNCTION_WORDS,
         greeting_reply="Sonoscan Vaani. How can I help you?",

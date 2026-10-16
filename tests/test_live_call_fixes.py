@@ -78,7 +78,7 @@ async def test_the_pod_call_a_bengali_caller_is_answered_in_bengali_not_hindi(m,
         ),
     )
     env.session.lang_router.note_response_language("bn")  # the call opened in Bengali
-    lang, result = await m._route_and_transcribe(env.session, "x.wav")
+    lang, result, _decisive = await m._route_and_transcribe(env.session, "x.wav")  # final verification 2026-10-16: 3rd value = decisive
     assert lang == "bn" and result.text.startswith("এইচবিএ")
 
 
@@ -94,7 +94,7 @@ async def test_a_call_in_bengali_does_not_flip_to_hindi_on_a_weak_hindi_read_eve
         "_asr_router",
         FakeRouter({"bn": Result("বাংলা", 0.30), "hi": Result("हिंदी", 0.80), "en": Result("english", 0.10)}),
     )
-    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    lang, _, _decisive = await m._route_and_transcribe(env.session, "x.wav")  # final verification 2026-10-16: 3rd value = decisive
     assert lang == "bn"
 
 
@@ -108,7 +108,7 @@ async def test_a_genuine_hindi_caller_is_still_answered_in_hindi(m, env, monkeyp
         "_asr_router",
         FakeRouter({"bn": Result("बंगाली", 0.10), "hi": Result("सीबीसी का रेट", 0.90), "en": Result("x", 0.0)}),
     )
-    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    lang, _, _decisive = await m._route_and_transcribe(env.session, "x.wav")  # final verification 2026-10-16: 3rd value = decisive
     assert lang == "hi"
 
 
@@ -123,7 +123,7 @@ async def test_when_only_the_name_was_not_trusted_the_agent_asks_for_the_name(m,
     ]
 
     async def route(session, wav):
-        return lang, Result(heard, 0.44)  # a well-formed sentence; the recognisers just disagreed
+        return lang, Result(heard, 0.44), True  # a well-formed sentence; the recognisers just disagreed (3rd value = decisive, final verification 2026-10-16)
 
     monkeypatch.setattr(m, "_route_and_transcribe", route)
     env.session.disclosed_langs.add(lang)
@@ -141,7 +141,7 @@ async def test_a_doctor_question_asks_for_the_doctor_and_an_unnamed_intent_keeps
     from agent.reply_templates import insufficient_information_reply
 
     async def route(session, wav):
-        return "en", Result("garbled", 0.44)
+        return "en", Result("garbled", 0.44), True  # final verification 2026-10-16: 3rd value = decisive
 
     monkeypatch.setattr(m, "_route_and_transcribe", route)
     said = await env.say("garbled", "doctor_availability", {"doctor_name": "x"})
@@ -154,7 +154,7 @@ async def test_a_doctor_question_asks_for_the_doctor_and_an_unnamed_intent_keeps
 @pytest.mark.asyncio
 async def test_a_trusted_turn_is_still_answered_straight_away(m, env, monkeypatch):
     async def route(session, wav):
-        return "en", Result("what is the price of a CBC test", 0.90)
+        return "en", Result("what is the price of a CBC test", 0.90), True  # final verification 2026-10-16: 3rd value = decisive
 
     monkeypatch.setattr(m, "_route_and_transcribe", route)
     said = await env.say("x", "test_rate", {"test_name": "CBC"})
@@ -215,7 +215,7 @@ async def test_a_bengali_turn_runs_bengali_and_english_and_never_hindi(m, env, m
     monkeypatch.setattr(m, "_lid", FakeLID("bn", {"bn": 0.95, "en": 0.0, "hi": 0.05}))
     monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
     monkeypatch.setattr(m, "_asr_router", router)
-    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    lang, _, _decisive = await m._route_and_transcribe(env.session, "x.wav")  # final verification 2026-10-16: 3rd value = decisive
     assert lang == "bn" and sorted(router.ran) == ["bn", "en"]  # Hindi's GPU time is not spent
 
 
@@ -255,7 +255,7 @@ async def test_hindi_is_run_the_moment_language_id_points_to_it(m, env, monkeypa
     monkeypatch.setattr(m, "_lid", FakeLID("hi", {"bn": 0.02, "en": 0.0, "hi": 0.98}))
     monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
     monkeypatch.setattr(m, "_asr_router", router)
-    lang, result = await m._route_and_transcribe(env.session, "x.wav")
+    lang, result, _decisive = await m._route_and_transcribe(env.session, "x.wav")  # final verification 2026-10-16: 3rd value = decisive
     assert lang == "hi" and "hi" in router.ran
 
 
@@ -273,7 +273,7 @@ async def test_english_speech_that_language_id_calls_bengali_is_still_found(m, e
     monkeypatch.setattr(m, "_lid", FakeLID("bn", {"bn": 0.83, "hi": 0.16, "en": 0.01}))
     monkeypatch.setattr(m, "_languages_active", ("bn", "hi", "en"))
     monkeypatch.setattr(m, "_asr_router", router)
-    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    lang, _, _decisive = await m._route_and_transcribe(env.session, "x.wav")  # final verification 2026-10-16: 3rd value = decisive
     assert lang == "en"
 
 
@@ -292,7 +292,7 @@ async def test_a_failed_engine_is_dropped_not_fatal(m, env, monkeypatch):
     monkeypatch.setattr(
         m, "_asr_router", Router({"bn": Result("বাংলা", 0.9), "hi": Result("x", 0), "en": Result("x", 0)})
     )
-    lang, _ = await m._route_and_transcribe(env.session, "x.wav")
+    lang, _, _decisive = await m._route_and_transcribe(env.session, "x.wav")  # final verification 2026-10-16: 3rd value = decisive
     assert lang == "bn"
 
 

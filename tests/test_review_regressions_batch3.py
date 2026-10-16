@@ -74,8 +74,14 @@ def test_a_dictated_slot_answer_is_not_called_jumbled(text):
 
 
 def test_a_short_answer_over_a_long_clip_is_a_fragment_only_outside_a_booking():
-    assert transcript_problem("না", "bn", 3.0, 0.9) == "fragment"
-    assert transcript_problem("না", "bn", 3.0, 0.9, slot_answer=True) is None
+    # SPEC CHANGE, 2026-10-14 (deliberate, commit acc89d9): a bare yes/no/ok ("না", "yes", "হ্যাঁ") is a COMPLETE answer however long
+    # the clip around it is -- a loud, slow, clear "yes" to "shall I continue in English?" was being thrown away as a stray
+    # fragment and the caller was ignored (pod log, call b3aea9d2). This test used to pin the opposite for "না". What is still a
+    # fragment is a genuine stray syllable that is not an answer word.
+    assert transcript_problem("না", "bn", 3.0, 0.9) is None
+    assert transcript_problem("yes", "en", 3.4, 1.0) is None
+    assert transcript_problem("ক", "bn", 3.0, 0.9) == "fragment"
+    assert transcript_problem("ক", "bn", 3.0, 0.9, slot_answer=True) is None
 
 
 def test_decoder_disagreement_still_counts_inside_a_booking():

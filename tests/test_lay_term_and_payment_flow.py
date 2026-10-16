@@ -96,7 +96,7 @@ def env(m, monkeypatch, tmp_path):
     state = {"text": "ok", "lang": "en", "data": {}}
 
     async def route(session, wav):
-        return state["lang"], ASRResult(state["text"])
+        return state["lang"], ASRResult(state["text"]), True  # sourav 2026-10-14: _route_and_transcribe now returns (lang, asr, decisive)
 
     async def resolve(session, text, lang):
         return {"secondary_intent": None, "direct_reply_bn": None, "intent": "unclear", "slots": {}, **state["data"]}

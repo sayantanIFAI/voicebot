@@ -379,6 +379,16 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
             else "Sorry, the doctor doesn't sit that day. Could you say another day?"
         )
     if reason == "invalid_slot":
+        # sourav, 2026-10-16: say the real chamber hours (clinic's own valid_slots) so the caller can pick a time that works.
+        from agent.booking_capture import hours_span
+
+        span = hours_span(result.get("valid_slots"))
+        if span:
+            return (
+                f"माफ़ कीजिए, डॉक्टर {span[0]} से {span[1]} तक बैठते हैं। इसके भीतर कोई समय बताएँगे?"
+                if hi
+                else f"Sorry, the doctor sits from {span[0]} to {span[1]}. Could you give a time within those hours?"
+            )
         return (
             "माफ़ कीजिए, वह समय ठीक नहीं है। चेंबर के समय के भीतर कोई समय बताएँगे?"
             if hi

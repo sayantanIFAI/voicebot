@@ -229,6 +229,16 @@ class RecordingTools:
         self.lookups.append((name, result))
         return result
 
+    async def get_test_prep(self, test_name, lang="bn"):
+        # sourav, 2026-10-16 (final verification): a price question that also says "fasting" / "empty stomach" now makes the orchestrator
+        # answer the implied preparation question too (agent/combined_question.py, b356fbe), through get_test_prep. This stand-in lacked it, so
+        # those turns raised AttributeError before any price was checked. It forwards to the real clinic API like get_faq and records nothing,
+        # so the price assertions (which test was looked up, which rate was spoken) are untouched.
+        from agent.api_models import PrepAnswer
+
+        raw = self.client.get("/api/v1/tests/prep", params={"name": test_name, "lang": lang}).json()
+        return validated(PrepAnswer, raw, "get_test_prep")
+
     async def get_faq(self, topic, lang="bn"):
         # sourav: a 'total ...' follow-up can be taken by the fast path as a clinic FAQ question; the real FAQ answer
         # is served by the same API, so this just forwards it (it is not a price and is not recorded as a lookup).

@@ -65,6 +65,7 @@ import datetime
 import difflib
 
 from agent.location_cues import ALL_LOCATION_PHRASES as _LOCATION_PHRASES  # sourav 2026-10-14
+from agent.doctor_cues import doctor_extra_forms as _doctor_extra_forms  # sourav 2026-10-14
 from agent import cart_tally as _cart_tally  # sourav 2026-10-14: shared 'total' cue words
 import logging
 import re
@@ -162,6 +163,25 @@ def _dedupe(forms) -> list[str]:
     return list(dict.fromkeys(f for f in forms if f))
 
 
+# sourav, 2026-10-14: "कल"/"kal" = yesterday or tomorrow in Hindi; a future-tense verb ending (बैठेंगे, मिलेंगे, होगा, baithenge, milegi ...)
+# settles it as tomorrow. Used only by _resolve_date.
+# sourav, 2026-10-16: the word "doctor" in any of the three languages / spellings (whole word), used by the "no doctor named" guard in resolve().
+# sourav, 2026-10-16: phrases that name no particular date, so they must not send a doctor question to the model: "next available", "this week",
+# "weekends", a time of day. The answer then lists the doctor's real sitting days / hours. "this evening" / "tonight" mean today.
+_SOFT_DATE = re.compile(
+    r"(?:^|\s)(?:next available|next appointment|next slot|next time|next visit|next day|first available|earliest|soonest|this week|weekly|weekends?|"
+    r"mornings?|afternoons?|evenings?|nights?|शाम|सुबह|दोपहर|रात|shaam|subah|dopahar|raat|সকালে|বিকেলে|বিকালে|সন্ধ্যায়|দুপুরে|রাতে|sokale|bikele|sondhye|dupure)(?=\s|$)"
+)
+_THIS_TIME_OF_DAY = re.compile(r"(?:^|\s)(?:this (?:morning|afternoon|evening)|tonight|aaj raat|aaj shaam|aaj subah)(?=\s|$)")
+_COMMON_WORD_ALIASES = frozenset({"कर", "कर्", "কর", "করে", "kor", "kar"})  # a doctor's surname that is also an everyday word (do / tax)
+_BEFORE_BOOKING = re.compile(r"(?:^|\s)(?:before|pehle|age|aage)(?:\s|$)|আগে|पहले")  # sourav 2026-10-16: "is he free BEFORE I book" asks, it does not book
+_SAYS_DOCTOR = re.compile(r"(?:^|\s)(?:doctor|doctors|dr|doc|daktar|doktor|dactar|ডাক্তার|ডক্টর|ডাঃ|ডাক্তারবাবু|डॉक्टर|डाक्टर|डॉ|डॉक्टर्स)(?:\s|$)")
+_KAL = re.compile(r"(?:^|\s)(?:कल|kal)(?:\s|$)")
+_PARSO = re.compile(r"(?:^|\s)(?:परसों|परसो|parso|parson)(?:\s|$)")  # day after tomorrow OR two days ago; same tense rule
+_AVAIL_NOW = re.compile(r"(?:^|\s)(?:available|उपलब्ध|upalabdh|achhen|achen|আছেন)(?:\s|$)")  # sourav 2026-10-16: "kal ... available hain kya" asks about tomorrow
+_PAST_WORD = re.compile(r"(?:^|\s)(?:था|थे|थी|tha|thi|the|thhe|ছিলেন|chilen|chhilen)(?:\s|$)")
+_FUTURE_WORD = re.compile(r"\S*(?:ेंगे|ेंगी|ेगा|ेगी|ोगा|ोगी|ोगे|ूँगा|ूंगा|ूँगी|ूंगी|enge|engi|ega|egi|oga|ogi|oge|bosben|bosbe|boshben|boshbe|asben|asbe|ashben|ashbe|achhen|achen)(?:\s|$)")
+
 class Catalogue:
     """The 74 rows, with every spoken form that maps to each -- plus the
     FAQ topic table, which is the same shape (one canonical key, several
@@ -232,6 +252,8 @@ class Catalogue:
         whole = Catalogue._full_name_form(d, lang)
         if whole:
             forms.append(whole)  # owned by this doctor: a shared surname's owners are counted with it
+        # sourav, 2026-10-14: every spelling/script a caller or the recogniser may use for this doctor (agent/doctor_cues.py)
+        forms += [_normalize(x) for x in _doctor_extra_forms(d)]
         return _dedupe(forms)
 
     @staticmethod
@@ -262,7 +284,11 @@ class Catalogue:
                 f["topic"],
                 _dedupe(
                     _normalize(k)
-                    for k in list(f.get(f"keywords_{lang}", [])) + (_LOCATION_PHRASES if f["topic"] == "location" else [])
+                    for k in list(f.get(f"keywords_{lang}", []))
+                    # sourav, 2026-10-16 (real call): an English question said in a call locked to Bengali/Hindi ("Parking is there") found no
+                    # FAQ topic because the Bengali/Hindi tables held only their own words. The English phrases are added to both.
+                    + ([k for k in f.get("keywords_en", []) if " " in k.strip() or len(k.strip()) >= 6] if lang in ("bn", "hi") else [])  # sourav 2026-10-16: no short English words (cash/gpay) -- they fuzzy-matched noise like "caha"
+                    + (_LOCATION_PHRASES if f["topic"] == "location" else [])
                 ),
             )
             for f in payload.get("faq_topics", [])
@@ -397,11 +423,126 @@ class FastPath:
         self.by_lang[lang]["served"] += 1
         fast_path_served.record(intent, "served", lang)
 
+    def _named_doctor(self, text: str, lang: str, strong: bool = True) -> tuple[str, str | None, float] | None:
+        """sourav, 2026-10-16: (name, spoken form, score) of the ONE doctor the sentence names, or None when none is named or several
+        doctors fit the words equally (a shared surname: the clinic API asks "which one?"). The same lookup the availability branch
+        uses, taken out so the booking, schedule and FAQ decisions all ask it the same way. It reads the clinic's own catalogue, so
+        a doctor added to the database is recognised with no code change."""
+        name, form, score = self.catalogue.match(text, "doctorfull", lang, 0.9)  # the whole name, if it was said
+        whole = bool(name)
+        if not name:
+            name, form, score = self.catalogue.match(text, "doctor", lang, COMMIT_FLOOR)
+        if not (name and score >= COMMIT_FLOOR):
+            return None
+        if self.catalogue.doctor_owner_count(lang, form) > 1:
+            return None
+        # A short surname can be an ordinary word ("कर" = "do" is also Dr. Kar; "Das" ~ "days"). For the NEW doctor-word logic the sentence must
+        # also say "doctor / Dr / डॉ / ডাঃ", or give the whole name, or the spoken form must be a long, distinctive name.
+        # Fuzzy hits are noise ("कल्याण" scored 0.8 against "आपका पता क्या है" and "chand" 0.75 against "can"): without a doctor word beside it the
+        # form must be said essentially exactly, as a word of the sentence.
+        if strong and not (whole or _SAYS_DOCTOR.search(f" {text} ")):
+            said = (form or name or "")
+            if not (score >= 0.95 and said not in _COMMON_WORD_ALIASES and any(tok == said or tok.startswith(said) for tok in text.split())):
+                return None
+        return name, form, score
+
+    @staticmethod
+    def _doctor_form_is_said(text: str, table: cues.CueTable, form: str | None) -> bool:
+        """sourav, 2026-10-16: did the caller actually SAY the doctor form the catalogue matched? A form of four letters or fewer must be
+        present as a word of the sentence (Bengali's fuzzy match had read an unknown name "ঝঝাইক্স" as the short surname "সেন"), and a form
+        that is also an ordinary word ("कर" = do, "কর" = do) needs "doctor / डॉ / ডাঃ" beside it. Failure = the turn goes to the model and
+        the clinic API, which says plainly that the doctor could not be identified."""
+        f = form or ""
+        if not f:
+            return True
+        if len(f) <= 4:
+            # A short surname must be said, not merely contained: Bengali "বসেন" (sits) ENDS in "সেন", so "ডাঃ ঝঝাইক্স কবে বসেন" had read as
+            # Dr. Sen. Words that merely end in the form are set aside; some other word must be the form, begin with it (case endings:
+            # সেনের, सेन को), or be a close misspelling of it (a recogniser's garble of the name).
+            others = [t for t in text.split() if not (t.endswith(f) and t != f)]
+            if not any(t == f or t.startswith(f) or difflib.SequenceMatcher(None, f, t).ratio() >= 0.75 for t in others):
+                return False
+        return not (f in _COMMON_WORD_ALIASES and not _SAYS_DOCTOR.search(f" {text} "))
+
+    @staticmethod
+    def _doctor_schedule_words(text: str, table: cues.CueTable) -> bool:
+        """The extra words that make a sentence naming a doctor a SCHEDULE question: come / which day / next / Monday / evening, or
+        "can I see ..." (see + a question frame). A wish ("I want to see", "dikhana hai") is not one -- that is a booking."""
+        return table.any(text, table.doctor_schedule) or (
+            table.any(text, table.doctor_see) and table.any(text, table.doctor_question)
+        )
+
+    def _is_schedule_question(self, text: str, table: cues.CueTable, doc) -> bool:
+        """A sentence that holds a booking WORD and a doctor: is it still just a schedule question? Yes when there is no booking VERB and
+        it asks (a time / availability word or a question frame), or when the booking verb is only "before I book"."""
+        if doc is None:
+            return False
+        asks = table.any(text, table.avail) or table.any(text, table.doctor_question) or "?" in text
+        if not table.any(text, table.book_verbs):
+            return asks
+        return bool(_BEFORE_BOOKING.search(f" {text} ")) and asks
+
+    def doctor_booking_hint(self, transcript: str, lang: str = "bn") -> "FastPathResult | None":
+        """sourav, 2026-10-16: a booking request that names ONE doctor ("I want to book an appointment with Dr Sen", "Dr Sen ka appointment
+        book karna hai", "ami Dr Sen ke dekhabo", "mujhe Dr Sen ko dikhana hai") as a book_appointment result with that doctor (and the day,
+        when the sentence names one the fast path can read). NOT used for ordinary turns -- the model still extracts booking details -- but as the
+        fallback when the model fails or does not understand, so a doctor booking never dies on a model error. Never a schedule question
+        (those are resolve()'s) and never a guess: no named doctor, no hint."""
+        table = cues.table_for(lang)
+        text = _normalize(transcript)
+        if table is None or not text:
+            return None
+        doc = self._named_doctor(text, lang)
+        if doc is None:
+            return None
+        if self._is_schedule_question(text, table, doc):
+            return None
+        wants_booking = table.any(text, table.book_verbs) or table.any(text, table.book) or table.any(text, cues.BOOK_NOUNS_ALL)
+        wants_to_see = (
+            table.any(text, table.doctor_see)
+            and table.any(text, table.doctor_want)
+            and not table.any(text, table.doctor_question)
+            and not table.any(text, table.avail)
+        )
+        if not (wants_booking or wants_to_see):
+            return None
+        name, form, score = doc
+        date_iso, confident = self._resolve_date(text, table)
+        if not date_iso:  # "kal" / "parso" next to a booking word can only be the future: nobody books yesterday
+            today = self._today or datetime.date.today()
+            if _KAL.search(text):
+                date_iso, confident = (today + datetime.timedelta(days=1)).isoformat(), True
+            elif _PARSO.search(text):
+                date_iso, confident = (today + datetime.timedelta(days=2)).isoformat(), True
+        return FastPathResult(
+            "book_appointment", _empty_slots(doctor_name=form or name, date=date_iso if confident else None), score, matched_form=form
+        )
+
     def _resolve_date(self, text: str, table: cues.CueTable) -> tuple[str | None, bool]:
         """-> (iso_date_or_None, is_confident). Not confident means the
         utterance contains date-ish language this module will not try to
         parse, so the whole turn must go to the LLM."""
         today = self._today or datetime.date.today()
+        # sourav, 2026-10-14: Hindi "कल" / "kal" means yesterday OR tomorrow; the TENSE of the sentence says which ("कल बैठेंगे" =
+        # tomorrow). A future-tense word next to it is read as tomorrow; anything else is still left to the model (never guessed).
+        if (
+            (_KAL.search(text) or _PARSO.search(text))
+            and (_FUTURE_WORD.search(text) or (_AVAIL_NOW.search(f" {text} ") and not _PAST_WORD.search(f" {text} ")))
+            and not re.search(r"\d", text)
+        ):
+            return (today + datetime.timedelta(days=2 if _PARSO.search(text) else 1)).isoformat(), True
+        # sourav, 2026-10-16: "on Monday" / "सोमवार को" / "সোমবার" -> the next such day (today counts), when it is the ONLY date word in the
+        # sentence. "next Monday", "Monday 20th", "Monday or Tuesday", "tomorrow Monday" still go to the model, as before.
+        if _THIS_TIME_OF_DAY.search(f" {text} "):
+            rest = _THIS_TIME_OF_DAY.sub(" ", f" {text} ").strip()
+            if not re.search(r"\d", rest) and not table.any(rest, table.date_words) and not any(table.contains(rest, k) for k in table.relative_days):
+                return today.isoformat(), True
+        softened = " ".join(_SOFT_DATE.sub(" ", f" {text} ").split())
+        if softened != text:
+            return self._resolve_date(softened, table)
+        weekday = self._only_weekday(text, table)
+        if weekday is not None:
+            return (today + datetime.timedelta(days=(weekday - today.weekday()) % 7)).isoformat(), True
         if table.strict_dates and (re.search(r"\d", text) or table.any(text, table.date_words)):
             return None, False
         for word, offset in table.relative_days.items():
@@ -411,6 +552,22 @@ class FastPath:
         if re.search(r"\d", text) or table.any(text, table.date_words):
             return None, False
         return None, True
+
+    @staticmethod
+    def _only_weekday(text: str, table: cues.CueTable) -> int | None:
+        """The weekday (Monday = 0) when `text` names exactly ONE weekday and nothing else date-like (no digit, no other date word, no
+        relative day); otherwise None."""
+        found = {d for w, d in cues.WEEKDAYS.items() if table.contains(text, cues.normalise_cue(w))}
+        if len(found) != 1:
+            return None
+        rest = f" {text} "
+        for w in cues.WEEKDAYS:
+            w = cues.normalise_cue(w)
+            rest = rest.replace(f" {w} ", " ") if w.isascii() or table.match != "substring" else rest.replace(w, " ")
+        rest = " ".join(rest.split())
+        if re.search(r"\d", rest) or table.any(rest, table.date_words) or any(table.contains(rest, k) for k in table.relative_days):
+            return None
+        return found.pop()
 
     @staticmethod
     def _without_cues(text: str, table: cues.CueTable) -> str:
@@ -474,6 +631,28 @@ class FastPath:
         other, _f, other_score = self.catalogue.match(left, "test", lang, COMMIT_FLOOR, skip_name=name)
         return other is not None and other_score >= COMMIT_FLOOR
 
+    def named_tests(self, transcript: str, lang: str = "bn", limit: int = 6) -> list[str]:
+        """sourav, 2026-10-16: EVERY catalogue test the sentence names, canonical names in the order said ([] when none).
+        Why: "lipid profile and uric acid total koto hobe" needs both tests; the fast path only ever resolved one, so the sentence
+        went to the model and, when the model was slow or failed on the pod, the caller heard "a little problem". Flow: match the best
+        test, take its words out of the sentence (_drop_window), match again, until nothing is left that names a test. Names only --
+        the prices still come from the clinic API."""
+        table = cues.table_for(lang)
+        text = _normalize(transcript)
+        out: list[str] = []
+        if table is None or not text:
+            return out
+        for _ in range(limit):
+            name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
+            if not (name and form and score >= COMMIT_FLOOR):
+                break
+            if name not in out:
+                out.append(name)
+            text = self._drop_window(text, form)
+            if not text.strip():
+                break
+        return out
+
     def looks_multi_test(self, transcript: str, lang: str = "bn") -> bool:
         """sourav, 2026-10-14: public yes/no -- does this sentence name more than one catalogue test? Used by
         main.py so such a sentence is never answered from the saved-answer cache (which can only hold ONE test's
@@ -525,9 +704,15 @@ class FastPath:
 
         # Booking is never handled here: open-ended extraction with PII in
         # it. Check first, before any cue that might also appear in it.
-        if table.any(text, table.book):
-            self._abstain("booking_excluded", lang=lang)
-            return None
+        doc = None  # sourav, 2026-10-16: the ONE doctor this sentence names (looked up at most once per turn)
+        if table.any(text, table.book) or table.any(text, table.book_verbs):
+            # sourav, 2026-10-16: "when is Dr Sen's next available appointment" / "Dr Sen ka next available slot kab hai" use the NOUN
+            # appointment / slot but ask for the doctor's schedule; they are answered from the clinic's real schedule. A sentence with
+            # a booking VERB ("book", "बुक करना", "বুক করতে") is still a booking and still goes to the booking flow, exactly as before.
+            doc = self._named_doctor(text, lang)
+            if not self._is_schedule_question(text, table, doc):
+                self._abstain("booking_excluded", lang=lang)
+                return None
 
         if _complexity(text, table):
             self._abstain("complexity_cue", lang=lang)
@@ -556,6 +741,14 @@ class FastPath:
         if sum((wants_rate, wants_avail, wants_prep)) > 1:
             self._abstain("ambiguous_multi_cue", lang=lang)
             return None
+
+        # sourav, 2026-10-16: with a doctor named and no price / preparation cue, the doctor words (come, which day, Monday, next, "can I see
+        # ... tomorrow") make it a schedule question. They are used ONLY here, so no other sentence is read differently.
+        if not (wants_rate or wants_prep):
+            if doc is None:
+                doc = self._named_doctor(text, lang)
+            if doc is not None and not wants_avail and self._doctor_schedule_words(text, table):
+                wants_avail = True
 
         if wants_rate or wants_prep:
             # A question with no test named in it -- only the cue and function words -- has no entity to look for. Matching
@@ -607,6 +800,10 @@ class FastPath:
             name, form, score = self.catalogue.match(text, "doctorfull", lang, 0.9)  # the whole name, if it was said
             if not name:
                 name, form, score = self.catalogue.match(text, "doctor", lang, COMMIT_FLOOR)
+            if name and score >= COMMIT_FLOOR and not self._doctor_form_is_said(text, table, form):
+                # sourav, 2026-10-16: an unknown doctor must not be answered as a similar-looking one, and an ordinary word must not be a doctor.
+                self._abstain("doctor_form_not_said", "doctor_availability", lang)
+                return None
             if name and score >= COMMIT_FLOOR and self.catalogue.doctor_owner_count(lang, form) > 1:
                 # "Dr. A. Sen" when Ashok Sen and Abhishek Sen both sit here: the model's turn reaches the clinic API,
                 # which answers "which one -- Ashok Sen or Abhishek Sen?" (by whole name, in the caller's script).
@@ -635,7 +832,20 @@ class FastPath:
             if not table.faq_after_failed_avail:
                 self._abstain("below_commit_floor", "doctor_availability", lang)
                 return None
+            # sourav, 2026-10-16: but a sentence that says "doctor" without naming one ("when is the doctor available in two days") is
+            # still a DOCTOR question; falling through to the FAQ table answered it with "home collection available" (the word "available").
+            # It goes to the model, which asks which doctor.
+            if _SAYS_DOCTOR.search(f" {text} "):
+                self._abstain("doctor_not_named", "doctor_availability", lang)
+                return None
             # no doctor named: "what time do you open" is a clinic question, not a doctor's schedule
+
+        # sourav, 2026-10-16: a sentence that names a doctor ("show my reports to Dr Sen", "I want to meet Dr Sen") is about that doctor,
+        # not a clinic FAQ: the word "reports" or "clinic" in it used to answer it with the clinic's address or hours. It goes to the model,
+        # which starts the booking (and agent/fast_path.doctor_booking_hint is the fallback if the model fails).
+        if doc is not None:
+            self._abstain("doctor_named_not_faq", lang=lang)
+            return None
 
         # No rate/prep/availability cue at all -- try the FAQ topic table
         # before falling through to greeting/thanks/abstain. Deliberately

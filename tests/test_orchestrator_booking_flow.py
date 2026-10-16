@@ -40,12 +40,17 @@ class FakeTools:
         self.holds, self.confirms, self.cancels, self.conflicts = [], [], [], []
         # KCD-dentistry: what route_department/department_doctors should answer with, set per test.
         self.route_department_result = {"matched": False}
-        self.department_doctors_result = {"matched": True, "doctors": ["Dr. S. Mukherjee"]}
+        self.department_doctors_result = {"matched": False}  # sourav 2026-10-14: a doctor name is not a department (tests that need a department set it)
         self.routed_symptoms = []
 
     async def hold_slot(self, doctor, date, slot):
         self.holds.append((doctor, date, slot))
         return {"success": True, "hold_token": f"hold-{len(self.holds)}", "doctor_id": 7}
+
+    async def get_doctor_availability(self, doctor, date=None, *a, **kw):
+        # sourav 2026-10-14: the booking branch looks the doctor up before asking for a time; a plain "found, sits 10-12" answer
+        # (the real API's field names: date + chamber_hours -- booking_doctor_sitting_hint reads these)
+        return {"found": True, "doctor_name": "Dr. A. Sen", "available": True, "date": "2026-10-01", "chamber_hours": "10:00-12:00"}
 
     async def booking_conflict(self, phone, date, slot):
         self.conflicts.append((phone, date, slot))
@@ -84,7 +89,7 @@ class FakeTools:
         self.routed_symptoms.append(query_text)
         return self.route_department_result
 
-    async def department_doctors(self, department_name):
+    async def department_doctors(self, department_name, lang="bn"):  # sourav 2026-10-14: real client also takes lang
         return self.department_doctors_result
 
 
@@ -104,7 +109,7 @@ def env(m, monkeypatch, tmp_path):
     state = {"text": "ok", "lang": "en", "data": {}, "reply": PRICE}
 
     async def route(session, wav):
-        return state["lang"], ASRResult(state["text"])
+        return state["lang"], ASRResult(state["text"]), True  # sourav 2026-10-14: _route_and_transcribe now returns (lang, asr, decisive)
 
     async def resolve(session, text, lang):
         return {"secondary_intent": None, "direct_reply_bn": None, **state["data"]}
@@ -157,8 +162,11 @@ def text_of(said):
 @pytest.mark.asyncio
 async def test_a_booking_is_collected_with_grouped_questions(m, env):
     said = await book(env, doctor_name="Sen")
-    assert ASK_DAY_TIME in text_of(said)  # the doctor is known: day and time together
-    said = await env.say("tomorrow at ten", "book_appointment", {"date": "2026-10-01", "time_slot": "10:00"})
+    # sourav, 2026-10-16 (final verification): b356fbe speaks the doctor's real sitting time as soon as a doctor is NAMED and then asks for the
+    # day (main_pcm.py, "Real call 2026-10-12": a caller could otherwise name a day the doctor is not in). That replaced the old combined
+    # "which day and what time" question for this one step; the day+time and name+phone groupings below are unchanged.
+    assert "usually sits on 2026-10-01, between 10:00-12:00" in text_of(said) and "Which day would you like the appointment for?" in text_of(said)
+    said = await env.say("on the first of October at ten", "book_appointment", {"date": "2026-10-01", "time_slot": "10:00"})
     assert ASK_DETAILS in text_of(said)  # then the name and number together
     said = await env.say("Ravi Das 9876543210", "book_appointment", {"patient_name": "Ravi Das", "phone": "9876543210"})
     assert env.session.booking.stage == "confirming"
@@ -174,7 +182,7 @@ async def test_an_opening_with_nothing_asks_for_the_whole_first_group(m, env):
 @pytest.mark.asyncio
 async def test_a_partial_answer_keeps_what_was_given_and_asks_the_rest_alone(m, env):
     await book(env, doctor_name="Sen")
-    said = await env.say("tomorrow", "book_appointment", {"date": "2026-10-01"})
+    said = await env.say("on the first of October", "book_appointment", {"date": "2026-10-01"})
     st = env.session.booking
     assert st.slots["doctor_name"] == "Sen" and st.slots["date"] == "2026-10-01"
     assert "what time" in text_of(said).lower() and ASK_DAY_TIME not in text_of(said)  # only the time is asked
@@ -213,7 +221,7 @@ async def reach(env, stage):
     """Drive a booking to `stage`; returns the booking's slots at that point."""
     await book(env, doctor_name="Sen")
     if stage != "after_doctor":
-        await env.say("tomorrow", "book_appointment", {"date": "2026-10-01"})
+        await env.say("on the first of October", "book_appointment", {"date": "2026-10-01"})
     if stage in ("after_time", "all_but_phone", "confirming"):
         await env.say("at ten", "book_appointment", {"time_slot": "10:00"})
     if stage in ("all_but_phone", "confirming"):
@@ -245,8 +253,10 @@ async def test_after_the_aside_the_booking_carries_on_from_where_it_was(m, env, 
     await env.say("what does the CBC cost", "test_rate", {"test_name": "CBC"})
     st = env.session.booking
     # finish it with everything still missing, in one go
+    # sourav, 2026-10-16 (final verification): the caller's sentence must CONTAIN what the stand-in model returns. Slot grounding
+    # (agent/slot_grounding.py, b356fbe) drops a name the caller never said, so the old utterance "all of it" could not carry "Ravi Das".
     await env.say(
-        "all of it",
+        "on the first of October at ten, Ravi Das, 9876543210",
         "book_appointment",
         {"date": "2026-10-01", "time_slot": "10:00", "patient_name": "Ravi Das", "phone": "9876543210"},
     )
@@ -268,8 +278,13 @@ async def test_a_question_at_the_confirmation_step_is_answered_and_a_later_yes_s
 @pytest.mark.asyncio
 async def test_small_talk_in_the_middle_of_a_booking_comes_back_to_it(m, env):
     await reach(env, "after_date")
+    before = dict(env.session.booking.slots)
     said = await env.say("thanks", "smalltalk", {}, direct_reply_bn="You are welcome.")
-    assert "You are welcome." in text_of(said) and BACK in text_of(said)
+    # sourav, 2026-10-16 (final verification): b356fbe re-routes small talk that arrives mid-collection into the booking (main_pcm.py, "Real call
+    # 2026-10-12": a terse answer was being classified smalltalk and drawing a generic filler), so the caller hears the PENDING question again, not
+    # a model-composed reply. What the test must still guarantee: nothing captured is lost, the booking stays open and the next question is asked.
+    assert "What time would you like the appointment?" in text_of(said)
+    assert env.session.booking is not None and env.session.booking.stage == "collecting" and dict(env.session.booking.slots) == before
 
 
 @pytest.mark.asyncio
@@ -560,7 +575,7 @@ async def test_a_bare_no_at_the_confirmation_step_reopens_and_asks_again_without
     monkeypatch.setattr(m, "_resolve_intent", must_not_run)
     said = await env.say("no", "unclear", {})
     assert not calls and env.session.booking.stage == "collecting"
-    assert "Which doctor" in text_of(said)
+    assert "what would you like to change" in text_of(said).lower()  # sourav 2026-10-14: a bare no asks WHAT to change
     assert env.session.booking.slots["patient_name"] == "Ravi Das"  # what was captured stays
 
 
@@ -568,7 +583,7 @@ async def test_a_bare_no_at_the_confirmation_step_reopens_and_asks_again_without
 async def test_a_no_with_nothing_to_change_after_more_words_still_reopens(m, env):
     await reach(env, "confirming")
     said = await env.say("no that is not right", "unclear", {})
-    assert env.session.booking.stage == "collecting" and "Which doctor" in text_of(said)
+    assert env.session.booking.stage == "collecting" and "what would you like to change" in text_of(said).lower()
 
 
 @pytest.mark.asyncio

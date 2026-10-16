@@ -94,7 +94,7 @@ def env(m, clinic, monkeypatch, tmp_path):
             state["asr_paths"].append(
                 (wav, np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0)
             )
-        return state["lang"], ASRResult(state["text"])
+        return state["lang"], ASRResult(state["text"]), True  # final verification 2026-10-16: _route_and_transcribe returns (lang, asr, decisive)
 
     async def resolve(session, text, lang):
         state["resolved"] += 1

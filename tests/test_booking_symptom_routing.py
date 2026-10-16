@@ -86,7 +86,9 @@ async def test_a_direct_doctor_name_never_triggers_symptom_routing_at_all(env):
     """The existing shortcut -- caller names a doctor directly -- must be completely unaffected."""
     said = await env.say("mujhe Dr Sen se appointment chahiye", "book_appointment", {"doctor_name": "Sen"})
     assert env.tools.routed_symptoms == []  # route_department was never even called
-    assert ASK_DAY_TIME in text_of(said)
+    # final verification 2026-10-16: b356fbe speaks the named doctor's real sitting time and then asks for the day (main_pcm.py, "Real call
+    # 2026-10-12"), instead of the old combined "which day and what time" question. The doctor-name shortcut itself is unchanged.
+    assert "usually sits on" in text_of(said) and "Which day would you like the appointment for?" in text_of(said)
 
 
 @pytest.mark.asyncio

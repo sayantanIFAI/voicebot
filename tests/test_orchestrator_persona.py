@@ -108,7 +108,7 @@ def env(m, monkeypatch, tmp_path):
     }
 
     async def route(session, wav):
-        return state["lang"], ASRResult(state["text"])
+        return state["lang"], ASRResult(state["text"]), True  # sourav 2026-10-14: _route_and_transcribe now returns (lang, asr, decisive)
 
     async def resolve(session, text, lang):
         return {

@@ -248,6 +248,11 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if reason == "doctor_not_available_that_day":
         return "দুঃখিত, ওই দিন ডাক্তার বসেন না। অন্য কোনো দিন বলবেন?"
     if reason == "invalid_slot":
+        # sourav, 2026-10-16: the caller is told the REAL chamber hours (from the clinic's own valid_slots), not just "within chamber hours"
+        # -- a real caller kept guessing times without ever hearing when the doctor sits.
+        span = _chamber_span(result)
+        if span:
+            return f"দুঃখিত, ডাক্তার {span[0]} থেকে {span[1]} পর্যন্ত বসেন। এর মধ্যে একটা সময় বলবেন?"
         return "দুঃখিত, ওই সময়টা ঠিক নেই। চেম্বারের সময়ের মধ্যে একটা সময় বলবেন?"
     if reason == "date_in_past":
         # KCD-363: never silently rolled forward -- stated plainly, and
@@ -256,6 +261,13 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if reason == "hold_expired":
         return "দুঃখিত, সময়টা ধরে রাখা যায়নি, একটু দেরি হয়ে গেছে। আবার চেষ্টা করি?"
     return "দুঃখিত, অ্যাপয়েন্টমেন্ট বুক করা গেল না। একটু পরে আবার চেষ্টা করুন, অথবা কাউন্টারে যোগাযোগ করুন।"
+
+
+def _chamber_span(result: dict):
+    """("10:00 AM", "12:00 PM") from the clinic's valid_slots in `result`, or None (imported late: booking_capture imports nothing from here)."""
+    from agent.booking_capture import hours_span
+
+    return hours_span((result or {}).get("valid_slots"))
 
 
 def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") -> str:

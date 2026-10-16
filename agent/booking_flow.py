@@ -68,6 +68,12 @@ class BookingState:
     # KCD-103: fields the agent has already asked for, so a question that did not land is not repeated as the same
     # long group (agent/slot_grouping.py asks a repeated field alone).
     asked_fields: set = field(default_factory=set)
+    # sourav, 2026-10-16 (agent/booking_capture.py): the booking's own memory for details that arrive in pieces or need a check.
+    # They live on the BookingState (one per call session), so digits or a half-heard name can never leak into another caller's booking.
+    phone_buffer: str = ""  # phone digits heard so far, kept across turns until a full 10-digit mobile number exists
+    pending_name: str | None = None  # a name read back to the caller and waiting for their yes/no
+    name_confirmed: str | None = None  # the name the caller has said "yes" to (not asked about again)
+    offered_options: list = field(default_factory=list)  # the other slots the clinic offered after a conflict ({"date","time_slot"})
 
     def touch(self) -> None:
         self.last_updated = time.monotonic()
@@ -218,6 +224,14 @@ _NO_WORDS = {
     "en": ("no", "nope", "wrong", "not correct"),
 }
 
+# sourav, 2026-10-14: a caller may answer the read-back in ANOTHER language than the call is locked to ("no" in a Hindi call, "nahi" in a
+# Bengali one, "হ্যাঁ" in English) -- the user's requirement is that a no / yes is understood in any language, and a "no" that went
+# unrecognised just repeated the read-back. These extras are the short, unambiguous yes/no words of the other languages, added to
+# the call's own list; the call's own words still win and the negation / hedge rules below are unchanged.
+_ANY_NO = ("no", "nope", "nahi", "nahin", "नहीं", "नही", "না", "নয়", "na", "nai")
+_ANY_YES = ("yes", "yeah", "yep", "ok", "okay", "haan", "han", "hya", "ha", "हाँ", "हां", "हा", "ओके", "হ্যাঁ", "হ্যা", "ওকে", "ji", "जी हाँ")
+_NOT_NO = {"hi": ("na", "nai", "ना"), "en": ("na", "nai", "না", "নয়"), "bn": ()}  # words that are ordinary filler / other meaning in that call
+
 _RE_TOKEN_SPLIT = re.compile(r"[\s,.!?।|]+")
 
 
@@ -305,6 +319,8 @@ def classify_yes_no(transcript: str, lang: str) -> str | None:
     tokens = _tokenize(t)
     yes_words = _YES_WORDS.get(lang, _YES_WORDS["en"])
     no_words = _NO_WORDS.get(lang, _NO_WORDS["en"])
+    no_words = tuple(dict.fromkeys((*no_words, *(w for w in _ANY_NO if w not in _NOT_NO.get(lang, ())))))
+    yes_words = tuple(dict.fromkeys((*yes_words, *_ANY_YES)))
     # "no" is checked first: "not correct" / "ঠিক না" contain "correct"/
     # "ঠিক", which are also yes-leaning words on their own.
     if any(_has_phrase(tokens, w) for w in no_words):
@@ -449,3 +465,18 @@ def correction_acknowledgement(changed: list[str], prior_slots: dict, new_slots:
     if lang == "en":
         return f"Got it, changed to {', '.join(parts)}."
     return f"ঠিক আছে, বদলে {', '.join(parts)} করে দিলাম।"
+
+
+# sourav, 2026-10-14: a BARE "no" to the read-back ("so, with Dr. Sen on ... shall I confirm this?") used to re-ask the very first
+# question ("which doctor?"), which sounds as if the whole booking was thrown away. The caller said "no" because ONE thing is wrong,
+# so ask which one; whatever they answer ("make it eleven", "the number is ...", "Dr. Ghosh instead") is applied by the usual
+# correction path and the whole booking is read back again. The details already captured stay.
+_WHAT_TO_CHANGE = {
+    "bn": "ঠিক আছে, কী বদলাতে চান -- ডাক্তার, তারিখ, সময়, রোগীর নাম, নাকি ফোন নম্বর?",
+    "hi": "ठीक है, क्या बदलना है -- डॉक्टर, तारीख, समय, मरीज़ का नाम, या फ़ोन नंबर?",
+    "en": "Sure -- what would you like to change: the doctor, the date, the time, the patient name or the phone number?",
+}
+
+
+def what_to_change_prompt(lang: str) -> str:
+    return _WHAT_TO_CHANGE.get(lang, _WHAT_TO_CHANGE["en"])

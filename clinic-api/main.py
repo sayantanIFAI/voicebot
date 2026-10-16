@@ -602,6 +602,17 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
     ]
     if said_in_full:
         return said_in_full
+    # sourav, 2026-10-14: an alias that IS what was said ("সেন" / "सेन" = Dr. Sen) outranks an alias that merely CONTAINS it
+    # ("সেনগুপ্ত" = Dr. Sengupta). Same rule as the Latin-script "whole token" check above; without it every Bengali/Hindi "Sen"
+    # question came back "which one -- Sen or Sengupta?" although the caller had named Dr. Sen exactly. A surname two doctors
+    # really share (রায়) still matches both here, so it still asks "which one?".
+    exact_alias = [
+        d
+        for d in doctors
+        if any(a.strip() and a.strip() in name_variants for a in (d.aliases_bn + "|" + (d.aliases_hi or "")).split("|"))
+    ]
+    if exact_alias:
+        return exact_alias
     out = []
     for d in doctors:
         aliases = [
@@ -1035,9 +1046,11 @@ def hold_booking(req: HoldRequest, db: Session = Depends(get_db)):
 
     result = bs.hold_slot(db, doctor.id, req.date, req.time_slot)
     if not result["success"]:
-        result["alternative_slots"] = [
-            a["time_slot"] for a in bs.nearest_alternatives(db, doctor.id, req.date, req.time_slot)
-        ]
+        nearest = bs.nearest_alternatives(db, doctor.id, req.date, req.time_slot)
+        result["alternative_slots"] = [a["time_slot"] for a in nearest]
+        # sourav, 2026-10-16: the same offers WITH their dates (one may be on another day), so "the first one" said by the caller
+        # maps to the exact slot the clinic offered. Additive: alternative_slots is unchanged for every existing reader.
+        result["alternative_options"] = [{"date": a["date"], "time_slot": a["time_slot"]} for a in nearest]
     else:
         result["doctor_id"] = doctor.id
         result["doctor_name"] = _doctor_ref(db, doctor)
