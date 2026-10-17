@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import glob
+import logging
 import os
 import threading
 
@@ -130,6 +131,12 @@ def _word_agreement(a: str, b: str) -> float:
     return len(wa & wb) / len(wa | wb)
 
 
+logger = logging.getLogger(__name__)
+
+RNNT_DROP_MIN_CTC_WORDS = 8  # CTC must have heard at least this many words for a comparison to mean anything
+RNNT_DROP_RATIO = 0.6  # RNNT keeping 60% or fewer of CTC's words = it dropped speech
+
+
 @dataclasses.dataclass
 class ASRResult:
     text: str
@@ -179,6 +186,15 @@ class TurnASR:
         with self._lock:
             ctc_text, rnnt_text = self._transcribe_clip(wav_path)
 
+        # Real call 2026-10-17: a long five-sentence question came back with only its last part. The two decoders read the same clip; the
+        # RNNT text is the one used (it is the more accurate), but a transducer can stop emitting words for a stretch of a long clip while
+        # CTC, which labels every frame independently, still has them. Both are logged on every turn so the cause can be read, and when RNNT
+        # has plainly dropped most of what CTC heard, CTC's longer reading is used -- complete with some spelling slips beats accurate but missing.
+        r_n, c_n = len(rnnt_text.split()), len(ctc_text.split())
+        logger.info("ASR decoders [%s]: rnnt %d words %r | ctc %d words %r", self.language_id, r_n, rnnt_text[:160], c_n, ctc_text[:160])
+        if ctc_text and c_n >= RNNT_DROP_MIN_CTC_WORDS and r_n <= RNNT_DROP_RATIO * c_n:
+            logger.warning("ASR [%s]: RNNT kept %d of CTC's %d words -- using CTC", self.language_id, r_n, c_n)
+            return ASRResult(text=ctc_text, decoder_used="ctc_rnnt_dropped", decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2))
         if rnnt_text:
             return ASRResult(
                 text=rnnt_text, decoder_used="rnnt", decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2)

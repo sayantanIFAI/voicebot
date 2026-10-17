@@ -69,6 +69,7 @@ import asyncio
 import contextlib
 import re
 import dataclasses
+import shutil
 import contextvars
 import datetime
 import io
@@ -2261,6 +2262,25 @@ def _log_timing(session: CallSession) -> None:
     )
 
 
+UTT_RING_DIR = os.environ.get("UTT_RING_DIR", "/tmp/utt_ring")
+UTT_RING_KEEP = int(os.environ.get("UTT_RING_KEEP", "8"))
+
+
+def _keep_recent_utterance(session: CallSession, wav_path: str) -> None:
+    """A debug aid: the last few utterances sent to recognition are copied to /tmp/utt_ring (container disk, newest UTT_RING_KEEP kept) so a
+    report like "I said five sentences and only the last was captured" can be answered from the audio itself. Never raises."""
+    if UTT_RING_KEEP <= 0:
+        return
+    try:
+        os.makedirs(UTT_RING_DIR, exist_ok=True)
+        shutil.copyfile(wav_path, os.path.join(UTT_RING_DIR, f"{int(time.time())}_{session.call_id}.wav"))
+        kept = sorted(f for f in os.listdir(UTT_RING_DIR) if f.endswith(".wav"))
+        for old in kept[:-UTT_RING_KEEP]:
+            os.remove(os.path.join(UTT_RING_DIR, old))
+    except OSError:
+        pass
+
+
 async def _with_spelled_tests(session: CallSession, lang: str, result, english_text: str):
     """A test code said letter by letter that the Bengali/Hindi recogniser wrote as a made-up word ("সি বি সি" -> "ক্বক"): the English
     recogniser (already run on this turn) keeps the letters apart. If it heard a catalogue code the Bengali/Hindi text does not name,
@@ -2456,7 +2476,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     temp_wavs.append(conditioned)
                     asr_wav = conditioned
             _mark(session, "prep")
+            _keep_recent_utterance(session, utterance_wav)
             lang, asr_result, lang_decisive = await _route_and_transcribe(session, asr_wav)
+            logger.info("[%s] heard (%s, %s, agreement %.2f): %r", session.call_id, lang, getattr(asr_result, "decoder_used", "?"),
+                        float(getattr(asr_result, "decoder_agreement", 0.0) or 0.0), getattr(asr_result, "text", ""))
             _mark(session, "asr")
             # KCD-075/KCD-076: measured inside its own budget slice, on
             # the SAME clip ASR already read, before the finally below
