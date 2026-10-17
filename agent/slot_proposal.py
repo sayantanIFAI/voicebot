@@ -79,9 +79,10 @@ _DAY = {
     },
 }
 _SLOT = {
-    "bn": "{time}-এ আপনার জন্য স্লট বুক করতে পারি। দয়া করে {early} মিনিট আগে চলে আসবেন।",
-    "hi": "{time} बजे आपके लिए स्लॉट बुक कर सकते हैं। कृपया {early} मिनट पहले आ जाइएगा।",
-    "en": "I can book a slot for you at {time}. Please come {early} minutes early.",
+    # a statement, not a question: the very next thing asked is the caller's name and number (owner 2026-10-17)
+    "bn": "{time}-এ আপনার জন্য স্লট রাখছি। দয়া করে {early} মিনিট আগে চলে আসবেন। অন্য সময় চাইলে বলুন।",
+    "hi": "{time} बजे आपके लिए स्लॉट रख रही हूँ। कृपया {early} मिनट पहले आ जाइएगा। कोई और समय चाहिए तो बताइए।",
+    "en": "I am holding the {time} slot for you. Please come {early} minutes early. If you would like another time, just say so.",
 }
 
 
@@ -90,6 +91,17 @@ _NONE_LEFT = {
     "hi": "माफ़ कीजिए, इस दिन के लिए कोई स्लॉट नहीं बचा है।",
     "en": "Sorry, there is no slot left for that day.",
 }
+
+
+_NOT_SITTING = {
+    "bn": "ওই দিন ডাক্তার বসেন না।",
+    "hi": "उस दिन डॉक्टर नहीं बैठते।",
+    "en": "The doctor does not sit on that day.",
+}
+
+
+def not_sitting(lang: str) -> str:
+    return _NOT_SITTING.get(lang, _NOT_SITTING["en"])
 
 
 def none_left(lang: str) -> str:

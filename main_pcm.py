@@ -2132,15 +2132,25 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     """Choose the time for the caller from the doctor's free slots and say it (agent/slot_proposal.py). True when a time was set and spoken.
     A time the caller already gave stays if it is a real slot of that day; one that is not (\"12:00\" for \"between ten and twelve\", the closing time) is
     replaced. Any failure leaves the booking exactly as it was (the old question then applies)."""
-    st.slots["_auto_slot_tried"] = "1"
     try:
         info = await _tools.free_slots(st.slots["doctor_name"], st.slots["date"])
     except Exception as e:  # noqa: BLE001 - the time proposal is an aid; any failure leaves the booking exactly as it was
         logger.warning("[%s] free_slots failed (%s)", session.call_id, e)
         return False
-    if not info.get("found") or not info.get("sits") or not info.get("valid_slots"):
+    if not info.get("found"):
         return False
     given = st.slots.get("time_slot")
+    if not info.get("sits") or not info.get("valid_slots"):
+        # Real call 2026-10-17: the date had come out as TODAY, a day this doctor does not sit, so no time was proposed and the caller was asked for one four
+        # times. The doctor's next sitting day is offered instead, with its first free slot -- the caller is never asked for a time.
+        nxt = info.get("next") or {}
+        if not (nxt.get("date") and nxt.get("time_slot")):
+            return False
+        key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
+        doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
+        st.slots["date"], st.slots["time_slot"] = nxt["date"], nxt["time_slot"]
+        await _speak(session, f"{slot_proposal.not_sitting(lang)} {slot_proposal.proposal(doctor, nxt['date'], nxt['time_slot'], lang)}", lang)
+        return True
     if given and given in (info.get("free_slots") or []):
         return False  # the caller named a time that is free: the normal hold secures it
     slot = slot_proposal.pick(info.get("free_slots") or [], st.slots["date"])
@@ -2160,6 +2170,41 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         return True
     await _speak(session, slot_proposal.proposal(doctor, st.slots["date"], slot, lang), lang)
     return True
+
+
+_THESE = ("এইগুলোই", "এগুলোই", "এইগুলো", "এগুলো", "ওইগুলো", "ওগুলো", "এই টেস্ট", "এই টেস্টগুলো", "এইটাই", "এটাই", "सब यही", "यही", "ये ही", "यही सब", "ये सब", "वही सब",
+          "these", "those", "these ones", "that's right", "thats right", "exactly", "all of them")
+
+
+async def _resume_after_unclear(session: CallSession, text: str, lang: str) -> bool:
+    """The turn made no sense on its own, but a question was just asked / tests were just named. Use the call's context:
+    (1) "এইগুলোই" / "these ones" right after a total of named tests = yes, give that total;
+    (2) any other unclear reply while a yes/no question is open = ask the SAME question again (kept for two misses)."""
+    lapsed = getattr(session, "lapsed_pending", None)
+    multi = getattr(session, "last_multi", None)
+    t = text or ""
+    low = t.lower()
+    if multi and session.turn_count - multi[1] <= 4 and any(w in low for w in _THESE):
+        try:
+            names = multi[0]
+            results = [(n, await _tools.get_test_rate(n)) for n in names]
+        except ToolCallError:
+            return False
+        session.last_multi = None
+        session.lapsed_pending = None
+        _priced_names.set([n for n, r in results if r.get("found")])
+        await _speak(session, multi_test_rate_reply(results, lang), lang)
+        return True
+    if lapsed and session.turn_count - lapsed[1] <= 2:
+        pending, _turn = lapsed
+        asked = getattr(session, "pending_question", None)
+        if asked and session.turn_count - asked[1] <= 4 and getattr(session, "reasked_pending", 0) < 2:
+            session.reasked_pending = getattr(session, "reasked_pending", 0) + 1
+            session.pending_entity = pending  # still waiting for the yes
+            session.lapsed_pending = (pending, session.turn_count)
+            await _speak(session, asked[0], lang)
+            return True
+    return False
 
 
 async def _answer_body_imaging(session: CallSession, text: str, lang: str) -> bool:
@@ -2366,6 +2411,9 @@ async def _finish_enquiry_turn(
         session.pending_entity = entity_text.PendingEntity(
             suggestion["intent"], suggestion["slot"], suggestion["name"], replay
         )
+        session.pending_question = (base_reply, session.turn_count)  # what was just asked, so a garbled reply can be met with the SAME question
+        if isinstance(suggestion["name"], list):
+            session.last_multi = (list(suggestion["name"]), session.turn_count)  # the tests of a total, for "these ones" / "এইগুলোই"
     base_reply = _with_resume(session, base_reply, lang)  # KCD-104: back to the booking, if one is open
     # An answer to the caller's own question starts with the answer (no "thank you for telling me"); KCD-512: a
     # senior's warm closing after.
@@ -3009,12 +3057,16 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     pending, session.pending_entity = session.pending_entity, None
     if pending is not None:
         answer = classify_yes_no(text, lang)
+        if answer in ("yes", "no"):
+            session.reasked_pending = 0
         if answer == "yes":
             data, confirmed_entity = pending.data, True
         elif answer == "no":
             await _speak(session, entity_text.reask(lang), lang)
             return
-        # anything else: the question lapses and this turn is handled as a fresh one
+        # Neither yes nor no: this turn is handled as a fresh one, but the question is REMEMBERED. If the turn turns out to be nothing (a garbled
+        # "eh eh you look"), the same question is asked again instead of "sorry, I did not understand" -- real call 2026-10-17.
+        session.lapsed_pending = (pending, session.turn_count)
 
     if not confirmed_entity:
         # OWNER'S INSTRUCTION, 2026-10-12: the answer to "is it blood, urine, or imaging?" (asked below, in the
@@ -3234,6 +3286,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # the caller has plainly moved on from).
         if session.booking is not None and session.booking.stage == "collecting" and not session.booking.is_stale():
             intent = session.booking.action
+        elif await _resume_after_unclear(session, text, lang):
+            return
         else:
             await _speak(session, phrase("unclear", lang), lang)
             return
@@ -3437,6 +3491,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 if avail is not None:
                     if avail.get("found"):
                         st.asked_fields.add("date")
+                        if avail.get("date"):  # "that day" in the caller's next sentence points at THIS date (real call 2026-10-17)
+                            session.last_doctor_enquiry = {"doctor_name": st.slots["doctor_name"], "date": avail["date"], "window": avail.get("chamber_hours"), "turn": session.turn_count}
                         await _speak(session, booking_doctor_sitting_hint(avail, lang), lang)
                         return
                     not_found_reply = doctor_availability_reply(st.slots, avail, lang)
@@ -3449,7 +3505,6 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 st.slots.get("doctor_name")
                 and st.slots.get("date")
                 and st.hold_token is None
-                and not st.slots.get("_auto_slot_tried")
                 and await _propose_slot(session, st, lang)
             ):
                 pass  # time_slot is now set and the proposal has been spoken; the hold below secures it

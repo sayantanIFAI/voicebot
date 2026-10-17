@@ -39,6 +39,7 @@ def test_the_day_is_said_the_way_people_say_it():
 
 def test_the_proposal_names_the_time_and_asks_to_come_early():
     p = sp.proposal("সেন", "2026-10-17", "10:45", "bn", _at(10, 12))
-    assert "আজই বসবেন" in p and "10:45-এ আপনার জন্য স্লট বুক করতে পারি" in p and "15 মিনিট আগে চলে আসবেন" in p
+    # SPEC CHANGE 2026-10-17: a statement ("I am holding the slot"), not a question -- the name and number are asked right after
+    assert "আজই বসবেন" in p and "10:45-এ আপনার জন্য স্লট রাখছি" in p and "15 মিনিট আগে চলে আসবেন" in p
     assert "10:45" in sp.proposal("Sen", "2026-10-17", "10:45", "en", _at(10, 12))
     assert "10:45" in sp.proposal("सेन", "2026-10-17", "10:45", "hi", _at(10, 12))

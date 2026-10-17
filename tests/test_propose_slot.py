@@ -61,6 +61,14 @@ def test_nothing_left_today_offers_the_next_day(monkeypatch):
     assert "আর কোনো স্লট নেই" in spoken[0] and "আগামীকাল" in spoken[0]
 
 
-def test_a_doctor_who_does_not_sit_is_left_to_the_old_path(monkeypatch):
-    done, st, spoken = _run(dict(INFO, sits=False), {"doctor_name": "Sen", "date": "2026-10-19"}, monkeypatch=monkeypatch)
+def test_a_day_the_doctor_does_not_sit_goes_to_his_next_sitting_day_never_to_a_time_question(monkeypatch):
+    # SPEC CHANGE 2026-10-17: the caller is never asked for a time -- a non-sitting day is moved to the next sitting day, said aloud
+    info = dict(INFO, sits=False, valid_slots=[], free_slots=[], next={"date": "2026-10-19", "time_slot": "10:00", "alternatives": []})
+    done, st, spoken = _run(info, {"doctor_name": "Sen", "date": "2026-10-17"}, now=datetime.datetime(2026, 10, 17, 9, 0), monkeypatch=monkeypatch)
+    assert done and st.slots["date"] == "2026-10-19" and st.slots["time_slot"] == "10:00"
+    assert "বসেন না" in spoken[0] and "পরশু" in spoken[0] and "10:00" in spoken[0]
+
+
+def test_a_doctor_with_no_next_sitting_day_is_left_to_the_old_path(monkeypatch):
+    done, st, spoken = _run(dict(INFO, sits=False, valid_slots=[], free_slots=[], next=None), {"doctor_name": "Sen", "date": "2026-10-19"}, monkeypatch=monkeypatch)
     assert not done and "time_slot" not in st.slots and spoken == []
