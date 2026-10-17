@@ -1837,6 +1837,13 @@ def _asks_when_sits(text: str) -> bool:
     return any(w in text.lower() for w in _WHEN_SITS)
 
 
+_NO_BOOKING_FOR_NUMBER = {
+    "bn": "{n} নম্বরে কোনো বুকিং পেলাম না। নম্বরটা আরেকবার বলবেন, বা কনফার্মেশন নম্বরটা?",
+    "hi": "{n} नंबर पर कोई बुकिंग नहीं मिली। नंबर दोबारा बताइए, या कन्फ़र्मेशन नंबर?",
+    "en": "I could not find a booking for {n}. Could you say the number again, or the confirmation number?",
+}
+
+
 def _readback_pending(session: CallSession) -> bool:
     b = session.booking
     return b is not None and b.action == "book_appointment" and bool(b.pending_name or b.slots.get("_phone_pending"))
@@ -3244,6 +3251,21 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if number:
             logger.info("[%s] %s read as the number for the open %s", session.call_id, intent, session.booking.action)
             intent, slots = session.booking.action, {"phone": number}
+    elif (
+        intent in ("cancel_appointment", "reschedule_appointment")
+        and session.booking is not None
+        and session.booking.action == intent
+        and session.booking.stage == "collecting"
+        and not session.booking.is_stale()
+        and not confirmed_entity
+        and not (slots or {}).get("confirmation_id")
+    ):
+        # Real call 2026-10-17: the model labelled the intent right but wrote the phone as 9976543210 for the spoken 9876543210 ("নাইট" -> 9). The digits the code
+        # reads from the caller's own words are the number; the model's copy of them is not trusted.
+        number = booking_capture.normalise_phone(booking_capture.read_digits(text)[0])
+        if number and number != (slots or {}).get("phone"):
+            logger.info("[%s] phone slot %s replaced by the digits heard: %s", session.call_id, (slots or {}).get("phone"), number)
+            slots = {**(slots or {}), "phone": number}
     if (
         intent in ("book_test", "lookup_booking")
         and session.booking is not None
@@ -3734,6 +3756,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     return
                 if bookings:
                     st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
+                else:
+                    st.slots.pop("phone", None)  # a number with no booking is not kept; the next one is read fresh
+                    await _speak(session, _NO_BOOKING_FOR_NUMBER.get(lang, _NO_BOOKING_FOR_NUMBER["en"]).format(n=" ".join(slots["phone"])), lang)
+                    return
             missing = missing_required(st)
             if missing:
                 await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
@@ -3760,6 +3786,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     return
                 if bookings:
                     st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
+                else:
+                    st.slots.pop("phone", None)  # a number with no booking is not kept; the next one is read fresh
+                    await _speak(session, _NO_BOOKING_FOR_NUMBER.get(lang, _NO_BOOKING_FOR_NUMBER["en"]).format(n=" ".join(slots["phone"])), lang)
+                    return
             missing = missing_required(st)
             if missing:
                 await _speak(session, missing_slot_prompt(intent, missing[0], lang), lang)
