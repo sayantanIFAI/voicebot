@@ -466,3 +466,14 @@ def test_a_doctor_title_is_always_said_as_doctor():
     assert _sn.expand_doctor_title("Dr. Sen", "en") == "Doctor Sen"
     assert _sn.expand_doctor_title("डॉ. सेन", "hi") == "डॉक्टर सेन"
     assert _sn.expand_doctor_title("drive", "en") == "drive"
+
+
+def test_decoder_agreement_ignores_how_spelled_letters_are_spaced():
+    import difflib
+    src = open(__import__("pathlib").Path(__file__).resolve().parents[1] / "agent" / "asr.py", encoding="utf-8").read()
+    ns = {"difflib": difflib, "SPACING_AGREEMENT_MIN": 0.8}
+    exec(src[src.index("def _word_agreement"): src.index("logger = logging")], ns)
+    f = ns["_word_agreement"]
+    assert f("सीबीसी ई सी जी टी एस एच", "सी बी स  स जी टीएसएच") >= 0.8
+    assert f("আমি যাব", "আমি যাব") == 1.0
+    assert f("ক্ব ইক", "কগ ত") < 0.5  # two different mis-hearings still disagree

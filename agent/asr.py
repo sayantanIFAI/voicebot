@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import difflib
 import glob
 import logging
 import os
@@ -131,11 +132,17 @@ def _word_agreement(a: str, b: str) -> float:
         return 1.0
     if not wa or not wb:
         return 0.0
-    return len(wa & wb) / len(wa | wb)
+    words = len(wa & wb) / len(wa | wb)
+    # Real call 2026-10-17: a caller SPELLING letters ("सीबीसी ई सी जी टी एस एच") got agreement 0.20 because one decoder wrote the letters apart and the other
+    # joined them ("सी बी स स जी टीएसएच") -- the same sounds, no shared WORD -- and a correct reading was thrown away as "jumbled". When the two
+    # texts are near-identical once the spaces are ignored, that similarity is the agreement.
+    ratio = difflib.SequenceMatcher(None, "".join(a.split()), "".join(b.split())).ratio()
+    return max(words, ratio) if ratio >= SPACING_AGREEMENT_MIN else words
 
 
 logger = logging.getLogger(__name__)
 
+SPACING_AGREEMENT_MIN = 0.8  # character similarity (spaces ignored) from which it counts as agreement
 RNNT_DROP_MIN_CTC_WORDS = 8  # CTC must have heard at least this many words for a comparison to mean anything
 RNNT_DROP_RATIO = 0.6  # RNNT keeping 60% or fewer of CTC's words = it dropped speech
 

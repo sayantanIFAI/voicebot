@@ -2436,6 +2436,11 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             ", ".join(f"{lg}:{r.decoder_agreement:.2f}" for lg, r in outcomes),
         )
         session.lang_router.note_response_language(lang)
+        # the spelled-code rescue (English recogniser keeps "C B C" apart) on THIS path too: it was missing here, and this is the path a
+        # sentence with spelled letters in it takes, because language ID is unsure of it (real call 2026-10-17: 5 turns, nothing captured)
+        english = next((r for lg, r in outcomes if lg == "en"), None)
+        if lang in ("bn", "hi") and english is not None:
+            result = await _with_spelled_tests(session, lang, result, english.text)
         # Real call 2026-10-17: language ID wobbles on accented English (Hindi 0.97 / English 0.03 is typical), so this branch ran,
         # picked English correctly, and returned "not decisive" -- which left the call's reply language unset, so an English question
         # got a Bengali answer. A CLEAN English sentence from the English recogniser (the same bar as the overrule below) is decisive.
