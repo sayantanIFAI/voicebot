@@ -215,7 +215,7 @@ def nearest_alternatives(db: Session, doctor_id: int, date: str, time_slot: str)
 NOT_PROVIDED_PHONE = "not_provided"
 
 
-def find_or_create_patient(db: Session, name: str, phone: str, age: int | None = None) -> Patient:
+def find_or_create_patient(db: Session, name: str, phone: str, age: int | None = None, address: str = "", sex: str = "") -> Patient:
     """CodeRabbit-flagged, real bug: the "not_provided" sentinel (a
     caller who declined to give any phone number) used to be looked up
     like a real phone value -- two DIFFERENT patients who share a name
@@ -224,7 +224,7 @@ def find_or_create_patient(db: Session, name: str, phone: str, age: int | None =
     authorisation is attached to it. A declined phone always creates a
     fresh Patient instead of searching for one."""
     if phone == NOT_PROVIDED_PHONE:
-        p = Patient(name=name, phone=phone, age=age, created_at=_now())
+        p = Patient(name=name, phone=phone, age=age, address=address or "", sex=sex or "", created_at=_now())
         db.add(p)
         db.flush()
         return p
@@ -232,8 +232,12 @@ def find_or_create_patient(db: Session, name: str, phone: str, age: int | None =
     if p:
         if age and not p.age:
             p.age = age
+        if address and not p.address:
+            p.address = address
+        if sex and not p.sex:
+            p.sex = sex
         return p
-    p = Patient(name=name, phone=phone, age=age, created_at=_now())
+    p = Patient(name=name, phone=phone, age=age, address=address or "", sex=sex or "", created_at=_now())
     db.add(p)
     db.flush()
     return p
@@ -347,6 +351,8 @@ def confirm_booking(
     caller_phone: str,
     patient_age: int | None = None,
     relationship_label: str = "self",
+    patient_address: str = "",
+    patient_sex: str = "",
 ) -> dict:
     lock = db.get(SlotLock, (doctor_id, date, time_slot))
     # IDEMPOTENT on the hold token: a retried request (a dropped connection, a repeated "yes") for a
@@ -374,7 +380,7 @@ def confirm_booking(
         return {"success": False, "reason": "hold_expired"}
 
     doctor = db.get(Doctor, doctor_id)
-    patient = find_or_create_patient(db, patient_name, phone, patient_age)
+    patient = find_or_create_patient(db, patient_name, phone, patient_age, patient_address, patient_sex)
     verified_by = "self" if caller_phone == phone else "relationship_stated"
     record_proxy(db, patient, caller_phone, relationship_label, verified_by)
 
@@ -792,9 +798,15 @@ def send_payment_link(db: Session, confirmation_id: str) -> dict:
     if appt.phone == NOT_PROVIDED_PHONE:
         return {"success": False, "reason": "no_phone_on_file"}
     doctor = db.get(Doctor, appt.doctor_id)
-    fee = (doctor.consultation_fee_inr if doctor else None) or 0
-    link = payments.create_payment_link(confirmation_id, fee)["url"]
-    message = f"Booking {confirmation_id}: {doctor.name if doctor else 'doctor'}, {appt.date} at {appt.time_slot}. Pay Rs {fee} to confirm: {link}"
+    # Owner, 2026-10-18: Rs 40 holds the booking, payable within 15 minutes, after which the link expires by itself. The doctor's visit fee is paid at the clinic.
+    fee = payments.BOOKING_FEE_INR
+    minutes = payments.LINK_EXPIRY_MINUTES
+    link = payments.create_payment_link(confirmation_id, fee, minutes)["url"]
+    message = (
+        f"{(doctor.full_name or doctor.name) if doctor else 'Doctor'} on {appt.date}. Pay Rs {fee} within {minutes} minutes to hold your booking, "
+        f"otherwise this link expires automatically: {link} "
+        f"-- আপনার বুকিং ধরে রাখতে {minutes} মিনিটের মধ্যে {fee} টাকা পেমেন্ট করুন, নাহলে লিংকটি নিজে থেকেই বাতিল হয়ে যাবে। Booking ID follows once paid."
+    )
     # One message on each channel, each its own row in the outbox and each handed to the provider hook (agent says: SMS and WhatsApp).
     result = queue_sms(db, appt.phone, "payment_link", message, confirmation_id)
     wa = queue_sms(db, appt.phone, "payment_link_whatsapp", message, confirmation_id)
@@ -805,7 +817,7 @@ def send_payment_link(db: Session, confirmation_id: str) -> dict:
             if row is not None and delivery["status"] in ("sent", "failed"):
                 row.status = delivery["status"]  # stays "queued" while the placeholder is in place
                 db.commit()
-    out = {"success": result["queued"], "amount_inr": fee, "payment_link": link, "confirmation_id": confirmation_id, "channels": ["sms", "whatsapp"]}
+    out = {"success": result["queued"], "amount_inr": fee, "expires_in_minutes": minutes, "payment_link": link, "confirmation_id": confirmation_id, "channels": ["sms", "whatsapp"]}
     if not result["queued"]:
         out["reason"] = result.get("reason", "unknown")
     return out
@@ -940,6 +952,18 @@ _DEPT_ALIASES: dict[str, str] = {
     "dental": "Dentistry", "dentist": "Dentistry", "teeth": "Dentistry", "tooth": "Dentistry", "দাঁতের": "Dentistry", "दांत": "Dentistry",
     "gen med": "General Medicine", "general medicine": "General Medicine", "physician": "General Medicine", "medicine": "General Medicine",
     "ent": "ENT", "ear nose throat": "ENT", "নাক কান গলা": "ENT", "नाक कान गला": "ENT",
+    # Owner, 2026-10-18: specialist titles callers actually say, and the departments added for routing
+    "gynecologist": "Gynaecology & Obstetrics", "gynaecologist": "Gynaecology & Obstetrics", "gynaeco": "Gynaecology & Obstetrics", "obstetrician": "Gynaecology & Obstetrics",
+    "গাইনোকোলজিস্ট": "Gynaecology & Obstetrics", "গাইনো": "Gynaecology & Obstetrics", "স্ত্রীরোগ": "Gynaecology & Obstetrics", "স্ত্রী রোগ": "Gynaecology & Obstetrics", "গায়নোকোলজিস্ট": "Gynaecology & Obstetrics",
+    "गायनेकोलॉजिस्ट": "Gynaecology & Obstetrics", "गायनो": "Gynaecology & Obstetrics",
+    "cardiologist": "Cardiology", "কার্ডিওলজিস্ট": "Cardiology", "हृदय रोग": "Cardiology",
+    "general surgeon": "General Surgery", "general surgery": "General Surgery", "surgeon": "General Surgery", "surgery": "General Surgery",
+    "জেনারেল সার্জন": "General Surgery", "জেনারেল সার্জারি": "General Surgery", "সার্জন": "General Surgery", "সার্জারি": "General Surgery", "সার্জেন": "General Surgery",
+    "जनरल सर्जन": "General Surgery", "सर्जन": "General Surgery", "सर्जरी": "General Surgery",
+    "neurologist": "Neurology", "neurology": "Neurology", "নিউরোলজিস্ট": "Neurology", "নিউরোলজি": "Neurology", "न्यूरोलॉजिस्ट": "Neurology",
+    "neurosurgeon": "Neurosurgery", "neurosurgery": "Neurosurgery", "neuro surgeon": "Neurosurgery", "নিউরোসার্জন": "Neurosurgery", "নিউরো সার্জন": "Neurosurgery", "न्यूरोसर्जन": "Neurosurgery",
+    "urologist": "Urology", "urology": "Urology", "ইউরোলজিস্ট": "Urology", "ইউরোলজি": "Urology", "यूरोलॉजिस्ट": "Urology",
+    "orthopedician": "Orthopaedics", "paediatrician": "Paediatrics", "pediatrician": "Paediatrics", "dermatologist": "Dermatology", "endocrinologist": "Diabetology & Endocrinology", "diabetologist": "Diabetology & Endocrinology",
 }
 
 
@@ -997,7 +1021,49 @@ def route_department(db: Session, query_text: str, lang: str) -> dict:
     }
 
 
-def department_doctors(db: Session, department_name: str, lang: str = "bn", limit: int = MAX_SUGGESTED_DOCTORS) -> dict:
+def _minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def sitting_doctors(
+    db: Session, department_id: int, lang: str = "bn", sex: str | None = None, on_date: str | None = None, at_time: str | None = None
+) -> list[dict]:
+    """The doctors of a department who match what the caller asked: a lady / gentleman doctor (`sex` "F" | "M"), sitting on `on_date`
+    (not on leave that day), and -- when `at_time` ("HH:MM") is given -- whose chamber hours contain that time. Owner, 2026-10-18:
+    "whoever is in X department and sits tomorrow at 11". Each row says when the doctor sits that day."""
+    from models import DoctorLeave
+
+    wd = datetime.date.fromisoformat(on_date).weekday() if on_date else None
+    out = []
+    for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).all():
+        if sex and d.sex != sex:
+            continue
+        start = end = None
+        if wd is not None:
+            sched = db.query(DoctorSchedule).filter_by(doctor_id=d.id, weekday=wd).first()
+            if not sched:
+                continue
+            if any(lv.start_date <= on_date <= lv.end_date for lv in db.query(DoctorLeave).filter_by(doctor_id=d.id).all()):
+                continue
+            start, end = sched.start_time, sched.end_time
+            if at_time and not (_minutes(start) <= _minutes(at_time) < _minutes(end)):
+                continue
+        out.append(
+            {"name": _doctor_spoken_name(d, lang), "full_name": d.full_name or d.name, "sex": d.sex, "start": start, "end": end, "visit_fee_inr": d.consultation_fee_inr}
+        )
+    return out
+
+
+def department_doctors(
+    db: Session,
+    department_name: str,
+    lang: str = "bn",
+    limit: int = MAX_SUGGESTED_DOCTORS,
+    sex: str | None = None,
+    on_date: str | None = None,
+    at_time: str | None = None,
+) -> dict:
     """KCD-dentistry: the real doctors in a NAMED department. Two callers, both real:
     (1) no usable symptom at all (route_department had nothing to match) and no doctor name either -- a
         general checkup first, same real-doctor-not-a-guess discipline as route_department.
@@ -1015,12 +1081,48 @@ def department_doctors(db: Session, department_name: str, lang: str = "bn", limi
     )
     if not dept:
         return {"matched": False}
-    return {
+    out = {
         "matched": True,
         "department_name": dept.name,
         "doctors": _department_doctor_names(db, dept.id, lang, limit),
         "doctors_today": _department_doctors_today(db, dept.id, lang),
     }
+    if sex or on_date or at_time:
+        # a filtered search lists EVERY match (not the first three), and says plainly when the filter left nobody
+        matches = sitting_doctors(db, dept.id, lang, sex, on_date, at_time)
+        out.update({"filtered": True, "sex": sex, "on_date": on_date, "at_time": at_time, "sitting": matches, "doctors": [m["name"] for m in matches]})
+        if sex and not on_date:
+            # "doctors_today" must obey the same filter: a lady doctor asked for is never answered with today's gentlemen
+            today_iso = datetime.date.today().isoformat()
+            out["doctors_today"] = [m["name"] for m in sitting_doctors(db, dept.id, lang, sex, today_iso)]
+    return out
+
+
+def clinic_cancellations(db: Session, phone: str | None = None, confirmation_id: str | None = None) -> list[dict]:
+    """Bookings the CLINIC cancelled (a doctor on leave) for this phone / confirmation id, newest first -- so a caller who asks about
+    one is told what happened, with an apology, instead of "no booking found"."""
+    q = db.query(Appointment).filter(Appointment.status == "cancelled", Appointment.cancel_reason == "doctor_leave")
+    if confirmation_id:
+        q = q.filter(Appointment.confirmation_id == confirmation_id)
+    elif phone:
+        q = q.filter((Appointment.phone == phone) | (Appointment.caller_phone == phone))
+    else:
+        return []
+    out = []
+    for a in q.order_by(Appointment.cancelled_at.desc()).limit(3).all():
+        doctor = db.get(Doctor, a.doctor_id)
+        out.append(
+            {
+                "confirmation_id": a.confirmation_id,
+                "date": a.date,
+                "time_slot": a.time_slot,
+                "reason": a.cancel_reason,
+                "doctor_name": (doctor.full_name or doctor.name) if doctor else "",
+                "doctor_name_bn": (doctor.full_name_bn if doctor else ""),
+                "doctor_name_hi": (doctor.full_name_hi if doctor else ""),
+            }
+        )
+    return out
 
 
 # ============================================================= drafts

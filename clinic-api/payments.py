@@ -20,12 +20,17 @@ logger = logging.getLogger("clinic.payments")
 PLACEHOLDER_BASE = "https://pay.kolkata-care-voice-agent.invalid"
 
 
-def create_payment_link(confirmation_id: str, amount_inr: int) -> dict:
+# Owner, 2026-10-18: the booking is held by a Rs 40 payment made within 15 minutes; the link then expires on its own.
+BOOKING_FEE_INR = int(os.environ.get("BOOKING_FEE_INR", "40"))
+LINK_EXPIRY_MINUTES = int(os.environ.get("PAYMENT_LINK_EXPIRY_MINUTES", "15"))
+
+
+def create_payment_link(confirmation_id: str, amount_inr: int, expires_in_minutes: int = LINK_EXPIRY_MINUTES) -> dict:
     url = os.environ.get("PAYMENT_LINK_URL", "")
     if not url:
         return {"url": f"{PLACEHOLDER_BASE}/{confirmation_id}", "provider": "placeholder"}
     try:
-        r = httpx.post(url, json={"reference": confirmation_id, "amount_inr": amount_inr}, timeout=8.0)
+        r = httpx.post(url, json={"reference": confirmation_id, "amount_inr": amount_inr, "expires_in_minutes": expires_in_minutes}, timeout=8.0)
         r.raise_for_status()
         return {"url": r.json()["url"], "provider": url}
     except (httpx.HTTPError, ValueError, KeyError) as e:

@@ -103,6 +103,7 @@ _SLOT_FIELDS = (
     "test_name",
     "relationship",
     "patient_age",
+    "patient_address",
     "symptom_description",
 )
 

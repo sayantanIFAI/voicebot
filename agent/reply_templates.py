@@ -224,7 +224,7 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         return _i18n.booking_reply(slots, result, lang)
     if result.get("success"):
         # The booking ID is given only after payment (owner, 2026-10-17); the payment-link sentence that follows says so.
-        return f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {result['time_slot']}।"
+        return f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {shown_time(slots, result['time_slot'])}।"
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -267,6 +267,14 @@ def _chamber_span(result: dict):
     return hours_span((result or {}).get("valid_slots"))
 
 
+def shown_time(slots: dict, held: str | None = None) -> str:
+    """The time a caller is TOLD (owner, 2026-10-18): the hour the doctor sits, unless the caller themselves asked for a time ("এগারোটার সময়"), in which
+    case that time. The held ten-minute slot is bookkeeping and is not spoken."""
+    if slots.get("_time_explicit"):
+        return slots.get("time_slot") or held or ""
+    return slots.get("_sits_start") or slots.get("time_slot") or held or ""
+
+
 def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") -> str:
     """Read back what is about to be written BEFORE it is written -- the
     step KCD-367/369 depend on: a caller who spots a mistake here corrects
@@ -286,7 +294,7 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") ->
         # Owner, 2026-10-17: the name and the number were each confirmed already, so the final read-back does not say the ten digits again (15 s of speech).
         return (
             f"তাহলে {slots.get('doctor_name')} ডাক্তারের কাছে {slots.get('date')} তারিখে, "
-            f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')} -- কনফার্ম করব?"
+            f"সময় {shown_time(slots)}-এ, রোগীর নাম {slots.get('patient_name')} -- কনফার্ম করব?"
         )
     if action == "book_test":
         # ", " not the ideographic "、" -- a stray full-width character

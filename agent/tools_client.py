@@ -178,6 +178,8 @@ class ClinicToolsClient:
         caller_phone: str,
         patient_age: int | None = None,
         relationship: str = "self",
+        patient_address: str = "",
+        patient_sex: str = "",
     ) -> dict:
         body = {
             "hold_token": hold_token,
@@ -189,6 +191,8 @@ class ClinicToolsClient:
             "caller_phone": caller_phone,
             "patient_age": patient_age,
             "relationship": relationship,
+            "patient_address": patient_address or "",
+            "patient_sex": patient_sex or "",
         }
         try:
             r = await self._client.post("/api/v1/bookings/confirm", json=body)
@@ -311,14 +315,50 @@ class ClinicToolsClient:
 
     # KCD-dentistry: the real doctors in a NAMED department -- used for the caller who gave no usable symptom
     # (route_department found nothing to match) and no doctor name either, routed to a general checkup instead.
-    async def department_doctors(self, department_name: str, lang: str = "bn") -> dict:
+    async def department_doctors(
+        self, department_name: str, lang: str = "bn", sex: str | None = None, on_date: str | None = None, at_time: str | None = None
+    ) -> dict:
         params = {"name": department_name, "lang": lang}
+        if sex:
+            params["sex"] = sex  # "F" | "M": a lady / gentleman doctor (owner, 2026-10-18)
+        if on_date:
+            params["on_date"] = on_date
+        if at_time:
+            params["at_time"] = at_time
         try:
             r = await self._client.get("/api/v1/departments/doctors", params=params)
             r.raise_for_status()
             return validated(RouteAnswer, r.json(), "department_doctors")
         except (httpx.HTTPError, ValueError) as e:
             raise ToolCallError(f"department_doctors({params!r}): {e}") from e
+
+    async def doctor_visit(self, name: str) -> dict:
+        """What a doctor's visit costs, from the doctors table."""
+        try:
+            r = await self._client.get("/api/v1/doctors/visit", params={"name": name})
+            r.raise_for_status()
+            return r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"doctor_visit({name!r}): {e}") from e
+
+    async def relationships(self) -> dict:
+        """The relationship words and the sex each implies (clinic-api relationship_rules)."""
+        try:
+            r = await self._client.get("/api/v1/relationships")
+            r.raise_for_status()
+            return r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"relationships(): {e}") from e
+
+    async def clinic_cancelled(self, phone: str | None = None, confirmation_id: str | None = None) -> dict:
+        """Bookings the clinic itself cancelled (a doctor on leave) for this phone / confirmation id."""
+        params = {k: v for k, v in (("phone", phone), ("confirmation_id", confirmation_id)) if v}
+        try:
+            r = await self._client.get("/api/v1/bookings/cancelled-by-clinic", params=params)
+            r.raise_for_status()
+            return r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"clinic_cancelled({params!r}): {e}") from e
 
     async def resend_confirmation(self, confirmation_id: str) -> dict:
         try:

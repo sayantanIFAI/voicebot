@@ -144,6 +144,30 @@ def day_line(doctor: str, date_iso: str, lang: str, now: datetime.datetime | Non
     return _DAY[lang][day_kind(date_iso, now)].format(doc=doctor, date=date_iso)
 
 
-def proposal(doctor: str, date_iso: str, slot: str, lang: str, now: datetime.datetime | None = None) -> str:
+# Owner, 2026-10-18: the caller is NOT given a ten-minute slot. They are told when the doctor SITS and to come then, with one to two hours in hand
+# (tokens are given in the order of payment, so nobody can be told an exact minute). The slot is still held internally.
+_SITS = {
+    "bn": "ডাক্তার {doc} {when} {time}-এ বসবেন। আপনি ওই সময়ে চলে আসুন, হাতে এক থেকে দুই ঘণ্টা সময় নিয়ে আসবেন। ঠিক আছে?",
+    "hi": "डॉक्टर {doc} {when} {time} बजे बैठेंगे। आप उसी समय आ जाइए, हाथ में एक से दो घंटे का समय लेकर आइए। ठीक है?",
+    "en": "Doctor {doc} sits {when} at {time}. Please come at that time, with one to two hours in hand. Is that all right?",
+}
+
+
+def proposal(doctor: str, date_iso: str, slot: str, lang: str, now: datetime.datetime | None = None, sits_at: str | None = None) -> str:
+    """What the caller hears: the day and the hour the doctor SITS (`sits_at`, the start of the chamber hours; the held `slot` when that is not known),
+    and to come then with one to two hours in hand."""
     lang = lang if lang in _DAY else "en"
-    return f"{day_line(doctor, date_iso, lang, now)} " + _SLOT[lang].format(time=slot, early=COME_EARLY_MINUTES)
+    when = when_phrase(date_iso, lang, now)
+    return _SITS[lang].format(doc=doctor, when=when, time=sits_at or slot)
+
+
+_CALL_AGAIN = {
+    "bn": "দুঃখিত, এই ডাক্তারের জন্য এখন কোনো ফাঁকা দিন বা সময় নেই। দয়া করে পরের তারিখের কথা জানতে আবার ফোন করবেন।",
+    "hi": "माफ़ कीजिए, इस डॉक्टर के लिए अभी कोई खाली दिन या समय नहीं है। कृपया अगली तारीख के बारे में पूछने के लिए दोबारा फ़ोन कीजिए।",
+    "en": "Sorry, there is no free day or time for this doctor right now. Please call again to ask about the next date.",
+}
+
+
+def call_again(lang: str) -> str:
+    """Owner, 2026-10-18: when no date and time is available for the doctor, the patient is asked to call again to ask about the next date."""
+    return _CALL_AGAIN.get(lang, _CALL_AGAIN["en"])

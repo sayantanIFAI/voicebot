@@ -117,6 +117,9 @@ _RE_WS = re.compile(r"\s+")
 _RE_PUNCT = re.compile(r"[।?!,.;:'\"()\-]+")
 
 
+_RE_BN_FINAL_T = re.compile(r"ত্(?=\s|$)")
+
+
 def _normalize(text: str) -> str:
     """NFC first: Bengali conjuncts and vowel signs have multiple valid
     encodings, and two visually identical strings compare unequal if one
@@ -126,6 +129,7 @@ def _normalize(text: str) -> str:
     writes a consonant with and without it for the same spoken word.
     """
     text = unicodedata.normalize("NFC", text).replace(chr(0x093C), "")
+    text = _RE_BN_FINAL_T.sub("ৎ", text)  # a word-final ত + hasanta is the letter ৎ ("বিশ্বজিত্" = "বিশ্বজিৎ"): one spelling for the matcher
     return _RE_WS.sub(" ", _RE_PUNCT.sub(" ", text)).strip().lower()
 
 

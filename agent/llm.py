@@ -109,6 +109,7 @@ SLOT RULES:
 - "contact_phone": a phone number the caller gives that is DIFFERENT from the number they are calling from, for the confirmation message -- only when they say so explicitly (e.g. "send it to a different number").
 - "relationship": only when the caller says who the patient is to them and it is not themselves, e.g. "mother", "son", "wife" -- copy the relationship word as said, in {language_name}. Leave null if they are booking for themselves.
 - "patient_age": only if an age is explicitly spoken, as a number.
+- "patient_address": only if the caller says where the patient lives (a locality, road or town) -- copy it as said, never invent one.
 - "time_slot" / "new_time_slot": only if explicitly spoken/known this turn, resolved to 24-hour "HH:MM" (e.g. "ten o'clock"/"দশটা"/"দশটার সময়"/"दस बजे" -> "10:00"; "6 PM"/"সন্ধ্যা ছটা"/"शाम छह बजे" -> "18:00"). The clinic is open 8:00-20:00, so a bare hour with no AM/PM said (e.g. "ten o'clock") resolves to the daytime hour (10:00), never the 22:00/night reading, unless the caller said "night"/"evening"/রাত/शाम/सन्ध्या for an hour from 1-7.
 - "confirmation_id": only if explicitly spoken/known this turn.
 - "spelled_letters": if the caller is spelling a name letter by letter (e.g. "R, A, V, I"), a list of the individual letters in order, lowercase. Otherwise null.
@@ -130,6 +131,7 @@ Output ONLY a single valid JSON object, no other text, in exactly this shape:
     "confirmation_id": string or null,
     "patient_name": string or null,
     "patient_age": number or null,
+    "patient_address": string or null,
     "phone": string or null,
     "contact_phone": string or null,
     "relationship": string or null,
@@ -153,7 +155,7 @@ Output ONLY a single valid JSON object, no other text, in exactly this shape:
 
 _FAST_OUTPUT_BLOCK = """Output ONLY a single valid JSON object, no other text. Include ONLY the fields that have a value: leave out every null slot, and leave out "secondary_intent", "secondary_slots" and "direct_reply_bn" unless they apply. Shape:
 {"intent": "<exactly one intent from the list above>", "slots": {"<slot name>": <value>, ...}}
-Slot names, and the type of each value: test_name, doctor_name, date, time_slot, new_date, new_time_slot, confirmation_id, patient_name, phone, contact_phone, relationship, symptom_description, faq_topic are strings; patient_age is a number; test_names and spelled_letters are arrays of strings.
+Slot names, and the type of each value: test_name, doctor_name, date, time_slot, new_date, new_time_slot, confirmation_id, patient_name, patient_address, phone, contact_phone, relationship, symptom_description, faq_topic are strings; patient_age is a number; test_names and spelled_letters are arrays of strings.
 For a second question add "secondary_intent" ("test_rate", "doctor_availability", "test_prep", "clinic_faq" or "department_query") and "secondary_slots" (any of test_name, doctor_name, date, faq_topic, symptom_description). "direct_reply_bn" (a string) is only for "smalltalk"; for every other intent the reply is composed later from real clinic data, not from you."""
 
 

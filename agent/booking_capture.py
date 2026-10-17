@@ -26,7 +26,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from agent import phonetic_match, spoken_codes, slot_grounding
+from agent import nato_letters, phonetic_match, spoken_codes, slot_grounding
 
 # ----------------------------------------------------------------------------------------------------------------- digits
 
@@ -637,10 +637,11 @@ def hours_span(valid_slots: object) -> tuple[str, str] | None:
 # ----------------------------------------------------------------------------------------------------------------- wording
 
 _PROMPTS = {
+    # Owner, 2026-10-18: a number said in groups ("two digits, five times", "four, three, three") is answered with a short "ok" in each gap, not with a count.
     "phone_partial": {
-        "en": "I have {n} digits so far. Please say the rest of the number.",
-        "hi": "अभी तक {n} अंक मिले हैं। बाकी नंबर बताइए।",
-        "bn": "এখন পর্যন্ত {n}টি সংখ্যা পেয়েছি। বাকি নম্বরটা বলুন।",
+        "en": "Okay, go on.",
+        "hi": "ठीक है, बोलिए।",
+        "bn": "ঠিক আছে, বলুন।",
     },
     "phone_invalid": {
         "en": "That does not look like a 10-digit mobile number. Please say it again, digit by digit.",
@@ -751,6 +752,7 @@ class TurnPlan:
     digits: bool = False  # phone digits (complete or not) were heard: the sentence belongs to the booking, never to a lookup
     after_speak: str | None = None  # asked after this turn's slots are merged, unless another question is due first
     compound: bool = False  # the number was said as a number ("four hundred ..."): ask for it digit by digit
+    age: int | None = None  # an age said in this sentence ("বয়স ৪৫", "45 years"), taken out BEFORE the digits are read as the phone number
 
 
 def _active(st) -> bool:
@@ -770,7 +772,46 @@ def _bare_no(text: str) -> str:
 _PHONE_CUES = frozenset({"number", "phone", "mobile", "contact", "नंबर", "नम्बर", "फोन", "फ़ोन", "मोबाइल", "নম্বর", "নাম্বার", "ফোন", "মোবাইল", "nombor", "nambar", "namber", "no."})  # fmt: skip
 
 
+# An age said with its word: "বয়স ৪৫", "আমার বয়স 45", "age 45", "45 years old", "৪৫ বছর", "उम्र 45", "45 साल". Only with the word -- a bare number is a digit of the phone.
+_DIGITS_ANY = str.maketrans("০১২৩৪৫৬৭৮৯०१२३४५६७८९", "01234567890123456789")
+_AGE_BEFORE = re.compile(r"(?:বয়স|বয়েস|age|aged|उम्र|उमर|आयु)\s*(?:হলো|হল|হয়েছে|है|is|of)?\s*(\d{1,3})(?!\d)", re.I)
+_AGE_AFTER = re.compile(r"(?<!\d)(\d{1,3})\s*(?:বছর|বছরের|years?\s*old|years?|yrs?|साल|वर्ष)", re.I)
+
+
+def split_age(text: str) -> tuple[int | None, str]:
+    """(age, the sentence without the age phrase). Numbers written as words ("পঁয়তাল্লিশ বছর") are left to the model's patient_age slot."""
+    t = (text or "").translate(_DIGITS_ANY)
+    for pat in (_AGE_BEFORE, _AGE_AFTER):
+        m = pat.search(t)
+        if m and 0 < int(m.group(1)) <= 120:
+            return int(m.group(1)), (t[: m.start()] + " " + t[m.end():]).strip()
+    return None, text
+
+
 def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
+    """The booking turn's deterministic reading (see _before_model), plus: an age said in the sentence is taken out first (so it is never read as a
+    phone digit) and kept; a name spelled \"S for September, A for Alpha\" (or letter by letter) is read back for a yes."""
+    text = nato_letters.collapse(text)
+    age, text = split_age(text) if _active(st) else (None, text)
+    plan = _before_model(st, text, lang, window=window, today=today)
+    if age:
+        plan.age = age
+        if plan.skip_model:
+            plan.slots = {**(plan.slots or {}), "patient_age": age}
+    if _active(st) and not plan.speak and not plan.skip_model and not st.pending_name and not st.slots.get("_phone_pending"):
+        from agent.booking_flow import missing_required
+
+        missing = missing_required(st)
+        asked_name = "patient_name" in missing and (missing[0] == "patient_name" or "patient_name" in st.asked_fields)
+        spelled = nato_letters.spelled_run(text) if asked_name else None
+        if spelled and not plan.digits:
+            name = spelled.title()
+            st.pending_name = name
+            plan.speak = prompt("name_confirm", lang, name=name)
+    return plan
+
+
+def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
     """Everything the caller's words settle by themselves, decided before the model is asked. `window` = the doctor's chamber
     hours on the booking date as [(start_min, end_min)] when known (to read a bare "ten" as the daytime hour)."""
     from agent.booking_flow import classify_yes_no, missing_required  # local import: booking_flow does not import this module
@@ -930,6 +971,8 @@ def _after_model(st, text: str, lang: str, slots: dict, plan: TurnPlan, window=N
         slots["time_slot"] = fix_model_time(slots["time_slot"], text, window)
     if plan.date:
         slots["date"] = plan.date
+    if plan.age:
+        slots["patient_age"] = plan.age  # the caller's own digits beat the model's reading of them
     if plan.compound:  # said as a number: whatever digits the model made of it are not the caller's number
         slots.pop("phone", None)
         slots.pop("contact_phone", None)

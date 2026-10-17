@@ -60,7 +60,9 @@ class Doctor(Base):
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False)
     # Added by booking_migrate.add_doctor_booking_columns() on an existing
     # DB -- see that module for why a real fee is needed for KCD-372.
-    consultation_fee_inr = Column(Integer, nullable=False, default=500)
+    consultation_fee_inr = Column(Integer, nullable=False, default=500)  # the doctor's VISIT fee ("ভিজিট"): what a caller means by "how much is the visit?"
+    # Owner, 2026-10-18: "F" | "M" | "" (not recorded). A caller can ask for a lady / female doctor and the search is filtered by this.
+    sex = Column(String, nullable=False, default="", server_default="")
 
     department = relationship("Department", back_populates="doctors")
     schedule = relationship("DoctorSchedule", back_populates="doctor")
@@ -184,6 +186,11 @@ class Appointment(Base):
     # charge alone (cancellation_charge_inr) proves an amount, not which
     # rule produced it.
     cancellation_policy_version = Column(Integer, nullable=True)
+    # Why a booking was cancelled by the CLINIC ("doctor_leave"); null for a caller's own cancellation. A caller who asks about it later is told
+    # with an apology, not just "cancelled" (owner, 2026-10-18).
+    cancel_reason = Column(String, nullable=True)
+    # The serial (token) number, given in the order bookings are PAID, not asked for (owner, 2026-10-18). Null until paid.
+    token_number = Column(Integer, nullable=True)
 
     doctor = relationship("Doctor")
 
@@ -254,6 +261,22 @@ class Patient(Base):
     # server_default so a database built by create_all() matches one migrated by
     # booking_migrate (ALTER ... DEFAULT FALSE) for an INSERT that omits the column.
     senior_mode = Column(Boolean, nullable=False, default=False, server_default=false())
+    # Owner, 2026-10-18: asked with the name and number. "F" | "M" | "" is understood from the relationship ("my mother") when it is not said.
+    sex = Column(String, nullable=False, default="", server_default="")
+    address = Column(String, nullable=False, default="", server_default="")
+
+
+class RelationshipRule(Base):
+    """Owner, 2026-10-18: a caller booking "for my mother" is booking for a woman. One row per relationship: the words callers use in each
+    language ("|"-joined) and the sex it implies ("" when the relationship says nothing: child, patient, relative)."""
+
+    __tablename__ = "relationship_rules"
+    id = Column(Integer, primary_key=True)
+    relationship_key = Column(String, nullable=False, unique=True)  # "mother"
+    inferred_sex = Column(String, nullable=False, default="")  # "F" | "M" | ""
+    keywords_bn = Column(String, nullable=False, default="")
+    keywords_hi = Column(String, nullable=False, default="")
+    keywords_en = Column(String, nullable=False, default="")
 
 
 class PatientProxy(Base):

@@ -147,6 +147,7 @@ from agent import test_availability  # real call 2026-10-14: "is the X test done
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
 from agent import slot_proposal  # the machine picks the appointment time and says it
+from agent import doctor_search, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -559,7 +560,7 @@ async def _warm_answers_once() -> int:
                 logger.warning("answer warm-up: FAQ %r failed (%s)", f["topic"], e)
         for reply in replies:
             for clause in split_into_clauses(reply) or [reply]:  # as _finish_enquiry_turn does
-                speed = effective_rate(rate, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None)
+                speed = effective_rate(rate, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None, lang=lang)
                 try:
                     await _tts.synthesize(clause, lang, speed=speed, pin=keep)
                 except Exception as e:  # noqa: BLE001 - an unspeakable or failed clip is skipped, never fatal
@@ -1037,6 +1038,11 @@ class CallSession:
         # the older-caller evidence accumulator, and bookkeeping so an
         # acknowledgement is spoken once per state entry, not every turn.
         self.reask = ReaskTracker()
+        self.dept_pending = None  # a question asked by agent/doctor_search.py and waiting for its answer
+        self.last_route = None  # the department just suggested for a symptom (so a push-back is answered with the same suggestion)
+        self.pending_prescription = None  # (test, turn): "do you have the prescription?" was just asked
+        self.caller_numbers: list[str] = []  # numbers the caller has SAID in this call, newest last (used to call back an unresolved call)
+        self.unclear_streak = 0  # consecutive turns the agent could not answer
         self.senior_evidence = SeniorEvidence()
         self.acknowledged_state: str | None = None
         self.senior_lookup_done = False
@@ -1223,7 +1229,7 @@ class CallSession:
 async def _synthesize_one_clause(session: CallSession, clause: str, lang: str, fallback_reason: str | None) -> bytes:
     # KCD-149/157: the caller's policy rate, and slower still for a price,
     # phone number or reference (the two multiply).
-    speed = effective_rate(session.policy, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None)
+    speed = effective_rate(session.policy, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None, lang=lang)
     try:
         return await _tts_router.synthesize(lang, clause, speed=speed)
     except UnspeakableTextError as e:
@@ -1344,6 +1350,144 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
     return total_duration
 
 
+# ---- 4. the clinic cancelled the booking (a doctor not consulting): told with sympathy and an apology ---------------------------------------
+_CLINIC_CANCELLED = {
+    "bn": "আন্তরিকভাবে দুঃখিত। ডাক্তার {doctor} {date} তারিখে বসতে পারছেন না, তাই আপনার অ্যাপয়েন্টমেন্টটা বাতিল করতে হয়েছে। অসুবিধার জন্য আমরা ক্ষমাপ্রার্থী, আর এর জন্য আপনার কোনো টাকা কাটা হবে না। চাইলে এখনই নতুন একটা তারিখে বুক করে দিতে পারি, কোন দিন সুবিধা হবে?",
+    "hi": "हमें बहुत खेद है। डॉक्टर {doctor} {date} को नहीं बैठ पाएँगे, इसलिए आपकी अपॉइंटमेंट रद्द करनी पड़ी। असुविधा के लिए हम क्षमा चाहते हैं, और इसके लिए आपसे कोई शुल्क नहीं लिया जाएगा। चाहें तो अभी नई तारीख पर बुक कर दूँ, कौन सा दिन ठीक रहेगा?",
+    "en": "We are so sorry. Dr {doctor} cannot sit on {date}, so we had to cancel your appointment. We sincerely apologise for the trouble, and you will not be charged for it. If you like I can book a new date for you right now -- which day suits you?",
+}
+
+
+async def _clinic_cancelled_reply(session: CallSession, lang: str, phone: str | None = None, confirmation_id: str | None = None) -> str | None:
+    """If the booking the caller is asking about was cancelled BY THE CLINIC (a doctor on leave), the sympathetic explanation; else None (the normal
+    "no booking found"). The doctor is remembered so "book him on another day" carries over."""
+    if _tools is None or not (phone or confirmation_id):
+        return None
+    try:
+        found = await _tools.clinic_cancelled(phone=phone, confirmation_id=confirmation_id)
+    except Exception as e:  # noqa: BLE001 - advisory
+        logger.warning("[%s] clinic-cancelled lookup failed: %s", session.call_id, e)
+        return None
+    rows = found.get("bookings") or []
+    if not rows:
+        return None
+    b = rows[0]
+    doctor = {"bn": b.get("doctor_name_bn"), "hi": b.get("doctor_name_hi")}.get(lang) or b.get("doctor_name") or ""
+    session.last_doctor_enquiry = {"doctor_name": b.get("doctor_name") or doctor, "date": None, "turn": session.turn_count}
+    return _CLINIC_CANCELLED.get(lang, _CLINIC_CANCELLED["en"]).format(doctor=doctor, date=b.get("date", ""))
+
+
+# ---- 7. "do you have the prescription?" answered ---------------------------------------------------------------------------------------------
+async def _answer_prescription(session: CallSession, text: str, lang: str) -> bool:
+    pend = getattr(session, "pending_prescription", None)
+    if not pend or session.turn_count - pend[1] > 2:
+        return False
+    answer = booking_capture.confirm_answer(text, lang)
+    if answer is None:
+        return False
+    session.pending_prescription = None
+    if answer == "yes":
+        await _speak(session, _with_resume(session, phrase("rx_yes", lang), lang), lang)
+        return True
+    await _speak(session, _with_resume(session, phrase("rx_no", lang), lang), lang)
+    await _queue_prescription_callback(session, f"prescription_missing:{pend[0]}", text, lang)
+    return True
+
+
+# ---- 12. a push-back on a department suggestion is answered with the same suggestion ------------------------------------------------------------
+_PUSHBACK = (
+    "অন্য ডাক্তার", "অন্য বিভাগ", "না আমি", "আমি চাই না", "চাই না", "লাগবে না", "দেখাব না", "মানছি না", "পছন্দ না", "ওটা না", "ওনার কাছে যাব না", "কার্ডিওলজিস্ট চাই", "স্পেশালিস্ট চাই",
+    "दूसरा डॉक्टर", "दूसरे डॉक्टर", "नहीं मुझे", "नहीं चाहिए", "नहीं दिखाना", "मंजूर नहीं", "स्पेशलिस्ट चाहिए",
+    "other doctor", "another doctor", "different doctor", "i don't want", "i do not want", "dont want", "don't want", "not a surgeon", "no i want", "i want a specialist", "i want another",
+)
+
+
+async def _answer_route_pushback(session: CallSession, text: str, lang: str) -> bool:
+    """"I do not want a general surgeon for a hernia": the clinic's routing does not change because the caller is unhappy with it (owner, 2026-10-18).
+    The same department is suggested again, kindly, with who is there."""
+    route = getattr(session, "last_route", None)
+    if not route or session.turn_count - route["turn"] > 3:
+        return False
+    low = " ".join(text.lower().split())
+    if not any(c in low for c in _PUSHBACK):
+        return False
+    dept = _dept_label(route["dept"], lang)
+    names = ", ".join(route.get("names") or [])
+    tail = {
+        "bn": f" {names} আছেন। কার কাছে বুক করব?" if names else " কার কাছে বুক করব?",
+        "hi": f" {names} हैं। किसके पास बुक करूँ?" if names else " किसके पास बुक करूँ?",
+        "en": f" {names} are there. Whom shall I book?" if names else " Whom shall I book?",
+    }[lang if lang in ("bn", "hi") else "en"]
+    head = {
+        "bn": f"আমি বুঝতে পারছি, তবে এই সমস্যার জন্য {dept} বিভাগের ডাক্তারকেই দেখাতে হয়, তাই আমি ওটাই বলব।",
+        "hi": f"मैं समझती हूँ, लेकिन इस समस्या के लिए {dept} विभाग के डॉक्टर को ही दिखाना होता है, इसलिए मैं वही बताऊँगी।",
+        "en": f"I understand, but for this problem the right doctor to see is in {dept}, so that is what I must suggest.",
+    }[lang if lang in ("bn", "hi") else "en"]
+    session.last_route = {**route, "turn": session.turn_count}
+    await _speak(session, head + tail, lang)
+    return True
+
+
+# ---- 11. human routing, and the numbers kept for a call back ---------------------------------------------------------------------------------------
+HUMAN_ROUTE_URL = os.environ.get("HUMAN_ROUTE_URL", "")  # placeholder: where a live-agent transfer is requested once the telephony / contact-centre system exists
+
+
+def _known_phone(session: CallSession) -> str | None:
+    """The best number to call this caller back on: the verified one, else the one booked with, else the newest number said in the call."""
+    st = session.booking
+    return (
+        session.identity.phone
+        or (st.slots.get("phone") or st.slots.get("contact_phone") if st is not None else None)
+        or (session.caller_numbers[-1] if session.caller_numbers else None)
+    )
+
+
+def _note_caller_number(session: CallSession, phone: str | None) -> None:
+    n = booking_capture.normalise_phone(phone or "") if phone else None
+    if n and (not session.caller_numbers or session.caller_numbers[-1] != n):
+        session.caller_numbers.append(n)
+
+
+async def _route_to_human_placeholder(session: CallSession, reason: str, phone: str | None) -> None:
+    """THE PLACEHOLDER for routing a caller to a person. With HUMAN_ROUTE_URL unset it only logs; set it to the contact-centre / telephony endpoint and it receives
+    {"call_id", "reason", "phone", "language"} by POST. (The `handoff_human` websocket frame to the bridge is sent separately, as before.)"""
+    logger.info("[%s] human routing requested (%s) phone=%s", session.call_id, reason, "known" if phone else "unknown")
+    if not HUMAN_ROUTE_URL:
+        return
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=4.0) as c:
+            await c.post(HUMAN_ROUTE_URL, json={"call_id": session.call_id, "reason": reason, "phone": phone, "language": session.lang})
+    except Exception as e:  # noqa: BLE001 - routing is best effort here; the spoken notice and the callback below still stand
+        logger.warning("[%s] human routing hook failed: %s", session.call_id, e)
+
+
+async def _queue_unresolved_callback(session: CallSession) -> None:
+    """A call that ended with the caller not served -- cut off, unheard, or a question the agent could not answer -- keeps the number in the callback table so
+    a person can ring back. Only with a number the caller actually gave (there is no caller-ID yet); nothing is queued, or said, without one."""
+    if _tools is None or session.outcome in ("handed_off", "emergency", "abusive_caller"):
+        return
+    st = session.booking
+    reason = None
+    if st is not None and st.stage in ("collecting", "confirming", "awaiting_charge_confirm"):
+        reason = "unresolved:booking_not_finished"
+    elif session.unclear_streak > 0 or session.reask.consecutive > 0:
+        reason = "unresolved:not_understood"
+    if not reason:
+        return
+    phone = _known_phone(session)
+    if not phone:
+        return
+    try:
+        summary = build_call_summary(reason, lang=session.lang, phone=phone, call_id=session.call_id)
+        await asyncio.wait_for(_tools.request_callback(phone, session.call_id, "asap", reason, summary), 4.0)
+        logger.info("[%s] call back queued (%s)", session.call_id, reason)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[%s] could not queue the call back (%s): %s", session.call_id, reason, e)
+
+
+
 async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[str, ...] | None = None):
     """Tell the caller and the telephony bridge that a person is taking over.
 
@@ -1369,7 +1513,8 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
     )
     session.outcome = "handed_off"
     _rec(session, "escalation", reason)
-    phone = session.identity.phone
+    phone = _known_phone(session)
+    await _route_to_human_placeholder(session, reason, phone)
     if phone:
         summary = build_call_summary(f"handoff:{reason}", lang=session.lang, phone=phone, call_id=session.call_id)
         with contextlib.suppress(ToolCallError):
@@ -1407,7 +1552,7 @@ async def _reask_or_handoff(
     langs = languages or (lang,)
     if decision.action == "handoff":
         for lg in langs:
-            await _speak(session, phrase("reask_final", lg), lg)
+            await _speak(session, phrase("reask_final", lg) + " " + phrase("handoff_better", lg), lg)
         await _handoff_to_human(session, f"unintelligible:{decision.reason}", langs)
         return
     for lg in langs:
@@ -1941,6 +2086,9 @@ _priced_names: contextvars.ContextVar[list | None] = contextvars.ContextVar("pri
 _doctor_enquiry_found: contextvars.ContextVar[dict | None] = contextvars.ContextVar("doctor_enquiry_found", default=None)
 # The caller's words for this turn, so a total can be checked against how many tests they SAID they meant ("all three together").
 _turn_text: contextvars.ContextVar[str | None] = contextvars.ContextVar("turn_text", default=None)
+# owner 2026-10-18: the test whose price was just given and which needs a prescription (the question is asked after the price), and the department just suggested
+_rx_asked: contextvars.ContextVar[str | None] = contextvars.ContextVar("rx_asked", default=None)
+_route_found: contextvars.ContextVar[dict | None] = contextvars.ContextVar("route_found", default=None)
 
 
 def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
@@ -2097,7 +2245,11 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         _note_suggestion(intent, "test_name", slots, result)
         if result.get("found"):
             _priced_names.set((_priced_names.get() or []) + [slots["test_name"]])
-        return test_rate_reply(slots, result, lang)
+        reply = test_rate_reply(slots, result, lang)
+        if result.get("found") and result.get("prescription_required"):
+            _rx_asked.set(slots["test_name"])  # owner 2026-10-18: a test that needs a prescription -> ask whether the caller has one
+            reply = f"{reply} {phrase('rx_ask', lang)}"
+        return reply
     if intent == "doctor_availability":
         if not slots.get("doctor_name"):
             return None
@@ -2127,7 +2279,9 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if not symptom:
             return None
         result = await _tools.route_department(symptom, lang)
-        return department_route_reply(result, symptom, lang)
+        if result.get("matched"):
+            _route_found.set({"dept": result["department_name"], "names": result.get("doctors_today") or result.get("doctors") or []})
+        return department_route_reply({**result, "department_name": _dept_label(result["department_name"], lang)} if result.get("matched") else result, symptom, lang)
     return None
 
 
@@ -2205,6 +2359,19 @@ def _bare_doctor_name(name: str) -> str:
     return " ".join(w for w in str(name or "").split() if w.lower().strip(".") not in _DOCTOR_TITLES).strip()
 
 
+async def _sits_start(st, date_iso: str, info: dict) -> str | None:
+    """When the doctor sits on `date_iso` (start of the chamber hours, "HH:MM"), kept on the booking for the arrival answers. From the answer already in hand
+    for that day, else one more lookup for the other day."""
+    hours = info.get("chamber_hours") if info.get("date") == date_iso else None
+    if not hours:
+        with contextlib.suppress(Exception):
+            hours = (await _tools.free_slots(st.slots["doctor_name"], date_iso)).get("chamber_hours")
+    start = hours.split("-")[0] if isinstance(hours, str) and "-" in hours else None
+    if start:
+        st.slots["_sits_start"] = start
+    return start
+
+
 async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     """Choose the time for the caller from the doctor's free slots and say it (agent/slot_proposal.py). True when a time was set and spoken.
     A time the caller already gave stays if it is a real slot of that day; one that is not (\"12:00\" for \"between ten and twelve\", the closing time) is
@@ -2222,11 +2389,17 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         # times. The doctor's next sitting day is offered instead, with its first free slot -- the caller is never asked for a time.
         nxt = info.get("next") or {}
         if not (nxt.get("date") and nxt.get("time_slot")):
+            if info.get("on_leave") or not info.get("valid_slots"):
+                # nothing at all to offer for this doctor: say so and ask the caller to call again about the next date (owner, 2026-10-18)
+                session.booking = None
+                await _speak(session, slot_proposal.call_again(lang), lang)
+                return True
             return False
         key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
         doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
         st.slots["date"], st.slots["time_slot"] = nxt["date"], nxt["time_slot"]
-        await _speak(session, f"{slot_proposal.not_sitting(lang)} {slot_proposal.proposal(doctor, nxt['date'], nxt['time_slot'], lang)}", lang)
+        st.slots["_time_ok"] = "pending"
+        await _speak(session, f"{slot_proposal.not_sitting(lang)} {slot_proposal.proposal(doctor, nxt['date'], nxt['time_slot'], lang, sits_at=await _sits_start(st, nxt['date'], info))}", lang)
         return True
     if given and given in (info.get("free_slots") or []):
         return False  # the caller named a time that is free: the normal hold secures it
@@ -2235,18 +2408,22 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     if not slot:
         nxt = info.get("next") or {}
         if not (nxt.get("date") and nxt.get("time_slot")):
-            return False  # nothing free anywhere soon: the existing path offers the alternatives
+            # nothing free on this day and no later day with a slot: the caller is asked to call again about the next date (owner, 2026-10-18)
+            session.booking = None
+            await _speak(session, slot_proposal.call_again(lang), lang)
+            return True
         # nothing left on that day (hours over / all taken): say so and offer the next day that has a slot
         slot, new_date = nxt["time_slot"], nxt["date"]
     key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
     doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
     st.slots["time_slot"] = slot
     st.slots["_time_ok"] = "pending"  # the name and number are asked only after the caller accepts this time
+    sits = await _sits_start(st, new_date or st.slots["date"], info)
     if new_date:
         st.slots["date"] = new_date
-        await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.proposal(doctor, new_date, slot, lang)}", lang)
+        await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.proposal(doctor, new_date, slot, lang, sits_at=sits)}", lang)
         return True
-    await _speak(session, slot_proposal.proposal(doctor, st.slots["date"], slot, lang), lang)
+    await _speak(session, slot_proposal.proposal(doctor, st.slots["date"], slot, lang, sits_at=sits), lang)
     return True
 
 
@@ -2318,6 +2495,302 @@ async def _answer_body_imaging(session: CallSession, text: str, lang: str) -> bo
         await _speak(session, f"{question} {phrase('send_prescription_whatsapp', lang)}", lang)
         await _queue_prescription_callback(session, f"body_imaging_{region}", text, lang)
     return True
+
+
+# ===================================================================================================================================
+# Owner's 2026-10-18 additions: answers the owner dictated, finding a doctor by sex / department / time, relationship -> sex, unanswered calls.
+# ===================================================================================================================================
+
+_relationship_cache: dict = {"rules": None, "at": 0.0}
+
+
+async def _relationship_rules() -> list[dict]:
+    """The relationship words and the sex each implies (clinic-api relationship_rules), cached for ten minutes. Empty when the clinic cannot be asked."""
+    now = time.monotonic()
+    if _relationship_cache["rules"] is None or now - _relationship_cache["at"] > 600:
+        try:
+            _relationship_cache["rules"] = (await _tools.relationships()).get("rules") or []
+        except Exception as e:  # noqa: BLE001 - advisory
+            logger.warning("relationship rules unavailable: %s", e)
+            _relationship_cache["rules"] = _relationship_cache["rules"] or []
+        _relationship_cache["at"] = now
+    return _relationship_cache["rules"]
+
+
+_FOR_CUES = ("জন্য", "এর", "র জন্য", "কে ", "for", "के लिए", "का ", "की ", "ke liye", "er jonno", "এর জন্য")
+
+
+def _sex_of_relationship(rules: list[dict], text: str, require_for: bool = True) -> tuple[str | None, str | None]:
+    """(relationship, sex) when the sentence says who the patient is ("for my mother", "আমার মায়ের জন্য", "मेरी माँ के लिए"). sex is "" for a relationship that
+    does not say one (child, friend). (None, None) when no relationship word is there. Whole words only."""
+    t = " " + " ".join(re.sub(r"[.,;:!?\"'()।॥]+", " ", (text or "").lower()).split()) + " "
+    if require_for and not any(c in t for c in _FOR_CUES) and "my " not in t and "আমার" not in t and "मेरी" not in t and "मेरे" not in t:
+        return None, None
+    best = (None, None, 0)
+    for r in rules:
+        for kw in [*r.get("keywords_bn", []), *r.get("keywords_hi", []), *r.get("keywords_en", [])]:
+            k = kw.lower()
+            hit = (f" {k} " in t) if k.isascii() else any(tok == k or tok.startswith(k) for tok in t.split())
+            if hit and len(k) > best[2]:
+                best = (r["relationship"], r["sex"], len(k))
+    return (best[0], best[1]) if best[0] else (None, None)
+
+
+async def _note_patient_relationship(session: CallSession, st, text: str, slots: dict) -> None:
+    """A booking made "for my mother" is for a woman: the relationship the caller said (model slot or the sentence) is looked up in the clinic's
+    relationship table and the patient's sex kept on the booking. Never overwrites a sex already known."""
+    if st.slots.get("patient_sex"):
+        return
+    rules = await _relationship_rules()
+    if not rules:
+        return
+    rel_text = (slots or {}).get("relationship") or st.slots.get("relationship")
+    rel, sex = _sex_of_relationship(rules, rel_text, require_for=False) if rel_text else (None, None)
+    if rel is None:
+        rel, sex = _sex_of_relationship(rules, text)
+    if rel:
+        st.slots.setdefault("relationship", rel)
+        if sex:
+            st.slots["patient_sex"] = sex
+            logger.info("[%s] booking for the %s -> patient sex %s", session.call_id, rel, sex)
+
+
+_NUM_IN_TEXT = re.compile(r"\d")
+
+
+def _sitting_start_and_doctor(session: CallSession, text: str, lang: str) -> tuple[str | None, str | None]:
+    """(when the doctor sits, from; the doctor's name when speakable). The hours come from the doctor the caller was just told about, from the booking
+    being made, or from a time the caller says in the sentence ("the doctor sits at 10")."""
+    start = None
+    doctor = None
+    ctx = session.last_doctor_enquiry or {}
+    window = ctx.get("window")
+    if isinstance(window, str) and "-" in window:
+        start = window.split("-")[0].strip()
+    if ctx.get("doctor_name") and not re.search(r"[A-Za-z]", str(ctx["doctor_name"])):
+        doctor = str(ctx["doctor_name"])
+    b = session.booking
+    if not start and b is not None and b.slots.get("_sits_start"):
+        start = b.slots["_sits_start"]
+    said = booking_capture.read_when(text, True).time
+    if said and (not start or _NUM_IN_TEXT.search(text) or True):
+        start = said if not (window and start) else start
+    return start, doctor
+
+
+async def _visit_fee_reply(session: CallSession, text: str, lang: str) -> str | None:
+    """"ডাক্তারের ভিজিট কত?" -- the figure is read from the doctors table. The doctor is the one named in the sentence, else the one just discussed."""
+    name = None
+    if _fast_path is not None:
+        with contextlib.suppress(Exception):
+            doc = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=False)  # noqa: SLF001
+            if doc is not None:
+                name = doc[1] or doc[0]
+    if not name:
+        ctx = session.last_doctor_enquiry or {}
+        name = ctx.get("doctor_name") or (session.booking.slots.get("doctor_name") if session.booking is not None else None)
+    if not name:
+        return {
+            "bn": "কোন ডাক্তারের ভিজিট জানতে চান?",
+            "hi": "किस डॉक्टर की विज़िट फ़ीस जानना चाहते हैं?",
+            "en": "Which doctor's visit fee would you like to know?",
+        }.get(lang, "")
+    try:
+        result = await _tools.doctor_visit(name)
+    except ToolCallError:
+        return None
+    if result.get("ambiguous"):
+        return None
+    if not result.get("found"):
+        return None
+    who = {"bn": result.get("doctor_name_bn"), "hi": result.get("doctor_name_hi"), "en": result.get("doctor_name")}.get(lang) or ""
+    fee = result.get("visit_fee_inr")
+    if fee is None:
+        return None
+    return {
+        "bn": f"{who} এর ভিজিট {fee} টাকা।",
+        "hi": f"{who} की विज़िट फ़ीस {fee} रुपये है।",
+        "en": f"{who}'s visit fee is {fee} rupees.",
+    }.get(lang)
+
+
+async def _answer_owner_faq(session: CallSession, text: str, lang: str) -> bool:
+    """Which branch this is, whether Swasthya Sathi / Ayushman Bharat cover the visit, how far from the stations, when to come with a token number, a
+    serial that cannot be pushed up, and what a doctor's visit costs (agent/owner_answers.py) -- fixed or table-read answers, no model."""
+    try:
+        spoken = owner_answers.branch_identity(text, lang) or owner_answers.scheme_cover(text, lang)
+        if not spoken and owner_answers.asks_token_push(text):
+            spoken = owner_answers.token_push_reply(lang)
+        if not spoken:
+            key = owner_answers.distance_from(text)
+            if key:
+                address = None
+                with contextlib.suppress(Exception):
+                    address = (await _tools.get_faq("location", lang)).get("answer")
+                spoken = owner_answers.distance_reply(key, lang, address)
+        if not spoken and owner_answers.asks_token_arrival(text):
+            start, doctor = _sitting_start_and_doctor(session, text, lang)
+            spoken = owner_answers.token_arrival_reply(owner_answers.token_number(text), start, lang, doctor)
+        if not spoken and owner_answers.asks_visit_fee(text):
+            spoken = await _visit_fee_reply(session, text, lang)
+    except Exception as e:  # noqa: BLE001 - these are aids; the turn goes on to the normal path
+        logger.warning("[%s] owner answers skipped: %s", session.call_id, e)
+        return False
+    if not spoken:
+        return False
+    await _speak(session, _with_resume(session, spoken, lang), lang)
+    return True
+
+
+_DEPT_LABEL = {
+    "General Medicine": ("জেনারেল মেডিসিন", "जनरल मेडिसिन", "General Medicine"),
+    "Cardiology": ("কার্ডিওলজি", "कार्डियोलॉजी", "Cardiology"),
+    "Gynaecology & Obstetrics": ("গাইনোকোলজি", "गायनेकोलॉजी", "Gynaecology"),
+    "Orthopaedics": ("অর্থোপেডিক্স", "ऑर्थोपेडिक्स", "Orthopaedics"),
+    "ENT": ("ই এন টি", "ई एन टी", "ENT"),
+    "Dermatology": ("ডার্মাটোলজি", "डर्मेटोलॉजी", "Dermatology"),
+    "Paediatrics": ("পেডিয়াট্রিক্স", "पीडियाट्रिक्स", "Paediatrics"),
+    "Diabetology & Endocrinology": ("ডায়াবেটিস ও এন্ডোক্রিনোলজি", "डायबिटीज़ और एंडोक्रिनोलॉजी", "Diabetes and Endocrinology"),
+    "Dentistry": ("ডেন্টিস্ট্রি", "डेंटिस्ट्री", "Dentistry"),
+    "General Surgery": ("জেনারেল সার্জারি", "जनरल सर्जरी", "General Surgery"),
+    "Neurology": ("নিউরোলজি", "न्यूरोलॉजी", "Neurology"),
+    "Neurosurgery": ("নিউরোসার্জারি", "न्यूरोसर्जरी", "Neurosurgery"),
+    "Urology": ("ইউরোলজি", "यूरोलॉजी", "Urology"),
+}
+
+
+def _dept_label(name: str, lang: str) -> str:
+    row = _DEPT_LABEL.get(name)
+    if not row:
+        return name
+    return row[{"bn": 0, "hi": 1}.get(lang, 2)]
+
+
+_WHEN_WORDS = {
+    "today": {"bn": "আজ", "hi": "आज", "en": "today"},
+    "tomorrow": {"bn": "আগামীকাল", "hi": "कल", "en": "tomorrow"},
+}
+
+
+def _when_phrase(date_iso: str | None, time_hhmm: str | None, lang: str) -> str:
+    """"আগামীকাল সকাল এগারোটায়" for the day and time a caller asked for; used in the "who sits then?" answers."""
+    parts = []
+    if date_iso:
+        today = datetime.date.today()
+        d = datetime.date.fromisoformat(date_iso)
+        if d == today:
+            parts.append(_WHEN_WORDS["today"][lang])
+        elif d == today + datetime.timedelta(days=1):
+            parts.append(_WHEN_WORDS["tomorrow"][lang])
+        else:
+            parts.append(d.isoformat())
+    if time_hhmm:
+        h = int(time_hhmm.split(":")[0])
+        ph = owner_answers.hour_phrase(h, lang)
+        parts.append(owner_answers._bn_case(ph, "loc") if lang == "bn" else ph)  # noqa: SLF001
+    return " ".join(parts)
+
+
+def _resolve_doctor_for_booking(item: dict) -> str:
+    return item.get("full_name") or item.get("name") or ""
+
+
+async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict | bool:
+    """Finding the doctor from how the caller asks (agent/doctor_search.py):
+      * the answer to "neurologist or neurosurgeon?" / "which of these doctors?" asked a moment ago;
+      * "neuro" / "euro" said alone: ask which, never guess;
+      * "a lady gynaecologist": the department's doctors of that sex only;
+      * "whoever is in X department, tomorrow at 11, book me": one doctor -> booked into the normal flow; several -> asked which.
+    Returns True when the turn was answered here, a dict (an intent result for the booking flow) when a single doctor was found, False to carry on."""
+    if _tools is None:
+        return False
+    # 1. the answer to a question asked here
+    pend = getattr(session, "dept_pending", None)
+    if pend and session.turn_count - pend["turn"] <= 3:
+        session.dept_pending = None
+        if pend["kind"] == "confirm":
+            chosen = doctor_search.pick_from(text, pend["options"])
+            if chosen is not None:
+                try:
+                    result = await _tools.department_doctors(chosen["dept"], lang, sex=pend.get("sex"))
+                except ToolCallError:
+                    return False
+                if result.get("matched"):
+                    await _speak(session, _with_resume(session, department_route_reply({**result, "department_name": _dept_label(result["department_name"], lang)}, "", lang), lang), lang)
+                    return True
+            return False
+        if pend["kind"] == "pick":
+            low = text.lower()
+            hits = [
+                item
+                for item in pend["doctors"]
+                if any(len(tok) >= 3 and tok.lower() in low for tok in (item.get("name", "") + " " + item.get("full_name", "")).replace(".", " ").split() if tok.lower() not in ("dr", "ডাঃ", "ডাক্তার"))
+            ]
+            if len(hits) != 1:  # "the first one" / "the second one", else the question is dropped (asked once)
+                hits = []
+                for idx, words in doctor_search._ORDINALS:  # noqa: SLF001
+                    if idx < len(pend["doctors"]) and doctor_search._has(doctor_search._norm(text), words) and len(text.split()) <= 4:  # noqa: SLF001
+                        hits = [pend["doctors"][idx]]
+            if len(hits) == 1:
+                return {
+                    "intent": "book_appointment",
+                    "slots": {"doctor_name": _resolve_doctor_for_booking(hits[0]), "date": pend.get("date"), "time_slot": pend.get("time")},
+                }
+            return False
+    # 2. neuro / euro: ask which
+    try:
+        cat = await _cached_catalogue()
+        existing = {d.get("department") or d.get("department_name") for d in (cat.get("doctors") or [])} - {None}
+    except Exception:  # noqa: BLE001
+        existing = None
+    if session.booking is None:
+        fam = doctor_search.confusable(text, existing or None)
+        if fam:
+            session.dept_pending = {"kind": "confirm", "options": fam["options"], "turn": session.turn_count, "sex": doctor_search.wanted_sex(text)}
+            await _speak(session, doctor_search.question(fam["options"], lang), lang)
+            return True
+    # 3. a lady / gentleman doctor, and 4. a department at a day and time
+    sex = doctor_search.wanted_sex(text)
+    when = booking_capture.read_when(text, False, want_day=True)
+    wants_when = bool(when.date or when.time)
+    wants_book = booking_carryover.asks_to_book(text) or bool(re.search(r"\b(book|appointment)\b|বুক|অ্যাপয়েন্টমেন্ট|अपॉइंटमेंट|बुक", text, re.I))
+    if not sex and not (wants_when and wants_book):
+        return False
+    if _fast_path is not None:
+        with contextlib.suppress(Exception):
+            if _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang)) is not None:  # noqa: SLF001
+                return False  # a doctor is named: the normal path
+    on_date = when.date if wants_when and wants_book else None
+    at_time = when.time if wants_when and wants_book else None
+    try:
+        result = await _tools.department_doctors(text, lang, sex=sex, on_date=on_date, at_time=at_time)
+    except ToolCallError:
+        return False
+    if not result.get("matched"):
+        return False
+    label = _dept_label(result["department_name"], lang)
+    if on_date or at_time:
+        sitting = result.get("sitting") or []
+        phrase_when = _when_phrase(on_date, at_time, lang)
+        if len(sitting) == 1:
+            item = sitting[0]
+            return {"intent": "book_appointment", "slots": {"doctor_name": _resolve_doctor_for_booking(item), "date": on_date, "time_slot": at_time}}
+        if len(sitting) > 1:
+            session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count}
+            await _speak(session, doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang), lang)
+            return True
+        others = []
+        if at_time and on_date:
+            with contextlib.suppress(ToolCallError):
+                again = await _tools.department_doctors(text, lang, sex=sex, on_date=on_date)
+                others = [s["name"] for s in again.get("sitting") or []]
+        await _speak(session, doctor_search.nobody_sits(phrase_when or label, others, lang), lang)
+        return True
+    if sex:
+        await _speak(session, _with_resume(session, doctor_search.filtered_reply(result, sex, lang, label), lang), lang)
+        return True
+    return False
+
 
 
 async def _answer_department_doctors(session: CallSession, text: str, lang: str) -> bool:
@@ -2474,6 +2947,14 @@ async def _finish_enquiry_turn(
         if _n and _n.strip().lower() not in [x.strip().lower() for x in session.priced_tests]:
             session.priced_tests.append(_n)
     _priced_names.set(None)
+    _rx = _rx_asked.get()
+    if _rx:
+        session.pending_prescription = (_rx, session.turn_count)
+        _rx_asked.set(None)
+    _rf = _route_found.get()
+    if _rf:
+        session.last_route = {**_rf, "turn": session.turn_count}
+        _route_found.set(None)
     _de = _doctor_enquiry_found.get()
     if _de:
         session.last_doctor_enquiry = {**_de, "turn": session.turn_count}
@@ -2570,6 +3051,7 @@ def _which_test_prompt(lang: str) -> str:
 async def _normalise_spelled(text: str) -> str:
     """"টি এস এইচ টেস্ট কত" -> "TSH টেস্ট কত": letters pronounced separately are read back as the test code they spell, for every test in the
     catalogue (agent/spelled_letters.normalise_spelled_codes). Never fails the turn."""
+    text = nato_letters.collapse(text)  # "S for September, A for Alpha" -> "S A"
     try:
         codes = await _catalogue_codes()
         new_text, found = spelled_letters.normalise_spelled_codes(text, codes)
@@ -3188,7 +3670,13 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
+        if await _answer_prescription(session, text, lang):
+            return
+        if await _answer_route_pushback(session, text, lang):
+            return
         if await _answer_named_total(session, text, lang):
+            return
+        if await _answer_owner_faq(session, text, lang):
             return
         if session.booking is None and await _answer_test_overview(session, text, lang):
             return
@@ -3200,6 +3688,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # Hindi/Bengali digit words; a yes to a name read back; "the first one" after offered slots) is decided here in code, before
         # the model -- the real call never reached the read-back because phone and name depended on the model alone.
         # agent/booking_capture.py holds the rules; this only speaks what they say.
+        dept_found = None
+        if session.booking is None or getattr(session, "dept_pending", None):
+            dept_found = await _dept_search_turn(session, text, lang)
+            if dept_found is True:
+                return
+            dept_found = dept_found if isinstance(dept_found, dict) else None
         chamber_window = await _chamber_window(session, text)
         capture_plan = booking_capture.before_model(session.booking, text, lang, window=chamber_window)
         if capture_plan.speak:
@@ -3209,7 +3703,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             data = {"intent": "book_appointment", "slots": capture_plan.slots or {}}
         else:
             try:
-                data = await _resolve_intent(session, text, lang)
+                data = dept_found if dept_found is not None else await _resolve_intent(session, text, lang)
             except ExtractionError as e:
                 logger.error("[%s] intent extraction failed: %s", session.call_id, e)
                 # sourav, 2026-10-16: a model failure in the middle of a booking asks the next booking question instead of
@@ -3293,6 +3787,9 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         intent = "book_appointment"
     _mark(session, "intent")
     _rec(session, "intent", intent)
+    if intent != "unclear":
+        session.unclear_streak = 0
+    _note_caller_number(session, (slots or {}).get("phone") or (slots or {}).get("contact_phone") or capture_plan.phone)
     _note_stated_age(session, slots, lang)
     if capture_plan.phone and session.booking is not None and intent != "book_appointment" and not confirmed_entity:
         # sourav, 2026-10-16: a complete 10-digit number was heard in a sentence the model labelled something else ("no, my number is
@@ -3420,6 +3917,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         elif await _resume_after_unclear(session, text, lang):
             return
         else:
+            session.unclear_streak += 1
+            if session.unclear_streak >= 3:
+                # owner 2026-10-18: after three tries the AI could not answer, it says it is routing the caller to a person to help better
+                await _speak(session, phrase("handoff_better", lang), lang)
+                await _handoff_to_human(session, "unanswered_x3", (lang,))
+                return
             await _speak(session, phrase("unclear", lang), lang)
             return
 
@@ -3558,12 +4061,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             slots, ask_back = booking_capture.after_model(st, text, lang, slots, capture_plan, window=chamber_window)
             prior_slots = dict(st.slots)
             changed = merge_slots(st, slots)
+            await _note_patient_relationship(session, st, text, slots)
             if st.slots.get("_time_ok") == "pending" and not ask_back:
                 # The time was proposed as a question. A different time ("এগারোটার সময় করুন") is taken and confirmed; a no moves to the next free slot; anything
                 # else -- a yes, or the name and number straight away -- accepts it. Only then are the name and number asked.
                 verdict = classify_yes_no(text, lang)
                 if "time_slot" in changed:
                     st.hold_token, st.hold_doctor_id = None, None
+                    st.slots["_time_explicit"] = "1"  # the caller chose this time: it is the one told back
                     await _speak(session, slot_proposal.reconfirm(st.slots["time_slot"], lang), lang)
                     return
                 if verdict == "no":
@@ -3733,6 +4238,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 st.slots["_phone_pending"] = effective_phone(st)
                 await _speak(session, booking_capture.prompt("phone_confirm", lang, digits=" ".join(effective_phone(st))), lang)
                 return
+            extra = [f for f in ("patient_age", "patient_address") if not st.slots.get(f) and f not in st.asked_fields]
+            if is_ready_to_confirm(st) and extra and session.policy.questions_per_turn > 1:
+                st.asked_fields.update(extra)
+                await _speak(session, slot_grouping.grouped_prompt(extra, lang) or _EXTRA_QUESTION[extra[0]].get(lang, _EXTRA_QUESTION[extra[0]]["en"]), lang)
+                return
             if is_ready_to_confirm(st):
                 mark_confirming(st)
                 if st.phone_declined:
@@ -3829,6 +4339,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             result = await _tools.lookup_bookings(
                 phone=slots.get("phone"), confirmation_id=slots.get("confirmation_id")
             )
+            if not (result.get("bookings") or []):
+                sorry = await _clinic_cancelled_reply(session, lang, slots.get("phone"), slots.get("confirmation_id"))
+                if sorry:
+                    await _speak(session, sorry, lang)
+                    return
             await _speak(session, _with_resume(session, lookup_reply(result.get("bookings") or [], lang), lang), lang)
 
         elif intent == "resend_confirmation":
@@ -3921,12 +4436,20 @@ def _followup(session: CallSession, intent: str, slots: dict, text: str, lang: s
     return resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities, gap)
 
 
+_EXTRA_QUESTION = {
+    "patient_age": {"bn": "রোগীর বয়স কত?", "hi": "मरीज़ की उम्र क्या है?", "en": "What is the patient's age?"},
+    "patient_address": {"bn": "ঠিকানাটা বলবেন?", "hi": "पता बताइए?", "en": "Could you tell me the address?"},
+}
+
 _NAME_ONLY = {"bn": "আপনার নামটা বলবেন প্লিজ?", "hi": "अपना नाम बताइए, प्लीज़?", "en": "Could you tell me your name, please?"}
 
 
 def _next_question(session: CallSession, st, intent: str, missing: list[str], lang: str) -> str:
     """KCD-103: the next question, one field or a group. The caller-state table (`questions_per_turn`) always wins
     over grouping, and a field already asked is asked alone (agent/slot_grouping.py)."""
+    if st.action == "book_appointment" and missing and missing[0] in ("patient_name", "phone") and not any(f in st.asked_fields for f in missing[:2]):
+        # owner, 2026-10-18: the age and the address are asked in the same breath as the name and the number
+        missing = list(missing) + [f for f in ("patient_age", "patient_address") if not st.slots.get(f) and f not in st.asked_fields]
     fields = slot_grouping.next_fields(st.action, missing, session.policy.questions_per_turn, st.asked_fields)
     grouped = slot_grouping.grouped_prompt(fields, lang) if len(fields) > 1 else None
     if grouped is None:
@@ -4117,6 +4640,8 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                     caller_phone=phone,
                     patient_age=st.slots.get("patient_age"),
                     relationship=st.slots.get("relationship") or "self",
+                    patient_address=st.slots.get("patient_address") or "",
+                    patient_sex=st.slots.get("patient_sex") or "",
                 )
             except ToolCallError as e:
                 # sourav, 2026-10-16: the request may have reached the clinic even though the answer did not come back. Never say
@@ -5096,6 +5621,8 @@ async def ws_audio(ws: WebSocket):
                     logger.error("[%s] call record: %d events could not be written", session.call_id, left)
             except Exception as e:  # noqa: BLE001
                 logger.error("[%s] call record could not be closed: %s", session.call_id, e)
+        with contextlib.suppress(Exception):
+            await _queue_unresolved_callback(session)
         await _save_unfinished_draft(session)
         _admission.release(admission)
         session.cleanup()

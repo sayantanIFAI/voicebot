@@ -31,12 +31,16 @@ APPOINTMENT_BOOKING_COLUMNS: dict[str, str] = {
     "rescheduled_from_id": "INTEGER",
     "booking_group_id": "VARCHAR",
     "cancellation_policy_version": "INTEGER",
+    "cancel_reason": "VARCHAR",
+    "token_number": "INTEGER",
 }
 
 PATIENT_COLUMNS: dict[str, str] = {
     # KCD-084. TRUE/FALSE, not 1/0: PostgreSQL rejects an integer default on
     # a BOOLEAN column (same reason enquiry_migrate uses them).
     "senior_mode": "BOOLEAN NOT NULL DEFAULT FALSE",
+    "sex": "VARCHAR NOT NULL DEFAULT ''",
+    "address": "VARCHAR NOT NULL DEFAULT ''",
 }
 
 DOCTOR_BOOKING_COLUMNS: dict[str, str] = {
@@ -48,6 +52,7 @@ DOCTOR_BOOKING_COLUMNS: dict[str, str] = {
     "full_name": "VARCHAR NOT NULL DEFAULT ''",
     "full_name_bn": "VARCHAR NOT NULL DEFAULT ''",
     "full_name_hi": "VARCHAR NOT NULL DEFAULT ''",
+    "sex": "VARCHAR NOT NULL DEFAULT ''",
 }
 
 

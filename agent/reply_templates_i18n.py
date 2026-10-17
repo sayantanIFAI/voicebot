@@ -330,8 +330,8 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
     if result.get("success"):
         doctor = _doctor_name(slots, result, lang)
         if hi:
-            return f"{doctor}, {result['date']}, समय {result['time_slot']}।"
-        return f"{doctor}, {result['date']}, at {result['time_slot']}."
+            return f"{doctor}, {result['date']}, समय {_shown(slots, result['time_slot'])}।"
+        return f"{doctor}, {result['date']}, at {_shown(slots, result['time_slot'])}."
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -406,16 +406,23 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
     )
 
 
+def _shown(slots: dict, held: str | None = None) -> str:
+    """The hour the doctor sits, unless the caller asked for a time themselves (agent.reply_templates.shown_time)."""
+    if slots.get("_time_explicit"):
+        return slots.get("time_slot") or held or ""
+    return slots.get("_sits_start") or slots.get("time_slot") or held or ""
+
+
 def booking_confirmation_readback(slots: dict, action: str, lang: str) -> str:
     hi = lang == "hi"
     if action == "book_appointment":
         if hi:
             return (
                 f"तो {slots.get('doctor_name')} डॉक्टर के पास {slots.get('date')} को, "
-                f"समय {slots.get('time_slot')} पर, मरीज़ का नाम {slots.get('patient_name')} -- कन्फ़र्म कर दूँ?"
+                f"समय {_shown(slots)} पर, मरीज़ का नाम {slots.get('patient_name')} -- कन्फ़र्म कर दूँ?"
             )
         return (
-            f"So, with Dr. {slots.get('doctor_name')} on {slots.get('date')} at {slots.get('time_slot')}, "
+            f"So, with Dr. {slots.get('doctor_name')} on {slots.get('date')} at {_shown(slots)}, "
             f"for {slots.get('patient_name')} -- shall I confirm this?"
         )
     if action == "book_test":

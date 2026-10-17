@@ -34,13 +34,13 @@ from typing import TypedDict
 GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
     "book_appointment": (
         ("doctor_name", "date", "time_slot"),
-        ("patient_name", "phone"),
+        ("patient_name", "phone", "patient_age", "patient_address"),
     ),
     "book_test": (("test_names", "date"), ("patient_name", "phone")),
 }
 
 # No question ever carries more fields than this, whatever the tables say.
-MAX_FIELDS_PER_QUESTION = 3
+MAX_FIELDS_PER_QUESTION = 4
 
 # One frame per (action-group, language): `frame` has `{}` where the joined fragments go, `f` maps a field to the words that
 # ask for it. (Functional TypedDict syntax because "and" is not a valid attribute name.)
@@ -98,19 +98,21 @@ _FRAMES: dict[tuple[str, str], _Frame] = {
         "f": {
             "patient_name": "your name",
             "phone": "your number",
+            "patient_age": "the patient's age",
+            "patient_address": "the address",
         },
     },
     ("details", "hi"): {
         "frame": "{} बताइए, प्लीज़?",
         "and": " और ",
         "comma": ", ",
-        "f": {"patient_name": "अपना नाम", "phone": "नंबर"},
+        "f": {"patient_name": "अपना नाम", "phone": "नंबर", "patient_age": "मरीज़ की उम्र", "patient_address": "पता"},
     },
     ("details", "bn"): {
         "frame": "{} বলবেন প্লিজ?",
         "and": " আর ",
         "comma": ", ",
-        "f": {"patient_name": "আপনার নাম", "phone": "নম্বরটা"},
+        "f": {"patient_name": "আপনার নাম", "phone": "নম্বরটা", "patient_age": "রোগীর বয়স", "patient_address": "ঠিকানা"},
     },
 }
 
@@ -120,7 +122,7 @@ def _kind(fields: tuple[str, ...]) -> str | None:
         return "schedule"
     if all(f in ("test_names", "date") for f in fields):
         return "tests"
-    if all(f in ("patient_name", "phone") for f in fields):
+    if all(f in ("patient_name", "phone", "patient_age", "patient_address") for f in fields):
         return "details"
     return None
 

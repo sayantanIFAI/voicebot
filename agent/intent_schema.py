@@ -65,6 +65,7 @@ SLOT_KEYS: tuple[str, ...] = (
     "confirmation_id",
     "patient_name",
     "patient_age",
+    "patient_address",
     "phone",
     "contact_phone",
     "relationship",
@@ -108,6 +109,7 @@ class Slots(BaseModel):
     confirmation_id: str | None = None
     patient_name: str | None = None
     patient_age: int | None = None
+    patient_address: str | None = None
     phone: str | None = None
     contact_phone: str | None = None
     relationship: str | None = None

@@ -716,7 +716,7 @@ def test_send_payment_link_only_ever_finds_a_confirmed_doctor_appointment(clinic
 
         result = bs.send_payment_link(db, booked["confirmation_id"])
         assert result["success"] is True
-        assert result["amount_inr"] == doc.consultation_fee_inr
+        assert result["amount_inr"] == 40 and result["expires_in_minutes"] == 15  # SPEC CHANGE 2026-10-18: Rs 40 holds the booking, payable within 15 minutes
         assert result["payment_link"].endswith(booked["confirmation_id"])
         assert result["payment_link"].startswith("https://") and ".invalid/" in result["payment_link"]
 

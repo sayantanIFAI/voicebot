@@ -210,6 +210,30 @@ PHRASES["en"]["reverify_notice"] = (
 # Said whenever the caller is asked to send a prescription photo over WhatsApp so a human colleague can call back
 # (agent/lay_terms.py's HEAD category, and both blood/abdomen flows in main.py). The number is fixed and spoken
 # plainly -- digits, not a link, since this is a voice call.
+# Owner, 2026-10-18: a test that needs a prescription -- asked whether the caller has it, and if not, the doctor is to send a WhatsApp message to the clinic's number.
+PHRASES["bn"]["rx_ask"] = "এই টেস্টের জন্য ডাক্তারের প্রেসক্রিপশন লাগে। আপনার কাছে প্রেসক্রিপশন আছে?"
+PHRASES["hi"]["rx_ask"] = "इस टेस्ट के लिए डॉक्टर का पर्चा चाहिए। क्या आपके पास पर्चा है?"
+PHRASES["en"]["rx_ask"] = "This test needs a doctor's prescription. Do you have the prescription?"
+PHRASES["bn"]["rx_yes"] = "ঠিক আছে, প্রেসক্রিপশনটা সঙ্গে নিয়ে আসবেন।"
+PHRASES["hi"]["rx_yes"] = "ठीक है, पर्चा साथ लेकर आइएगा।"
+PHRASES["en"]["rx_yes"] = "All right, please bring the prescription with you."
+PHRASES["bn"]["rx_no"] = (
+    "প্রেসক্রিপশন না থাকলে আপনার ডাক্তারকে বলুন, তিনি যেন আমাদের সোনোস্ক্যান হোয়াটসঅ্যাপ নম্বরে, ৯৬৩৫৫৮৮৩০৬, একটা মেসেজ পাঠিয়ে দেন। "
+    "মেসেজ এলে আমরা টেস্টের ব্যবস্থা করব।"
+)
+PHRASES["hi"]["rx_no"] = (
+    "अगर पर्चा नहीं है तो अपने डॉक्टर से कहिए कि वे हमारे सोनोस्कैन व्हाट्सऐप नंबर, 9635588306, पर एक मैसेज भेज दें। "
+    "मैसेज आने पर हम टेस्ट की व्यवस्था करेंगे।"
+)
+PHRASES["en"]["rx_no"] = (
+    "If you do not have a prescription, please ask your doctor to send a WhatsApp message to the Sonoscan WhatsApp number, 9635588306. "
+    "Once the message arrives we will arrange the test."
+)
+# Owner, 2026-10-18: after three tries the AI could not answer, it says it is routing the caller to a person to help better.
+PHRASES["bn"]["handoff_better"] = "আপনাকে আরও ভালোভাবে সাহায্য করার জন্য আমি এখন আপনাকে আমাদের স্টাফের সাথে যুক্ত করছি, দয়া করে লাইনে থাকুন।"
+PHRASES["hi"]["handoff_better"] = "आपकी और बेहतर मदद के लिए मैं अब आपको हमारे स्टाफ़ से जोड़ रही हूँ, कृपया लाइन पर बने रहिए।"
+PHRASES["en"]["handoff_better"] = "To help you better, I am now connecting you to our staff, please stay on the line."
+
 PHRASES["bn"]["send_prescription_whatsapp"] = (
     "প্রেসক্রিপশনের একটা ছবি এই হোয়াটসঅ্যাপ নম্বরে পাঠিয়ে দিন, ৯৬৩৫৫৮৮৩০৬। আমাদের একজন সহকর্মী দেখে আপনাকে কল করবেন।"
 )
@@ -279,14 +303,16 @@ PHRASES["en"]["lab_test_counter_only"] = (
 # Said as the closing line after a doctor's appointment is confirmed: the payment link has been sent, and the call
 # ends here (main.py's _end_call) -- the caller pays on their own phone, never a number spoken or taken on the call.
 PHRASES["bn"]["payment_link_sent"] = (
-    "আপনার স্লট রাখা হয়েছে। পেমেন্ট লিংক আপনার মোবাইলে এসএমএস আর হোয়াটসঅ্যাপে পাঠানো হয়েছে। পেমেন্ট করলেই আপনি বুকিং আইডি পেয়ে যাবেন। ধন্যবাদ।"
+    "আপনার স্লট রাখা হয়েছে। পেমেন্ট লিংক আপনার মোবাইলে এসএমএস আর হোয়াটসঅ্যাপে পাঠানো হয়েছে। চল্লিশ টাকা পনেরো মিনিটের মধ্যে পেমেন্ট করুন, না হলে লিংকটা নিজে থেকেই বাতিল হয়ে যাবে। "
+    "পেমেন্ট করলেই আপনি বুকিং আইডি পেয়ে যাবেন। ধন্যবাদ।"
 )
 PHRASES["hi"]["payment_link_sent"] = (
-    "आपका स्लॉट रख लिया गया है। पेमेंट लिंक आपके मोबाइल पर एसएमएस और व्हाट्सऐप पर भेज दिया गया है। पेमेंट करते ही आपको बुकिंग आईडी मिल जाएगी। धन्यवाद।"
+    "आपका स्लॉट रख लिया गया है। पेमेंट लिंक आपके मोबाइल पर एसएमएस और व्हाट्सऐप पर भेज दिया गया है। चालीस रुपये पंद्रह मिनट के अंदर भुगतान कीजिए, वरना लिंक अपने आप बंद हो जाएगा। "
+    "पेमेंट करते ही आपको बुकिंग आईडी मिल जाएगी। धन्यवाद।"
 )
 PHRASES["en"]["payment_link_sent"] = (
-    "Your slot is held. A payment link has been sent to your phone by SMS and WhatsApp. Once you pay, you will get your booking ID. "
-    "Thank you."
+    "Your slot is held. A payment link has been sent to your phone by SMS and WhatsApp. Please pay forty rupees within fifteen minutes, otherwise the link will expire "
+    "automatically. Once you pay, you will get your booking ID. Thank you."
 )
 
 # Spoken when a call is turned away before the caller has said a word, so

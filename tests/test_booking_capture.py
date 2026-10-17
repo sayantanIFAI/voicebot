@@ -157,7 +157,7 @@ def test_partial_digits_are_kept_on_this_booking_only_and_the_rest_is_asked_for(
     st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey")
     st.asked_fields.add("phone")
     plan = bc.before_model(st, "98765", "en")
-    assert st.phone_buffer == "98765" and "5 digits" in plan.speak
+    assert st.phone_buffer == "98765" and plan.speak == "Okay, go on."  # SPEC CHANGE 2026-10-18: an "ok" in the gap, not a count
     other = _booking(doctor_name="Rao")
     assert other.phone_buffer == ""  # a second caller's booking starts empty
 

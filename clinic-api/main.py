@@ -144,6 +144,9 @@ def _ensure_seeded():
         from booking_migrate import finish_booking_schema_setup
 
         logging.getLogger("clinic-api").info("booking schema setup (routes/fees): %s", finish_booking_schema_setup())
+        import clinic_extras
+
+        logging.getLogger("clinic-api").info("owner extras (sex, departments, routes, relationships): %s", clinic_extras.apply_extras(db))
         from patient_seed import seed_patient_context
 
         logging.getLogger("clinic-api").info("agent messages: %s inserted", am.seed_defaults(db))
@@ -191,6 +194,7 @@ def _test_reply_dict(t: LabTest) -> dict:
         "rate_inr": t.rate_inr,
         "sample_type": t.sample_type,
         "report_time_hours": t.report_time_hours,
+        "prescription_required": bool(t.prescription_required),
     }
 
 
@@ -576,11 +580,19 @@ def _bn_vowel_variants(s: str) -> set[str]:
     character is still an exact, character-for-character written-form comparison afterwards (CLAUDE.md "Doctor
     Nobody": never a sound-alike guess) -- it just stops a single grammatical vowel shortening from hiding an
     otherwise-exact match."""
+    out = {s}
     if s.endswith("ি"):  # ি (short i)
-        return {s, s[:-1] + "ী"}  # ী (long i)
-    if s.endswith("ী"):
-        return {s, s[:-1] + "ি"}
-    return {s}
+        out.add(s[:-1] + "ী")  # ী (long i)
+    elif s.endswith("ী"):
+        out.add(s[:-1] + "ি")
+    # Real call 2026-10-18: the recogniser wrote "বিশ্বজিত্ সেন" (ত + hasanta) for the seeded "বিশ্বজিৎ সেন" (the letter ৎ): the same sound, a different
+    # code point, so the whole name was not recognised and "Arindam or Biswajit?" was asked. Both spellings are tried for a word-final ত্/ৎ.
+    import re as _re
+
+    for v in list(out):
+        out.add(_re.sub(r"ত্(?=\s|$)", "ৎ", v))
+        out.add(v.replace("ৎ", "ত্"))
+    return out
 
 
 def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
@@ -1076,6 +1088,8 @@ class ConfirmRequest(BaseModel):
     caller_phone: str
     patient_age: int | None = None
     relationship: str = "self"
+    patient_address: str = ""
+    patient_sex: str = ""
 
 
 @app.post("/api/v1/bookings/confirm")
@@ -1092,6 +1106,8 @@ def confirm_booking_endpoint(req: ConfirmRequest, db: Session = Depends(get_db))
         req.caller_phone,
         req.patient_age,
         req.relationship,
+        req.patient_address,
+        req.patient_sex,
     )
 
 
@@ -1241,12 +1257,17 @@ def doctor_free_slots(name: str = Query(...), date: str = Query(...), db: Sessio
     except ValueError:
         return {"found": False, "query": name}
     sched = _schedule_for_weekday(db, doctor.id, target.weekday())
+    leave = eq.doctor_leave_on(db, doctor.id, target.isoformat())  # not consulting that day: nothing is offered, and the return date is told
+    if leave:
+        sched = None
     return {
         "found": True,
         "doctor_name": _doctor_ref(db, doctor),
         "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
         "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
         "date": target.isoformat(),
+        "on_leave": bool(leave),
+        "leave": leave,
         "sits": bool(sched),
         "chamber_hours": f"{sched.start_time}-{sched.end_time}" if sched else None,
         "valid_slots": _generate_slots(sched.start_time, sched.end_time) if sched else [],
@@ -1262,8 +1283,70 @@ def department_route(query: str = Query(...), lang: str = Query("bn"), db: Sessi
 
 
 @app.get("/api/v1/departments/doctors")
-def department_doctors(name: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
-    return bs.department_doctors(db, name, lang)
+def department_doctors(
+    name: str = Query(...),
+    lang: str = Query("bn"),
+    sex: str | None = Query(None),
+    on_date: str | None = Query(None),
+    at_time: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    return bs.department_doctors(db, name, lang, sex=sex if sex in ("F", "M") else None, on_date=on_date, at_time=at_time)
+
+
+@app.get("/api/v1/relationships")
+def relationships(db: Session = Depends(get_db)):
+    """Who is who: the words for each relationship and the sex it implies ("my mother" -> a woman)."""
+    import clinic_extras
+
+    return {"rules": clinic_extras.relationship_rules(db)}
+
+
+@app.get("/api/v1/doctors/visit")
+def doctor_visit(name: str = Query(...), db: Session = Depends(get_db)):
+    """What a doctor's visit costs ("ভিজিট"). Read from the doctors table, never said from memory."""
+    amb = _ambiguous_doctor(db, name)
+    if amb is not None:
+        return amb
+    doctor = _find_doctor(db, name)
+    if not doctor:
+        return {"found": False, "query": name}
+    return {
+        "found": True,
+        "doctor_name": _doctor_ref(db, doctor),
+        "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+        "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
+        "visit_fee_inr": doctor.consultation_fee_inr,
+    }
+
+
+class DoctorLeaveRequest(BaseModel):
+    doctor_name: str
+    start_date: str
+    end_date: str
+    return_date: str | None = None
+
+
+@app.post("/api/v1/doctors/leave")
+@idempotent("doctors.leave")
+def doctor_leave_register(req: DoctorLeaveRequest, db: Session = Depends(get_db)):
+    """The doctor will not consult from start_date to end_date: the leave is recorded, the confirmed appointments in the range are cancelled
+    (reason doctor_leave, no charge) and an apology is queued for each patient. A caller who asks later is told, sympathetically."""
+    import clinic_extras
+
+    doctor = _find_doctor(db, req.doctor_name)
+    if not doctor:
+        return {"success": False, "reason": "doctor_not_found"}
+    try:
+        return clinic_extras.register_leave(db, doctor, req.start_date, req.end_date, req.return_date, queue_sms=bs.queue_sms)
+    except ValueError:
+        return {"success": False, "reason": "invalid_date"}
+
+
+@app.get("/api/v1/bookings/cancelled-by-clinic")
+def cancelled_by_clinic(phone: str | None = Query(None), confirmation_id: str | None = Query(None), db: Session = Depends(get_db)):
+    rows = bs.clinic_cancellations(db, phone=phone, confirmation_id=confirmation_id)
+    return {"found": bool(rows), "bookings": rows}
 
 
 class SmsRequest(BaseModel):

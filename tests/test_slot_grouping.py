@@ -116,7 +116,7 @@ def test_the_english_wording_reads_as_one_natural_clause():
     assert grouped_prompt(["date", "time_slot"], "en") == "For the appointment, which day and what time?"
     assert (
         grouped_prompt(["patient_name", "phone"], "en")
-        == "May I have the patient's name and a phone number for the confirmation?"
+        == "Could you tell me your name and your number, please?"  # SPEC CHANGE 2026-10-17
     )
 
 

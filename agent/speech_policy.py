@@ -217,12 +217,17 @@ def limit_questions(text: str, max_questions: int) -> str:
 SPEECH_RATE_BOOST = float(os.environ.get("SPEECH_RATE_BOOST", "1.06"))
 
 
-def effective_rate(policy: SpeechPolicy, figure_rate: float | None = None) -> float:
+# Owner, 2026-10-18: "AI voice speed has to increase in Bengali". Bengali is spoken this much faster in all (instead of SPEECH_RATE_BOOST); Hindi and English keep theirs.
+SPEECH_RATE_BOOST_BN = float(os.environ.get("SPEECH_RATE_BOOST_BN", "1.16"))
+
+
+def effective_rate(policy: SpeechPolicy, figure_rate: float | None = None, lang: str | None = None) -> float:
     """The rate for one clause: the policy's, and never faster than a
     figure's own slower rate (KCD-157) when the clause carries a price,
     phone number or reference. The two multiply, so a senior caller hears
     a price slower still."""
-    return policy.speech_rate * SPEECH_RATE_BOOST * (figure_rate if figure_rate is not None else 1.0)
+    boost = SPEECH_RATE_BOOST_BN if lang == "bn" else SPEECH_RATE_BOOST
+    return policy.speech_rate * boost * (figure_rate if figure_rate is not None else 1.0)
 
 
 def as_call_state_fields(policy: SpeechPolicy) -> dict:
