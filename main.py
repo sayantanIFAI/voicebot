@@ -262,7 +262,7 @@ PLAYBACK_GUARD_S = 3.0
 # being skipped is muted silence, so rewinding into it costs nothing,
 # while NOT rewinding risks clipping the caller's first syllable if the
 # WebM decode is running a beat behind real time.
-RESYNC_REWIND_S = 0.25
+RESYNC_REWIND_S = 0.8  # 2026-10-17: was 0.25 and measured from the poll tick; see agent/playback_gate.py
 
 # KCD-049: poll granularity. The fixed 0.5 s poll costs half its period on
 # average (0.25 s) on EVERY turn. Instead: an ACTIVE cadence while the caller
@@ -3890,6 +3890,12 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
         session.booking = None
 
 
+def _take_gate_release(session: CallSession):
+    """Where in the audio the client said playback finished (once), or None."""
+    at, session.gate_release_at_s = getattr(session, "gate_release_at_s", None), None
+    return at
+
+
 async def _resync_after_playback(session: CallSession) -> bool:
     """Drop everything captured while the agent was talking, by moving
     processed_until_s to the current end of the decoded buffer. That region
@@ -3901,7 +3907,7 @@ async def _resync_after_playback(session: CallSession) -> bool:
         return False
     wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)
     buffer_end_s = wav.shape[-1] / sr
-    session.processed_until_s = max(session.processed_until_s, buffer_end_s - RESYNC_REWIND_S)
+    session.processed_until_s = session.gate.resync_target(buffer_end_s, session.processed_until_s, _take_gate_release(session))
     session.resync_pending = False
     logger.info("[%s] resynced to %.2fs after playback", session.call_id, session.processed_until_s)
     return True
@@ -4691,6 +4697,8 @@ async def _handle_control(session: CallSession, raw: str):
         logger.warning("[%s] unparseable control frame: %r", session.call_id, raw[:80])
         return
     if msg.get("type") == "playback_done":
+        # remember WHERE in the audio the agent finished, so the caller's first words (spoken as it finished) are not skipped by the resync
+        session.gate_release_at_s = getattr(getattr(session, "audio", None), "duration_s", None)
         session.release_gate()
     elif msg.get("type") == "interrupt":
         await _interrupt_playback(session, "manual")

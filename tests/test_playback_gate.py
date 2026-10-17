@@ -94,3 +94,16 @@ def test_resync_moves_the_marker_past_the_muted_region_with_a_small_rewind():
 def test_resync_never_moves_the_marker_backwards():
     g = PlaybackGate(clock=Clock())
     assert g.resync_target(buffer_end_s=5.0, processed_until_s=9.0) == 9.0
+
+
+def test_the_marker_starts_from_when_playback_ended_not_from_the_later_poll_tick():
+    # Real calls 2026-10-17: the buffer had grown 0.6 s past the moment the client said "playback done" by the time the poll loop looked, and the
+    # caller's first word fell in that gap.
+    g = PlaybackGate()
+    assert g.resync_target(buffer_end_s=12.6, processed_until_s=4.0, release_at_s=12.0) == pytest.approx(12.0 - RESYNC_REWIND_S)
+    assert g.resync_target(buffer_end_s=12.6, processed_until_s=4.0) == pytest.approx(12.6 - RESYNC_REWIND_S)  # no anchor: as before
+    assert g.resync_target(buffer_end_s=12.6, processed_until_s=11.9, release_at_s=12.0) == 11.9  # never backward
+
+
+def test_the_rewind_covers_a_caller_who_started_a_beat_before_the_agent_finished():
+    assert RESYNC_REWIND_S >= 0.6

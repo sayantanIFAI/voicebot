@@ -115,7 +115,8 @@ def test_the_session_gate_behaves_as_the_old_attributes_did(session):
 
 def test_main_and_main_pcm_agree_on_the_gate(webm, pcm):
     for mod in (webm, pcm):
-        assert mod.PLAYBACK_GUARD_S == 3.0 and mod.RESYNC_REWIND_S == 0.25
+        # SPEC CHANGE 2026-10-17: the rewind is 0.8 s (was 0.25 s), measured from when the client said playback ended -- callers' first words were being lost
+        assert mod.PLAYBACK_GUARD_S == 3.0 and mod.RESYNC_REWIND_S == 0.8
 
 
 # ============================================================ epochs and discard (KCD-052/163)

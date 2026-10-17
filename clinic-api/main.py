@@ -62,7 +62,7 @@ async def require_service_token(request: Request, call_next):
     return await call_next(request)
 
 
-SLOT_STEP_MIN = 15
+SLOT_STEP_MIN = 10  # owner, 2026-10-17: one booking per 10-minute slot (keep equal to booking_service.SLOT_STEP_MIN)
 
 
 @app.on_event("startup")

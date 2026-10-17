@@ -238,6 +238,10 @@ DEPARTMENTS = {
     ],
 }
 
+# Owner, 2026-10-17: Dr. A. Sen sits every Thursday and every Sunday (0=Monday ... 6=Sunday), 10:00 to 12:00, in every month.
+SCHEDULE_OVERRIDES = {"Dr. A. Sen": {"days": [3, 6], "start": "10:00", "end": "12:00"}}
+
+
 # (name, [Bengali aliases], rate_inr, sample_type, report_time_hours)
 # Aliases are what a real caller says, not a transliteration of the
 # English column -- e.g. nobody says "কমপ্লিট ব্লাড কাউন্ট", they say "সিবিসি".
@@ -543,7 +547,7 @@ def seed():
                 db.add(doc)
                 db.flush()
 
-                template = SHIFT_TEMPLATES[doctor_index % len(SHIFT_TEMPLATES)]
+                template = SCHEDULE_OVERRIDES.get(doc_name) or SHIFT_TEMPLATES[doctor_index % len(SHIFT_TEMPLATES)]
                 for weekday in template["days"]:
                     db.add(
                         DoctorSchedule(

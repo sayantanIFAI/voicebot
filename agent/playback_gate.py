@@ -34,7 +34,11 @@ import time
 from collections.abc import Callable
 
 PLAYBACK_GUARD_S = 3.0
-RESYNC_REWIND_S = 0.25
+# Real calls 2026-10-17 (saved audio): about half of the caller's utterances that follow an agent reply started at full speech level at their very
+# first sample -- the first word was already gone. The marker was set to the buffer's end at the poll tick AFTER playback ended, minus 0.25 s, so a
+# caller who began as the agent finished lost whatever they said in between. The marker now starts from the moment the client said playback was
+# over, and goes back 0.8 s from there. (Echo is not the cost: the greeting's tail did not correlate with the start of the clips, 0.05-0.08.)
+RESYNC_REWIND_S = 0.8
 
 
 class PlaybackGate:
@@ -76,9 +80,10 @@ class PlaybackGate:
             return False
         return True
 
-    def resync_target(self, buffer_end_s: float, processed_until_s: float) -> float:
-        """Where the processed marker moves to after playback: the end of the
-        buffer, less a small rewind so the first syllable of a caller who
-        started speaking as the gate lifted is not lost. Never moves backward."""
+    def resync_target(self, buffer_end_s: float, processed_until_s: float, release_at_s: float | None = None) -> float:
+        """Where the processed marker moves to after playback: the buffer position at the moment the client reported playback finished (when
+        known; otherwise the buffer's end now), less a rewind so the first words of a caller who started speaking as the agent finished are
+        not lost. Never moves backward."""
         self.resync_pending = False
-        return max(processed_until_s, buffer_end_s - RESYNC_REWIND_S)
+        base = buffer_end_s if release_at_s is None else min(buffer_end_s, release_at_s)
+        return max(processed_until_s, base - RESYNC_REWIND_S)

@@ -67,7 +67,10 @@ def _confirmation_id(date: str) -> str:
     return f"KCD-{date.replace('-', '')}-{uuid.uuid4().hex[:8].upper()}"
 
 
-def _generate_slots(start: str, end: str, step_min: int = 15) -> list[str]:
+SLOT_STEP_MIN = 10  # owner, 2026-10-17: one booking per 10-minute slot
+
+
+def _generate_slots(start: str, end: str, step_min: int = SLOT_STEP_MIN) -> list[str]:
     t = datetime.datetime.strptime(start, "%H:%M")
     end_t = datetime.datetime.strptime(end, "%H:%M")
     out = []

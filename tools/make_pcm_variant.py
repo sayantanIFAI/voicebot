@@ -76,6 +76,8 @@ SLICE_NEW = """    sr = session.audio.sample_rate
     return clip_path"""
 
 HELLO_NEW = """    if msg.get("type") == "playback_done":
+        # remember WHERE in the audio the agent finished, so the caller's first words (spoken as it finished) are not skipped by the resync
+        session.gate_release_at_s = getattr(getattr(session, "audio", None), "duration_s", None)
         session.release_gate()
     elif msg.get("type") == "hello":
         # The browser may refuse the 16kHz AudioContext we ask for. Trust
@@ -209,7 +211,7 @@ def main() -> None:
         "poll",
     )
 
-    rep('    if msg.get("type") == "playback_done":\n        session.release_gate()', HELLO_NEW, "hello")
+    rep('    if msg.get("type") == "playback_done":\n        # remember WHERE in the audio the agent finished, so the caller\'s first words (spoken as it finished) are not skipped by the resync\n        session.gate_release_at_s = getattr(getattr(session, "audio", None), "duration_s", None)\n        session.release_gate()', HELLO_NEW, "hello")
 
     rep(
         'TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.3"))',
