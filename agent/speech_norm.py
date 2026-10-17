@@ -456,7 +456,18 @@ _RE_LATIN_RUN = re.compile(r"[A-Za-z][A-Za-z .'-]*")
 _RE_NON_LATIN_RUN = re.compile(r"[^\x00-\x7f‘-”–—]+")
 
 
+# Owner's rule, 2026-10-17: the title in front of a doctor's name is ALWAYS said as the word "doctor" -- never the abbreviation read letter by letter
+# or dropped ("ডাঃ" -> "ডাক্তার", "Dr." -> "Doctor"), in every language.
+_DOCTOR_WORD = {"bn": "ডাক্তার", "hi": "डॉक्टर", "en": "Doctor"}
+_RE_DOCTOR_TITLE = re.compile(r"(?<![\wऀ-ॿঀ-৿])(?:ডাঃ|ডা\.|ডা:|ডাক্তার\.|डॉ\.?|डा\.|Dr\.?|DR\.?|dr\.?)(?![ऀ-ॿঀ-৿A-Za-z])")
+
+
+def expand_doctor_title(text: str, lang: str = "bn") -> str:
+    return _RE_DOCTOR_TITLE.sub(_DOCTOR_WORD.get(lang, _DOCTOR_WORD["en"]), text or "")
+
+
 def verbalize(text: str, lang: str = "bn") -> str:
+    text = expand_doctor_title(text, lang)
     if lang == "hi":
         return verbalize_hi(text)
     if lang == "en":

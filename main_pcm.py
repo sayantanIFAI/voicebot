@@ -2013,7 +2013,7 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             _de_date = slots.get("date") or result.get("date")
             if result.get("available") is False and result.get("next_available_date"):
                 _de_date = result["next_available_date"]
-            _doctor_enquiry_found.set({"doctor_name": slots["doctor_name"], "date": _de_date})
+            _doctor_enquiry_found.set({"doctor_name": slots["doctor_name"], "date": _de_date, "window": result.get("chamber_hours")})
         return doctor_availability_reply(slots, result, lang)
     if intent == "test_prep":
         if not slots.get("test_name"):
@@ -2270,7 +2270,7 @@ def _log_timing(session: CallSession) -> None:
 
 
 UTT_RING_DIR = os.environ.get("UTT_RING_DIR", "/tmp/utt_ring")
-UTT_RING_KEEP = int(os.environ.get("UTT_RING_KEEP", "8"))
+UTT_RING_KEEP = int(os.environ.get("UTT_RING_KEEP", "40"))
 
 
 def _keep_recent_utterance(session: CallSession, wav_path: str) -> None:
@@ -2300,6 +2300,17 @@ async def _catalogue_codes() -> dict[str, str]:
     return {c: next(iter(names)) for c, names in by_code.items() if len(names) == 1}
 
 
+_WHICH_TEST = {
+    "bn": "কোন টেস্টটার কথা জানতে চান? নামটা একটু ধীরে বলবেন?",
+    "hi": "किस टेस्ट के बारे में जानना है? नाम ज़रा धीरे बताइए।",
+    "en": "Which test do you mean? Could you say its name slowly?",
+}
+
+
+def _which_test_prompt(lang: str) -> str:
+    return _WHICH_TEST.get(lang, _WHICH_TEST["en"])
+
+
 async def _normalise_spelled(text: str) -> str:
     """"টি এস এইচ টেস্ট কত" -> "TSH টেস্ট কত": letters pronounced separately are read back as the test code they spell, for every test in the
     catalogue (agent/spelled_letters.normalise_spelled_codes). Never fails the turn."""
@@ -2321,6 +2332,7 @@ async def _with_spelled_tests(session: CallSession, lang: str, result, english_t
     try:
         if not english_text or not result.text:
             return result
+        logger.info("[%s] English recogniser heard %r beside the %s text %r", session.call_id, english_text, lang, result.text)
         cat = await _cached_catalogue()
         by_code: dict[str, set[str]] = {}
         for t in cat.get("tests", []):
@@ -3021,10 +3033,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # (register, no hedging, no reassurance or advice, sentence length) or is replaced.
         # KCD-500: and it may not claim anything about THIS caller's past -- history is rendered
         # from retrieved fields by agent/history_templates.py, never composed.
+        # Real call 2026-10-17: for the garbled "হস্ট হয় ওখানে" the model wrote "আপনার সব্বাস্তু! কিভাবে আমাদের সাহায্য করতে পারি?" -- nonsense that still
+        # passed the register and length checks. A 7B model does not write reliable Bengali or Hindi, so only ENGLISH smalltalk may be model-composed;
+        # Bengali and Hindi get the clinic's own wording.
         chosen = (
             reply
             if (
-                _speakable(reply or "", lang)
+                lang == "en"
+                and _speakable(reply or "", lang)
                 and persona_clean(reply or "", lang)
                 and not history_text.mentions_personal_history(reply or "", lang)
             )
@@ -3166,6 +3182,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             slots, _ = _followup(session, intent, slots, text, lang)
             reply = await _answer_enquiry_intent(intent, slots, lang)
             if reply is None:
+                if test_availability.asks_if_test_is_available(text, lang):
+                    # "...টেস্ট হয় ওখানে" with the name lost: not a question about preparation. Ask which test, and carry on as a price/availability
+                    # enquiry for whatever name comes next.
+                    session.pending_enquiry = ("test_rate", session.turn_count)
+                    await _speak(session, _which_test_prompt(lang), lang)
+                    return
                 session.pending_enquiry = (intent, session.turn_count)
                 await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                 return

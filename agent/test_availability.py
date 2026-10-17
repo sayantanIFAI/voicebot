@@ -93,6 +93,12 @@ def asks_if_test_is_available(text: str, lang: str) -> bool:
     words = t.split()
     if len(words) > 14:
         return False
+    # Real call 2026-10-17: "ক্গ টেস্ট হয় ওখানে" / "कि टेस्ट हो अपना ..." -- the test NAME was lost by the recogniser but the question is plain: "is a ... test done
+    # there?". The word "test" followed within three words by "done/happens" (হয়, होता, हो ...) is that question, whatever the name.
+    if len(words) <= 9:
+        for i, w in enumerate(words):
+            if w in _TEST_WORD_FORMS and any(v in _DONE_VERBS for v in words[i + 1: i + 4]):
+                return True
     # Every language's tails are tried: the recogniser's language label for one clip is not always right.
     for tails in _AVAILABLE_TAILS.values():
         for tail in tails:
@@ -106,6 +112,9 @@ def asks_if_test_is_available(text: str, lang: str) -> bool:
             return True
     return False
 
+
+_TEST_WORD_FORMS = frozenset(("টেস্ট", "টেস্টটা", "টেস্টগুলো", "टेस्ट", "test", "tests"))
+_DONE_VERBS = frozenset(("হয়", "হয", "হোয়", "করেন", "করে", "होता", "होते", "होती", "हो", "करते", "करती", "do", "does"))
 
 _TEST_WORDS = ("test", "টেস্ট", "টেস্টের", "টেস্টটা", "टेस्ट", "পরীক্ষা", "परीक्षा", "जांच", "scan", "স্ক্যান", "स्कैन")
 

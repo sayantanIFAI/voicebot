@@ -426,3 +426,43 @@ def test_a_long_clip_is_cut_in_a_pause_not_in_speech():
 def test_ask_back_does_not_double_the_bengali_ti():
     q = _mtc.shortfall([("a", _found("Uric Acid")), ("b", _found("TSH"))], 3, "bn")
     assert "তিনটিটি" not in q and "তিনটি টেস্ট" in q
+
+
+# ---- an availability question whose test NAME was lost is still an availability question
+def test_availability_question_without_a_readable_name():
+    for text, lang in [("ক্গ টেস্ট হয় ওখানে", "bn"), ("কি টেস্ট হয় আপনাদের ওখানে", "bn"), ("तम्त टेस्ट हो अपना दरोखा ना", "hi"), ("ইক টেস্ট হয় ওখানে", "bn")]:
+        assert _ta.asks_if_test_is_available(text, lang), text
+    # but not when it is about something else
+    for text, lang in [("টেস্ট হয়ে যাওয়ার পর রিপোর্ট কবে", "bn"), ("সিবিসি টেস্টের দাম কত", "bn"), ("আমি টেস্ট করাতে চাই", "bn")]:
+        assert not _ta.asks_if_test_is_available(text, lang), text
+
+
+# ---- "book that time" after an availability answer; the doctor title is always the word "doctor"
+from agent import booking_carryover as _bc
+from agent import speech_norm as _sn
+
+
+def test_that_time_after_an_availability_answer_fills_date_and_time():
+    ctx = {"doctor_name": "Sen", "date": "2026-10-17", "window": "10:00-12:00", "turn": 3}
+    out = _bc.carry_over(ctx, {}, "ওই সময় একটা বুকিং দিয়ে দেন তাহলে আমাকে", None, 4)
+    assert out == {"doctor_name": "Sen", "date": "2026-10-17", "time_slot": "10:00"}
+
+
+def test_that_day_that_time_still_works_when_the_doctor_is_already_in_the_booking():
+    ctx = {"doctor_name": "Sen", "date": "2026-10-17", "window": "10:00-12:00", "turn": 3}
+    out = _bc.carry_over(ctx, {}, "ওই দিনেরই ওই সময়েই বুকিং নেন", {"doctor_name": "Sen"}, 5)
+    assert out == {"date": "2026-10-17", "time_slot": "10:00"}
+
+
+def test_nothing_is_carried_without_the_pointing_words_or_when_the_caller_names_a_time():
+    ctx = {"doctor_name": "Sen", "date": "2026-10-17", "window": "10:00-12:00", "turn": 3}
+    assert "time_slot" not in _bc.carry_over(ctx, {}, "বুকিং করুন", None, 4)
+    assert _bc.carry_over(ctx, {"time_slot": "11:00"}, "ওই সময়", None, 4)["time_slot"] == "11:00"
+    assert _bc.carry_over(ctx, {}, "ওই সময়", None, 9) == {}  # too long ago
+
+
+def test_a_doctor_title_is_always_said_as_doctor():
+    assert _sn.expand_doctor_title("ডাঃ সেন", "bn") == "ডাক্তার সেন"
+    assert _sn.expand_doctor_title("Dr. Sen", "en") == "Doctor Sen"
+    assert _sn.expand_doctor_title("डॉ. सेन", "hi") == "डॉक्टर सेन"
+    assert _sn.expand_doctor_title("drive", "en") == "drive"
