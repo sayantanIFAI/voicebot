@@ -52,7 +52,7 @@ def missing_slot_prompt(intent: str, missing: str, lang: str = "bn") -> str:
         ("book_appointment", "date"): "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?",
         ("book_appointment", "time_slot"): "কোন সময়ের জন্য অ্যাপয়েন্টমেন্ট চাই?",
         ("book_appointment", "patient_name"): "রোগীর নামটা বলবেন?",
-        ("book_appointment", "phone"): "একটা ফোন নম্বর দেবেন, যাতে কনফার্মেশন পাঠাতে পারি?",
+        ("book_appointment", "phone"): "যে নম্বর থেকে বুক করবেন সেটা বলবেন? ওই নম্বরে কনফার্মেশন পাঠাব।",
         ("test_prep", "test_name"): "কোন টেস্টের প্রস্তুতি জানতে চান, একটু বলবেন?",
         ("clinic_faq", "faq_topic"): "দুঃখিত, ঠিক বুঝতে পারলাম না। আর একটু বলবেন?",
         ("book_test", "test_names"): "কোন টেস্টগুলো বুক করতে চান, একটু বলবেন?",

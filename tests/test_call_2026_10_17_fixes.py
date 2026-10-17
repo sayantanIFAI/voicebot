@@ -492,3 +492,11 @@ def test_noisy_english_does_not_beat_clean_bengali_in_a_bengali_call():
     assert _ls.pick_candidate([("bn", bn), ("en", clear)], lid, "bn")[0] == "en"
     # and on the first turn (no established call language) the old rule stands
     assert _ls.pick_candidate([("bn", bn), ("en", en)], lid, None)[0] == "en"
+
+
+# ---- "<your place> X <is done>" with a garbled X that is close to a test the clinic does
+def test_the_have_frame_finds_the_words_between_the_place_and_the_verb():
+    assert _ta.have_frame_name("আপনাদের ওখানে চিস্টিক্স রে হয়") == "চিস্টিক্স রে"
+    assert _ta.have_frame_name("आपके यहाँ चेस्ट एक्स रे होता है") == "चेस्ट एक्स रे"
+    assert _ta.have_frame_name("আমি কাল যাব") is None
+    assert _ta.asks_if_test_is_available("আপনাদের ওখানে চিস্টিক্স রে হয়", "bn")

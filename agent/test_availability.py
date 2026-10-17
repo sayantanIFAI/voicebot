@@ -81,6 +81,24 @@ def _contains_cue(norm_text: str, cues: tuple[str, ...]) -> bool:
     return False
 
 
+# "<what> is done / available at your place": the structural frame of a "do you have X?" question, whatever X is.
+_HAVE_FRAME = re.compile(
+    r"(?:আপনাদের|আপনার|ওদের|তোমাদের)?\s*(?:ওখানে|এখানে|কাছে)\s+(?P<x>.+?)\s+(?:হয|করেন|পাওয়া যায|আছে)$"
+    r"|(?:आपके|आप लोगों के|आपका)\s*(?:यहाँ|यहां|वहाँ|वहां)\s+(?P<y>.+?)\s+(?:होता है|होते हैं|होती है|होता|हो जाता है|करते हैं)$"
+)  # the Bengali verbs are written without the nukta: _norm() drops it ("হয়" -> "হয")
+
+
+def have_frame_name(text: str) -> str | None:
+    """The words in "<your place> X <is done>" ("আপনাদের ওখানে চিস্টিক্স রে হয়") -- X, with a trailing word for "test" removed -- or None."""
+    m = _HAVE_FRAME.search(_norm(text))
+    if not m:
+        return None
+    x = (m.group("x") or m.group("y") or "").split()
+    while x and x[-1] in _TEST_WORD_FORMS:
+        x.pop()
+    return " ".join(x) if x and sum(len(w) for w in x) >= 3 else None
+
+
 def asks_if_test_is_available(text: str, lang: str) -> bool:
     """True for "is the X test done here?" in any of the three languages. Deliberately narrow: a sentence that also
     asks a price, a preparation, a report time, or asks to book is NOT an availability question -- those have their
@@ -89,6 +107,8 @@ def asks_if_test_is_available(text: str, lang: str) -> bool:
     if not t or _contains_cue(t, _NOT_AVAILABILITY):
         return False
     if translit_frames.match(text) is not None:  # "do you do chest X-ray" written in Bengali/Devanagari letters
+        return True
+    if have_frame_name(text) is not None and len(t.split()) <= 9:  # "<your place> X <is done>": the intent layer decides whether X is a test
         return True
     words = t.split()
     if len(words) > 14:

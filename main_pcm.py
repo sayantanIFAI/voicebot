@@ -1765,6 +1765,15 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # "do you do chest X-ray" written by the Bengali/Hindi recogniser in its own letters is read by rule, not left to the model, which
     # called it "unclear" (real call 2026-10-17). The name after the frame is a candidate for the catalogue lookup that follows.
     asked = translit_frames.match(text) or spelled_letters.bare_code_request(text)
+    if asked is None and _fast_path is not None:
+        # Real call 2026-10-17: "আপনাদের ওখানে চিস্টিক্স রে হয়" (chest X-ray, misheard) was answered with the payment methods. When the words in the
+        # "do you have X?" frame are close to a test the clinic does (catalogue similarity >= 0.75; ordinary clinic words score <= 0.67), X is a test
+        # candidate: the lookup answers an exact name or asks "did you mean ...?".
+        x = test_availability.have_frame_name(text)
+        if x:
+            hit = await asyncio.to_thread(_fast_path.catalogue.match, x, "test", text_lang, 0.75)
+            if hit and hit[0]:
+                asked = x
     if asked is not None:
         logger.info("[%s] test named by rule (frame / spelled code) -> test_rate for %r", session.call_id, asked)
         return {
