@@ -49,6 +49,9 @@ def test_the_chosen_spelling_carries_over_to_the_same_word_with_an_ending():
     assert bn_respell.respell("যাওয়াটা") == "যাওয়াাটা"
     assert bn_respell.respell("কয়েকটা") == "কয়একটা"
     assert bn_respell.respell("স্যাম্পলের") == "স্যাম্পেলের"
+    # round 3: নিয়ে chosen (candidate 4); গিয়ে and হয় kept as written
+    assert bn_respell.respell("নিয়ে") == "নিইয়ে"
+    assert bn_respell.respell("গিয়ে") == "গিয়ে" and bn_respell.respell("হয়") == "হয়"
     # a longer word that merely starts the same is left alone
     assert bn_respell.respell("কয়েকশো") == "কয়েকশো"
 

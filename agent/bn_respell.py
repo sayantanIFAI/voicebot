@@ -33,6 +33,10 @@ _RESPELL: dict[str, str] = {
     "যাওয়া": "যাওয়াা",  # 2026-10-17: the listener chose the lengthened আ for যাওয়ার (candidate 2 of 6)
     "যাওয়ার": "যাওয়াার",
     "স্যাম্পল": "স্যাম্পেল",  # 2026-10-17: candidate 4 of 6
+    # Round 3, 2026-10-17: the listener kept গিয়ে and হয় as written (candidate 1 was best) and chose নিয়ে -> নিইয়ে (candidate 4 of 6).
+    "নিয়ে": "নিইয়ে",
+    "নিয়েও": "নিইয়েও",
+    "নিয়েই": "নিইয়েই",
     # কয়েক: chosen from the user's OWN recording of the word (Downloads/My recording 49.m4a): of 15 spellings the voice said, কয়এক was
     # the nearest to it acoustically (MFCC distance 3.46; the next 3.87, the current spelling 4.43). Measured against one speaker, so
     # the listener's ear still decides -- it is not in REVIEWED until they say so.
@@ -86,7 +90,7 @@ def rule_changes() -> dict[str, str]:
     return {w: _sh(w) for w in sorted(_NATIVE_BASE) if w not in _RESPELL and _sh(w) != w}
 
 
-REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা", "নেওয়া", "যাওয়ার", "স্যাম্পল"}  # approved by a native listener
+REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা", "নেওয়া", "যাওয়ার", "স্যাম্পল", "নিয়ে"}  # approved by a native listener
 
 _BENGALI_WORD = re.compile(r"[ঀ-৿]+")
 
