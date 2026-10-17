@@ -136,4 +136,4 @@ def availability_reply(names: list[str], lang: str) -> str:
             f"Yes, we do the {spoken}. What would you like to know about {'them' if many else 'it'}? "
             "The rate, the preparation, or when the report is ready?"
         )
-    return f"জি, আমাদের এখানে {spoken} হয়। এ সম্পর্কে আর কী জানতে চান? রেট, প্রস্তুতি, নাকি রিপোর্ট কবে পাবেন?"
+    return f"হ্যাঁ, আমাদের এখানে {spoken} হয়। এ সম্পর্কে আর কী জানতে চান? রেট, প্রস্তুতি, নাকি রিপোর্ট কবে পাবেন?"

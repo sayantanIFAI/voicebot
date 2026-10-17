@@ -37,7 +37,7 @@ PHRASES: dict[str, dict[str, str]] = {
         # The caller has said nothing for SILENCE_PROMPT_S after the agent finished speaking: ask once whether there is
         # more (one question), and say that the call ends if not. If still silent, idle_close ends the call.
         "silence_prompt": "আর কিছু জানতে চান? না চাইলে আমি কল শেষ করে দেব।",
-        "silence_go_on": "জি, বলুন।",
+        "silence_go_on": "হ্যাঁ, বলুন।",
         "silence_goodbye": "ঠিক আছে, ধন্যবাদ। ভালো থাকবেন।",
         # Abuse from the caller (agent/abuse.py): calm, no imitation, no lecture; the third time the call is closed.
         "abuse_first": "আমি আপনাকে সাহায্য করতে এখানে আছি। ভদ্রভাবে বললে আমি আরও ভালো সাহায্য করতে পারব। বলুন, কী জানতে চান?",

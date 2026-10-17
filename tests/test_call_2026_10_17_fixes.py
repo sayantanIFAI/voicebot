@@ -345,3 +345,41 @@ def test_spelled_letters_do_not_count_against_english():
     assert _ls.english_word_share("what is the rate of c b c and eurica it together") >= 0.6
     assert _ls.english_word_share("sibisi test rate koto") < 0.6
     assert _ls.english_word_share("i want a test") == 1.0  # "i" and "a" are words and still count
+
+
+# ---- "d s h test" is handed to the catalogue lookup, hesitations are not a finished sentence, no Hindi জি in Bengali replies
+from agent.endpointing import classify_completeness as _cc
+
+
+def test_a_sentence_of_only_spelled_letters_and_test_is_a_code_request():
+    assert _sl.bare_code_request("d s h test") == "DSH"
+    assert _sl.bare_code_request("ডি এস এইচ টেস্ট") == "DSH"
+    assert _sl.bare_code_request("डी एस एच टेस्ट") == "DSH"
+    assert _sl.bare_code_request("c b c") == "CBC"
+
+
+def test_more_than_a_code_is_not_a_bare_code_request():
+    assert _sl.bare_code_request("what is the rate of c b c") is None
+    assert _sl.bare_code_request("d s h test price") is None
+    assert _sl.bare_code_request("a b") is None  # too short to be a code
+    assert _sl.bare_code_request("hello there") is None
+
+
+def test_a_hesitation_or_opener_is_not_a_finished_sentence():
+    for text, lang in [("it's", "en"), ("it's uh", "en"), ("what", "en"), ("आपके", "hi"), ("आप लोगों के साथ", "hi"), ("আপনাদের", "bn")]:
+        assert _cc(text, lang) == "incomplete", text
+    assert _cc("yes", "en") == "complete" and _cc("thank you", "en") == "complete"
+
+
+def test_no_hindi_ji_in_bengali_replies():
+    """"জি" is Hindi "ji"; West Bengal says "হ্যাঁ" / "আচ্ছা". Checked on the spoken text of the three places it used to be."""
+    import pathlib
+    from agent import phrases, test_availability
+    assert not _re_ji.search(test_availability.availability_reply(["Lipid Profile"], "bn"))
+    assert not _re_ji.search(phrases.phrase("silence_go_on", "bn"))
+    src = pathlib.Path(__file__).resolve().parents[1].joinpath("agent", "senior_care.py").read_text(encoding="utf-8")
+    assert not any(_re_ji.search(line) for line in src.splitlines() if '"bn":' in line)
+
+
+import re as _re0
+_re_ji = _re0.compile("(?<![\u0980-\u09FF])জি(?![\u0980-\u09FF])")

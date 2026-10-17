@@ -1749,9 +1749,9 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
 
     # "do you do chest X-ray" written by the Bengali/Hindi recogniser in its own letters is read by rule, not left to the model, which
     # called it "unclear" (real call 2026-10-17). The name after the frame is a candidate for the catalogue lookup that follows.
-    asked = translit_frames.match(text)
+    asked = translit_frames.match(text) or spelled_letters.bare_code_request(text)
     if asked is not None:
-        logger.info("[%s] transliterated English question frame -> test_rate for %r", session.call_id, asked)
+        logger.info("[%s] test named by rule (frame / spelled code) -> test_rate for %r", session.call_id, asked)
         return {
             "intent": "test_rate",
             "slots": {k: (asked if k == "test_name" else None) for k in (

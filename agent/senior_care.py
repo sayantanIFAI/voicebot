@@ -43,7 +43,7 @@ PATIENCE = {
 }
 # a warmer acknowledgement used in place of the plain one in senior mode
 WARM_ACK = {
-    "bn": "জি, বলার জন্য ধন্যবাদ।",
+    "bn": "আচ্ছা, বলার জন্য ধন্যবাদ।",
     "hi": "जी, बताने के लिए धन्यवाद।",
     "en": "Yes, thank you for telling me.",
 }

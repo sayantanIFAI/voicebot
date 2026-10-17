@@ -67,3 +67,38 @@ def match_codes(english_text: str, codes: dict[str, str]):
         if len(set(near)) == 1:  # a candidate that is close to two different tests is no evidence for either
             found.append((cand, near[0], False))
     return found
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# A sentence that is ONLY a spelled code and the word "test" ("d s h test", "ডি এস এইচ টেস্ট"). Real call 2026-10-17: "d s h test" -- a
+# mis-hearing of "T S H test" -- was handed to the intent model, which answered with the home-collection FAQ because no test name was
+# extracted. The catalogue lookup would have asked "did you mean TSH?" (it does for "DSH"); the model just never got it that far. A
+# sentence made of nothing but letters and "test" is unambiguous enough to hand to the lookup directly: the lookup then answers an exact
+# code or ASKS about a near one (CLAUDE.md: suggest, never resolve).
+_LETTER_NAMES = {
+    # Bengali script
+    "এ": "a", "বি": "b", "সি": "c", "ডি": "d", "ই": "e", "এফ": "f", "জি": "g", "এইচ": "h", "আই": "i", "জে": "j", "কে": "k", "এল": "l",
+    "এম": "m", "এন": "n", "ও": "o", "পি": "p", "কিউ": "q", "আর": "r", "এস": "s", "টি": "t", "ইউ": "u", "ভি": "v", "এক্স": "x",
+    "ওয়াই": "y", "জেড": "z",
+    # Devanagari
+    "ए": "a", "बी": "b", "सी": "c", "डी": "d", "ई": "e", "एफ": "f", "जी": "g", "एच": "h", "आई": "i", "जे": "j", "के": "k", "एल": "l",
+    "एम": "m", "एन": "n", "ओ": "o", "पी": "p", "क्यू": "q", "आर": "r", "एस": "s", "टी": "t", "यू": "u", "वी": "v", "एक्स": "x",
+    "वाई": "y", "जेड": "z",
+}
+_TEST_WORD = frozenset(("test", "tests", "টেস্ট", "টেস্টটা", "टेस्ट"))
+
+
+def bare_code_request(text: str) -> str | None:
+    """"DSH" for "d s h test" / "ডি এস এইচ টেস্ট"; None unless the WHOLE sentence is three to five spelled letters and, optionally, the word test."""
+    letters: list[str] = []
+    for tok in _TOKEN.findall((text or "").lower()) if text and text.isascii() else (text or "").lower().replace(",", " ").split():
+        tok = tok.strip(".,?!।")
+        if tok in _TEST_WORD:
+            continue
+        if len(tok) == 1 and tok.isascii() and tok.isalpha():
+            letters.append(tok)
+        elif tok in _LETTER_NAMES:
+            letters.append(_LETTER_NAMES[tok])
+        else:
+            return None
+    return "".join(letters).upper() if 3 <= len(letters) <= 5 else None
