@@ -130,6 +130,7 @@ from agent import cart_tally  # sourav 2026-10-14: running list of priced tests 
 from agent import test_availability  # real call 2026-10-14: "is the X test done here?" is a question, not a booking
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
+from agent import test_overview  # what tests do you do? from the catalogue, no model
 from agent import translit_frames  # "do you do chest X-ray" written in Bengali/Devanagari letters
 from agent import spelled_letters  # a spelled test code ("C B C") the Bengali recogniser wrote as a made-up word
 from agent.catalogue_forms import lab_test_code
@@ -2092,6 +2093,26 @@ async def _handle_test_category_answer(session: CallSession, category: str, text
     await _queue_prescription_callback(session, f"lay_term_{category}", text, lang)
 
 
+async def _answer_test_overview(session: CallSession, text: str, lang: str) -> bool:
+    """"What tests do you do?" (agent/test_overview.py): the kinds of tests the clinic offers, from the catalogue, no model. Only when the question
+    is about the whole range and names no particular test. True when answered."""
+    if not test_overview.asks_which_tests(text):
+        return False
+    try:
+        if _fast_path is not None and _fast_path.named_tests(text, language_of_script(text, lang)):
+            return False  # a test is named: that is an availability / price question, handled elsewhere
+        cat = await _cached_catalogue()
+        spoken = test_overview.reply(cat.get("tests", []), lang)
+    except Exception as e:  # noqa: BLE001 - an overview is an aid; the turn goes on to the normal path
+        logger.warning("test overview skipped: %s", e)
+        return False
+    if not spoken:
+        return False
+    session.pending_enquiry = ("test_rate", session.turn_count)  # the next test name gets its price
+    await _speak(session, _with_resume(session, spoken, lang), lang)
+    return True
+
+
 async def _answer_named_total(session: CallSession, text: str, lang: str) -> bool:
     """sourav, 2026-10-16: "<test A> and <test B> total koto hobe" -- two or more tests NAMED in the sentence plus a total word. Answered here, with
     no model: fast_path.named_tests finds the tests, the clinic API prices each one, multi_test_rate_reply adds them up (truth boundary: no
@@ -2917,6 +2938,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
         if await _answer_named_total(session, text, lang):
+            return
+        if session.booking is None and await _answer_test_overview(session, text, lang):
             return
         # sourav, 2026-10-16: what the caller's OWN words settle during a doctor booking (phone digits said in pieces, "double nine",
         # Hindi/Bengali digit words; a yes to a name read back; "the first one" after offered slots) is decided here in code, before
