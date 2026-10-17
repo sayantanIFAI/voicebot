@@ -782,12 +782,20 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
     # 1. A name read back and waiting for the caller's yes/no.
     if st.pending_name:
         answer = confirm_answer(text, lang)
-        if answer == "yes":
+        repeated = candidate_name(text) if answer is None and read_digits(text)[1] >= 1 else None
+        if repeated:
+            # Real call 2026-10-17: to "I heard the name আবু আবু আলী. Is that right?" the caller said "abu ali" and their number. That is an answer: the name
+            # as heard now is the name, the number is taken, and nothing but the confirmation is asked.
+            st.pending_name, st.name_confirmed = None, repeated
+            plan.slots, plan.skip_model = {"patient_name": repeated}, True
+        elif answer == "yes":
             name, st.pending_name = st.pending_name, None
             st.name_confirmed = name
             plan.slots, plan.skip_model = {"patient_name": name}, True
             return plan
-        if answer == "no":
+        if repeated:
+            pass
+        elif answer == "no":
             st.pending_name = None
             fresh = candidate_name(_bare_no(text))
             if fresh:
@@ -796,7 +804,7 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
             else:
                 plan.speak = prompt("name_again", lang)
             return plan
-        fresh = candidate_name(text)  # neither yes nor no: if it is a name, it is the corrected name
+        fresh = None if repeated else candidate_name(text)  # neither yes nor no: if it is a name, it is the corrected name
         st.pending_name = None
         if fresh:
             st.pending_name = fresh
@@ -875,6 +883,8 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
         plan.speak = prompt("phone_cleared", lang)
     if plan.speak:
         return plan
+    if plan.skip_model and plan.phone and isinstance(plan.slots, dict) and "phone" not in plan.slots:
+        plan.slots = {**plan.slots, "phone": plan.phone}  # the name was settled by this sentence and the number came with it
 
     # 4. The time and the day: "দশটার সময়", "10 ta", "दस बजे", "tomorrow at ten", a bare "कल" (see read_when).
     time_pending = st.slots.get("_time_ok") == "pending"  # a time was just proposed: the caller may answer with another one, even beside the number

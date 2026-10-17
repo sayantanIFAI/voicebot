@@ -1847,6 +1847,11 @@ def _asks_when_sits(text: str) -> bool:
     return any(w in text.lower() for w in _WHEN_SITS)
 
 
+def _readback_pending(session: CallSession) -> bool:
+    b = session.booking
+    return b is not None and b.action == "book_appointment" and bool(b.pending_name or b.slots.get("_phone_pending"))
+
+
 def _doctor_booking_open(session: CallSession) -> bool:
     """A doctor booking is being filled in, or a doctor was just asked about."""
     b = session.booking
@@ -2985,6 +2990,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # _continue_language_switch_offer on the turn after. Checked before anything else can consume this turn.
         if (
             not session.awaiting_language_switch_offer
+            and not _readback_pending(session)  # a name/number read-back is waiting for its yes/no: a garbled short answer is not a language change
             and not switch_target  # Real call 2026-10-17: an EXPLICIT "speak Bengali" said in Hindi was answered with "shall I speak Hindi?" (the offer fired on top of the request)
             and detected_lang != session.lang
             and detected_lang in _languages_active
@@ -3507,6 +3513,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 text,
                 session.booking.slots if session.booking is not None else None,
                 session.turn_count,
+                time_said=bool(capture_plan.time),
             )
             st = _enter_task(session, "book_appointment")
             # sourav, 2026-10-16: the model's phone must be a real 10-digit mobile number and its patient name must be in the caller's

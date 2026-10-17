@@ -137,7 +137,7 @@ def points_at_doctor(text: str) -> bool:
     return _has(_norm(text), _HIM_HER)
 
 
-def carry_over(ctx: dict | None, slots: dict, text: str, booking_slots: dict | None, turn_count: int) -> dict:
+def carry_over(ctx: dict | None, slots: dict, text: str, booking_slots: dict | None, turn_count: int, time_said: bool = False) -> dict:
     """The booking `slots` with doctor_name (and date) filled from the doctor just asked about, or `slots` unchanged.
 
     Rules: nothing remembered, too long ago, a doctor already named this turn or already in the booking, or the booking already
@@ -160,6 +160,10 @@ def carry_over(ctx: dict | None, slots: dict, text: str, booking_slots: dict | N
         out["date"] = ctx["date"]
     elif wants_day and ctx.get("date"):
         # the caller POINTED at the date just stated; a different date the model read out of the same sentence (2026-10-17 for "that 19th") is its error
+        out["date"] = ctx["date"]
+    # Real call 2026-10-17: the agent said "Dr Sen sits on the 19th, 10-12. Which day?" and the caller answered with a TIME only ("আরে হৈদিনি করে দিন
+    # এগারোটার সময়", the day-pointer garbled): the only day the caller can mean is the one just given.
+    if (time_said or out.get("time_slot")) and ctx.get("date") and not out.get("date") and not booked.get("date"):
         out["date"] = ctx["date"]
     if wants_time and not out.get("time_slot") and not booked.get("time_slot"):
         start = window_start(ctx.get("window"))
