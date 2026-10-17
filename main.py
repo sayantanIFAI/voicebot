@@ -3013,6 +3013,17 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
+    # Real call 2026-10-17: after "Dr Sen does not sit that day; next: 18 October", "ঠিক আছে ওই দিন আমার একটা বুকিং দিন" was read as a LOOKUP of an
+    # existing booking ("from which number did you book?") and the phone digits then fell to the greeting. A request to book, straight after
+    # a doctor was asked about, is a booking: the doctor and the day come from what was just said (booking_carryover).
+    if (
+        intent in ("lookup_booking", "unclear", "smalltalk", "clinic_faq")
+        and session.booking is None
+        and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)
+        and booking_carryover.asks_to_book(text)
+    ):
+        logger.info("[%s] %s re-read as a booking request after a doctor enquiry", session.call_id, intent)
+        intent, slots = "book_appointment", {}
     _mark(session, "intent")
     _rec(session, "intent", intent)
     _note_stated_age(session, slots, lang)

@@ -94,6 +94,21 @@ def none_left(lang: str) -> str:
     return _NONE_LEFT.get(lang, _NONE_LEFT["en"])
 
 
+_WHEN = {
+    "bn": {"today": "আজই", "tomorrow": "আগামীকাল, {date} তারিখে", "other": "{date} তারিখে"},
+    "hi": {"today": "आज ही", "tomorrow": "कल, {date} तारीख को", "other": "{date} को"},
+    "en": {"today": "today", "tomorrow": "tomorrow, {date}", "other": "on {date}"},
+}
+
+
+def when_phrase(date_iso: str | None, lang: str, now: datetime.datetime | None = None) -> str:
+    """The day as a caller says it: "আজই" / "আগামীকাল, <date> তারিখে" / "<date> তারিখে" (Hindi "आज ही" / "कल, <date> तारीख को", English "today" / "tomorrow, <date>")."""
+    lang = lang if lang in _WHEN else "en"
+    if not date_iso:
+        return _WHEN[lang]["today"]
+    return _WHEN[lang][day_kind(date_iso, now)].format(date=date_iso)
+
+
 def day_line(doctor: str, date_iso: str, lang: str, now: datetime.datetime | None = None) -> str:
     lang = lang if lang in _DAY else "en"
     return _DAY[lang][day_kind(date_iso, now)].format(doc=doctor, date=date_iso)

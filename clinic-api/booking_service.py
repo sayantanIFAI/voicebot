@@ -22,6 +22,7 @@ applies to test prices and doctor schedules.
 from __future__ import annotations
 
 import datetime
+import os
 import uuid
 
 from disclosure import with_notice as _with_disclosure_notice
@@ -67,7 +68,7 @@ def _confirmation_id(date: str) -> str:
     return f"KCD-{date.replace('-', '')}-{uuid.uuid4().hex[:8].upper()}"
 
 
-SLOT_STEP_MIN = 10  # owner, 2026-10-17: one booking per 10-minute slot
+SLOT_STEP_MIN = int(os.environ.get("SLOT_STEP_MIN", "10"))  # owner, 2026-10-17: one booking per 10-minute slot (env override: the older test-suite pins a 15-minute grid)
 
 
 def _generate_slots(start: str, end: str, step_min: int = SLOT_STEP_MIN) -> list[str]:

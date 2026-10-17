@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from agent import slot_proposal
 from agent.report_time_wording import report_time_phrase, report_time_safety_note
 from agent.sample_wording import sample_sentence
 
@@ -268,16 +269,14 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str) -> str:
         hours = result.get("chamber_hours", "")
         date = result.get("date")
         if hi:
-            when = f" {date} को" if date else " आज"
-            return f"जी हाँ,{when} {name} चेंबर में रहेंगे। समय: {hours}।"
-        when = f" on {date}" if date else " today"
-        return f"Yes, {name} will be in the chamber{when}. Timing: {hours}."
+            return f"जी हाँ, {name} {slot_proposal.when_phrase(date, 'hi')} बैठेंगे। समय: {hours}।"
+        return f"Yes, {name} sits {slot_proposal.when_phrase(date, 'en')}. Timing: {hours}."
 
     next_date = result.get("next_available_date")
     if next_date:
         if hi:
-            return f"{name} उस दिन नहीं बैठेंगे। अगला उपलब्ध दिन: {next_date}।"
-        return f"{name} does not sit on that day. The next available day is {next_date}."
+            return f"{name} उस दिन नहीं बैठेंगे। वे {slot_proposal.when_phrase(next_date, 'hi')} बैठेंगे।"
+        return f"{name} does not sit on that day. The next sitting is {slot_proposal.when_phrase(next_date, 'en')}."
     if hi:
         return f"{name} अभी किसी तय दिन नहीं बैठ रहे हैं। आप हमारे काउंटर पर पूछ सकते हैं।"
     return f"{name} is not sitting on any fixed day right now. You can ask at our counter."
@@ -290,8 +289,8 @@ def booking_doctor_sitting_hint(result: dict, lang: str) -> str:
     name = _doctor_name({}, result, lang)
     date, hours = result.get("date"), result.get("chamber_hours", "")
     if hi:
-        return f"{name} आम तौर पर {date} को, {hours} के बीच बैठते हैं। किस दिन के लिए अपॉइंटमेंट चाहिए?"
-    return f"{name} usually sits on {date}, between {hours}. Which day would you like the appointment for?"
+        return f"{name} {slot_proposal.when_phrase(date, 'hi')} बैठेंगे, {hours} के बीच। किस दिन के लिए अपॉइंटमेंट चाहिए?"
+    return f"{name} sits {slot_proposal.when_phrase(date, 'en')}, between {hours}. Which day would you like the appointment for?"
 
 
 def test_prep_reply(slots: dict, result: dict, lang: str) -> str:

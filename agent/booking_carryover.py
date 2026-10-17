@@ -66,6 +66,30 @@ def _has(text: str, cues: tuple[str, ...]) -> bool:
     return any((f" {c} " in padded) if c.isascii() else (c in text) for c in cues)
 
 
+_BOOK_REQUEST = (
+    "বুকিং দিন", "বুকিং দিয়ে", "বুকিং করে দিন", "বুকিং করুন", "বুকিং নিন", "বুকিং নেন", "বুকিং করে দেন", "বুক করে দিন", "বুক করুন", "বুক করে দেন",
+    "অ্যাপয়েন্টমেন্ট দিন", "অ্যাপয়েন্টমেন্ট দিয়ে", "অ্যাপয়েন্টমেন্ট করে দিন", "অ্যাপয়েন্টমেন্ট করুন", "বুকিং চাই", "অ্যাপয়েন্টমেন্ট চাই", "একটা বুকিং",
+    "बुकिंग कर दो", "बुकिंग कर दीजिए", "बुक कर दो", "बुक कर दीजिए", "अपॉइंटमेंट दे दो", "अपॉइंटमेंट दीजिए", "अपॉइंटमेंट चाहिए", "बुकिंग चाहिए", "बुकिंग कर दें",
+    "book it", "book me", "make a booking", "make an appointment", "book an appointment", "book that", "give me a booking", "give me an appointment",
+    "i want a booking", "i want an appointment",
+)
+_LOOKUP = (
+    "আমার বুকিং", "বুকিং কোথায়", "বুকিং চেক", "বুকিং স্ট্যাটাস", "কনফার্মেশন", "বুকিংয়ের তথ্য", "মেরী बुकिंग", "मेरी बुकिंग", "बुकिंग की स्थिति",
+    "my booking", "my appointment", "booking status", "check my booking", "confirmation id", "confirmation number",
+)
+
+
+def asks_to_book(text: str) -> bool:
+    """The caller asks for a booking (and is not asking about one they already have)."""
+    t = _norm(text)
+    return _has(t, _BOOK_REQUEST) and not _has(t, _LOOKUP)
+
+
+def recent(ctx: dict | None, turn_count: int) -> bool:
+    """A doctor was just asked about (within MAX_GAP_TURNS turns)."""
+    return bool(ctx and ctx.get("doctor_name") and turn_count - ctx.get("turn", -99) <= MAX_GAP_TURNS)
+
+
 def says_same_day(text: str) -> bool:
     return _has(_norm(text), _SAME_DAY)
 

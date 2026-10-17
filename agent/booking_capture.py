@@ -38,13 +38,13 @@ _ROMAN_DIGIT_WORD = {
     "nau": "9", "noy": "9", "shunya": "0", "shunyo": "0", "sunno": "0", "jiro": "0", "zero": "0",
 }  # fmt: skip
 _MULTIPLIER = {
-    "double": 2, "dabal": 2, "dabl": 2, "ডাবল": 2, "डबल": 2, "দুবার": 2, "triple": 3, "tripal": 3, "ট্রিপল": 3, "ट्रिपल": 3,
+    "double": 2, "ডবল": 2, "dabal": 2, "dabl": 2, "ডাবল": 2, "डबल": 2, "দুবার": 2, "triple": 3, "tripal": 3, "ট্রিপল": 3, "ट्रिपल": 3,
 }  # fmt: skip
 # sourav, 2026-10-16 (real Bengali call): "Seven Eight ... Double Six" was refused as "not a 10-digit number" because the recogniser wrote
 # English digit words in Bengali / Devanagari letters ("ডাবল সিক্স", "सेवन एट") and the table only knew the native words.
 _EXTRA_DIGIT_WORD = {
     "জিরো": "0", "জিরও": "0", "ওয়ান": "1", "টু": "2", "থ্রি": "3", "ফোর": "4", "ফাইভ": "5", "সিক্স": "6", "সেভেন": "7", "এইট": "8",
-    "নাইন": "9", "वन": "1", "टू": "2", "थ्री": "3", "फोर": "4", "फाइव": "5", "सिक्स": "6", "सेवन": "7", "एट": "8", "नाइन": "9",
+    "নাইট": "8", "নাইন": "9", "वन": "1", "टू": "2", "थ्री": "3", "फोर": "4", "फाइव": "5", "सिक्स": "6", "सेवन": "7", "एट": "8", "नाइन": "9",
     "ছ": "6", "শুন্য": "0", "शुन्य": "0", "नो": "9", "छे": "6", "छै": "6", "paach": "5", "saath": "7", "nine": "9", "aat": "8",
 }  # fmt: skip
 _DIGIT_WORDS = {**spoken_codes._DIGIT_WORD, **_ROMAN_DIGIT_WORD, **_EXTRA_DIGIT_WORD}

@@ -16,6 +16,7 @@ direct_reply_bn -- there is no fact to get wrong in "নমস্কার" or "
 from __future__ import annotations
 
 from agent import reply_templates_i18n as _i18n
+from agent import slot_proposal
 from agent.sample_wording import sample_sentence
 
 
@@ -163,12 +164,11 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
     name = _spoken_doctor_name(slots, result)
     if result.get("available"):
         hours = result.get("chamber_hours", "")
-        date_txt = f" {result.get('date')} তারিখে" if result.get("date") else " আজ"
-        return f"হ্যাঁ,{date_txt} {name} চেম্বারে থাকবেন। সময়: {hours}।"
+        return f"হ্যাঁ, {name} {slot_proposal.when_phrase(result.get('date'), 'bn')} বসবেন। সময়: {hours}।"
 
     next_date = result.get("next_available_date")
     if next_date:
-        return f"{name} ওই দিন বসবেন না। পরবর্তী উপলব্ধ দিন: {next_date}।"
+        return f"{name} ওই দিন বসবেন না। তিনি {slot_proposal.when_phrase(next_date, 'bn')} বসবেন।"
     return f"{name} এখন কোনো নির্দিষ্ট দিন বসছেন না। আমাদের কাউন্টারে খোঁজ নিতে পারেন।"
 
 
@@ -184,7 +184,7 @@ def booking_doctor_sitting_hint(result: dict, lang: str = "bn") -> str:
     if not result.get("found") or not result.get("available"):
         return "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?"
     return (
-        f"{name} সাধারণত {result.get('date')} তারিখে, সময় {result.get('chamber_hours', '')}-এর মধ্যে বসেন। "
+        f"{name} {slot_proposal.when_phrase(result.get('date'), 'bn')} বসবেন, সময় {result.get('chamber_hours', '')}-এর মধ্যে। "
         "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?"
     )
 
