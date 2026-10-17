@@ -3217,7 +3217,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
 
     try:
         if (
-            intent in ("book_test", "test_rate")
+            intent in ("book_test", "test_rate", "test_prep")  # test_prep: the model hears "sugar test হয়" as a fasting question (real call 2026-10-17)
             and (slots.get("test_name") or slots.get("test_names"))
             and test_availability.asks_if_test_is_available(text, lang)
         ):

@@ -147,7 +147,8 @@ def test_booking_price_and_prep_questions_are_not_availability_questions(text, l
 
 def test_the_availability_reply_says_yes_and_asks_what_more_in_every_language():
     en = availability_reply(["Lipid Profile"], "en")
-    assert en.startswith("Yes, we do the Lipid Profile test.") and "What would you like to know" in en
+    # SPEC CHANGE 2026-10-17 (owner): the answer opens with the plain yes -- "Yes, we do." / "হ্যাঁ, হয়।" / "जी हाँ, होता है।"
+    assert en.startswith("Yes, we do. We do the Lipid Profile test.") and "What would you like to know" in en
     hi = availability_reply(["लिपिड प्रोफाइल टेस्ट"], "hi")
     assert "होता है" in hi and "जानना चाहेंगे" in hi
     bn = availability_reply(["লিপিড প্রোফাইল টেস্ট"], "bn")

@@ -138,11 +138,11 @@ def availability_reply(names: list[str], lang: str) -> str:
     word = {"bn": "টেস্ট", "hi": "टेस्ट", "en": "test"}
     spoken = _join([n if _has_test_word(n) else f"{n} {word.get(lang, 'test')}" for n in names], lang)
     if lang == "hi":
-        head = f"जी, हमारे यहाँ {spoken} होते हैं।" if many else f"जी, हमारे यहाँ {spoken} होता है।"
+        head = f"जी हाँ, होता है। हमारे यहाँ {spoken} होते हैं।" if many else f"जी हाँ, होता है। हमारे यहाँ {spoken} होता है।"
         return f"{head} इसके बारे में और क्या जानना चाहेंगे? रेट, तैयारी, या रिपोर्ट कब मिलेगी?"
     if lang == "en":
         return (
-            f"Yes, we do the {spoken}. What would you like to know about {'them' if many else 'it'}? "
+            f"Yes, we do. We do the {spoken}. What would you like to know about {'them' if many else 'it'}? "
             "The rate, the preparation, or when the report is ready?"
         )
-    return f"হ্যাঁ, আমাদের এখানে {spoken} হয়। এ সম্পর্কে আর কী জানতে চান? রেট, প্রস্তুতি, নাকি রিপোর্ট কবে পাবেন?"
+    return f"হ্যাঁ, হয়। আমাদের এখানে {spoken} হয়। এ সম্পর্কে আর কী জানতে চান? রেট, প্রস্তুতি, নাকি রিপোর্ট কবে পাবেন?"
