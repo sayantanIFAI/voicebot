@@ -36,9 +36,14 @@ def code_of(name: str) -> str | None:
     return None
 
 
+# A code two tests share ("USG" = USG Whole Abdomen AND USG Pregnancy Profile) names neither: no spelled form is generated for it, so the
+# caller is asked which one. tests/test_synonyms_extra.py fails if a NEW shared code appears, so this list cannot go stale unnoticed.
+SHARED_CODES = frozenset({"USG"})
+
+
 def forms(name: str, table: dict[str, str]) -> list[str]:
     code = code_of(name)
-    if not code:
+    if not code or code in SHARED_CODES:
         return []
     letters = [table[c] for c in code if c in table]
     return [" ".join(letters), "".join(letters)] if len(letters) == len(code) else []

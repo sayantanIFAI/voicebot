@@ -33,6 +33,7 @@ from idempotency import idempotent
 from idempotency import set_key_from_header as set_idempotency_key
 from models import FAQ, Appointment, AuditLog, Department, Doctor, DoctorSchedule, LabTest
 from i18n_content import TEST_ALIASES_EN
+import synonyms_extra as sx  # five more lay/clinical/loan-word names per test per language
 import spelled_forms as sf  # every test code spelled out in Bengali/Hindi letter names, generated from the code
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -207,9 +208,9 @@ def catalogue(db: Session = Depends(get_db)):
         "tests": [
             {
                 "name": t.name,
-                "aliases_bn": _with_spelled([a for a in (t.aliases_bn or "").split("|") if a], sf.forms_bn(t.name)),
-                "aliases_hi": _with_spelled([a for a in (t.aliases_hi or "").split("|") if a], sf.forms_hi(t.name)),
-                "aliases_en": list(TEST_ALIASES_EN.get(t.name, [])),
+                "aliases_bn": _with_spelled([a for a in (t.aliases_bn or "").split("|") if a], sf.forms_bn(t.name) + sx.extra(t.name, "bn")),
+                "aliases_hi": _with_spelled([a for a in (t.aliases_hi or "").split("|") if a], sf.forms_hi(t.name) + sx.extra(t.name, "hi")),
+                "aliases_en": _with_spelled(list(TEST_ALIASES_EN.get(t.name, [])), sx.extra(t.name, "en")),
                 # The lay-term fast path (agent/lay_terms.py) reads this to answer "রক্ত পরীক্ষা" ("blood test") with
                 # the REAL list of blood tests, off the same cached catalogue fetch every other lookup already uses --
                 # never a second endpoint, never a hardcoded list that could drift from what the lab actually runs.
@@ -278,7 +279,7 @@ def _alias_blob(t: LabTest) -> str:
     knows all three, so every place that matches a name sees the same forms."""
     return (
         (t.aliases_bn or "") + "|" + (t.aliases_hi or "") + "|" + "|".join(TEST_ALIASES_EN.get(t.name, []))
-        + "|" + "|".join(sf.forms_bn(t.name) + sf.forms_hi(t.name))
+        + "|" + "|".join(sf.forms_bn(t.name) + sf.forms_hi(t.name) + sx.extra(t.name, "bn") + sx.extra(t.name, "hi") + sx.extra(t.name, "en"))
     )
 
 
