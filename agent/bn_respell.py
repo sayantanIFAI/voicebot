@@ -36,6 +36,11 @@ _RESPELL: dict[str, str] = {
     # Round 3, 2026-10-17: the listener kept গিয়ে and হয় as written (candidate 1 was best) and chose নিয়ে -> নিইয়ে (candidate 4 of 6).
     "নিয়ে": "নিইয়ে",
     "নিয়েও": "নিইয়েও",
+    # Round 4, 2026-10-17: ঠিকানা -> ঠিকানাহ (the listener's candidate 5 of 6); an inflected ঠিকানাটা is left as written (the added হ would sit mid-word).
+    "ঠিকানা": "ঠিকানাহ",
+    # নদিয়া -> নোদিয়া, chosen from the listener's own recording (My recording 50): of 15 spellings the voice said, নোদিয়া was within 0.02 of the
+    # nearest by acoustic distance and is what the English recogniser heard ("nody ah"); not in REVIEWED until the listener confirms it.
+    "নদিয়া": "নোদিয়া",
     "নিয়েই": "নিইয়েই",
     # কয়েক: chosen from the user's OWN recording of the word (Downloads/My recording 49.m4a): of 15 spellings the voice said, কয়এক was
     # the nearest to it acoustically (MFCC distance 3.46; the next 3.87, the current spelling 4.43). Measured against one speaker, so
@@ -90,7 +95,7 @@ def rule_changes() -> dict[str, str]:
     return {w: _sh(w) for w in sorted(_NATIVE_BASE) if w not in _RESPELL and _sh(w) != w}
 
 
-REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা", "নেওয়া", "যাওয়ার", "স্যাম্পল", "নিয়ে"}  # approved by a native listener
+REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা", "নেওয়া", "যাওয়ার", "স্যাম্পল", "নিয়ে", "ঠিকানা"}  # approved by a native listener
 
 _BENGALI_WORD = re.compile(r"[ঀ-৿]+")
 
@@ -103,11 +108,11 @@ def _key(word: str) -> str:
 # "স্যাম্পল"); the caller hears the same sound in "নেওয়ার", "যাওয়াটা", "কয়েকটা", "স্যাম্পলের". So the chosen spelling of the base is kept and the
 # ending is appended unchanged. Only these endings, only on these bases: a longer word that merely starts the same is left alone.
 _FAMILY_ENDINGS = frozenset(
-    ("র", "রও", "টা", "টাও", "টি", "টায়", "টার", "টাকে", "তে", "তেও", "ও", "ই", "কে", "ে", "ের", "েও", "গুলো", "গুলোর", "জন", "জনের", "দিন", "দিনের")
+    ("র", "য়", "রও", "টা", "টাও", "টি", "টায়", "টার", "টাকে", "তে", "তেও", "ও", "ই", "কে", "ে", "ের", "েও", "গুলো", "গুলোর", "জন", "জনের", "দিন", "দিনের")
 )
 
 
-_FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল")
+_FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল", "নদিয়া")
 
 
 def _family(w: str) -> str | None:

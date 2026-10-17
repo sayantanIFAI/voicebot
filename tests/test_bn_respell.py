@@ -54,6 +54,9 @@ def test_the_chosen_spelling_carries_over_to_the_same_word_with_an_ending():
     assert bn_respell.respell("গিয়ে") == "গিয়ে" and bn_respell.respell("হয়") == "হয়"
     # a longer word that merely starts the same is left alone
     assert bn_respell.respell("কয়েকশো") == "কয়েকশো"
+    # round 4
+    assert bn_respell.respell("ঠিকানা") == "ঠিকানাহ" and bn_respell.respell("ঠিকানাটা") == "ঠিকানাটা"
+    assert bn_respell.respell("নদিয়া") == "নোদিয়া" and bn_respell.respell("নদিয়ার") == "নোদিয়ার"
 
 
 # ---- the "sh" rule: native Bengali words only -------------------------------------------------------------------------
