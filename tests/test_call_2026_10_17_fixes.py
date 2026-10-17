@@ -315,3 +315,33 @@ def test_a_whole_token_code_matches_only_exactly():
 def test_a_code_close_to_two_tests_is_no_evidence():
     codes = {"HIV": "A", "HIB": "B"}
     assert _sl.match_codes("h i c", codes) == [] or len(_sl.match_codes("h i c", codes)) == 0
+
+
+# ---- English question frames written in Bengali/Devanagari letters; spelled letters do not count against English; how-to-reach cues
+from agent import lang_select as _ls
+from agent import test_availability as _ta
+from agent import translit_frames as _tf
+
+
+def test_do_you_do_frame_in_bengali_and_hindi_letters():
+    assert _tf.match("দো ইউ ডু চেস্ট এক্স রে") == "চেস্ট এক্স রে"
+    assert _tf.match("दो यू डू चेस्ट एक्स रे") == "चेस्ट एक्स रे"
+    assert _tf.match("वू यू डू चेस्ट रेट") == "चेस्ट रेट"
+    assert _tf.match("डू यू हैव थाइरॉइड टेस्ट") == "थाइरॉइड"
+
+
+def test_frame_needs_the_whole_frame_and_a_name():
+    assert _tf.match("আপনারা কি এক্স রে করেন") is None
+    assert _tf.match("दो यू डू") is None
+    assert _tf.match("what is the rate") is None
+
+
+def test_the_frame_makes_it_an_availability_question():
+    assert _ta.asks_if_test_is_available("দো ইউ ডু চেস্ট এক্স রে", "en")
+    assert not _ta.asks_if_test_is_available("চেস্ট এক্স রে কত", "bn")
+
+
+def test_spelled_letters_do_not_count_against_english():
+    assert _ls.english_word_share("what is the rate of c b c and eurica it together") >= 0.6
+    assert _ls.english_word_share("sibisi test rate koto") < 0.6
+    assert _ls.english_word_share("i want a test") == 1.0  # "i" and "a" are words and still count

@@ -105,6 +105,12 @@ LOCATION_BN_NATIVE: list[str] = [
     'কোন স্থানে আপনাদের ক্লিনিক',
     'ক্লিনিক কোথায়',
     'ঠিকানা কী',
+    'আপনাদের ওখানে কীভাবে যেতে হবে',
+    'আপনাদের ওখানে কিভাবে যেতে হবে',
+    'ওখানে কীভাবে যাওয়া যাবে',
+    'আপনাদের ক্লিনিকে কীভাবে আসব',
+    'আপনাদের ক্লিনিকে কিভাবে আসব',
+    'কীভাবে যাব আপনাদের ওখানে',
 ]
 
 LOCATION_HI_NATIVE: list[str] = [
@@ -126,6 +132,21 @@ LOCATION_HI_NATIVE: list[str] = [
     'किधर आना पड़ेगा हमको',
     'किधर आना पड़ेगा',
     'लोकेशन बताइए',
+    # Real call 2026-10-17, FIRST sentence of the call: "अरे आप लोगों का उधर कैसे जाए" got "sorry, say again" (no cue matched);
+    # only the longer repeat ("... कैसे पहुँचे ...") was understood. "How do I go/come there" in the ways it is said.
+    'आप लोगों के उधर कैसे जाए',
+    'आप लोगों के यहाँ कैसे जाए',
+    'उधर कैसे जाएं',
+    'उधर कैसे जाना है',
+    'उधर कैसे जाएँगे',
+    'वहाँ कैसे जाना है',
+    'वहां कैसे जाना है',
+    'कैसे जाएं आपके क्लिनिक',
+    'आपके यहाँ कैसे आना है',
+    'आपके यहां कैसे आएं',
+    'कैसे पहुँचे आप लोगों के उधर',
+    'क्लिनिक तक कैसे पहुँचें',
+    'आप लोगों का पता क्या है',
 ]
 
 LOCATION_EN_EXTRA: list[str] = [
@@ -145,6 +166,11 @@ LOCATION_EN_EXTRA: list[str] = [
     'get directions',
     'how to get there',
     'route to the clinic',
+    'how do i get to you',
+    'how can i come there',
+    'how do i come to your clinic',
+    'how do we go there',
+    'how can we reach you',
 ]
 
 LOCATION_CROSS: list[str] = [

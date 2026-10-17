@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from agent import translit_frames
+
 _PUNCT = re.compile(r"[.,;:!?\"'()\[\]{}।॥\-–—_/]+")
 
 
@@ -86,6 +88,8 @@ def asks_if_test_is_available(text: str, lang: str) -> bool:
     t = _norm(text)
     if not t or _contains_cue(t, _NOT_AVAILABILITY):
         return False
+    if translit_frames.match(text) is not None:  # "do you do chest X-ray" written in Bengali/Devanagari letters
+        return True
     words = t.split()
     if len(words) > 14:
         return False

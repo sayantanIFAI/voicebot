@@ -194,7 +194,10 @@ def english_word_share(text: str) -> float:
     """Share of the tokens that are ordinary English words (a small fixed list). A Bengali or Hindi sentence written
     out in Latin letters ("sibisi test rate koto") scores low; a real English question scores high."""
     tokens = [t.strip(".,?!'\"").lower() for t in (text or "").split()]
-    tokens = [t for t in tokens if t]
+    # A lone letter that is not a word ("c b c" -- a test code SPELLED by the caller) is neither English nor not-English: it says nothing
+    # about the language, and counting it against the sentence threw away "what is the rate of c b c and uric acid together" (real call
+    # 2026-10-17: share 0.58 < 0.6, so a first English question was answered in Bengali). "a" and "i" are real words and still count.
+    tokens = [t for t in tokens if t and (len(t) > 1 or t in _ENGLISH_WORDS)]
     if not tokens:
         return 0.0
     return sum(t in _ENGLISH_WORDS for t in tokens) / len(tokens)

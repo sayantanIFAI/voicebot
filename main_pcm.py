@@ -145,6 +145,7 @@ from agent import cart_tally  # sourav 2026-10-14: running list of priced tests 
 from agent import test_availability  # real call 2026-10-14: "is the X test done here?" is a question, not a booking
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
+from agent import translit_frames  # "do you do chest X-ray" written in Bengali/Devanagari letters
 from agent import spelled_letters  # a spelled test code ("C B C") the Bengali recogniser wrote as a made-up word
 from agent.catalogue_forms import lab_test_code
 from agent import multi_test_confirm  # garbled test names in a total: read back once, price after a yes
@@ -1755,6 +1756,21 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
         if hit is not None:
             logger.info("[%s] fast path resolved %s (%.2f) -- no LLM call", session.call_id, hit.intent, hit.confidence)
             return hit.as_llm_shape()
+
+    # "do you do chest X-ray" written by the Bengali/Hindi recogniser in its own letters is read by rule, not left to the model, which
+    # called it "unclear" (real call 2026-10-17). The name after the frame is a candidate for the catalogue lookup that follows.
+    asked = translit_frames.match(text)
+    if asked is not None:
+        logger.info("[%s] transliterated English question frame -> test_rate for %r", session.call_id, asked)
+        return {
+            "intent": "test_rate",
+            "slots": {k: (asked if k == "test_name" else None) for k in (
+                "test_name", "test_names", "doctor_name", "date", "time_slot", "new_date", "new_time_slot", "confirmation_id",
+                "patient_name", "patient_age", "phone", "contact_phone", "relationship", "spelled_letters", "symptom_description", "faq_topic")},
+            "direct_reply_bn": None,
+            "secondary_intent": None,
+            "secondary_slots": None,
+        }
 
     # The cache stores the whole intent object (smalltalk carries reply
     # text in the caller's language), so the language is part of the key.
