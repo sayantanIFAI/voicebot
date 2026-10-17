@@ -33,6 +33,7 @@ from idempotency import idempotent
 from idempotency import set_key_from_header as set_idempotency_key
 from models import FAQ, Appointment, AuditLog, Department, Doctor, DoctorSchedule, LabTest
 from i18n_content import TEST_ALIASES_EN
+import spelled_forms as sf  # every test code spelled out in Bengali/Hindi letter names, generated from the code
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -206,8 +207,8 @@ def catalogue(db: Session = Depends(get_db)):
         "tests": [
             {
                 "name": t.name,
-                "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a],
-                "aliases_hi": [a for a in (t.aliases_hi or "").split("|") if a],
+                "aliases_bn": _with_spelled([a for a in (t.aliases_bn or "").split("|") if a], sf.forms_bn(t.name)),
+                "aliases_hi": _with_spelled([a for a in (t.aliases_hi or "").split("|") if a], sf.forms_hi(t.name)),
                 "aliases_en": list(TEST_ALIASES_EN.get(t.name, [])),
                 # The lay-term fast path (agent/lay_terms.py) reads this to answer "রক্ত পরীক্ষা" ("blood test") with
                 # the REAL list of blood tests, off the same cached catalogue fetch every other lookup already uses --
@@ -266,12 +267,19 @@ def _norm_name(s: str) -> str:
     return " ".join(t for t in toks if t and t not in _GENERIC_WORDS)
 
 
+def _with_spelled(aliases: list[str], spelled: list[str]) -> list[str]:
+    return aliases + [s for s in spelled if s not in aliases]
+
+
 def _alias_blob(t: LabTest) -> str:
     """sourav, 2026-10-14: every alias of a test as one "|"-joined string: Bengali + Hindi (database columns) + the
     English table in i18n_content.TEST_ALIASES_EN. Why: the name search used to build `t.aliases_bn + "|" +
     t.aliases_hi` in five places, so English lay words ("typhoid test") could never match; this is the one place that
     knows all three, so every place that matches a name sees the same forms."""
-    return (t.aliases_bn or "") + "|" + (t.aliases_hi or "") + "|" + "|".join(TEST_ALIASES_EN.get(t.name, []))
+    return (
+        (t.aliases_bn or "") + "|" + (t.aliases_hi or "") + "|" + "|".join(TEST_ALIASES_EN.get(t.name, []))
+        + "|" + "|".join(sf.forms_bn(t.name) + sf.forms_hi(t.name))
+    )
 
 
 def _find_test(db: Session, name: str) -> LabTest | None:

@@ -1741,6 +1741,7 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # for a language it has none for, so the turn goes to the LLM -- safe by
     # construction, just not free.
     await _maybe_reload_fast_path()
+    text = await _normalise_spelled(text)  # letters said one by one ("টি এস এইচ") become the code they spell ("TSH") before anything reads the sentence
     # Real call 2026-10-17: `lang` is the call's sticky REPLY language, not the language of THIS sentence. A Hindi sentence in a call
     # whose reply language was Bengali was matched against the Bengali cue table and answered with the clinic's address. The shortcut,
     # the cache and the model are all given the language the sentence is actually written in; `lang` stays what the reply is spoken in.
@@ -2287,6 +2288,32 @@ def _keep_recent_utterance(session: CallSession, wav_path: str) -> None:
         pass
 
 
+async def _catalogue_codes() -> dict[str, str]:
+    """{UPPER-CASE letters-only code: canonical test name} for every catalogue test that has one (CBC, ESR, TSH, PSA, HIV, ECG, ...). A code
+    two tests share names neither."""
+    cat = await _cached_catalogue()
+    by_code: dict[str, set[str]] = {}
+    for t in cat.get("tests", []):
+        code = lab_test_code(str(t["name"]))
+        if code.isalpha() and code.isascii() and code.upper() == code and len(code) >= 2:
+            by_code.setdefault(code, set()).add(str(t["name"]))
+    return {c: next(iter(names)) for c, names in by_code.items() if len(names) == 1}
+
+
+async def _normalise_spelled(text: str) -> str:
+    """"টি এস এইচ টেস্ট কত" -> "TSH টেস্ট কত": letters pronounced separately are read back as the test code they spell, for every test in the
+    catalogue (agent/spelled_letters.normalise_spelled_codes). Never fails the turn."""
+    try:
+        codes = await _catalogue_codes()
+        new_text, found = spelled_letters.normalise_spelled_codes(text, codes)
+        if found or new_text != text:
+            logger.info("spelled letters read as code(s) %s: %r -> %r", found or "(near)", text, new_text)
+        return new_text
+    except Exception as e:  # noqa: BLE001 - advisory
+        logger.warning("spelled-letter normalisation skipped: %s", e)
+        return text
+
+
 async def _with_spelled_tests(session: CallSession, lang: str, result, english_text: str):
     """A test code said letter by letter that the Bengali/Hindi recogniser wrote as a made-up word ("সি বি সি" -> "ক্বক"): the English
     recogniser (already run on this turn) keeps the letters apart. If it heard a catalogue code the Bengali/Hindi text does not name,
@@ -2580,6 +2607,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         text = asr_result.text.strip()
         if detected_lang == "en":
             text = fix_asr_confusables(text)
+        if text:
+            text = await _normalise_spelled(text)  # letters said one by one ("টি এস এইচ") are the code they spell ("TSH") for the whole turn
         if not text:
             logger.info("[%s] ASR returned empty text", session.call_id)
             lang = _keep_language(session, prior_lang)

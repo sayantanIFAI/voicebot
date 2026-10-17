@@ -15,6 +15,7 @@ transcript the model reads; the lookup that follows treats an exact code as name
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
@@ -102,3 +103,77 @@ def bare_code_request(text: str) -> str | None:
         else:
             return None
     return "".join(letters).upper() if 3 <= len(letters) <= 5 else None
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# Spelled letters ANYWHERE in a sentence, in any script, read back into the test code they spell.
+# "টি এস এইচ টেস্ট কত", "पी एस ए का रेट", "what is the e s r", "ই ই জি", "এফ এফ এস" -> TSH, PSA, ESR, EEG, FFS. The owner's rule: letters
+# that are pronounced separately must stay separate and be read as the code they spell, for EVERY test with a code, not for a hand-picked few.
+# The codes come from the clinic catalogue itself, so a test added tomorrow works with no edit here.
+#
+# Some letter names are also ordinary words (Bengali "আর" = "and" / R, "ও" = "also" / O, "ই" = emphasis / E). So a run of letter names is
+# never taken on its own: every window inside it is tried, longest first, and a window is replaced only if the letters it spells ARE a
+# catalogue code. "সি বি সি আর ই এস আর" ("CBC and ESR") gives CBC, the word "আর", and ESR.
+# A run of three to five letters that is NOT a code but sits one letter from exactly one is still turned into Latin letters ("DSH"), so the
+# catalogue lookup asks "did you mean TSH?" -- a near match suggests, it never resolves.
+_VARIANTS = {
+    # extra spellings recognisers actually produce for a letter name, on top of the canonical ones in clinic-api/spelled_forms.py
+    "বী": "b", "সী": "c", "ডী": "d", "ঈ": "e", "জী": "g", "এচ": "h", "পী": "p", "টী": "t", "ভী": "v", "ডাবলিউ": "w", "ডাবল্যু": "w",
+    "बी": "b", "सी": "c", "डी": "d", "ई": "e", "जी": "g", "पी": "p", "टी": "t", "वी": "v", "डबल्यू": "w", "डबलयू": "w", "ऐ": "a", "अ": "a",
+}  # fmt: skip
+_BN = {"এ": "a", "বি": "b", "সি": "c", "ডি": "d", "ই": "e", "এফ": "f", "জি": "g", "এইচ": "h", "আই": "i", "জে": "j", "কে": "k", "এল": "l",
+       "এম": "m", "এন": "n", "ও": "o", "পি": "p", "কিউ": "q", "আর": "r", "এস": "s", "টি": "t", "ইউ": "u", "ভি": "v", "ডাব্লিউ": "w",
+       "এক্স": "x", "ওয়াই": "y", "জেড": "z"}  # fmt: skip
+_HI = {"ए": "a", "बी": "b", "सी": "c", "डी": "d", "ई": "e", "एफ": "f", "जी": "g", "एच": "h", "आई": "i", "जे": "j", "के": "k", "एल": "l",
+       "एम": "m", "एन": "n", "ओ": "o", "पी": "p", "क्यू": "q", "आर": "r", "एस": "s", "टी": "t", "यू": "u", "वी": "v", "डब्ल्यू": "w",
+       "एक्स": "x", "वाई": "y", "जेड": "z"}  # fmt: skip
+_LETTER = {**_BN, **_HI, **_VARIANTS}
+_EDGE = ".,;:!?\"'()।॥"
+
+
+def _letter_of(token: str) -> str | None:
+    t = unicodedata.normalize("NFC", token.strip(_EDGE)).lower()
+    if len(t) == 1 and t.isascii() and t.isalpha():
+        return t
+    return _LETTER.get(t)
+
+
+def normalise_spelled_codes(text: str, codes) -> tuple[str, list[str]]:
+    """(text with each spelled-out test code replaced by the code in Latin capitals, the codes found). `codes`: an iterable of the catalogue's
+    upper-case letters-only test codes."""
+    codes = {c.upper() for c in codes}
+    tokens = (text or "").split()
+    letters = [_letter_of(t) for t in tokens]
+    out: list[str | None] = list(tokens)
+    found: list[str] = []
+    i = 0
+    while i < len(tokens):
+        if letters[i] is None:
+            i += 1
+            continue
+        j = i
+        while j < len(tokens) and letters[j] is not None:
+            j += 1
+        # the run is tokens[i:j]; try every window, longest first
+        taken = [False] * (j - i)
+        for size in range(min(6, j - i), 1, -1):
+            for a in range(i, j - size + 1):
+                if any(taken[a - i: a - i + size]):
+                    continue
+                word = "".join(letters[a: a + size]).upper()
+                if word in codes:
+                    out[a] = word
+                    for k in range(a + 1, a + size):
+                        out[k] = None
+                    for k in range(a - i, a - i + size):
+                        taken[k] = True
+                    found.append(word)
+        if not any(taken) and 3 <= j - i <= 5:  # a whole run that is not a code but is one letter from exactly one
+            word = "".join(letters[i:j]).upper()
+            near = {c for c in codes if len(c) >= 3 and _one_apart(word, c)}
+            if len(near) == 1:
+                out[i] = word
+                for k in range(i + 1, j):
+                    out[k] = None
+        i = j
+    return " ".join(t for t in out if t is not None), found
