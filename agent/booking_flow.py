@@ -228,8 +228,13 @@ _NO_WORDS = {
 # Bengali one, "হ্যাঁ" in English) -- the user's requirement is that a no / yes is understood in any language, and a "no" that went
 # unrecognised just repeated the read-back. These extras are the short, unambiguous yes/no words of the other languages, added to
 # the call's own list; the call's own words still win and the negation / hedge rules below are unchanged.
-_ANY_NO = ("no", "nope", "nahi", "nahin", "नहीं", "नही", "না", "নয়", "na", "nai")
-_ANY_YES = ("yes", "yeah", "yep", "ok", "okay", "haan", "han", "hya", "ha", "हाँ", "हां", "हा", "ओके", "হ্যাঁ", "হ্যা", "ওকে", "ji", "जी हाँ")
+_ANY_NO = ("no", "nope", "nahi", "nahin", "नहीं", "नही", "না", "নয়", "na", "nai", "ভুল", "গলত", "गलत", "wrong", "incorrect", "galat", "bhul", "হয়নি", "ঠিক হয়নি")
+# Real call 2026-10-17: "এটাই ঠিক" (that is right) answered a name read-back and was NOT a yes, so the same question was asked again and again, and the
+# words were then taken for a new name. Every ordinary way of saying "that is correct" -- a bare ঠিক / ठीक / सही / correct / sahi, or a hum -- is a yes.
+_ANY_YES = (
+    "yes", "yeah", "yep", "ok", "okay", "haan", "han", "hya", "ha", "हाँ", "हां", "हा", "ओके", "হ্যাঁ", "হ্যা", "হাঁ", "হা", "ওকে", "ji", "जी हाँ", "জি", "जी",
+    "ঠিক", "ঠিকই", "সঠিক", "ठीक", "सही", "correct", "right", "sahi", "sahee", "theek", "thik", "exactly",
+)
 _NOT_NO = {"hi": ("na", "nai", "ना"), "en": ("na", "nai", "না", "নয়"), "bn": ()}  # words that are ordinary filler / other meaning in that call
 
 _RE_TOKEN_SPLIT = re.compile(r"[\s,.!?।|]+")

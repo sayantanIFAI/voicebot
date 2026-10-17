@@ -3670,6 +3670,15 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     await _speak(session, conflict_reply(conflict["existing"], lang), lang)
                     return
 
+            if (
+                is_ready_to_confirm(st)
+                and effective_phone(st) != "not_provided"
+                and st.slots.get("_phone_ok") != effective_phone(st)
+            ):
+                # the number is read back for a yes, like the name, before the whole booking is read out
+                st.slots["_phone_pending"] = effective_phone(st)
+                await _speak(session, booking_capture.prompt("phone_confirm", lang, digits=" ".join(effective_phone(st))), lang)
+                return
             if is_ready_to_confirm(st):
                 mark_confirming(st)
                 if st.phone_declined:

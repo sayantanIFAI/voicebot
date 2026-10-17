@@ -672,6 +672,11 @@ _PROMPTS = {
         "hi": "मैंने नाम {name} सुना। क्या यह सही है?",
         "bn": "আমি নামটা শুনেছি {name}। এটা কি ঠিক?",
     },
+    "phone_confirm": {
+        "en": "I heard the number {digits}. Is that correct?",
+        "hi": "मैंने नंबर {digits} सुना। क्या यह सही है?",
+        "bn": "আমি নম্বরটা শুনেছি {digits}। এটা কি ঠিক?",
+    },
     "name_again": {
         "en": "Sorry about that. Please tell me the patient's name again.",
         "hi": "माफ़ कीजिए। कृपया मरीज़ का नाम दोबारा बताइए।",
@@ -707,6 +712,20 @@ def phone_invalid_prompt(step: "PhoneStep", lang: str) -> str:
     if step.reason == "length":
         return prompt("phone_wrong_length", lang, n=step.n)
     return prompt("phone_invalid", lang)
+
+
+_HUMS = frozenset({"hmm", "hm", "hmmm", "mhm", "mm", "হুম", "হুঁ", "হু", "হম", "हम्म", "हूँ", "हूं", "हम"})
+
+
+def confirm_answer(text: str, lang: str) -> str | None:
+    """yes / no / None for a name or number READ BACK to the caller. A hum (\"hmm\", \"হুম\") is a yes here -- the owner's rule -- but never for the
+    final booking write, which keeps classify_yes_no's stricter reading."""
+    from agent.booking_flow import classify_yes_no
+
+    answer = classify_yes_no(text, lang)
+    if answer is None and any(w in _HUMS for w in _words(text)):
+        return "yes"
+    return answer
 
 
 def prompt(key: str, lang: str, **fmt: object) -> str:
@@ -762,7 +781,7 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
 
     # 1. A name read back and waiting for the caller's yes/no.
     if st.pending_name:
-        answer = classify_yes_no(text, lang)
+        answer = confirm_answer(text, lang)
         if answer == "yes":
             name, st.pending_name = st.pending_name, None
             st.name_confirmed = name
@@ -782,6 +801,29 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
         if fresh:
             st.pending_name = fresh
             plan.speak = prompt("name_confirm", lang, name=fresh)
+            return plan
+
+    # 1b. A phone number read back and waiting for the caller's yes/no (owner, 2026-10-17: the number is confirmed like the name).
+    pending_phone = st.slots.get("_phone_pending")
+    if pending_phone:
+        answer = confirm_answer(text, lang)
+        said_digits = read_digits(text)[1] >= 7  # a whole new number in this sentence
+        if answer == "yes" and not said_digits:
+            st.slots.pop("_phone_pending", None)
+            st.slots["_phone_ok"] = pending_phone
+            plan.slots, plan.skip_model = {}, True
+            return plan
+        st.slots.pop("_phone_pending", None)
+        if answer == "no" or said_digits:
+            for key in ("phone", "contact_phone", "_phone_ok", "_conflict_checked"):
+                st.slots.pop(key, None)
+            st.phone_buffer = ""
+            if not said_digits:
+                plan.speak = prompt("phone_cleared", lang)
+                return plan
+        else:  # neither: ask the same question again, once more
+            st.slots["_phone_pending"] = pending_phone
+            plan.speak = prompt("phone_confirm", lang, digits=" ".join(pending_phone))
             return plan
 
     # 2. "the first one / the second one" after the clinic offered other slots.
