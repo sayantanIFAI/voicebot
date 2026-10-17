@@ -380,7 +380,8 @@ def _digit_count(tokens: Iterable[str], lang: str) -> tuple[int, bool]:
 # that announce MORE to come. These are sentence ENDINGS that mean "I am about to ask / say something".
 _CONTINUATION_TAIL = {
     "en": re.compile(
-        r"(?:one (?:more )?(?:thing|question)|a (?:quick )?question|tell me (?:one|something)|let me (?:ask|think)"
+        r"(?:(?:tell|show|give|help|let) me|can you(?: please)?(?: tell| help)?|could you(?: please)?(?: tell| help)?|please)\s*$"
+        r"|(?:one (?:more )?(?:thing|question)|a (?:quick )?question|tell me (?:one|something)|let me (?:ask|think)"
         r"|i (?:want|would like) to (?:ask|know|say)|can i ask|hold on|just a (?:minute|second|moment)|one second|wait)\s*$"
     ),
     "hi": re.compile(

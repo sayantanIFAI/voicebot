@@ -421,9 +421,15 @@ def _en_spell(s: str) -> str:
     return " ".join(out)
 
 
+# Owner, 2026-10-17: the English voice must say UPI as the three letters, "you pee eye".
+_EN_LETTER_WORDS = {"UPI": "you pee eye", "OTP": "O T P", "SMS": "S M S", "CBC": "C B C", "ECG": "E C G", "TSH": "T S H"}
+_RE_EN_LETTER_WORDS = re.compile(r"\b(" + "|".join(_EN_LETTER_WORDS) + r")\b")
+
+
 def verbalize_en(text: str) -> str:
     if not text:
         return text
+    text = _RE_EN_LETTER_WORDS.sub(lambda m: _EN_LETTER_WORDS[m.group(1)], text)
     text = text.replace("₹", " rupees ").replace("%", " percent ")
     text = _RE_DATE.sub(
         lambda m: (

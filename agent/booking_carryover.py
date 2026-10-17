@@ -12,6 +12,8 @@ FOLLOWUP turns that names no doctor gets doctor_name from it, and the date too w
 
 from __future__ import annotations
 
+import re
+
 MAX_GAP_TURNS = 3  # same distance agent/enquiry_followup.FOLLOWUP_MAX_GAP treats as "just now"
 
 _SAME_DAY = (
@@ -79,10 +81,16 @@ _LOOKUP = (
 )
 
 
+# Any booking word at all, once a doctor has just been asked about: "okay at the book again", "বুক তো করিনি", "অযাপ্ফোন্টমেন্ট বুক করতে বলছি".
+_BOOK_WORDS = ("বুক", "অ্যাপয়েন্টমেন্ট", "অযাপ্ফোন্টমেন্ট", "ন্টমেন্ট", "বুকিং", "बुक", "बुकिंग", "अपॉइंटमेंट", "appointment", "booking")
+
+
 def asks_to_book(text: str) -> bool:
     """The caller asks for a booking (and is not asking about one they already have)."""
     t = _norm(text)
-    return _has(t, _BOOK_REQUEST) and not _has(t, _LOOKUP)
+    if _has(t, _LOOKUP):
+        return False
+    return _has(t, _BOOK_REQUEST) or any(w in t for w in _BOOK_WORDS) or _has(t, ("book",))
 
 
 def recent(ctx: dict | None, turn_count: int) -> bool:
@@ -90,8 +98,13 @@ def recent(ctx: dict | None, turn_count: int) -> bool:
     return bool(ctx and ctx.get("doctor_name") and turn_count - ctx.get("turn", -99) <= MAX_GAP_TURNS)
 
 
+# "ওই উনিশ তারিখেই" / "उसी उन्नीस तारीख" / "that 19th": a pointing word, one word (the day number), then 'date' -- the date the agent just gave
+_POINTED_DATE = re.compile(r"(?:ওই|এই|সেই|ঐ|उसी|उस|इसी|इस|वही|that|same|this)\s+\S+\s+(?:তারিখ|तारीख|तारिख|date)")
+
+
 def says_same_day(text: str) -> bool:
-    return _has(_norm(text), _SAME_DAY)
+    t = _norm(text)
+    return _has(t, _SAME_DAY) or bool(_POINTED_DATE.search(t))
 
 
 def points_at_doctor(text: str) -> bool:
@@ -118,6 +131,9 @@ def carry_over(ctx: dict | None, slots: dict, text: str, booking_slots: dict | N
     # hours (the start of them), whether or not the doctor was already carried over.
     wants_day, wants_time = says_same_day(text), says_same_time(text)
     if (wants_day or wants_time) and ctx.get("date") and not out.get("date") and not booked.get("date"):
+        out["date"] = ctx["date"]
+    elif wants_day and ctx.get("date"):
+        # the caller POINTED at the date just stated; a different date the model read out of the same sentence (2026-10-17 for "that 19th") is its error
         out["date"] = ctx["date"]
     if wants_time and not out.get("time_slot") and not booked.get("time_slot"):
         start = window_start(ctx.get("window"))

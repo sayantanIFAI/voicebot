@@ -134,6 +134,7 @@ from agent import slot_proposal  # the machine picks the appointment time and sa
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
+from agent import greeting_words  # a hello is answered with the introduction; "okay" is not a hello
 from agent import test_overview  # what tests do you do? from the catalogue, no model
 from agent import translit_frames  # "do you do chest X-ray" written in Bengali/Devanagari letters
 from agent import spelled_letters  # a spelled test code ("C B C") the Bengali recogniser wrote as a made-up word
@@ -3089,8 +3090,9 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     # existing booking ("from which number did you book?") and the phone digits then fell to the greeting. A request to book, straight after
     # a doctor was asked about, is a booking: the doctor and the day come from what was just said (booking_carryover).
     if (
-        intent in ("lookup_booking", "unclear", "smalltalk", "clinic_faq")
+        intent in ("lookup_booking", "unclear", "smalltalk", "clinic_faq", "book_test")
         and session.booking is None
+        and not (intent == "book_test" and _fast_path is not None and _fast_path.named_tests(text, language_of_script(text, lang)))
         and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)
         and booking_carryover.asks_to_book(text)
     ):
@@ -3187,6 +3189,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             )
             else phrase("smalltalk_default", lang)
         )
+        if chosen == phrase("smalltalk_default", lang) and not greeting_words.is_greeting(text):
+            chosen = phrase("silence_go_on", lang)  # "okay" / "ঠিক আছে" is not hello: do not introduce ourselves again, just say go on
         await _speak(session, _with_resume(session, chosen, lang), lang)
         return
 

@@ -56,6 +56,8 @@ def day_kind(date_iso: str, now: datetime.datetime | None = None) -> str:
         return "today"
     if d == today + datetime.timedelta(days=1):
         return "tomorrow"
+    if d == today + datetime.timedelta(days=2):
+        return "day_after"
     return "other"
 
 
@@ -95,9 +97,10 @@ def none_left(lang: str) -> str:
 
 
 _WHEN = {
-    "bn": {"today": "আজই", "tomorrow": "আগামীকাল, {date} তারিখে", "other": "{date} তারিখে"},
-    "hi": {"today": "आज ही", "tomorrow": "कल, {date} तारीख को", "other": "{date} को"},
-    "en": {"today": "today", "tomorrow": "tomorrow, {date}", "other": "on {date}"},
+    # the day after tomorrow: the DATE first, then the word ("পরশু" / "परसों"), owner 2026-10-17
+    "bn": {"today": "আজই", "tomorrow": "আগামীকাল, {date} তারিখে", "day_after": "{date} তারিখে, পরশু", "other": "{date} তারিখে"},
+    "hi": {"today": "आज ही", "tomorrow": "कल, {date} तारीख को", "day_after": "{date} को, परसों", "other": "{date} को"},
+    "en": {"today": "today", "tomorrow": "tomorrow, {date}", "day_after": "on {date}, the day after tomorrow", "other": "on {date}"},
 }
 
 
@@ -111,6 +114,9 @@ def when_phrase(date_iso: str | None, lang: str, now: datetime.datetime | None =
 
 def day_line(doctor: str, date_iso: str, lang: str, now: datetime.datetime | None = None) -> str:
     lang = lang if lang in _DAY else "en"
+    if day_kind(date_iso, now) == "day_after":
+        when = when_phrase(date_iso, lang, now)
+        return {"bn": f"ডাক্তার {doctor} {when} বসবেন।", "hi": f"डॉक्टर {doctor} {when} बैठेंगे।", "en": f"Doctor {doctor} sits {when}."}[lang]
     return _DAY[lang][day_kind(date_iso, now)].format(doc=doctor, date=date_iso)
 
 

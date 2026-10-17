@@ -500,3 +500,47 @@ def test_the_have_frame_finds_the_words_between_the_place_and_the_verb():
     assert _ta.have_frame_name("आपके यहाँ चेस्ट एक्स रे होता है") == "चेस्ट एक्स रे"
     assert _ta.have_frame_name("আমি কাল যাব") is None
     assert _ta.asks_if_test_is_available("আপনাদের ওখানে চিস্টিক্স রে হয়", "bn")
+
+
+# ---- fast fixes after the 2026-10-17 evening call
+def test_any_booking_word_after_a_doctor_enquiry_is_a_booking_request():
+    from agent import booking_carryover as bc
+
+    for t in ["okay at the book again", "হ্যাঁ বুক তো করিনি", "আরে আমি তো ডাক্তার বিশ্বজিৎ সেন এর অযাপ্ফোন্টমেন্ট বুক করতে বলছি", "मुझे अपॉइंटमेंट चाहिए"]:
+        assert bc.asks_to_book(t), t
+    assert not bc.asks_to_book("আমার বুকিং কোথায়") and not bc.asks_to_book("check my booking")
+
+
+def test_that_nineteenth_means_the_date_just_stated_and_overrides_a_wrong_model_date():
+    from agent import booking_carryover as bc
+
+    ctx = {"doctor_name": "Biswajit Sen", "date": "2026-10-19", "window": "10:00-12:00", "turn": 3}
+    out = bc.carry_over(ctx, {"date": "2026-10-17"}, "ওই উনিশ তারিখেই আপনি অযাপ্ফোন্টমেন্ট করেন", {"doctor_name": "Biswajit Sen"}, 4)
+    assert out["date"] == "2026-10-19"
+
+
+def test_the_day_after_tomorrow_is_the_date_then_the_word():
+    import datetime
+    from agent import slot_proposal as sp
+
+    now = datetime.datetime(2026, 10, 17, 9, 0)
+    assert sp.day_kind("2026-10-19", now) == "day_after"
+    assert sp.when_phrase("2026-10-19", "bn", now) == "2026-10-19 তারিখে, পরশু"
+    assert sp.when_phrase("2026-10-19", "hi", now) == "2026-10-19 को, परसों"
+    assert sp.when_phrase("2026-10-19", "en", now) == "on 2026-10-19, the day after tomorrow"
+    assert "পরশু" in sp.day_line("সেন", "2026-10-19", "bn", now)
+
+
+def test_okay_is_not_a_hello_and_upi_is_three_letters():
+    from agent import greeting_words as gw
+    from agent import speech_norm as sn
+
+    assert gw.is_greeting("hello") and gw.is_greeting("নমস্কার") and not gw.is_greeting("okay") and not gw.is_greeting("ঠিক আছে")
+    assert "you pee eye" in sn.verbalize("We accept cash, cards and UPI.", "en")
+
+
+def test_a_trailing_tell_me_or_please_is_not_a_finished_sentence():
+    from agent.endpointing import classify_completeness as cc
+
+    for t in ["okay can you please tell me", "please", "can you tell me"]:
+        assert cc(t, "en") == "incomplete", t
