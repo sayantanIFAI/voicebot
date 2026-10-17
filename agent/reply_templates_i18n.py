@@ -692,17 +692,20 @@ def category_test_list_reply(spoken_names: list[str], category: str, lang: str) 
 def department_route_reply(result: dict, symptom: str, lang: str) -> str:
     hi = lang == "hi"
     if result.get("matched"):
-        doctors = result.get("doctors") or []
-        who = (
-            (f" हमारे यहाँ {', '.join(doctors)} हैं।" if hi else f" We have {', '.join(doctors)} here.") if doctors else ""
-        )
-        base = (
-            f"इसके लिए {result['department_name']} विभाग में दिखाना ठीक रहेगा।"
-            if hi
-            else f"For this, it would be best to see the {result['department_name']} department."
-        )
-        ask = " डॉक्टर की अपॉइंटमेंट बना दूँ?" if hi else " Shall I book a doctor's appointment?"
-        return base + who + ask
+        # Owner, 2026-10-17: who is in the department TODAY, and the caller chooses. No "it would be best to see ..." advice.
+        doctors, today = result.get("doctors") or [], result.get("doctors_today") or []
+        dept = result["department_name"]
+        if today:
+            if hi:
+                return f"आज {dept} विभाग में {len(today)} डॉक्टर हैं: {', '.join(today)}। आप किसे दिखाना चाहेंगे?"
+            return f"Today the {dept} department has {len(today)} doctor{'s' if len(today) != 1 else ''}: {', '.join(today)}. Which one would you like to see?"
+        if doctors:
+            if hi:
+                return f"{dept} विभाग में {', '.join(doctors)} हैं, पर आज कोई नहीं बैठ रहा। किसके बारे में जानना चाहेंगे?"
+            return f"The {dept} department has {', '.join(doctors)}, but none of them sits today. Whose timings would you like?"
+        if hi:
+            return f"{dept} विभाग के डॉक्टरों की सूची अभी मेरे पास नहीं है। काउंटर पर पूछ सकते हैं।"
+        return f"I do not have the {dept} department's doctors listed right now. You can ask at the counter."
     if result.get("ambiguous"):
         by_dept = result.get("doctors_by_department") or {}
 

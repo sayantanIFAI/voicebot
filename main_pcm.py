@@ -148,6 +148,8 @@ from agent.combined_question import add_implied_second_question  # "price AND fa
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
 from agent import slot_proposal  # the machine picks the appointment time and says it
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
+from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
+from agent import dept_list  # 'who are the doctors in cardio'
 from agent import test_overview  # what tests do you do? from the catalogue, no model
 from agent import translit_frames  # "do you do chest X-ray" written in Bengali/Devanagari letters
 from agent import spelled_letters  # a spelled test code ("C B C") the Bengali recogniser wrote as a made-up word
@@ -2077,6 +2079,9 @@ async def _handle_lay_term(session: CallSession, category: str, text: str, lang:
     module docstring for why HEAD never names a specific test: the catalogue has none today, and naming one that
     does not exist would be exactly the fabricated fact CLAUDE.md's truth boundary exists to prevent."""
     reason = f"lay_term_{category}"
+    # Owner, 2026-10-17: "peter chhobi" / "mathar chhobi" are ASKED back from the catalogue ("do you mean the abdomen ultrasound?") rather than answered with a price
+    if category in (ABDOMEN, HEAD) and await _answer_body_imaging(session, text, lang):
+        return
     if category == BLOOD:
         cat = await _cached_catalogue()
         names = sorted({t["name"] for t in cat.get("tests", []) if t.get("sample_type") == "Blood"})
@@ -2153,6 +2158,56 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.proposal(doctor, new_date, slot, lang)}", lang)
         return True
     await _speak(session, slot_proposal.proposal(doctor, st.slots["date"], slot, lang), lang)
+    return True
+
+
+async def _answer_body_imaging(session: CallSession, text: str, lang: str) -> bool:
+    """"buker chhobi korbo" / "haater chhobi tulbo" (agent/body_imaging.py): the caller names a body part, not a test. Ask, from the catalogue's own
+    imaging tests for that part, which one they mean -- or say plainly that none is listed. Never names a scan the clinic lacks."""
+    region = body_imaging.detect(text)
+    if region is None:
+        return False
+    try:
+        cat = await _cached_catalogue()
+        names = body_imaging.candidates(region, cat.get("tests", []))
+        key = {"bn": "aliases_bn", "hi": "aliases_hi"}.get(lang)
+        tests = {t["name"]: t for t in cat.get("tests", [])}
+        spoken = []
+        for n in names:
+            alias = next((a for a in (tests[n].get(key) or []) if a), None) if key else None
+            spoken.append(alias or n.split("(")[0].strip())
+    except Exception as e:  # noqa: BLE001 - an aid; the normal path takes over
+        logger.warning("body imaging skipped: %s", e)
+        return False
+    if not names and region == "head":
+        return False  # no head imaging test exists: the existing lay-term answer (not on our list + prescription route) stands
+    question = body_imaging.question(region, spoken, lang)
+    if names:
+        # a yes (or the caller naming one of them) goes on to that test's price, through the usual pending-confirmation replay
+        data = {"intent": "test_rate", "slots": {"test_name": names[0]}, "direct_reply_bn": None, "secondary_intent": None, "secondary_slots": None}
+        if len(names) == 1:
+            session.pending_entity = entity_text.PendingEntity("test_rate", "test_name", names[0], data)
+        else:
+            session.pending_enquiry = ("test_rate", session.turn_count)
+        await _speak(session, _with_resume(session, question, lang), lang)
+    else:
+        await _speak(session, f"{question} {phrase('send_prescription_whatsapp', lang)}", lang)
+        await _queue_prescription_callback(session, f"body_imaging_{region}", text, lang)
+    return True
+
+
+async def _answer_department_doctors(session: CallSession, text: str, lang: str) -> bool:
+    """"who are the doctors in cardio" (agent/dept_list.py): the department's short form is resolved by the clinic API; the answer is the real list,
+    who sits today first, and the caller chooses. No advice, no test, no medicine."""
+    if not dept_list.asks_doctor_list(text):
+        return False
+    try:
+        result = await _tools.department_doctors(text, lang)
+    except ToolCallError:
+        return False
+    if not result.get("matched"):
+        return False
+    await _speak(session, _with_resume(session, department_route_reply(result, "", lang), lang), lang)
     return True
 
 
@@ -3003,6 +3058,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if await _answer_named_total(session, text, lang):
             return
         if session.booking is None and await _answer_test_overview(session, text, lang):
+            return
+        if session.booking is None and await _answer_body_imaging(session, text, lang):
+            return
+        if session.booking is None and await _answer_department_doctors(session, text, lang):
             return
         # sourav, 2026-10-16: what the caller's OWN words settle during a doctor booking (phone digits said in pieces, "double nine",
         # Hindi/Bengali digit words; a yes to a name read back; "the first one" after offered slots) is decided here in code, before

@@ -459,9 +459,15 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
     if result.get("matched"):
         # Administrative routing only, never a diagnosis. The doctor names are a live query result
         # (clinic-api's _department_doctor_names), never invented -- an empty list just omits the sentence.
-        doctors = result.get("doctors") or []
-        who = f" আমাদের এখানে {' ও '.join(doctors)} আছেন।" if doctors else ""
-        return f"এই সমস্যার জন্য {result['department_name']} বিভাগে দেখানো ভালো হবে।{who} ডাক্তারের অ্যাপয়েন্টমেন্ট করে দেব?"
+        # Owner, 2026-10-17: say who is in the department TODAY and let the caller choose. Never "it would be best to see ..." (no advice),
+        # and never a lab test or a medicine.
+        doctors, today = result.get("doctors") or [], result.get("doctors_today") or []
+        dept = result["department_name"]
+        if today:
+            return f"আজ {dept} বিভাগে {len(today)} জন ডাক্তার আছেন: {', '.join(today)}। কাকে দেখাতে চান?"
+        if doctors:
+            return f"{dept} বিভাগে {', '.join(doctors)} আছেন, তবে আজ কেউ বসছেন না। কার কথা জানতে চান?"
+        return f"{dept} বিভাগের ডাক্তারদের তালিকা এখন আমার কাছে নেই। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
     if result.get("ambiguous"):
         by_dept = result.get("doctors_by_department") or {}
         parts = []

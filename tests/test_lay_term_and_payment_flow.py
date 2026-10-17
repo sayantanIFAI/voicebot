@@ -166,8 +166,9 @@ async def test_a_blood_lay_term_never_asks_the_model(m, env):
 async def test_an_abdomen_lay_term_names_the_real_matching_test_and_its_price(m, env):
     said = await env.say("peter chhobi korate chai")
     out = text_of(said)
-    assert "USG Whole Abdomen" in out
-    assert "1500" in out
+    # SPEC CHANGE 2026-10-17 (owner): "peter chhobi" is ASKED back from the catalogue ("do you mean the USG Whole Abdomen?"); the price follows a yes
+    assert "USG Whole Abdomen" in out and out.rstrip().endswith("?")
+    assert "1500" not in out
 
 
 @pytest.mark.asyncio
@@ -180,7 +181,7 @@ async def test_a_head_lay_term_never_invents_a_test_the_catalogue_does_not_have(
     assert "rupees" not in out and "hours" not in out  # no fabricated price or report-time figure
 
 
-@pytest.mark.parametrize("text", ["rokto porikkha korte hobe", "peter chhobi korate chai", "mathar chhobi korate chai"])
+@pytest.mark.parametrize("text", ["rokto porikkha korte hobe", "mathar chhobi korate chai"])  # the abdomen is now asked back first (SPEC CHANGE 2026-10-17)
 @pytest.mark.asyncio
 async def test_every_lay_term_reply_tells_the_caller_to_send_the_prescription_over_whatsapp(m, env, text):
     said = await env.say(text)
@@ -194,12 +195,12 @@ async def test_a_callback_is_queued_with_a_factual_summary_only_when_a_phone_is_
     assert env.tools.callbacks == []  # no phone known yet: nothing to call back on, nothing queued
 
     env.session.identity.phone = "9812345678"
-    await env.say("peter chhobi korate chai")
+    await env.say("mathar chhobi korate chai")  # SPEC CHANGE 2026-10-17: the abdomen is asked back, so the callback case uses the head
     assert len(env.tools.callbacks) == 1
     cb = env.tools.callbacks[0]
     assert cb["phone"] == "9812345678"
-    assert cb["reason"] == "lay_term_abdomen"
-    assert "peter chhobi korate chai" in cb["summary"]
+    assert cb["reason"] == "lay_term_head"
+    assert "mathar chhobi korate chai" in cb["summary"]
     assert "phone: 9812345678" in cb["summary"]
 
 

@@ -922,6 +922,50 @@ def _department_doctor_names(
     ]
 
 
+# Short forms a caller uses for a department ("cardio", "ortho", "gynae", "derma", "pedia", "gen med", "হার্টের ডাক্তার") -> the department's own name.
+# Owner, 2026-10-17: "who are the doctors in cardio" means Cardiology. An ASCII key must be a whole word; a Bengali/Hindi key is a substring.
+_DEPT_ALIASES: dict[str, str] = {
+    "cardio": "Cardiology", "cardiac": "Cardiology", "cardiologist": "Cardiology", "heart": "Cardiology",
+    "কার্ডিও": "Cardiology", "হার্ট": "Cardiology", "হৃদরোগ": "Cardiology", "कार्डियो": "Cardiology", "हार्ट": "Cardiology", "दिल": "Cardiology",
+    "ortho": "Orthopaedics", "orthopedic": "Orthopaedics", "orthopedics": "Orthopaedics", "orthopaedic": "Orthopaedics", "bone": "Orthopaedics",
+    "অর্থো": "Orthopaedics", "হাড়ের": "Orthopaedics", "हड्डी": "Orthopaedics", "ऑर्थो": "Orthopaedics",
+    "gynae": "Gynaecology & Obstetrics", "gyne": "Gynaecology & Obstetrics", "gynec": "Gynaecology & Obstetrics", "gynaec": "Gynaecology & Obstetrics",
+    "gynecology": "Gynaecology & Obstetrics", "gynaecology": "Gynaecology & Obstetrics", "gyn": "Gynaecology & Obstetrics", "obs": "Gynaecology & Obstetrics",
+    "obstetrics": "Gynaecology & Obstetrics", "গাইনি": "Gynaecology & Obstetrics", "स्त्री रोग": "Gynaecology & Obstetrics", "गायनी": "Gynaecology & Obstetrics",
+    "derma": "Dermatology", "dermato": "Dermatology", "skin": "Dermatology", "চর্ম": "Dermatology", "ত্বকের": "Dermatology", "स्किन": "Dermatology", "त्वचा": "Dermatology",
+    "pedia": "Paediatrics", "peds": "Paediatrics", "paeds": "Paediatrics", "pediatric": "Paediatrics", "pediatrics": "Paediatrics", "paediatric": "Paediatrics",
+    "child": "Paediatrics", "children": "Paediatrics", "শিশু": "Paediatrics", "বাচ্চার": "Paediatrics", "बच्चों": "Paediatrics", "बाल रोग": "Paediatrics",
+    "diabetes": "Diabetology & Endocrinology", "diabetology": "Diabetology & Endocrinology", "endo": "Diabetology & Endocrinology",
+    "endocrine": "Diabetology & Endocrinology", "endocrinology": "Diabetology & Endocrinology", "ডায়াবেটিস": "Diabetology & Endocrinology", "मधुमेह": "Diabetology & Endocrinology",
+    "dental": "Dentistry", "dentist": "Dentistry", "teeth": "Dentistry", "tooth": "Dentistry", "দাঁতের": "Dentistry", "दांत": "Dentistry",
+    "gen med": "General Medicine", "general medicine": "General Medicine", "physician": "General Medicine", "medicine": "General Medicine",
+    "ent": "ENT", "ear nose throat": "ENT", "নাক কান গলা": "ENT", "नाक कान गला": "ENT",
+}
+
+
+def _alias_department(q: str) -> str | None:
+    """The department a short form in `q` stands for, or None. Longest key first, so 'general medicine' beats 'medicine'."""
+    import re
+
+    for key in sorted(_DEPT_ALIASES, key=len, reverse=True):
+        if key.isascii():
+            if re.search(rf"(?<![a-z]){re.escape(key)}(?![a-z])", q):
+                return _DEPT_ALIASES[key]
+        elif key in q:
+            return _DEPT_ALIASES[key]
+    return None
+
+
+def _department_doctors_today(db: Session, department_id: int, lang: str = "bn") -> list[str]:
+    """The doctors of the department who sit on today's weekday (the clinic's day: the server runs on Asia/Kolkata time)."""
+    wd = datetime.date.today().weekday()
+    out = []
+    for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).all():
+        if db.query(DoctorSchedule).filter_by(doctor_id=d.id, weekday=wd).first():
+            out.append(_doctor_spoken_name(d, lang))
+    return out
+
+
 def route_department(db: Session, query_text: str, lang: str) -> dict:
     """Symptom text -> department, plus (KCD-lay-terms) the real doctors in it, so the agent can name someone
     instead of only the department. `phrase_matches` tolerates a word or two inserted inside a keyword phrase --
@@ -949,6 +993,7 @@ def route_department(db: Session, query_text: str, lang: str) -> dict:
         "department_name": dept.name,
         "department_id": dept.id,
         "doctors": _department_doctor_names(db, dept.id, lang),
+        "doctors_today": _department_doctors_today(db, dept.id, lang),
     }
 
 
@@ -962,6 +1007,9 @@ def department_doctors(db: Session, department_name: str, lang: str = "bn", limi
         of a word or two around the department's own name ("ENT doctor" must still match "ENT") for exactly
         that reason -- a real doctor's name never collides with one of this clinic's ~9 department names."""
     q = department_name.strip().lower()
+    alias = _alias_department(q)
+    if alias:
+        q = alias.lower()
     dept = next(
         (d for d in db.query(Department).all() if d.name.lower() == q or phrase_matches(d.name.lower(), q)), None
     )
@@ -971,6 +1019,7 @@ def department_doctors(db: Session, department_name: str, lang: str = "bn", limi
         "matched": True,
         "department_name": dept.name,
         "doctors": _department_doctor_names(db, dept.id, lang, limit),
+        "doctors_today": _department_doctors_today(db, dept.id, lang),
     }
 
 
