@@ -3488,11 +3488,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     # gets the booking, told plainly what that costs
                     # them, instead of being blocked here forever.
                     st.phone_declined = True
-                elif field_name == "patient_name" and st.note_retry("patient_name") >= 2:
-                    # KCD-368: offered proactively after one failed
-                    # capture, not only when the caller asks for it.
-                    await _speak(session, spelling_prompt(lang), lang)
-                    return
+                # Owner, 2026-10-17: the caller is never asked to SPELL their name letter by letter -- a heard name is read back for a yes
+                # (booking_capture), and a name not heard is simply asked again.
                 elif field_name == "doctor_name" and st.note_retry("doctor_name") >= 2:
                     # KCD-dentistry, real-call bug 2026-10-12: a caller who says they do not know the doctor
                     # (and gives no symptom either, or route_department already tried and failed above) was

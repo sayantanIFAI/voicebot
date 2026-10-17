@@ -11,6 +11,8 @@ Run:  python3 seed.py     (idempotent -- safe to re-run, wipes and reloads)
 
 from __future__ import annotations
 
+import os
+
 from db import SessionLocal, engine
 from i18n_content import (
     DEFAULT_PREP_EN,
@@ -88,6 +90,7 @@ SHIFT_TEMPLATES = [
 DOCTOR_FULL_NAMES = {
     "Dr. S. Mukherjee": "Dr. Sourav Mukherjee",
     "Dr. A. Sen": "Dr. Arindam Sen",
+    "Dr. B. Sen": "Dr. Biswajit Sen",
     "Dr. P. Ghosh": "Dr. Prabir Ghosh",
     "Dr. R. Chowdhury": "Dr. Rajib Chowdhury",
     "Dr. K. Bhattacharya": "Dr. Kaushik Bhattacharya",
@@ -240,6 +243,9 @@ DEPARTMENTS = {
 
 # Owner, 2026-10-17: Dr. A. Sen sits every Thursday and every Sunday (0=Monday ... 6=Sunday), 10:00 to 12:00, in every month.
 SCHEDULE_OVERRIDES = {"Dr. A. Sen": {"days": [3, 6], "start": "10:00", "end": "12:00"}}
+# Owner, 2026-10-17: a SECOND doctor named Sen (a different first name), so "Dr. Sen" must be asked back: "Dr. Arindam Sen or Dr. Biswajit Sen?".
+# Added after the main loop (so the round-robin schedules of every other doctor stay exactly as they were).
+EXTRA_DOCTORS = [("General Medicine", "Dr. B. Sen", "MBBS, MD (Gen. Med.)", {"days": [0, 2, 4], "start": "10:00", "end": "12:00"})]
 
 
 # (name, [Bengali aliases], rate_inr, sample_type, report_time_hours)
@@ -558,6 +564,19 @@ def seed():
                         )
                     )
                 doctor_index += 1
+
+        for dept_name, doc_name, quals, template in (EXTRA_DOCTORS if os.environ.get("SEED_EXTRA_DOCTORS", "1") != "0" else []):
+            dept = db.query(Department).filter_by(name=dept_name).one()
+            surname = doc_name.split()[-1]
+            latin, full_bn, full_hi = doctor_full_names().get(doc_name, ("", "", ""))
+            doc = Doctor(
+                name=doc_name, full_name=latin, full_name_bn=full_bn, full_name_hi=full_hi, qualifications=quals,
+                aliases_bn="|".join(SURNAME_BN.get(surname, [])), aliases_hi="|".join(SURNAME_HI.get(surname, [])), department_id=dept.id,
+            )
+            db.add(doc)
+            db.flush()
+            for weekday in template["days"]:
+                db.add(DoctorSchedule(doctor_id=doc.id, weekday=weekday, start_time=template["start"], end_time=template["end"]))
 
         for name, aliases_bn, rate, sample, hours in LAB_TESTS:
             fasting, prep_bn = _prep_for(name)

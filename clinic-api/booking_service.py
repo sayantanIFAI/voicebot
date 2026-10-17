@@ -359,9 +359,9 @@ def confirm_booking(
             return {
                 "success": True,
                 "confirmation_id": appt.confirmation_id,
-                "doctor_name": doctor.name,
-                "doctor_name_bn": _alias(doctor.aliases_bn),
-                "doctor_name_hi": _alias(doctor.aliases_hi),
+                "doctor_name": doctor.full_name or doctor.name,
+                "doctor_name_bn": doctor.full_name_bn or _alias(doctor.aliases_bn),
+                "doctor_name_hi": doctor.full_name_hi or _alias(doctor.aliases_hi),
                 "date": date,
                 "time_slot": time_slot,
                 "replayed": True,
@@ -429,9 +429,9 @@ def confirm_booking(
     return {
         "success": True,
         "confirmation_id": confirmation_id,
-        "doctor_name": doctor.name,
-        "doctor_name_bn": _alias(doctor.aliases_bn),
-        "doctor_name_hi": _alias(doctor.aliases_hi),
+        "doctor_name": doctor.full_name or doctor.name,
+        "doctor_name_bn": doctor.full_name_bn or _alias(doctor.aliases_bn),
+        "doctor_name_hi": doctor.full_name_hi or _alias(doctor.aliases_hi),
         "date": date,
         "time_slot": time_slot,
     }
@@ -450,7 +450,7 @@ def find_conflict(db: Session, patient_phone: str, date: str, time_slot: str) ->
     doctor = db.get(Doctor, existing.doctor_id)
     return {
         "confirmation_id": existing.confirmation_id,
-        "doctor_name": doctor.name if doctor else None,
+        "doctor_name": (doctor.full_name or doctor.name) if doctor else None,
         "date": existing.date,
         "time_slot": existing.time_slot,
     }
@@ -611,7 +611,7 @@ def reschedule_appointment(db: Session, confirmation_id: str, new_date: str, new
     return {
         "success": True,
         "confirmation_id": new_confirmation_id,
-        "doctor_name": doctor.name,
+        "doctor_name": doctor.full_name or doctor.name,
         "date": new_date,
         "time_slot": new_time_slot,
     }
@@ -670,7 +670,7 @@ def lookup_bookings(
         out.append(
             {
                 "confirmation_id": a.confirmation_id,
-                "doctor_name": doctor.name if doctor else None,
+                "doctor_name": (doctor.full_name or doctor.name) if doctor else None,
                 "date": a.date,
                 "time_slot": a.time_slot,
                 "patient_name": a.patient_name,
@@ -908,7 +908,7 @@ def _doctor_spoken_name(d: Doctor, lang: str) -> str:
         return d.full_name_bn or d.name
     if lang == "hi":
         return d.full_name_hi or d.name
-    return d.name
+    return d.full_name or d.name  # the whole name in English too
 
 
 def _department_doctor_names(

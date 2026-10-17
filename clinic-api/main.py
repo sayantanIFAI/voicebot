@@ -668,8 +668,8 @@ def _doctor_choices(db: Session, name: str, doctors: list[Doctor], near: bool = 
 def _doctor_ref(db: Session, d: Doctor) -> str:
     """What a reply calls this doctor: the short name, unless another doctor has the same short name ("Dr. A. Sen" twice),
     in which case the whole name -- a name that can be looked up again must point at one doctor."""
-    twins = db.query(Doctor).filter(Doctor.name == d.name, Doctor.id != d.id).count()
-    return (d.full_name or d.name) if twins else d.name
+    # Owner, 2026-10-17: ALWAYS the whole name ("Dr. Arindam Sen"), even when only one doctor has that surname -- the caller learns who they are booking.
+    return d.full_name or d.name
 
 
 def _ambiguous_doctor(db: Session, name: str) -> dict | None:
@@ -786,8 +786,8 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None), 
             return {
                 "found": True,
                 "doctor_name": _doctor_ref(db, doctor),
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-                "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+                "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+                "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
                 "date": target.isoformat(),
                 "available": True,
                 "chamber_hours": f"{sched.start_time}-{sched.end_time}",
@@ -797,8 +797,8 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None), 
         return {
             "found": True,
             "doctor_name": _doctor_ref(db, doctor),
-            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-            "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+            "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+            "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
             "date": target.isoformat(),
             "available": False,
             "chamber_hours": None,
@@ -811,8 +811,8 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None), 
         return {
             "found": True,
             "doctor_name": _doctor_ref(db, doctor),
-            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-            "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+            "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+            "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
             "date": None,
             "available": False,
             "chamber_hours": None,
@@ -822,8 +822,8 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None), 
     return {
         "found": True,
         "doctor_name": _doctor_ref(db, doctor),
-        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-        "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+        "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+        "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
         "date": next_date,
         "available": True,
         "chamber_hours": f"{sched.start_time}-{sched.end_time}",
@@ -925,8 +925,8 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
         "success": True,
         "confirmation_id": result["confirmation_id"],
         "doctor_name": _doctor_ref(db, doctor),
-        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-        "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+        "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+        "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
         "date": req.date,
         "time_slot": req.time_slot,
     }
@@ -1221,7 +1221,7 @@ def doctor_earliest(name: str = Query(...), db: Session = Depends(get_db)):
         "found": True,
         "available": True,
         "doctor_name": _doctor_ref(db, doctor),
-        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+        "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
         **result,
     }
 
@@ -1244,8 +1244,8 @@ def doctor_free_slots(name: str = Query(...), date: str = Query(...), db: Sessio
     return {
         "found": True,
         "doctor_name": _doctor_ref(db, doctor),
-        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-        "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+        "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+        "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
         "date": target.isoformat(),
         "sits": bool(sched),
         "chamber_hours": f"{sched.start_time}-{sched.end_time}" if sched else None,

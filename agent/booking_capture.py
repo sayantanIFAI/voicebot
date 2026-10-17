@@ -181,7 +181,7 @@ def absorb(buffer: str, text: str, asked: bool) -> PhoneStep:
 _NAME_LEADS = (
     "my name is", "my name's", "the name is", "name is", "this is", "it is", "it's", "i am", "i'm", "call me", "patient name is",
     "patient is", "its", "mera naam", "mera nam", "meri naam", "naam hai", "naam", "mera", "main", "mai", "amar naam", "amar nam",
-    "amar", "ami", "ঠিক আছে", "আমার নাম", "আমার", "আমি", "নাম", "मेरा नाम", "मेरा", "मैं", "मै", "नाम", "पेशेंट का नाम", "मरीज़ का नाम",
+    "amar", "ami", "ঠিক আছে", "হ্যাঁ", "হ্যা", "হাঁ", "আচ্ছা", "yes", "yeah", "haan", "han", "okay", "ok", "हाँ", "हां", "अच्छा", "আমার নাম", "আমার", "আমি", "নাম", "मेरा नाम", "मेरा", "मैं", "मै", "नाम", "पेशेंट का नाम", "मरीज़ का नाम",
 )  # fmt: skip
 _NAME_TAILS = (
     "hai", "hain", "है", "हैं", "হয়", "হলো", "হল", "please", "pls", "ji", "जी", "জি", "সাহেব", "thanks", "thank you",
@@ -230,6 +230,11 @@ def candidate_name(text: str) -> str | None:
     if not raw or "?" in raw or "؟" in raw:
         return None
     words = [w for w in re.split(r"[\s,।|!]+", raw) if w]
+    # Real call 2026-10-17: "হ্যাঁ সায়ন দাস নাইন সিক্স থ্রি ডবল ফাইভ ..." -- the name and the phone number in ONE breath. The number words are the phone's,
+    # not the name's: with three or more of them in the sentence they are set aside and what is left is read as the name.
+    phone_words = [w for w in words if w.lower() in _DIGIT_WORDS or w.lower() in _MULTIPLIER or any(ch.isdigit() for ch in w)]
+    if len(phone_words) >= 3:
+        words = [w for w in words if w not in phone_words]
     words = _strip_leads_and_tails([w.strip(".") for w in words if w.strip(".")])
     if not 1 <= len(words) <= 4:
         return None

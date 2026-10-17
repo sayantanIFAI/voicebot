@@ -23,6 +23,7 @@ the normal flow.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 
@@ -211,12 +212,17 @@ def limit_questions(text: str, max_questions: int) -> str:
     return " ".join(kept)
 
 
+# Owner, 2026-10-17: "speak a little faster, more human". The voice's own default pace is slightly slow; 1.06 = about 6% quicker, for every clause (a
+# price or number is still slowed by its figure rate on top, and a senior caller by the policy rate). SPEECH_RATE_BOOST=1.0 restores the old pace.
+SPEECH_RATE_BOOST = float(os.environ.get("SPEECH_RATE_BOOST", "1.06"))
+
+
 def effective_rate(policy: SpeechPolicy, figure_rate: float | None = None) -> float:
     """The rate for one clause: the policy's, and never faster than a
     figure's own slower rate (KCD-157) when the clause carries a price,
     phone number or reference. The two multiply, so a senior caller hears
     a price slower still."""
-    return policy.speech_rate * (figure_rate if figure_rate is not None else 1.0)
+    return policy.speech_rate * SPEECH_RATE_BOOST * (figure_rate if figure_rate is not None else 1.0)
 
 
 def as_call_state_fields(policy: SpeechPolicy) -> dict:
