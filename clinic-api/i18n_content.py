@@ -185,8 +185,8 @@ FAQ_I18N: dict[str, tuple[str, str]] = {
     # OWNER'S INSTRUCTION, 2026-10-13: clinic address changed to this one, all three languages (see the
     # matching Bengali change in seed.py's FAQ seed row for "location").
     "location": (
-        "हमारे क्लिनिक का पता १७२, बेहारामपुर रोड, ज़िला नदिया, रानाघाट है।",
-        "Our clinic is at 172, Beharampur Road, District Nadia, Ranaghat.",
+        "हमारे क्लिनिक का पता ४४, सी आई टी रोड, लेडीज़ पार्क के पास, बेनियापुकुर, कोलकाता है।",
+        "Our clinic is at 44, C I T Road, near Ladies Park, Beniapukur, Kolkata.",
     ),
     "payment_methods": (
         "यहाँ नकद, सभी प्रमुख कार्ड, और ऑनलाइन पेमेंट भी हो जाता है।",

@@ -342,7 +342,7 @@ FAQ_ENTRIES = [
         ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব"] + LOCATION_BN_NATIVE + LOCATION_ROMAN + LOCATION_CROSS_SCRIPT + LOCATION_HI_NATIVE,  # sourav 2026-10-14: every accent, see i18n_content.LOCATION_ROMAN
         # OWNER'S INSTRUCTION, 2026-10-13: clinic address changed to this one, all three languages (see the
         # matching Hindi/English change in i18n_content.py's FAQ_I18N["location"]).
-        "আমাদের ক্লিনিকের ঠিকানা ১৭২, বেহারামপুর রোড, জেলা নদিয়া, রানাঘাট।",
+        "আমাদের ক্লিনিকের ঠিকানা ৪৪, সি আই টি রোড, লেডিজ পার্কের কাছে, বেনিয়াপুকুর, কলকাতা।",
     ),
     (
         "payment_methods",
