@@ -2919,6 +2919,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # _continue_language_switch_offer on the turn after. Checked before anything else can consume this turn.
         if (
             not session.awaiting_language_switch_offer
+            and not switch_target  # Real call 2026-10-17: an EXPLICIT "speak Bengali" said in Hindi was answered with "shall I speak Hindi?" (the offer fired on top of the request)
             and detected_lang != session.lang
             and detected_lang in _languages_active
             and len(session.lang_history) >= 2
@@ -4448,6 +4449,10 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
     pending_text, session.pending_language_switch_text = session.pending_language_switch_text, None
     pending_asr, session.pending_language_switch_asr_result = session.pending_language_switch_asr_result, None
     answer = _answer_to_switch_offer(text, target, lang)
+    # An explicit request in this reply ("বাংলায় বলুন", "speak English") names the language to use, whatever was offered, whatever the yes/no reads as.
+    explicit = next((r for l in (lang, "bn", "hi", "en") for r in [detect_language_switch_request(text, l)] if r), None)
+    if explicit:
+        target, answer = explicit, "yes"
     reply_lang = lang
     if answer == "yes":
         _lock_reply_language(session, target)

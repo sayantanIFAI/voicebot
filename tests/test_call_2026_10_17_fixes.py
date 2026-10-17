@@ -544,3 +544,27 @@ def test_a_trailing_tell_me_or_please_is_not_a_finished_sentence():
 
     for t in ["okay can you please tell me", "please", "can you tell me"]:
         assert cc(t, "en") == "incomplete", t
+
+
+# ---- an explicit "speak <language>" is obeyed in any language, and never turned into an offer of the language it was said in
+def test_the_switch_request_is_read_in_every_script_even_garbled():
+    from agent.language_switch import detect_language_switch_request as d
+
+    cases = [
+        ("बंगाली में बात कीजिए बंगलाई बोलू", "hi", "bn"),
+        ("বাঙালি মেয়ে বাদ কেজি বাংলায় বলুন", "bn", "bn"),
+        ("हिंदी में बात कीजिए", "hi", "hi"),
+        ("হিন্দিতে বলুন", "bn", "hi"),
+        ("please speak in english", "en", "en"),
+        ("अंग्रेज़ी में बोलिए", "hi", "en"),
+        ("ইংরেজিতে কথা বলুন", "bn", "en"),
+    ]
+    for text, lang, want in cases:
+        assert d(text, lang) == want, (text, d(text, lang))
+
+
+def test_main_does_not_offer_a_switch_on_top_of_an_explicit_request():
+    src = open(__import__("pathlib").Path(__file__).resolve().parents[1] / "main.py", encoding="utf-8").read()
+    i = src.index("session.pending_language_switch = detected_lang")
+    window = src[max(0, i - 700): i]
+    assert "and not switch_target" in window
