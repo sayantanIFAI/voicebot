@@ -170,6 +170,9 @@ INDIC_MIN_LID = 0.10
 # gives it some probability, or most of what it wrote is words an English speaker actually says.
 ENGLISH_MIN_LID = 0.05
 ENGLISH_MIN_WORD_SHARE = 0.5
+STABLE_CALL_LID = 0.8  # language ID this sure of the call's language ...
+STABLE_CALL_ENGLISH_SHARE = 0.75  # ... and English must be at least this plainly English (and its decoders agree this well) to take the turn
+STABLE_CALL_ENGLISH_AGREEMENT = 0.7
 _ENGLISH_WORDS = frozenset(
     """
 a an the and or but if so of to in on at for from with by about as is are was were be been am do does did have has had
@@ -303,6 +306,18 @@ def pick_candidate(
                 or lid_scores.get("en", 0.0) >= ENGLISH_MIN_LID
                 or english_word_share(r.text) >= ENGLISH_MIN_WORD_SHARE
             ):
+                # Real call 2026-10-17: in a call that had been Bengali for many turns, with language ID at bn 0.97 / en 0.00 and the Bengali
+                # recogniser reading "তো আমার একটা বুকিং করে দিন কালকে" perfectly (agreement 1.00), the English recogniser's "the booking go to
+                # then galva" (agreement 0.62, 4 of 6 words ordinary English) won, and the booking request was lost. Inside an established
+                # Indic call, with language ID sure of it and not hearing English, English needs to be clearly English (>= 0.75 ordinary words, decoders agreeing >= 0.7).
+                if (
+                    prior in ("bn", "hi")
+                    and lid_scores
+                    and lid_scores.get(prior, 0.0) >= STABLE_CALL_LID
+                    and lid_scores.get("en", 0.0) < ENGLISH_MIN_LID
+                    and (english_word_share(r.text) < STABLE_CALL_ENGLISH_SHARE or r.decoder_agreement < STABLE_CALL_ENGLISH_AGREEMENT)
+                ):
+                    continue
                 return lang, r
     rest = [(lang, r) for lang, r in usable if lang != "en"] or usable
     if lid_scores:

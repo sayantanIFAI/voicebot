@@ -477,3 +477,18 @@ def test_decoder_agreement_ignores_how_spelled_letters_are_spaced():
     assert f("सीबीसी ई सी जी टी एस एच", "सी बी स  स जी टीएसएच") >= 0.8
     assert f("আমি যাব", "আমি যাব") == 1.0
     assert f("ক্ব ইক", "কগ ত") < 0.5  # two different mis-hearings still disagree
+
+
+# ---- a noisy English reading must not beat clean Bengali inside an established Bengali call
+def test_noisy_english_does_not_beat_clean_bengali_in_a_bengali_call():
+    from types import SimpleNamespace as R
+
+    bn = R(text="তো আমার একটা বুকিং করে দিন কালকে", decoder_agreement=1.0)
+    en = R(text="the booking go to then galva", decoder_agreement=0.62)
+    lid = {"bn": 0.97, "en": 0.0, "hi": 0.03}
+    assert _ls.pick_candidate([("bn", bn), ("en", en)], lid, "bn")[0] == "bn"
+    # clearly English still takes the turn, even mid-Bengali-call
+    clear = R(text="what is the price of the blood test", decoder_agreement=0.9)
+    assert _ls.pick_candidate([("bn", bn), ("en", clear)], lid, "bn")[0] == "en"
+    # and on the first turn (no established call language) the old rule stands
+    assert _ls.pick_candidate([("bn", bn), ("en", en)], lid, None)[0] == "en"

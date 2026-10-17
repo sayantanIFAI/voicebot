@@ -1945,7 +1945,11 @@ async def _answer_test_availability(slots: dict, lang: str) -> tuple[str, dict]:
         name, result = results[0]
         _note_suggestion("test_rate", "test_name", {"test_name": name}, result)
         return test_rate_reply({"test_name": name}, result, lang), {"test_name": name}
-    return test_availability.availability_reply(found, lang), {"test_name": found[0]}
+    # Real call 2026-10-17: "কিডনি ফাঙ্কটিয়ান টেস্ট হয়" was answered "…কিডনি ফাঙ্কটিয়ান টেস্ট হয়" -- the caller's misheard words repeated back. The answer
+    # names the test the way the clinic does (its own Bengali/Hindi name from the table), the way the price answer already does.
+    key = {"bn": "test_name_bn", "hi": "test_name_hi"}.get(lang, "test_name")
+    spoken = [r.get(key) or r.get("test_name") or n for n, r in results if r.get("found")]
+    return test_availability.availability_reply(spoken, lang), {"test_name": found[0]}
 
 
 async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | None:
