@@ -47,7 +47,7 @@ class EndpointConfig:
     # Shorter than this cannot be a finished utterance: a cough, click or pop.
     min_speech_s: float = 0.35
     # Runaway utterance: force a cut so one talker cannot stall the pipeline.
-    max_utterance_s: float = 20.0
+    max_utterance_s: float = 45.0  # real call 2026-10-17: a caller listing tests was cut at 20 s while still speaking
     # KCD-048. The transcript reads as finished -> less silence is needed; as
     # unfinished -> more. `complete` is floored well above ordinary
     # intra-sentence pauses; `incomplete` is never below the baseline.

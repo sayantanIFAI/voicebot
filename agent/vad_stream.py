@@ -52,7 +52,7 @@ class TurnDetector:
         silence_confirm_s: float = 1.0,
         tail_guard_s: float = 0.3,
         min_speech_s: float = 0.35,
-        max_utterance_s: float = 20.0,
+        max_utterance_s: float = 45.0,
         config: EndpointConfig | None = None,
     ):
         # silence_confirm_s was raised from an initial 0.8s after real

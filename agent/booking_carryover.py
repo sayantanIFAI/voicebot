@@ -18,7 +18,7 @@ MAX_GAP_TURNS = 3  # same distance agent/enquiry_followup.FOLLOWUP_MAX_GAP treat
 
 _SAME_DAY = (
     # Bengali
-    "এই দিন", "ওই দিন", "সেই দিন", "ওইদিন", "এইদিন", "একই দিন", "এই তারিখ", "ওই তারিখ", "সেই তারিখ", "একই তারিখ", "ঐ দিন", "ঐ তারিখ",
+    "সেদিন", "ওদিন", "এদিন", "এই দিন", "ওই দিন", "সেই দিন", "ওইদিন", "এইদিন", "একই দিন", "এই তারিখ", "ওই তারিখ", "সেই তারিখ", "একই তারিখ", "ঐ দিন", "ঐ তারিখ",
     # Hindi
     "उसी दिन", "उस दिन", "इसी दिन", "इस दिन", "वही दिन", "उसी तारीख", "इसी तारीख", "उस तारीख", "इस तारीख", "वही तारीख", "उसी डेट", "उस डेट",
     # English
@@ -76,13 +76,39 @@ _BOOK_REQUEST = (
     "i want a booking", "i want an appointment",
 )
 _LOOKUP = (
-    "আমার বুকিং", "বুকিং কোথায়", "বুকিং চেক", "বুকিং স্ট্যাটাস", "কনফার্মেশন", "বুকিংয়ের তথ্য", "মেরী बुकिंग", "मेरी बुकिंग", "बुकिंग की स्थिति",
+    "আমার বুকিং", "আমার অ্যাপয়েন্টমেন্ট", "আমার appointment", "মেরা অ্যাপয়েন্টমেন্ট", "मेरा अपॉइंटमेंट", "मेरी अपॉइंटमेंट", "বুকিং কোথায়", "বুকিং চেক", "বুকিং স্ট্যাটাস", "কনফার্মেশন", "বুকিংয়ের তথ্য", "মেরী बुकिंग", "मेरी बुकिंग", "बुकिंग की स्थिति",
     "my booking", "my appointment", "booking status", "check my booking", "confirmation id", "confirmation number",
 )
 
 
 # Any booking word at all, once a doctor has just been asked about: "okay at the book again", "বুক তো করিনি", "অযাপ্ফোন্টমেন্ট বুক করতে বলছি".
 _BOOK_WORDS = ("বুক", "অ্যাপয়েন্টমেন্ট", "অযাপ্ফোন্টমেন্ট", "ন্টমেন্ট", "বুকিং", "बुक", "बुकिंग", "अपॉइंटमेंट", "appointment", "booking")
+
+
+_CHANGE_CUES = (
+    "cancel", "reschedule", "postpone", "change", "shift", "move", "বাতিল", "ক্যান্সেল", "পরিবর্তন", "বদল", "পিছিয়ে", "সরিয়ে", "রিশিডিউল", "তারিখ পাল্টা",
+    "रद्द", "कैंसल", "बदल", "आगे बढ़ा", "रीशेड्यूल", "पोस्टपोन",
+)
+
+
+def mentions_change_or_cancel(text: str) -> bool:
+    return _has(_norm(text), _CHANGE_CUES)
+
+
+# A bare "do it" / "take it" said right after a doctor was asked about ("এই সেদিনেরই করুন", "ওই দিনই করে দিন", "मैं ले लूँगा"): the booking goes on.
+_DO_IT = (
+    "করুন", "করে দিন", "করে দেন", "করে দাও", "করব", "করবো", "করতে চাই", "নেব", "নেবো", "নিতে চাই", "নিয়ে নিন", "দেখাব", "দেখাবো", "দেখাতে চাই",
+    "कर दो", "कर दीजिए", "कर दें", "करना है", "करूँगा", "करूंगा", "करूँगी", "लेना है", "ले लूँगा", "ले लूंगा", "दिखाना है",
+    "do it", "go ahead", "take it", "i will take", "i'll take", "i want to see",
+)
+
+
+def continues_booking(text: str) -> bool:
+    """Right after a doctor was asked about: a booking word, a pointer to the day/time just given, or a bare \"do it\"."""
+    t = _norm(text)
+    if _has(t, _LOOKUP) or _has(t, _CHANGE_CUES):
+        return False
+    return asks_to_book(text) or says_same_day(text) or says_same_time(text) or _has(t, _DO_IT)
 
 
 def asks_to_book(text: str) -> bool:

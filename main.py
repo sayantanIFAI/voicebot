@@ -145,6 +145,7 @@ from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a
 from agent import booking_capture  # sourav 2026-10-16: deterministic phone / name / ordinal-slot capture + safe confirm recovery for the doctor booking
 from agent import booking_carryover  # sourav 2026-10-14: 'book him / that day' after a doctor-availability answer
 from agent.fast_path import Catalogue, FastPath
+from agent.fast_path import _normalize as fast_path_normalize
 from agent.filler import await_with_filler
 from agent.full_duplex import FullDuplexProcessor, wav_to_pcm16k
 from agent.golden_buckets import channel_buckets
@@ -1751,6 +1752,19 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
             if refusal:
                 logger.info("[%s] fast path %s refused (%s) -- the model decides", session.call_id, hit.intent, refusal)
                 hit = None
+        if hit is not None and hit.intent == "clinic_faq" and _doctor_booking_open(session) and booking_carryover.continues_booking(text):
+            # Real call 2026-10-17: "ওই দিনই এগারোটার সময় করুন" (book it that day at eleven) matched the opening-hours FAQ on the word "সময়" while a doctor
+            # booking was waiting for its day/time. A day, a time or a "do it" said to an open doctor booking is the booking's answer, not an FAQ.
+            logger.info("[%s] fast path clinic_faq refused: the open doctor booking is being answered", session.call_id)
+            return {
+                "intent": "book_appointment",
+                "slots": {k: None for k in (
+                    "test_name", "test_names", "doctor_name", "date", "time_slot", "new_date", "new_time_slot", "confirmation_id",
+                    "patient_name", "patient_age", "phone", "contact_phone", "relationship", "spelled_letters", "symptom_description", "faq_topic")},
+                "direct_reply_bn": None,
+                "secondary_intent": None,
+                "secondary_slots": None,
+            }
         if hit is not None:
             logger.info("[%s] fast path resolved %s (%.2f) -- no LLM call", session.call_id, hit.intent, hit.confidence)
             return hit.as_llm_shape()
@@ -1802,10 +1816,61 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
         if hint is None:
             raise
         return hint
-    if isinstance(data, dict) and data.get("intent") == "unclear":
+    if isinstance(data, dict) and (
+        data.get("intent") == "unclear"
+        or (
+            data.get("intent") in ("lookup_booking", "smalltalk", "clinic_faq", "reschedule_appointment", "cancel_appointment")
+            and booking_carryover.asks_to_book(text)
+            and not booking_carryover.mentions_change_or_cancel(text)
+        )
+    ):
         hint = _doctor_booking_hint(text, text_lang)
         if hint is not None:
             return hint
+    return _with_whole_doctor_name(data, text, text_lang)
+
+
+_WHEN_SITS = ("কবে", "কখন", "কোন দিন", "কোন কোন", "বসেন", "বসে", "কটায়", "कब", "कौन से दिन", "बैठते", "बैठती", "when", "which day", "what time", "schedule")
+
+
+def _asks_when_sits(text: str) -> bool:
+    return any(w in text.lower() for w in _WHEN_SITS)
+
+
+def _doctor_booking_open(session: CallSession) -> bool:
+    """A doctor booking is being filled in, or a doctor was just asked about."""
+    b = session.booking
+    if b is not None and b.action == "book_appointment" and b.stage == "collecting" and not b.is_stale():
+        return True
+    return booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)
+
+
+def _with_whole_doctor_name(data, text: str, lang: str):
+    """Real call 2026-10-17: "ডাক্তার সেন এর অ্যাপয়েন্টমেন্ট নেবো আমি বিশ্বজিৎ সেন" -- the model took the first \"Sen\" as the doctor and the clinic asked
+    \"Arindam or Biswajit?\". When the caller SAID one doctor's whole name anywhere in the sentence, that is the doctor: the slot is set to it. A
+    booking request for that doctor enters the booking flow. Never raises."""
+    if _fast_path is None or not isinstance(data, dict) or not isinstance(data.get("slots"), dict):
+        return data
+    if data.get("intent") not in ("doctor_availability", "book_appointment", "unclear", "lookup_booking", "reschedule_appointment", "cancel_appointment"):
+        return data
+    try:
+        name, form, score = _fast_path.catalogue.match(fast_path_normalize(text), "doctorfull", lang, 0.9)
+    except Exception:  # noqa: BLE001 - a repair must never take a turn down
+        logger.warning("whole doctor name check failed", exc_info=True)
+        return data
+    if not name:
+        return data
+    whole = form or name
+    if data["slots"].get("doctor_name") == whole:
+        return data
+    if data.get("intent") == "doctor_availability":
+        hint = _doctor_booking_hint(text, lang)  # None for a schedule question, so only a booking request changes intent
+        if hint is not None:
+            return hint
+    if data.get("intent") == "doctor_availability" and booking_carryover.continues_booking(text) and not _asks_when_sits(text):
+        return {**data, "intent": "book_appointment", "slots": {**data["slots"], "doctor_name": whole}}  # "…নেব আমি বিশ্বজিৎ সেন" is a booking, with the whole name said
+    if data.get("intent") in ("doctor_availability", "book_appointment"):
+        data = {**data, "slots": {**data["slots"], "doctor_name": whole}}
     return data
 
 
@@ -3144,14 +3209,35 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     # existing booking ("from which number did you book?") and the phone digits then fell to the greeting. A request to book, straight after
     # a doctor was asked about, is a booking: the doctor and the day come from what was just said (booking_carryover).
     if (
-        intent in ("lookup_booking", "unclear", "smalltalk", "clinic_faq", "book_test")
+        intent in ("lookup_booking", "unclear", "smalltalk", "clinic_faq", "book_test", "reschedule_appointment", "cancel_appointment")
         and session.booking is None
+        and not (intent in ("reschedule_appointment", "cancel_appointment") and booking_carryover.mentions_change_or_cancel(text))
         and not (intent == "book_test" and _fast_path is not None and _fast_path.named_tests(text, language_of_script(text, lang)))
-        and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)
-        and booking_carryover.asks_to_book(text)
+        and (booking_carryover.recent(session.last_doctor_enquiry, session.turn_count) or intent in ("lookup_booking", "unclear", "reschedule_appointment", "cancel_appointment"))
+        and (
+            booking_carryover.asks_to_book(text)
+            or (booking_carryover.recent(session.last_doctor_enquiry, session.turn_count) and booking_carryover.continues_booking(text))
+        )
     ):
         logger.info("[%s] %s re-read as a booking request after a doctor enquiry", session.call_id, intent)
-        intent, slots = "book_appointment", {}
+        # keep what the model did read of the booking (the doctor, a date, a time); only the intent was wrong
+        slots = {k: v for k, v in (slots or {}).items() if k in ("doctor_name", "date", "time_slot", "patient_name", "phone") and v}
+        intent = "book_appointment"
+    if (
+        intent in ("book_test", "lookup_booking")
+        and session.booking is not None
+        and session.booking.action == "book_appointment"
+        and session.booking.stage == "collecting"
+        and not session.booking.is_stale()
+        and not confirmed_entity
+        and not (intent == "book_test" and _fast_path is not None and _fast_path.named_tests(text, language_of_script(text, lang)))
+        and booking_carryover.continues_booking(text)
+    ):
+        # Real call 2026-10-17: a doctor booking was open and asked for the day; "এই সেদিনেরই করুন" was read as a lab-test booking and answered with
+        # the counter message. An answer to the open doctor booking is never a lab-test request when no test is named.
+        logger.info("[%s] %s read as the open doctor booking's answer", session.call_id, intent)
+        slots = {k: v for k, v in (slots or {}).items() if k in ("doctor_name", "date", "time_slot", "patient_name", "phone") and v}
+        intent = "book_appointment"
     _mark(session, "intent")
     _rec(session, "intent", intent)
     _note_stated_age(session, slots, lang)
