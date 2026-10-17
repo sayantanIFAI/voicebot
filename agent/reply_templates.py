@@ -223,11 +223,8 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.booking_reply(slots, result, lang)
     if result.get("success"):
-        return (
-            f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
-            f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {result['time_slot']}। "
-            f"কনফার্মেশন নম্বর: {result['confirmation_id']}।"
-        )
+        # The booking ID is given only after payment (owner, 2026-10-17); the payment-link sentence that follows says so.
+        return f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {result['time_slot']}।"
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -286,12 +283,10 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") ->
         # been announced separately (phrase("no_confirmation_number", lang)
         # in main.py, before this readback runs) so it is omitted here
         # rather than repeated.
-        phone = slots.get("contact_phone") or slots.get("phone")
-        phone_clause = f", ফোন নম্বর {phone} " if phone else " "
+        # Owner, 2026-10-17: the name and the number were each confirmed already, so the final read-back does not say the ten digits again (15 s of speech).
         return (
             f"তাহলে {slots.get('doctor_name')} ডাক্তারের কাছে {slots.get('date')} তারিখে, "
-            f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')}"
-            f"{phone_clause}-- এই অ্যাপয়েন্টমেন্টটা কনফার্ম করব?"
+            f"সময় {slots.get('time_slot')}-এ, রোগীর নাম {slots.get('patient_name')} -- কনফার্ম করব?"
         )
     if action == "book_test":
         # ", " not the ideographic "、" -- a stray full-width character

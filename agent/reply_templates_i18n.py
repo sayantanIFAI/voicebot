@@ -330,14 +330,8 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
     if result.get("success"):
         doctor = _doctor_name(slots, result, lang)
         if hi:
-            return (
-                f"आपकी अपॉइंटमेंट कन्फ़र्म हो गई है। {doctor}, {result['date']}, "
-                f"समय {result['time_slot']}। कन्फ़र्मेशन नंबर: {result['confirmation_id']}।"
-            )
-        return (
-            f"Your appointment is confirmed. {doctor}, {result['date']}, "
-            f"at {result['time_slot']}. Your confirmation number is {result['confirmation_id']}."
-        )
+            return f"{doctor}, {result['date']}, समय {result['time_slot']}।"
+        return f"{doctor}, {result['date']}, at {result['time_slot']}."
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -418,12 +412,11 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str) -> str:
         if hi:
             return (
                 f"तो {slots.get('doctor_name')} डॉक्टर के पास {slots.get('date')} को, "
-                f"समय {slots.get('time_slot')} पर, मरीज़ का नाम {slots.get('patient_name')}, "
-                f"फ़ोन नंबर {slots.get('phone')} -- यह अपॉइंटमेंट कन्फ़र्म कर दूँ?"
+                f"समय {slots.get('time_slot')} पर, मरीज़ का नाम {slots.get('patient_name')} -- कन्फ़र्म कर दूँ?"
             )
         return (
             f"So, with Dr. {slots.get('doctor_name')} on {slots.get('date')} at {slots.get('time_slot')}, "
-            f"for {slots.get('patient_name')}, phone number {slots.get('phone')} -- shall I confirm this?"
+            f"for {slots.get('patient_name')} -- shall I confirm this?"
         )
     if action == "book_test":
         tests = ", ".join(slots.get("_test_names_display", [])) or ("टेस्ट" if hi else "the tests")

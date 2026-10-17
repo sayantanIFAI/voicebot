@@ -33,7 +33,8 @@ def test_booking_confirmation_readback_all_languages():
     }
     for lang in ("bn", "hi", "en"):
         reply = rt.booking_confirmation_readback(slots, "book_appointment", lang)
-        assert "2026-10-01" in reply and "18:15" in reply and "9800000001" in reply
+        # SPEC CHANGE 2026-10-17: the number is confirmed on its own, so the final read-back does not repeat the ten digits
+        assert "2026-10-01" in reply and "18:15" in reply and "Ravi" in reply and "9800000001" not in reply
         assert _script(reply) == lang or lang == "en"  # english readback embeds a latin doctor name either way
 
 

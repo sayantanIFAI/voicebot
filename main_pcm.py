@@ -3240,6 +3240,21 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         slots = {k: v for k, v in (slots or {}).items() if k in ("doctor_name", "date", "time_slot", "patient_name", "phone") and v}
         intent = "book_appointment"
     if (
+        intent in ("book_test", "add_test_booking", "unclear", "smalltalk", "clinic_faq", "lookup_booking")
+        and session.booking is not None
+        and session.booking.action in ("cancel_appointment", "reschedule_appointment")
+        and session.booking.stage == "collecting"
+        and not session.booking.is_stale()
+        and not confirmed_entity
+        and not (_fast_path is not None and _fast_path.named_tests(text, language_of_script(text, lang)))
+    ):
+        # Real call 2026-10-17: "which number did you book from?" was answered with ten digits and the model called it a lab-test booking; the cancellation
+        # could never be done. A phone number said while a cancel/reschedule waits for one is that booking's number.
+        number = booking_capture.normalise_phone(booking_capture.read_digits(text)[0])
+        if number:
+            logger.info("[%s] %s read as the number for the open %s", session.call_id, intent, session.booking.action)
+            intent, slots = session.booking.action, {"phone": number}
+    if (
         intent in ("book_test", "lookup_booking")
         and session.booking is not None
         and session.booking.action == "book_appointment"
