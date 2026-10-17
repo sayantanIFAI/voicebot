@@ -254,7 +254,9 @@ async def test_the_first_or_second_offered_slot_is_a_slot_the_clinic_really_offe
     rig.new_call("en")
     await rig.say("is doctor Sen available tomorrow")
     await rig.say("book him for that day", B())
-    taken = await rig.say("10:00", B(time_slot="10:00"))
+    await rig.say("10:00", B(time_slot="10:00"))
+    # SPEC CHANGE 2026-10-17: a time is confirmed ("Is that time fine?") before the hold is made; the yes is what meets the taken slot
+    taken = await rig.say("yes", B())
     assert "already booked" in taken, taken
     offered = list(rig.session.booking.offered_options)
     assert offered, "the clinic offered nothing"

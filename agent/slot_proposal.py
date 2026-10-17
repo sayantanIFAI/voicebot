@@ -33,10 +33,10 @@ def _minutes(slot: str) -> int:
     return int(h) * 60 + int(m)
 
 
-def pick(free_slots: list[str], date_iso: str, now: datetime.datetime | None = None, lead_minutes: int = LEAD_MINUTES) -> str | None:
+def pick(free_slots: list[str], date_iso: str, now: datetime.datetime | None = None, lead_minutes: int = LEAD_MINUTES, skip=()) -> str | None:
     """The first free slot, and on today's date the first one that starts at least `lead_minutes` from now. None when there is none."""
     now = now or clinic_now()
-    slots = sorted(set(free_slots or []), key=_minutes)
+    slots = sorted(set(free_slots or []) - set(skip or ()), key=_minutes)
     if not slots:
         return None
     if date_iso == now.date().isoformat():
@@ -80,9 +80,10 @@ _DAY = {
 }
 _SLOT = {
     # a statement, not a question: the very next thing asked is the caller's name and number (owner 2026-10-17)
-    "bn": "{time}-এ আপনার জন্য স্লট রাখছি। দয়া করে {early} মিনিট আগে চলে আসবেন। অন্য সময় চাইলে বলুন।",
-    "hi": "{time} बजे आपके लिए स्लॉट रख रही हूँ। कृपया {early} मिनट पहले आ जाइएगा। कोई और समय चाहिए तो बताइए।",
-    "en": "I am holding the {time} slot for you. Please come {early} minutes early. If you would like another time, just say so.",
+    # a QUESTION: the caller says yes (or another time) BEFORE the name and number are asked (owner 2026-10-17)
+    "bn": "{time}-এ আপনার জন্য স্লট রাখছি, ঠিক আছে? দয়া করে {early} মিনিট আগে চলে আসবেন।",
+    "hi": "{time} बजे आपके लिए स्लॉट रख रही हूँ, ठीक है? कृपया {early} मिनट पहले आ जाइएगा।",
+    "en": "I am holding the {time} slot for you -- is that all right? Please come {early} minutes early.",
 }
 
 
@@ -122,6 +123,17 @@ def when_phrase(date_iso: str | None, lang: str, now: datetime.datetime | None =
     if not date_iso:
         return _WHEN[lang]["today"]
     return _WHEN[lang][day_kind(date_iso, now)].format(date=date_iso)
+
+
+_RECONFIRM = {
+    "bn": "ঠিক আছে, {time}। এই সময়টা ঠিক আছে তো?",
+    "hi": "ठीक है, {time} बजे। यह समय ठीक है न?",
+    "en": "All right, {time}. Is that time fine?",
+}
+
+
+def reconfirm(time_slot: str, lang: str) -> str:
+    return _RECONFIRM.get(lang, _RECONFIRM["en"]).format(time=time_slot)
 
 
 def day_line(doctor: str, date_iso: str, lang: str, now: datetime.datetime | None = None) -> str:

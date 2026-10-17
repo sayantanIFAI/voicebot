@@ -2143,7 +2143,7 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         return True
     if given and given in (info.get("free_slots") or []):
         return False  # the caller named a time that is free: the normal hold secures it
-    slot = slot_proposal.pick(info.get("free_slots") or [], st.slots["date"])
+    slot = slot_proposal.pick(info.get("free_slots") or [], st.slots["date"], skip=st.slots.get("_time_skip") or ())
     new_date = None
     if not slot:
         nxt = info.get("next") or {}
@@ -2154,6 +2154,7 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
     doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
     st.slots["time_slot"] = slot
+    st.slots["_time_ok"] = "pending"  # the name and number are asked only after the caller accepts this time
     if new_date:
         st.slots["date"] = new_date
         await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.proposal(doctor, new_date, slot, lang)}", lang)
@@ -3417,6 +3418,22 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             slots, ask_back = booking_capture.after_model(st, text, lang, slots, capture_plan, window=chamber_window)
             prior_slots = dict(st.slots)
             changed = merge_slots(st, slots)
+            if st.slots.get("_time_ok") == "pending" and not ask_back:
+                # The time was proposed as a question. A different time ("এগারোটার সময় করুন") is taken and confirmed; a no moves to the next free slot; anything
+                # else -- a yes, or the name and number straight away -- accepts it. Only then are the name and number asked.
+                verdict = classify_yes_no(text, lang)
+                if "time_slot" in changed:
+                    st.hold_token, st.hold_doctor_id = None, None
+                    await _speak(session, slot_proposal.reconfirm(st.slots["time_slot"], lang), lang)
+                    return
+                if verdict == "no":
+                    st.slots["_time_skip"] = list(st.slots.get("_time_skip") or []) + [st.slots.get("time_slot")]
+                    st.slots.pop("time_slot", None)
+                    st.slots.pop("_time_ok", None)
+                    if await _propose_slot(session, st, lang):
+                        return
+                else:
+                    st.slots["_time_ok"] = "yes"
             if ask_back:
                 await _speak(session, ask_back, lang)
                 return
@@ -3496,9 +3513,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 st.slots.get("doctor_name")
                 and st.slots.get("date")
                 and st.hold_token is None
+                and st.slots.get("_time_ok") != "yes"
+                and not st.slots.get("_time_ok_seen")
                 and await _propose_slot(session, st, lang)
             ):
-                pass  # time_slot is now set and the proposal has been spoken; the hold below secures it
+                return  # the time is proposed as a question; the caller's answer comes before the name and number
 
             # Secure the hold as soon as doctor+date+time are known, even
             # if patient details are still missing -- KCD-376: the
@@ -3745,6 +3764,9 @@ def _followup(session: CallSession, intent: str, slots: dict, text: str, lang: s
     return resolve_followup_slot(intent, slots, text, lang, session.last_enquiry_entities, gap)
 
 
+_NAME_ONLY = {"bn": "আপনার নামটা বলবেন প্লিজ?", "hi": "अपना नाम बताइए, प्लीज़?", "en": "Could you tell me your name, please?"}
+
+
 def _next_question(session: CallSession, st, intent: str, missing: list[str], lang: str) -> str:
     """KCD-103: the next question, one field or a group. The caller-state table (`questions_per_turn`) always wins
     over grouping, and a field already asked is asked alone (agent/slot_grouping.py)."""
@@ -3753,6 +3775,8 @@ def _next_question(session: CallSession, st, intent: str, missing: list[str], la
     if grouped is None:
         fields = fields[:1]
     st.asked_fields.update(fields)
+    if not grouped and fields[0] == "patient_name" and (st.slots.get("phone") or getattr(st, "phone_declined", False)):
+        return _NAME_ONLY.get(lang, _NAME_ONLY["en"])  # the number is already known: ask only for the name
     return grouped or missing_slot_prompt(intent, fields[0], lang)
 
 

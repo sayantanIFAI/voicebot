@@ -44,7 +44,7 @@ _MULTIPLIER = {
 # English digit words in Bengali / Devanagari letters ("ডাবল সিক্স", "सेवन एट") and the table only knew the native words.
 _EXTRA_DIGIT_WORD = {
     "জিরো": "0", "জিরও": "0", "ওয়ান": "1", "টু": "2", "থ্রি": "3", "ফোর": "4", "ফাইভ": "5", "সিক্স": "6", "সেভেন": "7", "এইট": "8",
-    "নাইট": "8", "নাইন": "9", "वन": "1", "टू": "2", "थ्री": "3", "फोर": "4", "फाइव": "5", "सिक्स": "6", "सेवन": "7", "एट": "8", "नाइन": "9",
+    "নাইট": "8", "ওন": "1", "নাইন": "9", "वन": "1", "टू": "2", "थ्री": "3", "फोर": "4", "फाइव": "5", "सिक्स": "6", "सेवन": "7", "एट": "8", "नाइन": "9",
     "ছ": "6", "শুন্য": "0", "शुन्य": "0", "नो": "9", "छे": "6", "छै": "6", "paach": "5", "saath": "7", "nine": "9", "aat": "8",
 }  # fmt: skip
 _DIGIT_WORDS = {**spoken_codes._DIGIT_WORD, **_ROMAN_DIGIT_WORD, **_EXTRA_DIGIT_WORD}
@@ -68,15 +68,51 @@ _RESET_WORDS = (
 )  # fmt: skip
 
 
+# "five nines" / "পাঁচটা নাইন" (five of the digit nine): a COUNT followed by a digit. In Bengali the count carries the classifier "-টা/-টি/-টে" ("পাঁচটা"), which a
+# plain digit does not ("পাঁচ"); in English it is the plural digit ("nines", "eights"). Real call 2026-10-17: "পাঁচটা নাইন পাঁচটা নাইট" (99999 88888) was read as 2 digits.
+_CLASSIFIED_COUNT = {
+    "দুটো": 2, "দুটি": 2, "দুইটা": 2, "তিনটে": 3, "তিনটা": 3, "তিনটি": 3, "চারটে": 4, "চারটা": 4, "চারটি": 4, "পাঁচটা": 5, "পাঁচটি": 5, "পাঁচটে": 5,
+    "ছটা": 6, "ছয়টা": 6, "ছয়টি": 6, "সাতটা": 7, "সাতটি": 7, "আটটা": 8, "আটটি": 8, "নয়টা": 9, "নয়টি": 9,
+}  # fmt: skip
+_PLURAL_DIGIT = {"zeros": "0", "ones": "1", "twos": "2", "threes": "3", "fours": "4", "fives": "5", "sixes": "6", "sevens": "7", "eights": "8", "nines": "9"}
+_COUNT_WORD = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+
+
+def _digit_of(tok: str) -> str | None:
+    tok = tok.lstrip("+")
+    if tok.isdigit() and len(tok) == 1:
+        return tok
+    if tok in _DIGIT_WORDS:
+        return _DIGIT_WORDS[tok]
+    if tok in _PLURAL_DIGIT:
+        return _PLURAL_DIGIT[tok]
+    return None
+
+
 def read_digits(text: str) -> tuple[str, int, int]:
-    """(digits said, number of tokens that were digits, number of tokens). "double nine" -> "99"; "triple five" -> "555";
-    a numeral token ("98765") is kept whole; any other word is skipped, never merged into the digits around it."""
+    """(digits said, number of tokens that were digits, number of tokens). "double nine" -> "99"; "triple five" -> "555"; "five nines" -> "99999";
+    "পাঁচটা নাইন" -> "99999"; a numeral token ("98765") is kept whole; any other word is skipped, never merged into the digits around it."""
     tokens = spoken_codes._tokens(text)
     out: list[str] = []
     hits = 0
     times = 1
-    for tok in tokens:
-        tok = tok.lstrip("+")
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i].lstrip("+")
+        following = _digit_of(tokens[i + 1]) if i + 1 < len(tokens) else None
+        if following is not None and tok in _CLASSIFIED_COUNT:  # "পাঁচটা নাইন"
+            out.append(following * _CLASSIFIED_COUNT[tok])
+            hits += 2
+            times = 1
+            i += 2
+            continue
+        if following is not None and tok in _COUNT_WORD and tokens[i + 1] in _PLURAL_DIGIT:  # "five nines"
+            out.append(following * _COUNT_WORD[tok])
+            hits += 2
+            times = 1
+            i += 2
+            continue
+        i += 1
         if tok in _MULTIPLIER:
             times = _MULTIPLIER[tok]
             hits += 1
@@ -85,6 +121,8 @@ def read_digits(text: str) -> tuple[str, int, int]:
             digit = tok
         elif tok in _DIGIT_WORDS:
             digit = _DIGIT_WORDS[tok]
+        elif tok in _PLURAL_DIGIT:
+            digit = _PLURAL_DIGIT[tok]
         else:
             times = 1
             continue
@@ -797,7 +835,8 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
         return plan
 
     # 4. The time and the day: "দশটার সময়", "10 ta", "दस बजे", "tomorrow at ten", a bare "कल" (see read_when).
-    if not (plan.digits and not plan.phone):  # a sentence of phone digits is not also a time
+    time_pending = st.slots.get("_time_ok") == "pending"  # a time was just proposed: the caller may answer with another one, even beside the number
+    if not (plan.digits and not plan.phone) or time_pending:  # a sentence of phone digits is not also a time
         asked_time = "time_slot" in missing and (missing[0] == "time_slot" or "time_slot" in st.asked_fields)
         asked_day = "date" in missing
         if asked_time or asked_day or plan.phone is None:
@@ -806,6 +845,11 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
                 plan.time = when.time
             elif when.time and st.slots.get("time_slot") and when.time != st.slots.get("time_slot"):
                 plan.time = when.time  # a time said with a marker while one is already held: the caller is changing it
+            if plan.time and plan.digits and not plan.phone:
+                # digits are also in this sentence: a "time" read from them (পাঁচটা = 5) must fall inside the doctor's sitting hours, else it is part of the number
+                hh, mm = (int(x) for x in plan.time.split(":"))
+                if not window or not any(a <= hh * 60 + mm < b for a, b in window):
+                    plan.time = None
             if when.date and not st.slots.get("date"):
                 plan.date = when.date
             if (plan.time or plan.date) and when.pure and not plan.digits:

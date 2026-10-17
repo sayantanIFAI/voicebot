@@ -92,25 +92,25 @@ _FRAMES: dict[tuple[str, str], _Frame] = {
         "f": {"test_names": "কোন টেস্টগুলো", "date": "কোন দিন"},
     },
     ("details", "en"): {
-        "frame": "May I have {}?",
+        "frame": "Could you tell me {}, please?",
         "and": " and ",
         "comma": ", ",
         "f": {
-            "patient_name": "the patient's name",
-            "phone": "a phone number for the confirmation",
+            "patient_name": "your name",
+            "phone": "your number",
         },
     },
     ("details", "hi"): {
-        "frame": "{} बताइए?",
+        "frame": "{} बताइए, प्लीज़?",
         "and": " और ",
         "comma": ", ",
-        "f": {"patient_name": "मरीज़ का नाम", "phone": "कन्फ़र्मेशन के लिए एक फ़ोन नंबर"},
+        "f": {"patient_name": "अपना नाम", "phone": "नंबर"},
     },
     ("details", "bn"): {
-        "frame": "{} বলবেন?",
+        "frame": "{} বলবেন প্লিজ?",
         "and": " আর ",
         "comma": ", ",
-        "f": {"patient_name": "রোগীর নাম", "phone": "কনফার্মেশনের জন্য একটা ফোন নম্বর"},
+        "f": {"patient_name": "আপনার নাম", "phone": "নম্বরটা"},
     },
 }
 
