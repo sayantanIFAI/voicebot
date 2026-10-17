@@ -2124,7 +2124,7 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     st.slots["_auto_slot_tried"] = "1"
     try:
         info = await _tools.free_slots(st.slots["doctor_name"], st.slots["date"])
-    except ToolCallError as e:
+    except Exception as e:  # noqa: BLE001 - the time proposal is an aid; any failure leaves the booking exactly as it was
         logger.warning("[%s] free_slots failed (%s)", session.call_id, e)
         return False
     if not info.get("found") or not info.get("sits") or not info.get("valid_slots"):
