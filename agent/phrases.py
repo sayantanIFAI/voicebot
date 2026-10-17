@@ -279,13 +279,13 @@ PHRASES["en"]["lab_test_counter_only"] = (
 # Said as the closing line after a doctor's appointment is confirmed: the payment link has been sent, and the call
 # ends here (main.py's _end_call) -- the caller pays on their own phone, never a number spoken or taken on the call.
 PHRASES["bn"]["payment_link_sent"] = (
-    "আপনার অ্যাপয়েন্টমেন্ট বুক হয়েছে। বুকিং নম্বর আর পেমেন্ট লিংক আপনার মোবাইলে পাঠানো হয়েছে, ওখান থেকে পেমেন্ট করে আপনার স্লট নিশ্চিত করুন। ধন্যবাদ।"
+    "আপনার অ্যাপয়েন্টমেন্ট বুক হয়েছে। বুকিং নম্বর আর পেমেন্ট লিংক আপনার মোবাইলে এসএমএস আর হোয়াটসঅ্যাপে পাঠানো হয়েছে, ওখান থেকে পেমেন্ট করে আপনার স্লট নিশ্চিত করুন। ধন্যবাদ।"
 )
 PHRASES["hi"]["payment_link_sent"] = (
-    "आपकी अपॉइंटमेंट बुक हो गई है। पेमेंट लिंक आपके मोबाइल पर भेज दिया गया है, वहाँ से पेमेंट करके बुकिंग पक्की कर लीजिए। धन्यवाद।"
+    "आपकी अपॉइंटमेंट बुक हो गई है। बुकिंग नंबर और पेमेंट लिंक आपके मोबाइल पर एसएमएस और व्हाट्सऐप पर भेज दिया गया है, वहाँ से पेमेंट करके अपना स्लॉट पक्का कर लीजिए। धन्यवाद।"
 )
 PHRASES["en"]["payment_link_sent"] = (
-    "Your appointment is booked. A payment link has been sent to your phone -- please pay there to confirm it. "
+    "Your appointment is booked. Your booking number and a payment link have been sent to your phone by SMS and WhatsApp -- please pay there to secure your slot. "
     "Thank you."
 )
 

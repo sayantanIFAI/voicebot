@@ -25,6 +25,8 @@ import datetime
 import os
 import uuid
 
+import notifications
+import payments
 from disclosure import with_notice as _with_disclosure_notice
 from models import (
     Appointment,
@@ -791,10 +793,19 @@ def send_payment_link(db: Session, confirmation_id: str) -> dict:
         return {"success": False, "reason": "no_phone_on_file"}
     doctor = db.get(Doctor, appt.doctor_id)
     fee = (doctor.consultation_fee_inr if doctor else None) or 0
-    link = f"https://pay.kolkata-care-voice-agent.invalid/{confirmation_id}"
-    message = f"Pay Rs {fee} to confirm your appointment ({confirmation_id}): {link}"
+    link = payments.create_payment_link(confirmation_id, fee)["url"]
+    message = f"Booking {confirmation_id}: {doctor.name if doctor else 'doctor'}, {appt.date} at {appt.time_slot}. Pay Rs {fee} to confirm: {link}"
+    # One message on each channel, each its own row in the outbox and each handed to the provider hook (agent says: SMS and WhatsApp).
     result = queue_sms(db, appt.phone, "payment_link", message, confirmation_id)
-    out = {"success": result["queued"], "amount_inr": fee, "payment_link": link, "confirmation_id": confirmation_id}
+    wa = queue_sms(db, appt.phone, "payment_link_whatsapp", message, confirmation_id)
+    for channel, res in (("sms", result), ("whatsapp", wa)):
+        if res.get("queued") and not res.get("duplicate"):
+            delivery = notifications.send(channel, appt.phone, message, confirmation_id)
+            row = db.get(SmsOutbox, res["id"])
+            if row is not None and delivery["status"] in ("sent", "failed"):
+                row.status = delivery["status"]  # stays "queued" while the placeholder is in place
+                db.commit()
+    out = {"success": result["queued"], "amount_inr": fee, "payment_link": link, "confirmation_id": confirmation_id, "channels": ["sms", "whatsapp"]}
     if not result["queued"]:
         out["reason"] = result.get("reason", "unknown")
     return out
