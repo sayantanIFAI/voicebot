@@ -22,7 +22,7 @@ _GENERAL = (
     "क्या क्या", "कौन कौन", "कौन-कौन", "कौन से", "किस किस", "कितने तरह", "कितने प्रकार", "सब तरह के", "हर तरह के", "टेस्ट की लिस्ट", "टेस्ट की सूची",
     "सभी टेस्ट", "सारे टेस्ट", "किस तरह के", "कैसे कैसे",
     # English
-    "what tests", "which tests", "what kind of tests", "what kinds of tests", "what type of tests", "what types of tests", "types of tests",
+    "what kind of test", "what type of test", "what kinds of test", "what sort of test", "what tests", "which tests", "what kind of tests", "what kinds of tests", "what type of tests", "what types of tests", "types of tests",
     "kinds of tests", "list of tests", "all the tests", "all tests", "what all tests", "what sort of tests", "tests do you", "tests are available",
     "tests you do", "tests you have", "tests available",
 )

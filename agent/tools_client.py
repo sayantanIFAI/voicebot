@@ -89,6 +89,18 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_doctor_availability({doctor_name!r}, {date!r}): {e}") from e
 
+    async def free_slots(self, doctor_name: str, date: str) -> dict:
+        """The doctor's still-free slots on a date (GET /api/v1/doctors/free-slots); the agent chooses the time from these."""
+        try:
+            r = await self._client.get("/api/v1/doctors/free-slots", params={"name": doctor_name, "date": date})
+            r.raise_for_status()
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("free-slots did not return an object")
+            return data
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"free_slots({doctor_name!r}, {date!r}): {e}") from e
+
     # ---- Tool 4: GET /api/v1/tests/prep?name=... ----
     # Expected response shape:
     #   found=true:  {"found": true, "test_name": "...", "test_name_bn": "...",

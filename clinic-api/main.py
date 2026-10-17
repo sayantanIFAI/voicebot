@@ -1226,6 +1226,34 @@ def doctor_earliest(name: str = Query(...), db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/v1/doctors/free-slots")
+def doctor_free_slots(name: str = Query(...), date: str = Query(...), db: Session = Depends(get_db)):
+    """The slots of one doctor on one date that are still free (not booked, not held, not already past), and every valid slot of that day.
+    The voice agent picks the time for the caller from this (agent/slot_proposal.py) instead of asking for one."""
+    amb = _ambiguous_doctor(db, name)
+    if amb is not None:
+        return amb
+    doctor = _find_doctor(db, name)
+    if not doctor:
+        return {"found": False, "query": name}
+    try:
+        target = datetime.date.fromisoformat(date)
+    except ValueError:
+        return {"found": False, "query": name}
+    sched = _schedule_for_weekday(db, doctor.id, target.weekday())
+    return {
+        "found": True,
+        "doctor_name": _doctor_ref(db, doctor),
+        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+        "doctor_name_hi": _first_alias_bn(doctor.aliases_hi),
+        "date": target.isoformat(),
+        "sits": bool(sched),
+        "chamber_hours": f"{sched.start_time}-{sched.end_time}" if sched else None,
+        "valid_slots": _generate_slots(sched.start_time, sched.end_time) if sched else [],
+        "free_slots": bs.available_slots(db, doctor.id, target.isoformat()) if sched else [],
+    }
+
+
 @app.get("/api/v1/departments/route")
 def department_route(query: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
     return bs.route_department(db, query, lang)

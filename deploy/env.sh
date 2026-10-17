@@ -7,6 +7,8 @@
 # hypothetical: the ollama binary and the entire Postgres installation
 # have each been lost to it three times.
 
+# The clinic is in Kolkata: "today", "now" and the free appointment slots are judged on its clock, not the server's (the pods run UTC).
+export TZ=${TZ:-Asia/Kolkata}
 export HF_HOME=/workspace/.cache/huggingface
 export TORCH_HOME=/workspace/.cache/torch
 export HF_HUB_ENABLE_HF_TRANSFER=0

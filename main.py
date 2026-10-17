@@ -130,6 +130,8 @@ from agent import cart_tally  # sourav 2026-10-14: running list of priced tests 
 from agent import test_availability  # real call 2026-10-14: "is the X test done here?" is a question, not a booking
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
+from agent import slot_proposal  # the machine picks the appointment time and says it
+from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import test_overview  # what tests do you do? from the catalogue, no model
 from agent import translit_frames  # "do you do chest X-ray" written in Bengali/Devanagari letters
 from agent import spelled_letters  # a spelled test code ("C B C") the Bengali recogniser wrote as a made-up word
@@ -2093,6 +2095,35 @@ async def _handle_test_category_answer(session: CallSession, category: str, text
     await _queue_prescription_callback(session, f"lay_term_{category}", text, lang)
 
 
+def _bare_doctor_name(name: str) -> str:
+    return " ".join(w for w in str(name or "").split() if w.lower().strip(".") not in _DOCTOR_TITLES).strip()
+
+
+async def _propose_slot(session: CallSession, st, lang: str) -> bool:
+    """Choose the time for the caller from the doctor's free slots and say it (agent/slot_proposal.py). True when a time was set and spoken.
+    A time the caller already gave stays if it is a real slot of that day; one that is not (\"12:00\" for \"between ten and twelve\", the closing time) is
+    replaced. Any failure leaves the booking exactly as it was (the old question then applies)."""
+    st.slots["_auto_slot_tried"] = "1"
+    try:
+        info = await _tools.free_slots(st.slots["doctor_name"], st.slots["date"])
+    except ToolCallError as e:
+        logger.warning("[%s] free_slots failed (%s)", session.call_id, e)
+        return False
+    if not info.get("found") or not info.get("sits") or not info.get("valid_slots"):
+        return False
+    given = st.slots.get("time_slot")
+    if given and given in (info.get("free_slots") or []):
+        return False  # the caller named a time that is free: the normal hold secures it
+    slot = slot_proposal.pick(info.get("free_slots") or [], st.slots["date"])
+    if not slot:
+        return False  # nothing free: the existing path offers the alternatives
+    key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
+    doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
+    st.slots["time_slot"] = slot
+    await _speak(session, slot_proposal.proposal(doctor, st.slots["date"], slot, lang), lang)
+    return True
+
+
 async def _answer_test_overview(session: CallSession, text: str, lang: str) -> bool:
     """"What tests do you do?" (agent/test_overview.py): the kinds of tests the clinic offers, from the catalogue, no model. Only when the question
     is about the whole range and names no particular test. True when answered."""
@@ -3306,6 +3337,16 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     st.slots["doctor_name"] = None
                     await _speak(session, not_found_reply, lang)
                     return
+
+            # The caller is not asked for a time (agent/slot_proposal.py): the machine knows the sitting hours, what is booked and the clock.
+            if (
+                st.slots.get("doctor_name")
+                and st.slots.get("date")
+                and st.hold_token is None
+                and not st.slots.get("_auto_slot_tried")
+                and await _propose_slot(session, st, lang)
+            ):
+                pass  # time_slot is now set and the proposal has been spoken; the hold below secures it
 
             # Secure the hold as soon as doctor+date+time are known, even
             # if patient details are still missing -- KCD-376: the
