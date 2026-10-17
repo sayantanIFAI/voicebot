@@ -2115,11 +2115,20 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     if given and given in (info.get("free_slots") or []):
         return False  # the caller named a time that is free: the normal hold secures it
     slot = slot_proposal.pick(info.get("free_slots") or [], st.slots["date"])
+    new_date = None
     if not slot:
-        return False  # nothing free: the existing path offers the alternatives
+        nxt = info.get("next") or {}
+        if not (nxt.get("date") and nxt.get("time_slot")):
+            return False  # nothing free anywhere soon: the existing path offers the alternatives
+        # nothing left on that day (hours over / all taken): say so and offer the next day that has a slot
+        slot, new_date = nxt["time_slot"], nxt["date"]
     key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
     doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
     st.slots["time_slot"] = slot
+    if new_date:
+        st.slots["date"] = new_date
+        await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.proposal(doctor, new_date, slot, lang)}", lang)
+        return True
     await _speak(session, slot_proposal.proposal(doctor, st.slots["date"], slot, lang), lang)
     return True
 

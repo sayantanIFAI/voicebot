@@ -1251,6 +1251,8 @@ def doctor_free_slots(name: str = Query(...), date: str = Query(...), db: Sessio
         "chamber_hours": f"{sched.start_time}-{sched.end_time}" if sched else None,
         "valid_slots": _generate_slots(sched.start_time, sched.end_time) if sched else [],
         "free_slots": bs.available_slots(db, doctor.id, target.isoformat()) if sched else [],
+        # when nothing is left on this date (the sitting hours are over, or every slot is taken): the next day with a free slot
+        "next": bs.earliest_available(db, doctor.id, target + datetime.timedelta(days=1)),
     }
 
 

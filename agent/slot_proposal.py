@@ -83,6 +83,17 @@ _SLOT = {
 }
 
 
+_NONE_LEFT = {
+    "bn": "দুঃখিত, এই দিনের জন্য আর কোনো স্লট নেই।",
+    "hi": "माफ़ कीजिए, इस दिन के लिए कोई स्लॉट नहीं बचा है।",
+    "en": "Sorry, there is no slot left for that day.",
+}
+
+
+def none_left(lang: str) -> str:
+    return _NONE_LEFT.get(lang, _NONE_LEFT["en"])
+
+
 def day_line(doctor: str, date_iso: str, lang: str, now: datetime.datetime | None = None) -> str:
     lang = lang if lang in _DAY else "en"
     return _DAY[lang][day_kind(date_iso, now)].format(doc=doctor, date=date_iso)
