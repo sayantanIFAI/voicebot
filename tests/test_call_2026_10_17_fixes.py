@@ -383,3 +383,46 @@ def test_no_hindi_ji_in_bengali_replies():
 
 import re as _re0
 _re_ji = _re0.compile("(?<![\u0980-\u09FF])জি(?![\u0980-\u09FF])")
+
+
+def test_a_code_inside_a_named_test_is_not_a_further_test():
+    # "T S H" next to a named Thyroid Profile (T3 T4 TSH) must not become a fourth test
+    codes = {"TSH": "TSH", "CBC": "Complete Blood Count (CBC)"}
+    found = _sl.match_codes("c b c ya rosa t s h complete blood profile", codes)
+    already = {"Lipid Profile", "Thyroid Profile (T3 T4 TSH)"}
+    kept = [c for c, name, _ in found if name not in already and not any(c.upper() in a.upper() for a in already)]
+    assert kept == ["CBC"]
+
+
+# ---- long clips are cut at their pauses; the ask-back says "তিন টেস্ট" not "তিনটিটি"
+import numpy as _np
+from agent import clip_chunks as _cl
+
+
+def _speech_with_pauses(sr=16000, seg_s=(7.0, 6.0, 4.0), gap_s=0.5):  # pauses fall inside each 6.6-11 s search window
+    rng = _np.random.default_rng(1)
+    parts = []
+    for i, s in enumerate(seg_s):
+        parts.append((rng.standard_normal(int(s * sr)) * 3000).astype(_np.int16))
+        if i < len(seg_s) - 1:
+            parts.append(_np.zeros(int(gap_s * sr), dtype=_np.int16))
+    return _np.concatenate(parts)
+
+
+def test_a_short_clip_is_not_cut():
+    assert _cl.split_points(_speech_with_pauses(seg_s=(4.0, 4.0)), 16000, 11.0) == []
+
+
+def test_a_long_clip_is_cut_in_a_pause_not_in_speech():
+    x = _speech_with_pauses()
+    cuts = _cl.split_points(x, 16000, 11.0)
+    assert cuts, "a 17.5 s clip must be cut"
+    for c in cuts:
+        assert _np.abs(x[c - 800:c + 800]).max() < 1000, "the cut must fall in the silence between segments"
+    pieces = _np.diff([0, *cuts, len(x)])
+    assert (pieces <= 11.0 * 16000 + 1).all()
+
+
+def test_ask_back_does_not_double_the_bengali_ti():
+    q = _mtc.shortfall([("a", _found("Uric Acid")), ("b", _found("TSH"))], 3, "bn")
+    assert "তিনটিটি" not in q and "তিনটি টেস্ট" in q

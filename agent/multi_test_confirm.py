@@ -95,7 +95,7 @@ def expected_count(text: str) -> int | None:
 
 
 _NUMBER = {
-    "bn": {2: "দুটি", 3: "তিনটি", 4: "চারটি"},
+    "bn": {2: "দুই", 3: "তিন", 4: "চার"},  # the template adds "টি"
     "hi": {2: "दो", 3: "तीन", 4: "चार"},
     "en": {2: "two", 3: "three", 4: "four"},
 }

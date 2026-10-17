@@ -2123,6 +2123,12 @@ async def _answer_named_total(session: CallSession, text: str, lang: str) -> boo
     except ToolCallError as e:
         logger.warning("[%s] named-total lookup failed (%s) -- leaving the turn to the normal path", session.call_id, e)
         return False
+    # Real call 2026-10-17: "...three together, total" with the CBC lost by the recogniser was priced as a total of the TWO tests heard.
+    # When the caller said how many tests they meant and fewer were understood, say what was caught and ask for all the names again.
+    short = multi_test_confirm.shortfall(results, multi_test_confirm.expected_count(text), lang)
+    if short:
+        await _speak(session, _with_resume(session, short, lang), lang)
+        return True
     for n in names:
         if n.strip().lower() not in [x.strip().lower() for x in session.priced_tests]:
             session.priced_tests.append(n)
@@ -2296,7 +2302,11 @@ async def _with_spelled_tests(session: CallSession, lang: str, result, english_t
                 by_code.setdefault(code, set()).add(str(t["name"]))
         codes = {c: next(iter(names)) for c, names in by_code.items() if len(names) == 1}  # a code two tests share names neither
         already = set(_fast_path.named_tests(result.text, lang)) if _fast_path is not None else set()
-        add = [cand for cand, name, _exact in spelled_letters.match_codes(english_text, codes) if name not in already]
+        # "T S H" heard beside a named Thyroid Profile (T3 T4 TSH) is that same test, not a fourth one
+        add = [
+            cand for cand, name, _exact in spelled_letters.match_codes(english_text, codes)
+            if name not in already and not any(cand.upper() in a.upper() for a in already)
+        ]
         if not add:
             return result
         logger.info("[%s] spelled test code(s) %s heard by the English recogniser (%r) but not in the %s text (%r)",
@@ -2412,8 +2422,12 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         both = await outcomes_for([primary, secondary])
         if len(both) == 2:
             lang, result = pick_candidate(both, lid.scores, session.lang_router.previous_language)
-            return lang, result, True
-        lang, result = both[0]
+        else:
+            lang, result = both[0]
+        # the same spelled-code rescue as the single-language path below: the English recogniser keeps "C B C" apart
+        english = next((r for lg, r in both if lg == "en"), None)
+        if lang in ("bn", "hi") and english is not None:
+            result = await _with_spelled_tests(session, lang, result, english.text)
         return lang, result, True
 
     chosen, result = decision.language, (await outcomes_for([decision.language]))[0][1]

@@ -29,6 +29,7 @@ reusing, because it encodes real, previously-debugged failures:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import glob
 import logging
@@ -37,6 +38,8 @@ import threading
 
 import numpy as np
 import torch
+
+from agent.clip_chunks import chunk_wav
 
 # The AI4Bharat NeMo fork (nemo_toolkit 1.23) calls np.sctypes, which NumPy 2.0
 # removed. Loading the checkpoint works, so the model "comes up" -- and then
@@ -183,8 +186,20 @@ class TurnASR:
         """Blocking. Callers MUST run this via asyncio.to_thread -- it
         holds the GIL through GPU inference and would otherwise stall
         every other WebSocket connection's audio handling on this process."""
-        with self._lock:
-            ctc_text, rnnt_text = self._transcribe_clip(wav_path)
+        # A clip over ~11 s is read in pieces cut at its pauses (agent/clip_chunks.py): beyond that length the RNNT decoder lost the start.
+        pieces = chunk_wav(wav_path)
+        try:
+            with self._lock:
+                texts = [self._transcribe_clip(p) for p in pieces]
+        finally:
+            for p in pieces:
+                if p != wav_path:
+                    with contextlib.suppress(OSError):
+                        os.remove(p)
+        ctc_text = " ".join(c for c, _ in texts if c).strip()
+        rnnt_text = " ".join(r for _, r in texts if r).strip()
+        if len(pieces) > 1:
+            logger.info("ASR [%s]: long clip read in %d pieces", self.language_id, len(pieces))
 
         # Real call 2026-10-17: a long five-sentence question came back with only its last part. The two decoders read the same clip; the
         # RNNT text is the one used (it is the more accurate), but a transducer can stop emitting words for a stretch of a long clip while

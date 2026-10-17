@@ -14,7 +14,7 @@ Devanagari spelling is the lookup key, exactly as aliases_bn is for Bengali.
 from __future__ import annotations
 
 TEST_ALIASES_HI: dict[str, list[str]] = {
-    "Complete Blood Count (CBC)": ["सीबीसी", "सी बी सी"],
+    "Complete Blood Count (CBC)": ["सीबीसी", "सी बी सी", "कंप्लीट ब्लड प्रोफाइल", "कम्प्लीट ब्लड प्रोफाइल", "कंप्लीट ब्लड काउंट", "कम्प्लीट ब्लड काउंट", "कंप्लीट ब्लड पिक्चर", "फुल ब्लड काउंट", "ब्लड काउंट", "ब्लड प्रोफाइल", "हीमोग्राम", "सीबीसी टेस्ट", "सी बी सी टेस्ट"],
     "ESR": ["ईएसआर", "ई एस आर"],
     "Blood Sugar Fasting": ["ब्लड शुगर फास्टिंग", "शुगर फास्टिंग", "खाली पेट शुगर"],
     "Blood Sugar PP": ["शुगर पीपी", "पीपी शुगर", "खाने के बाद शुगर"],
@@ -22,7 +22,7 @@ TEST_ALIASES_HI: dict[str, list[str]] = {
     "Lipid Profile": ["लिपिड प्रोफाइल", "कोलेस्ट्रॉल टेस्ट"],
     "Liver Function Test (LFT)": ["लिवर फंक्शन टेस्ट", "एलएफटी", "लिवर टेस्ट", "पीलिया का टेस्ट", "पीलिया टेस्ट"],
     "Kidney Function Test (KFT)": ["किडनी फंक्शन टेस्ट", "केएफटी", "किडनी टेस्ट"],
-    "Thyroid Profile (T3 T4 TSH)": ["थायराइड प्रोफाइल", "थायराइड टेस्ट"],
+    "Thyroid Profile (T3 T4 TSH)": ["थायराइड प्रोफाइल", "थायराइड टेस्ट", "थायराइड", "थाइरॉइड", "थायरॉइड", "थाइराइड टेस्ट"],
     "TSH": ["टीएसएच"],
     "Urine Routine Examination": ["यूरिन टेस्ट", "पेशाब की जांच", "यूरिन रूटीन"],
     "Widal Test": ["विडाल टेस्ट", "टाइफाइड टेस्ट"],
@@ -61,7 +61,7 @@ TEST_ALIASES_HI: dict[str, list[str]] = {
 # on purpose: no schema change and no migration on the live database. A form must belong to ONE test (a form in two
 # tests would make the fast path pick the first silently) -- "sugar test"/"heart test" are deliberately absent.
 TEST_ALIASES_EN: dict[str, list[str]] = {
-    "Complete Blood Count (CBC)": ["complete blood count", "full blood count", "blood count"],
+    "Complete Blood Count (CBC)": ["complete blood count", "full blood count", "blood count", "complete blood picture", "complete blood profile", "full blood picture", "blood picture", "complete haemogram", "complete hemogram", "haemogram", "hemogram", "cbc test", "cbp"],
     "ESR": ["erythrocyte sedimentation rate", "sed rate"],
     "Blood Sugar Fasting": ["fasting blood sugar", "fasting sugar", "empty stomach sugar", "empty stomach sugar test", "sugar fasting"],
     "Blood Sugar PP": ["post prandial sugar", "postprandial blood sugar", "pp sugar", "sugar after meals", "sugar after food"],
@@ -69,7 +69,7 @@ TEST_ALIASES_EN: dict[str, list[str]] = {
     "Lipid Profile": ["cholesterol test", "cholesterol", "lipid test"],
     "Liver Function Test (LFT)": ["liver function test", "liver test", "jaundice test", "liver profile"],
     "Kidney Function Test (KFT)": ["kidney function test", "kidney test", "renal function test"],
-    "Thyroid Profile (T3 T4 TSH)": ["thyroid test", "thyroid profile", "thyroid"],
+    "Thyroid Profile (T3 T4 TSH)": ["thyroid test", "thyroid profile", "thyroid", "thyroid function test", "thyroid panel", "t3 t4 tsh"],
     "TSH": ["thyroid stimulating hormone"],  # sourav: "tsh test" dropped; the fast path already strips "test"
     "Urine Routine Examination": ["urine test", "urine routine", "urine examination", "urine check", "pee test"],
     "Widal Test": ["typhoid test", "typhoid fever test", "widal"],
