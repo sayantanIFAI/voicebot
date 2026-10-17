@@ -33,12 +33,24 @@ def test_an_entry_is_never_the_word_itself_or_empty():
 
 
 def test_the_words_a_native_listener_chose_are_in_the_table():
-    chosen = {"প্রয়োজন": "প্রোজোন", "সাড়া": "শাঁড়া", "সময়টা": "শমোইটা", "নেওয়া": "নেওয়াা"}
+    # SPEC CHANGE 2026-10-17: the listener's second round chose নেওয়া -> নেওআ (was নেওয়াা), যাওয়ার -> যাওয়াার, স্যাম্পল -> স্যাম্পেল;
+    # কয়েক was chosen from the user's own recording. আরও stays as written (candidate 1 was the best).
+    chosen = {"প্রয়োজন": "প্রোজোন", "সাড়া": "শাঁড়া", "সময়টা": "শমোইটা", "নেওয়া": "নেওআ", "যাওয়ার": "যাওয়াার",
+              "স্যাম্পল": "স্যাম্পেল", "কয়েক": "কয়এক"}
     for word, spelling in chosen.items():
         assert bn_respell.respell(word) == spelling
-    # the three the listener rejected every candidate for, and the one where the plain spelling was the best, stay as written
-    for word in ("দুঃখিত", "কয়েক", "হয়ে", "যাওয়ার"):
+    # the words the listener rejected every candidate for, and the one where the plain spelling was the best, stay as written
+    for word in ("দুঃখিত", "হয়ে", "আরও"):
         assert bn_respell.respell(word) == word
+
+
+def test_the_chosen_spelling_carries_over_to_the_same_word_with_an_ending():
+    assert bn_respell.respell("নেওয়ার") == "নেওআর"
+    assert bn_respell.respell("যাওয়াটা") == "যাওয়াাটা"
+    assert bn_respell.respell("কয়েকটা") == "কয়একটা"
+    assert bn_respell.respell("স্যাম্পলের") == "স্যাম্পেলের"
+    # a longer word that merely starts the same is left alone
+    assert bn_respell.respell("কয়েকশো") == "কয়েকশো"
 
 
 # ---- the "sh" rule: native Bengali words only -------------------------------------------------------------------------

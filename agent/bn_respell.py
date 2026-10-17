@@ -29,7 +29,14 @@ _RESPELL: dict[str, str] = {
     "প্রয়োজন": "প্রোজোন",  # was candidate 3 of 5
     "সাড়া": "শাঁড়া",  # candidate 4 of 4
     "সময়টা": "শমোইটা",  # candidate 4 of 5 (the earlier machine-chosen সমোইটা is replaced)
-    "নেওয়া": "নেওয়াা",  # candidate 5 of 5; listener: better, "not perfect"
+    "নেওয়া": "নেওআ",  # 2026-10-17: candidate 4 of 6 (the earlier নেওয়াা was "better, not perfect")
+    "যাওয়া": "যাওয়াা",  # 2026-10-17: the listener chose the lengthened আ for যাওয়ার (candidate 2 of 6)
+    "যাওয়ার": "যাওয়াার",
+    "স্যাম্পল": "স্যাম্পেল",  # 2026-10-17: candidate 4 of 6
+    # কয়েক: chosen from the user's OWN recording of the word (Downloads/My recording 49.m4a): of 15 spellings the voice said, কয়এক was
+    # the nearest to it acoustically (MFCC distance 3.46; the next 3.87, the current spelling 4.43). Measured against one speaker, so
+    # the listener's ear still decides -- it is not in REVIEWED until they say so.
+    "কয়েক": "কয়এক",
     # Same ড়া sound as সাড়া, so it gets the same treatment (nasal mark after শা). NOT yet heard by the listener.
     "সাড়ে": "শাঁড়ে",
 }
@@ -79,7 +86,7 @@ def rule_changes() -> dict[str, str]:
     return {w: _sh(w) for w in sorted(_NATIVE_BASE) if w not in _RESPELL and _sh(w) != w}
 
 
-REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা"}  # approved by a native listener (নেওয়া: better, not perfect)
+REVIEWED: set[str] = {"প্রয়োজন", "সাড়া", "সময়টা", "নেওয়া", "যাওয়ার", "স্যাম্পল"}  # approved by a native listener
 
 _BENGALI_WORD = re.compile(r"[ঀ-৿]+")
 
@@ -88,11 +95,32 @@ def _key(word: str) -> str:
     return unicodedata.normalize("NFC", word)
 
 
+# LAYER 2 -- the same word with a common ending. A native listener chose a spelling for the BASE word ("নেওয়া", "যাওয়া", "কয়েক",
+# "স্যাম্পল"); the caller hears the same sound in "নেওয়ার", "যাওয়াটা", "কয়েকটা", "স্যাম্পলের". So the chosen spelling of the base is kept and the
+# ending is appended unchanged. Only these endings, only on these bases: a longer word that merely starts the same is left alone.
+_FAMILY_ENDINGS = frozenset(
+    ("র", "রও", "টা", "টাও", "টি", "টায়", "টার", "টাকে", "তে", "তেও", "ও", "ই", "কে", "ে", "ের", "েও", "গুলো", "গুলোর", "জন", "জনের", "দিন", "দিনের")
+)
+
+
+_FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল")
+
+
+def _family(w: str) -> str | None:
+    for base in _FAMILY_BASES:
+        if w.startswith(base) and w[len(base):] in _FAMILY_ENDINGS:
+            return _RESPELL[base] + w[len(base):]
+    return None
+
+
 def respell(word: str) -> str:
     """The spelling to send to the voice for one Bengali word; the word itself when it needs no help."""
     w = _key(word)
     if w in _RESPELL:
         return _RESPELL[w]
+    fam = _family(w)
+    if fam is not None:
+        return fam
     if w in _NATIVE_SH and os.environ.get("BN_RESPELL_RULES", "1") != "0":
         return _sh(w)
     return word
