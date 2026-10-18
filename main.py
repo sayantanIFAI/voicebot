@@ -4315,7 +4315,9 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             missing = missing_required(st)
             if missing:
                 field_name = missing[0]
-                if field_name == "phone" and st.note_retry("phone") >= 2:
+                # Real call 2026-10-18: a number given in pieces (nine digits, one short) counted as a second miss and the phone was GIVEN UP on -- the booking went on
+                # to the age without a number. A turn that carried digits is progress, not a refusal: only turns with no digits count.
+                if field_name == "phone" and not capture_plan.digits and st.note_retry("phone") >= 2:
                     # KCD-370: a caller who won't give a number still
                     # gets the booking, told plainly what that costs
                     # them, instead of being blocked here forever.

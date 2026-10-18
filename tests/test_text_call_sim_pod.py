@@ -54,6 +54,22 @@ def test_kalkei_after_the_doctors_day_was_told_keeps_that_day_and_asks_the_name(
     said = _said(t, 1)
     assert "2026-10-17" not in said and "কনফার্মেশন নম্বর" not in said and "আপনার নামটা বলবেন" in said
 
+def test_a_number_that_came_out_one_digit_short_is_read_back_so_far_and_never_given_up_on():
+    t = _run(
+        "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "ঠিক",
+        "নাইন সিক্স থ্রি ডবল ফাইভল নাইট থ্রি জিরো ওন", "ঠিক আছে",
+    )
+    assert "9 6 3 5 5 8 3 0 1 পেয়েছি" in _said(t, 4)  # "ফাইভল" is a five; nine digits so far
+    assert "রোগীর বয়স" not in _said(t, 5) and "নম্বর" in _said(t, 5)  # still asking for the number, not on to the age
+
+
+def test_the_number_given_in_pieces_and_then_again_whole_is_the_whole_one():
+    t = _run(
+        "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "ঠিক", "নয় আট", "সাত ছয়",
+        "নাইন সিক্স থ্রি ডবল ফাইভ এইট থ্রি জিরো ওয়ান ফোর",
+    )
+    assert "9 6 3 5 5 8 3 0 1 4। এটা কি ঠিক?" in _said(t, 6)
+
 
 def test_the_whole_order_name_number_age_address_each_read_back_then_payment_notice_then_the_arrival_question():
     t = _run(
