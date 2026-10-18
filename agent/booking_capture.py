@@ -1010,6 +1010,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     elif step.status == "partial":
         st.phone_buffer = step.buffer
         plan.digits = True
+        st.retry_counts.pop("phone", None)  # digits were heard: that is progress, not a miss (the phone is never given up on mid-number)
         # a few digits so far: "ok, go on" (a number said in groups). Nearly all of it (6 or more): say what was heard, so a caller who FINISHED a number that came out short
         # knows which digits are missing -- an "ok" alone made them think it was complete (real call 2026-10-18).
         spoken = prompt("phone_partial_long" if len(step.buffer) >= 6 else "phone_partial", lang, n=len(step.buffer), digits=" ".join(step.buffer))

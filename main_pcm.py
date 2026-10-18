@@ -4583,6 +4583,9 @@ def _next_question(session: CallSession, st, intent: str, missing: list[str], la
     if grouped is None:
         fields = fields[:1]
     st.asked_fields.update(fields)
+    if fields[0] == "phone" and st.phone_buffer:
+        # a number heard in part: say what was heard and ask for the rest, not the opening question again
+        return booking_capture.prompt("phone_partial_long", lang, n=len(st.phone_buffer), digits=" ".join(st.phone_buffer))
     if not grouped and fields[0] == "patient_name" and (st.slots.get("phone") or getattr(st, "phone_declined", False)):
         return _NAME_ONLY.get(lang, _NAME_ONLY["en"])  # the number is already known: ask only for the name
     return grouped or missing_slot_prompt(intent, fields[0], lang)
