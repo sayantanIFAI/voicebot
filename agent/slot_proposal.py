@@ -175,6 +175,26 @@ def conclusion(doctor: str, date_iso: str, time: str, lang: str, now: datetime.d
     return _CONCLUDE[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time)
 
 
+_SITS_ASK = {
+    "bn": "ডাক্তার {doc} {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
+    "hi": "डॉक्टर {doc} {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
+    "en": "Doctor {doc} sits {when} at {time}. Shall I book that day?",
+}
+_SITS_MOVED = {
+    "bn": "ওই দিন ডাক্তার বসেন না। উনি {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
+    "hi": "उस दिन डॉक्टर नहीं बैठते। वे {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
+    "en": "The doctor does not sit that day. The next sitting is {when} at {time}. Shall I book that day?",
+}
+
+
+def sits_statement(doctor: str, date_iso: str, time: str, lang: str, now: datetime.datetime | None = None, moved: bool = False) -> str:
+    """Owner, 2026-10-18: the caller asks for a doctor on a day: FIRST say whether the doctor sits then ("ডাক্তার বিশ্বজিৎ সেন আগামীকাল, 2026-10-19 তারিখে 10:00-এ বসবেন।"), or
+    that he does not and when he next sits, and ask whether to book that day. The name and the rest are asked only after the caller says yes (or names another day)."""
+    lang = lang if lang in _SITS_ASK else "en"
+    table = _SITS_MOVED if moved else _SITS_ASK
+    return table[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time)
+
+
 _PAY_NOTICE = {
     "bn": "আপনার হোয়াটসঅ্যাপে একটা পেমেন্ট লিংক পাঠানো হবে। পনেরো মিনিটের মধ্যে চল্লিশ টাকা পেমেন্ট করবেন, না হলে লিংকটা নিজে থেকেই বাতিল হয়ে যাবে। ",
     "hi": "आपके व्हाट्सऐप पर एक पेमेंट लिंक भेजा जाएगा। पंद्रह मिनट के अंदर चालीस रुपये भुगतान कीजिए, वरना लिंक अपने आप बंद हो जाएगा। ",

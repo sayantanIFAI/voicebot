@@ -2402,7 +2402,9 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
         st.slots["date"], st.slots["time_slot"] = nxt["date"], nxt["time_slot"]
         st.slots["_time_ok"] = "pending"
-        await _speak(session, f"{slot_proposal.not_sitting(lang)} {slot_proposal.proposal(doctor, nxt['date'], nxt['time_slot'], lang, sits_at=await _sits_start(st, nxt['date'], info))}", lang)
+        st.slots["_sits_told"] = "1"
+        sits_next = await _sits_start(st, nxt["date"], info)
+        await _speak(session, slot_proposal.sits_statement(doctor, nxt["date"], sits_next or nxt["time_slot"], lang, moved=True), lang)
         return True
     if given and given in (info.get("free_slots") or []):
         st.slots["_time_explicit"] = "1"  # the caller named this time: it is the one told back
@@ -2426,11 +2428,23 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     if new_date:
         # the day had to move (nothing left on the asked day): that IS a question for the caller
         st.slots["_time_ok"] = "pending"
+        st.slots["_sits_told"] = "1"
         st.slots["date"] = new_date
-        await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.proposal(doctor, new_date, slot, lang, sits_at=sits)}", lang)
+        await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.sits_statement(doctor, new_date, sits or slot, lang)}", lang)
         return True
     # Owner, 2026-10-18: the day is the caller's own and the doctor sits that day. Nothing is asked about the time here: the slot is held quietly, the name, the number,
     # the age and the address are asked one at a time, and the day / hour / "come with one to two hours in hand" is the last question (agent/slot_proposal.arrival_question).
+    # Real call 2026-10-18: "কালকে ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট লাগবে, কালকে কি বসছেন উনি" -- asked in one breath whether he sits, and the AI went straight to
+    # "your name?". The caller is told FIRST whether the doctor sits that day (or when he next sits) and asked whether to book it -- unless they were already told in this call.
+    ctx = getattr(session, "last_doctor_enquiry", None)
+    told = st.slots.get("_sits_told") or (
+        booking_carryover.recent(ctx, getattr(session, "turn_count", 0)) and (ctx or {}).get("date") == st.slots["date"]
+    )
+    if not told:
+        st.slots["_sits_told"] = "1"
+        st.slots["_time_ok"] = "pending"
+        await _speak(session, slot_proposal.sits_statement(doctor, st.slots["date"], sits or slot, lang), lang)
+        return True
     st.slots["_time_ok"] = "yes"
     return False
 
@@ -4157,12 +4171,18 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     st.slots["_time_explicit"] = "1"  # the caller chose this time: it is the one told back
                     await _speak(session, slot_proposal.reconfirm(st.slots["time_slot"], lang), lang)
                     return
-                if verdict == "no":
-                    st.slots["_time_skip"] = list(st.slots.get("_time_skip") or []) + [st.slots.get("time_slot")]
-                    st.slots.pop("time_slot", None)
-                    st.slots.pop("_time_ok", None)
+                if "date" in changed:
+                    # another day named ("না, পরশু করুন"): the doctor's sitting that day is told in its turn
+                    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit"):
+                        st.slots.pop(k, None)
+                    st.hold_token, st.hold_doctor_id = None, None
                     if await _propose_slot(session, st, lang):
                         return
+                elif verdict == "no":
+                    # not that day: the day is asked again (the sitting of whichever day comes next is told then)
+                    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit", "date"):
+                        st.slots.pop(k, None)
+                    st.hold_token, st.hold_doctor_id = None, None
                 else:
                     st.slots["_time_ok"] = "yes"
             if ask_back:

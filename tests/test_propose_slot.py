@@ -36,12 +36,26 @@ INFO = {"found": True, "sits": True, "doctor_name": "Dr. A. Sen", "doctor_name_b
         "free_slots": ["10:00", "10:15", "10:30", "10:45"], "next": None}
 
 
-def test_the_time_is_chosen_and_said_not_asked(monkeypatch):
+def test_the_caller_is_first_told_whether_the_doctor_sits_that_day_and_asked_to_book_it(monkeypatch):
+    # owner 2026-10-18: "কালকে ডাক্তার ... কালকে কি বসছেন উনি" -> first "he sits tomorrow at 10:00. Shall I book that day?", the name only after the yes
     now = datetime.datetime(2026, 10, 17, 10, 12)
     done, st, spoken = _run(INFO, {"doctor_name": "Sen", "date": "2026-10-17"}, now=now, monkeypatch=monkeypatch)
-    assert done and st.slots["time_slot"] == "10:45"
-    # SPEC CHANGE 2026-10-18: the doctor's sitting hour and "come with one to two hours in hand", not a ten-minute slot
-    assert "আজই" in spoken[0] and "বসবেন" in spoken[0] and "10:45" in spoken[0] and "এক থেকে দুই ঘণ্টা" in spoken[0]
+    assert done and st.slots["time_slot"] == "10:45" and st.slots["_time_ok"] == "pending" and st.slots["_sits_told"] == "1"
+    assert "আজই" in spoken[0] and "বসবেন" in spoken[0] and "অ্যাপয়েন্টমেন্ট করব?" in spoken[0] and "এক থেকে দুই ঘণ্টা" not in spoken[0]
+
+
+def test_a_caller_already_told_the_sitting_is_not_told_twice(monkeypatch):
+    spoken = []
+
+    async def fake_speak(session, text, lang_, **kw):
+        spoken.append(text)
+
+    monkeypatch.setattr(main, "_tools", _Tools(INFO))
+    monkeypatch.setattr(main, "_speak", fake_speak)
+    monkeypatch.setattr(main.slot_proposal, "clinic_now", lambda: datetime.datetime(2026, 10, 17, 9, 0))
+    st = types.SimpleNamespace(slots={"doctor_name": "Sen", "date": "2026-10-17"}, hold_token=None)
+    session = types.SimpleNamespace(call_id="t", turn_count=3, last_doctor_enquiry={"doctor_name": "Sen", "date": "2026-10-17", "turn": 2})
+    assert not asyncio.run(main._propose_slot(session, st, "bn")) and spoken == [] and st.slots["_time_ok"] == "yes"
 
 
 def test_a_closing_time_taken_for_between_ten_and_twelve_is_replaced(monkeypatch):
