@@ -165,11 +165,19 @@ _SWITCH_PHRASES: dict[str, dict[str, str]] = {
 }
 
 
+_PLACE_NAMES = re.compile(
+    r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ)\s*বাজার|english\s*ba[sz]+ar|englishbazar|इंग्लिश\s*बा(?:ज़?|ज़)ार|अंग्रेज\s*बा(?:ज़?|ज़)ार|ইংলিশবাজার",
+    re.I,
+)
+
+
 def detect_language_switch_request(text: str, lang: str) -> str | None:
     """`lang` is the ASR-detected language of THIS utterance (the request
     itself is understood correctly regardless of which language it was
     made in). Returns the requested target language code, or None if this
     utterance was not a language-switch request."""
+    # Owner, 2026-10-18: "ইংলিশ বাজার" / "English Bazar" is a police station in Malda, said in an address -- not a request to speak English.
+    text = _PLACE_NAMES.sub(" ", text)
     t = text.strip().lower()
     # sourav, 2026-10-14 (real call): the call was locked to English, so the Bengali-script request "বেঙ্গলিতে কথা বলুন"
     # was looked up only in the English table and never found. A language-switch request must work whatever language

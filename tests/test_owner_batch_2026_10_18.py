@@ -194,8 +194,9 @@ def test_the_payment_notice_comes_before_the_last_question_and_the_closing_line_
 # ---- 2. Bengali is faster
 def test_bengali_is_spoken_faster_than_hindi_and_english():
     policy = speech_policy.derive_policy()
-    assert speech_policy.effective_rate(policy, None, "bn") > speech_policy.effective_rate(policy, None, "hi")
-    assert speech_policy.effective_rate(policy, None, "hi") == speech_policy.effective_rate(policy, None, "en")
+    hi = speech_policy.effective_rate(policy, None, "hi")
+    assert speech_policy.effective_rate(policy, None, "bn") > hi
+    assert speech_policy.effective_rate(policy, None, "en") > hi  # owner 2026-10-18: the English voice is the slowest and is sped up most
 
 
 # ---- 7 / 11. the phrases exist in all three languages
@@ -393,3 +394,38 @@ def test_the_caller_asked_whether_the_tests_are_done_here_is_told_yes_first():
     q = "আমাকে বলুন তো ওখানে আপনাদের ওই ক্ব আর লিপিড প্রোফাইল এই দুটো টেস্ট করবো হয় কি এই দুটো টেস্ট CBC"
     assert test_availability.mentions_done_here(q) and test_availability.mentions_done_here("do you do the lipid profile test")
     assert not test_availability.mentions_done_here("লিপিড প্রোফাইলের দাম কত") and not test_availability.mentions_done_here("সিবিসি টেস্টের রেট কত")
+
+
+# ---- 2026-10-18 issues list
+def test_english_bazar_is_a_place_not_a_request_for_english():
+    from agent import language_switch
+
+    for t in ("আমার ঠিকানা ইংলিশ বাজার থানা মালদা", "English Bazar police station", "ইংলিশ বাজার", "इंग्लिश बाज़ार"):
+        assert language_switch.detect_language_switch_request(t, "bn") is None, t
+    assert language_switch.detect_language_switch_request("ইংলিশে কথা বলুন", "bn") == "en"
+
+
+def test_one_more_digit_at_the_end_is_added_to_the_number_so_far():
+    assert bc.end_append("শেষে একটা জিরো হবে আরেকটা") == "0" and bc.end_append("নয় আট সাত") == ""
+    step = bc.absorb("921321410", "শেষে একটা জিরো হবে আরেকটা", True)
+    assert step.status == "complete" and step.number == "9213214100"
+    again = bc.absorb("921321410", "শেষে আরেকটা জিরো হবে জিরো", True)  # said twice for emphasis: still one zero, never eleven digits
+    assert again.status == "complete" and again.number == "9213214100"
+
+
+def test_a_changed_name_or_age_is_read_back_again():
+    assert bc.name_change("নামটা চাঞ্জ হবে বিপ্লব সাহা") == "বিপ্লব সাহা" and bc.name_change("আমার নাম বিপ্লব সাহা") is None
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="সায়ন দাস", phone="9876543210")
+    st.name_confirmed = "সায়ন দাস"
+    plan = bc.before_model(st, "নামটা চাঞ্জ হবে বিপ্লব সাহা", "bn")
+    assert st.pending_name == "বিপ্লব সাহা" and "patient_name" not in st.slots and plan.speak.startswith("আমি নামটা শুনেছি বিপ্লব সাহা")
+    st2 = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="সায়ন দাস", phone="9876543210", patient_age=45)
+    plan2 = bc.before_model(st2, "বয়স ৫০ হবে", "bn")
+    assert st2.slots["_age_pending"] == 50 and "patient_age" not in st2.slots and "50" in plan2.speak
+
+
+def test_the_day_the_doctor_does_not_sit_is_named_in_the_not_sitting_message():
+    from agent import slot_proposal
+
+    said = slot_proposal.sits_statement("বিশ্বজিৎ সেন", "2026-10-19", "10:00", "bn", moved=True, asked_date="2026-10-18")
+    assert said.startswith("আজ ডাক্তার বসেন না।") and "2026-10-19" in said and "ঠিক আছে, বদলে" not in said

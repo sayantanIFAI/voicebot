@@ -36,7 +36,7 @@ _PICTURE = (
 )
 # but a question about PRICE, a doctor, a booking number etc. is a different question
 _OTHER = (
-    "দাম", "রেট", "কত টাকা", "ডাক্তার", "বুকিং", "কনফার্মেশন", "रेट", "दाम", "कीमत", "डॉक्टर", "price", "rate", "cost", "doctor", "booking", "confirmation",
+    "বুকিং", "কনফার্মেশন", "बुकिंग", "booking", "confirmation", "doctor", "booking", "confirmation",
 )
 # a bare catalogue test name already said ("chest x-ray", "বুকের এক্স রে") is handled by the normal test lookup, not here
 _NAMES_A_TEST = ("এক্স রে", "এক্সরে", "এক্স-রে", "x-ray", "xray", "x ray", "एक्स रे", "एक्सरे")
@@ -63,7 +63,7 @@ def detect(text: str) -> str | None:
     """The body region a caller wants a picture of ("chest", "head", "abdomen", "hand", "leg", "knee", "spine", "neck"), or None.
     Needs BOTH a body-part word and a picture word, and no price / doctor / booking question in the same breath."""
     t = _norm(text)
-    if not t or len(t.split()) > 14:
+    if not t or len(t.split()) > 40:  # a caller who has forgotten the test's name talks around it: price, when to come, what the doctor said
         return None
     if _has_word(t, _OTHER) or _has_word(t, _NAMES_A_TEST):
         return None
@@ -71,6 +71,38 @@ def detect(text: str) -> str | None:
         return None
     hits = [(len(w), region) for region, (names, _) in REGIONS.items() for w in names if _has_word(t, (w,))]
     return max(hits)[1] if hits else None
+
+
+_PRICE = ("কত টাকা", "কত পড়বে", "কত লাগবে", "দাম", "রেট", "খরচ", "কত", "कितना", "कितने", "दाम", "रेट", "कीमत", "खर्च", "price", "rate", "cost", "how much", "charge")
+
+
+def asks_price(text: str) -> bool:
+    return _has_word(_norm(text), _PRICE)
+
+
+def listing(region: str | None, items: list[tuple[str, int | None]], lang: str) -> str:
+    """"For a picture of the belly we do: A (1500 rupees), B (900 rupees)." -- the real tests, and their rates when the caller asked what it costs. `region` None = every imaging
+    test the clinic does (a body part with no test of its own listed)."""
+    lang = lang if lang in _REGION_NOUN else "en"
+    parts = []
+    for name, rate in items:
+        if rate:
+            parts.append({"bn": f"{name} {rate} টাকা", "hi": f"{name} {rate} रुपये", "en": f"{name} {rate} rupees"}[lang])
+        else:
+            parts.append(name)
+    joined = {"bn": ", ", "hi": ", ", "en": ", "}[lang].join(parts)
+    if region is None:
+        return {
+            "bn": f"আমাদের এখানে ছবির যে টেস্টগুলো হয়: {joined}।",
+            "hi": f"हमारे यहाँ तस्वीर के ये टेस्ट होते हैं: {joined}।",
+            "en": f"The picture tests we do here are: {joined}.",
+        }[lang]
+    noun = _REGION_NOUN[lang][region]
+    return {
+        "bn": f"{noun} ছবির জন্য আমাদের এখানে এই টেস্টগুলো হয়: {joined}।",
+        "hi": f"{noun} की तस्वीर के लिए हमारे यहाँ ये टेस्ट होते हैं: {joined}।",
+        "en": f"For a picture of the {noun} we do: {joined}.",
+    }[lang]
 
 
 def candidates(region: str, tests: list[dict]) -> list[str]:

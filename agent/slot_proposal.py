@@ -181,18 +181,26 @@ _SITS_ASK = {
     "en": "Doctor {doc} sits {when} at {time}. Shall I book that day?",
 }
 _SITS_MOVED = {
-    "bn": "ওই দিন ডাক্তার বসেন না। উনি {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
-    "hi": "उस दिन डॉक्टर नहीं बैठते। वे {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
-    "en": "The doctor does not sit that day. The next sitting is {when} at {time}. Shall I book that day?",
+    "bn": "{asked} ডাক্তার বসেন না। উনি {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
+    "hi": "{asked} डॉक्टर नहीं बैठते। वे {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
+    "en": "The doctor does not sit {asked}. The next sitting is {when} at {time}. Shall I book that day?",
+}
+_ASKED_DAY = {
+    "bn": {"today": "আজ", "tomorrow": "আগামীকাল", "day_after": "পরশু", "other": "{date} তারিখে"},
+    "hi": {"today": "आज", "tomorrow": "कल", "day_after": "परसों", "other": "{date} को"},
+    "en": {"today": "today", "tomorrow": "tomorrow", "day_after": "the day after tomorrow", "other": "on {date}"},
 }
 
 
-def sits_statement(doctor: str, date_iso: str, time: str, lang: str, now: datetime.datetime | None = None, moved: bool = False) -> str:
+def sits_statement(
+    doctor: str, date_iso: str, time: str, lang: str, now: datetime.datetime | None = None, moved: bool = False, asked_date: str | None = None
+) -> str:
     """Owner, 2026-10-18: the caller asks for a doctor on a day: FIRST say whether the doctor sits then ("ডাক্তার বিশ্বজিৎ সেন আগামীকাল, 2026-10-19 তারিখে 10:00-এ বসবেন।"), or
     that he does not and when he next sits, and ask whether to book that day. The name and the rest are asked only after the caller says yes (or names another day)."""
     lang = lang if lang in _SITS_ASK else "en"
     table = _SITS_MOVED if moved else _SITS_ASK
-    return table[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time)
+    asked = _ASKED_DAY[lang][day_kind(asked_date, now)].format(date=asked_date) if (moved and asked_date) else {"bn": "ওই দিন", "hi": "उस दिन", "en": "that day"}[lang]
+    return table[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time, asked=asked)
 
 
 _PAY_NOTICE = {

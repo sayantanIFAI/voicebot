@@ -219,6 +219,8 @@ SPEECH_RATE_BOOST = float(os.environ.get("SPEECH_RATE_BOOST", "1.06"))
 
 # Owner, 2026-10-18: "AI voice speed has to increase in Bengali". Bengali is spoken this much faster in all (instead of SPEECH_RATE_BOOST); Hindi and English keep theirs.
 SPEECH_RATE_BOOST_BN = float(os.environ.get("SPEECH_RATE_BOOST_BN", "1.16"))
+# Owner, 2026-10-18: "the AI's English is very slow". The English voice is the slowest of the three by nature.
+SPEECH_RATE_BOOST_EN = float(os.environ.get("SPEECH_RATE_BOOST_EN", "1.28"))
 
 
 def effective_rate(policy: SpeechPolicy, figure_rate: float | None = None, lang: str | None = None) -> float:
@@ -226,7 +228,7 @@ def effective_rate(policy: SpeechPolicy, figure_rate: float | None = None, lang:
     figure's own slower rate (KCD-157) when the clause carries a price,
     phone number or reference. The two multiply, so a senior caller hears
     a price slower still."""
-    boost = SPEECH_RATE_BOOST_BN if lang == "bn" else SPEECH_RATE_BOOST
+    boost = SPEECH_RATE_BOOST_BN if lang == "bn" else SPEECH_RATE_BOOST_EN if lang == "en" else SPEECH_RATE_BOOST
     return policy.speech_rate * boost * (figure_rate if figure_rate is not None else 1.0)
 
 

@@ -105,6 +105,36 @@ def test_each_read_back_asks_the_next_question_and_the_next_answer_is_the_yes():
     last = _said(t, 6)
     assert "ঠিকানা বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা শুনেছি" in last and last.rstrip().endswith("ঠিক আছে?")  # the address goes into the closing question
 
+# ---- the 2026-10-18 issues list
+def test_a_picture_of_a_body_part_says_which_tests_there_are_before_the_prescription_line():
+    t = _run("আমার ওই পেটের ছবি তুলব কোন টেস্ট এ আমার মনে নাই পেটের ছবি তুলতে হবে ডাক্তার বলেছিল কখন আসবো কত টাকা পড়বে")
+    said = _said(t, 0)
+    assert "পেটের ছবির জন্য আমাদের এখানে এই টেস্টগুলো হয়" in said and "টাকা" in said
+    assert said.index("এই টেস্টগুলো হয়") < said.index("প্রেসক্রিপশনের একটা ছবি")
+
+
+def test_a_clear_bengali_sentence_is_answered_in_bengali_even_when_the_call_was_locked_to_english():
+    t = asyncio.run(text_call_sim.run(["আমার বুকে খুব ব্যাথা করছে কোন ডাক্তার দেখাবো আপনাদের ওখানে কে আছে"], lang="en"))
+    said = _said(t, 0)
+    assert any("ঀ" <= c <= "৿" for c in said) and "Dr." not in said
+
+
+def test_the_day_the_doctor_does_not_sit_is_named_with_no_acknowledgement_of_it_first():
+    t = _run("ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "আজকে পাওয়া যাবে")
+    said = _said(t, 2)
+    assert "আজ ডাক্তার বসেন না" in said and "বদলে" not in said and "করে দিলাম" not in said
+
+
+def test_a_changed_name_is_read_back_and_the_number_is_not_said_twice_or_short():
+    t = _run(
+        "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "ঠিক", "নয় দুই এক তিন দুই এক চার এক জিরো", "শেষে একটা জিরো হবে আরেকটা",
+        "হ্যাঁ", "নামটা চাঞ্জ হবে বিপ্লব সাহা",
+    )
+    assert "পেয়েছি" in _said(t, 4) and "9 2 1 3 2 1 4 1 0 পেয়েছি" in _said(t, 4)  # nine digits so far
+    assert "আমি নম্বরটা শুনেছি 9 2 1 3 2 1 4 1 0 0" in _said(t, 5) and _said(t, 5).count("9 2 1 3 2 1 4 1 0 0") == 1  # the zero went on the end; said once
+    assert "ঠিক আছে, 9213214100" not in _said(t, 5)
+    assert "আমি নামটা শুনেছি বিপ্লব সাহা" in _said(t, 7)
+
 
 def test_the_whole_order_name_number_age_address_each_read_back_then_payment_notice_then_the_arrival_question():
     t = _run(

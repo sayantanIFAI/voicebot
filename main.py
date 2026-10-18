@@ -161,6 +161,7 @@ from agent.lang_select import (
     languages_to_verify,
     pick_candidate,
 )
+from agent.lang_select import script_share
 from agent.lang_select import speakable as _speakable
 from agent.language_policy import language_mismatch
 from agent.language_switch import detect_language_switch_request
@@ -290,7 +291,9 @@ SEMANTIC_ENDPOINTING = os.environ.get("SEMANTIC_ENDPOINTING", "1") == "1"
 # the words so far are plainly unfinished. It is now on, but it may only ever add patience: a transcript that reads
 # finished no longer shortens the wait below the baseline (that shortcut cut people off), and an unfinished one waits
 # ENDPOINT_INCOMPLETE_S. Set SEMANTIC_ENDPOINTING=0 to return to the fixed baseline.
-ENDPOINT_INCOMPLETE_S = float(os.environ.get("ENDPOINT_INCOMPLETE_S", "2.5"))
+# Owner, 2026-10-18: a caller may pause up to 3.5 seconds in the middle of what they are saying (a number said in groups, a name remembered): that long is waited for
+# when the sentence is not finished.
+ENDPOINT_INCOMPLETE_S = float(os.environ.get("ENDPOINT_INCOMPLETE_S", "3.5"))
 SPECULATIVE_ASR_TIMEOUT_S = 1.5
 MAX_SPECULATIONS_PER_TURN = 3
 SPECULATION_MATCH_TOLERANCE_S = 0.25
@@ -1668,6 +1671,8 @@ async def _echo_new_slots(session: CallSession, changed: list[str], prior_slots:
         return
     for field in newly:
         value = slots.get(field)
+        if field in ("phone", "contact_phone", "patient_name", "patient_age", "patient_address"):
+            continue  # these are READ BACK for a yes in their own turn: echoing them first says them twice (real call 2026-10-18)
         if value and field in _ECHOED_FIELDS:
             await _speak(session, slot_echo(str(value), lang), lang)
             return
@@ -2378,6 +2383,7 @@ async def _handle_lay_term(session: CallSession, category: str, text: str, lang:
             reply = phrase("head_imaging_not_listed", lang)
     else:  # HEAD
         reply = phrase("head_imaging_not_listed", lang)
+        reply = f"{reply} {await _imaging_listing(lang)}".strip()
     await _speak(session, f"{reply} {phrase('send_prescription_whatsapp', lang)}", lang)
     await _queue_prescription_callback(session, reason, text, lang)
 
@@ -2443,11 +2449,12 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
             return False
         key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
         doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
+        asked_day = st.slots["date"]
         st.slots["date"], st.slots["time_slot"] = nxt["date"], nxt["time_slot"]
         st.slots["_time_ok"] = "pending"
         st.slots["_sits_told"] = "1"
         sits_next = await _sits_start(st, nxt["date"], info)
-        await _speak(session, slot_proposal.sits_statement(doctor, nxt["date"], sits_next or nxt["time_slot"], lang, moved=True), lang)
+        await _speak(session, slot_proposal.sits_statement(doctor, nxt["date"], sits_next or nxt["time_slot"], lang, moved=True, asked_date=asked_day), lang)
         return True
     if given and given in (info.get("free_slots") or []):
         st.slots["_time_explicit"] = "1"  # the caller named this time: it is the one told back
@@ -2547,6 +2554,20 @@ async def _answer_body_imaging(session: CallSession, text: str, lang: str) -> bo
         return False
     if not names and region == "head":
         return False  # no head imaging test exists: the existing lay-term answer (not on our list + prescription route) stands
+    if names and body_imaging.asks_price(text):
+        # Owner, 2026-10-18: "পেটের ছবি তুলব, কোন টেস্ট মনে নাই, কত টাকা পড়বে": the tests there are for that part, each with its rate, THEN the prescription line
+        items = []
+        try:
+            for n, sp in zip(names[:4], spoken):
+                r = await _tools.get_test_rate(n)
+                if r.get("found"):
+                    items.append((sp, r.get("rate_inr")))
+        except ToolCallError:
+            items = []
+        if items:
+            await _speak(session, f"{body_imaging.listing(region, items, lang)} {phrase('send_prescription_whatsapp', lang)}", lang)
+            await _queue_prescription_callback(session, f"body_imaging_{region}", text, lang)
+            return True
     question = body_imaging.question(region, spoken, lang)
     if names:
         # a yes (or the caller naming one of them) goes on to that test's price, through the usual pending-confirmation replay
@@ -2557,9 +2578,26 @@ async def _answer_body_imaging(session: CallSession, text: str, lang: str) -> bo
             session.pending_enquiry = ("test_rate", session.turn_count)
         await _speak(session, _with_resume(session, question, lang), lang)
     else:
-        await _speak(session, f"{question} {phrase('send_prescription_whatsapp', lang)}", lang)
+        # no test of its own for that part: say what pictures the clinic DOES do, then the prescription route
+        await _speak(session, f"{question} {await _imaging_listing(lang)}{phrase('send_prescription_whatsapp', lang)}", lang)
         await _queue_prescription_callback(session, f"body_imaging_{region}", text, lang)
     return True
+
+
+async def _imaging_listing(lang: str) -> str:
+    """"The picture tests we do here are: ..." from the catalogue's own Imaging tests, with a trailing space; empty when there are none or the catalogue is unavailable."""
+    try:
+        cat = await _cached_catalogue()
+        key = {"bn": "aliases_bn", "hi": "aliases_hi"}.get(lang)
+        spoken = []
+        for t in cat.get("tests", []):
+            if t.get("sample_type") != "Imaging":
+                continue
+            alias = next((a for a in (t.get(key) or []) if a), None) if key else None
+            spoken.append((alias or t["name"].split("(")[0].strip(), None))
+        return body_imaging.listing(None, spoken[:6], lang) + " " if spoken else ""
+    except Exception:  # noqa: BLE001 - advisory
+        return ""
 
 
 # ===================================================================================================================================
@@ -3512,6 +3550,20 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         lang = _resolve_reply_language(
             session, lang, lang_decisive
         )  # what the AGENT replies in -- sticky; see the function
+        # Owner, 2026-10-18 (a first turn of noise heard as English locked the whole call to English; the caller then spoke Bengali and kept being answered in English):
+        # a clear sentence in Bengali or Hindi -- four words or more, nearly all in that script -- is answered in that language at once, whatever the call was locked to.
+        _heard = (asr_result.text or "").strip()
+        if (
+            session.lang_locked
+            and detected_lang in ("bn", "hi")
+            and lang != detected_lang
+            and len(_heard.split()) >= 4
+            and script_share(_heard, detected_lang) >= 0.85
+        ):
+            logger.info("[%s] a clear %s sentence: the reply language moves from %s to %s", session.call_id, detected_lang, lang, detected_lang)
+            _lock_reply_language(session, detected_lang)
+            session.lang_router.note_response_language(detected_lang)
+            lang = detected_lang
         confidence = confidence_state(getattr(asr_result, "decoder_used", None), asr_result.decoder_agreement)
         apply_confidence(session.call_state, confidence != VERIFIED)
         apply_channel_quality(session.call_state, channel_quality)
@@ -4272,6 +4324,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             if ask_back:
                 await _speak(session, ask_back, lang)
                 return
+            if "date" in changed and prior_slots.get("date") and st.slots.get("doctor_name") and st.slots.get("_time_ok") != "pending":
+                # The caller CHANGED the day ("আজকে পাওয়া যাবে?"). What they hear is whether the doctor sits THAT day (or "not today; next on ..."), not an
+                # acknowledgement of a day the doctor does not sit (real call 2026-10-18).
+                for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit"):
+                    st.slots.pop(k, None)
+                st.hold_token, st.hold_doctor_id = None, None
+                if await _propose_slot(session, st, lang):
+                    return
             if st.hold_token and {"doctor_name", "date", "time_slot"} & set(changed):
                 # KCD-104: the caller changed WHICH slot they want; the hold is on the old one. Drop it so
                 # the new doctor/date/time is held below (the old hold expires on its own).

@@ -175,11 +175,34 @@ class PhoneStep:
     n: int = 0  # invalid: the number of digits heard ("length") ; "start": the first digit heard as an int
 
 
+_END_CUES = ("শেষে", "শেষ", "অন্তে", "last", "end", "ending", "finally", "आखिर", "अंत", "अंतिम", "आख़िर")
+_MORE_CUES = ("আরেকটা", "আরেক", "আরও", "আরো", "আর একটা", "আর এক", "এক্সট্রা", "additional", "another", "one more", "extra", "और एक", "एक और", "एक्स्ट्रा", "और")
+
+
+def end_append(text: str) -> str:
+    """"শেষে একটা জিরো হবে আরেকটা" ("at the end there will be one more zero"): the digit(s) to ADD to the number heard so far, or "". Needs an end word AND a
+    'one more / another' word, so an ordinary digit run never reads as an addition. One to three digits."""
+    t = unicodedata.normalize("NFC", text or "").lower()
+    if not (any(c in t for c in _END_CUES) and any(c in t for c in _MORE_CUES)):
+        return ""
+    digits = read_digits(text)[0]
+    return digits if 1 <= len(digits) <= 3 else ""
+
+
 def absorb(buffer: str, text: str, asked: bool) -> PhoneStep:
     """One turn of phone capture. `buffer` = digits kept from earlier turns of THIS booking; `asked` = the phone is the question
     the caller is answering (so a sentence of a few digits is certainly the number). When it is not asked, only a complete
     valid number counts -- digits in an unrelated sentence ("at 5 pm", "3 days") are never appended to the buffer."""
     low = unicodedata.normalize("NFC", text or "").lower()
+    extra = end_append(text)
+    if extra and buffer:
+        # Real call 2026-10-18: nine digits so far and "শেষে একটা জিরো হবে আরেকটা": the zero goes on the end. If the caller repeats it ("…জিরো হবে জিরো") the number is
+        # never longer than ten digits: only as many as fit are added.
+        candidate = (buffer + extra)[:10]
+        done = phone_from_digits(candidate)
+        if done:
+            return PhoneStep("complete", number=done, pure=True)
+        return PhoneStep("partial", buffer=candidate, pure=True)
     digits, hits, total = read_digits(text)
     # sourav, 2026-10-16: "four five hundred seven eighty-nine" -- a number said as a number. Its digits cannot be trusted ("458789"
     # was read back to a real caller), so the caller is asked for the number one digit at a time instead of a wrong read-back.
@@ -960,11 +983,53 @@ def bare_address(text: str) -> str | None:
     return t[:160]
 
 
+_CHANGE_WORDS = frozenset(
+    "চেঞ্জ চাঞ্জ চেন্জ পাল্টে পাল্টাতে পাল্টান বদলে বদল বদলান বদলাতে সংশোধন ভুল ঠিক করে change correct changed wrong "
+    "बदल बदलना बदलें गलत सुधार".split()
+)
+_NAME_FIELD_WORDS = frozenset("নাম নামটা নামটি নামে নামের name नाम नाम".split())
+_CHANGE_FILLER = frozenset(
+    "হবে হলো হল হয় হোক করুন করে করো করতে দিন দাও দিন্ দেন আমার আমি এটা ওটা সেটা তো যে একটু please to is will be the my it এটি ही है हो करो करें दीजिए मेरा मेरी".split()
+)
+
+
+def name_change(text: str) -> str | None:
+    """"নামটা চাঞ্জ হবে বিপ্লব সাহা" / "change the name to Biplab Saha": the NEW name, or None when the sentence is not a name change. The change word and the word "name" must both be
+    there; what is left after them (and the little filler words) is the name."""
+    words = [w for w in re.split(r"[\s,।|!?]+", unicodedata.normalize("NFC", text or "")) if w]
+    low = [w.lower() for w in words]
+    if not (any(w in _CHANGE_WORDS for w in low) and any(w in _NAME_FIELD_WORDS for w in low)):
+        return None
+    left = [w for w, lw in zip(words, low) if lw not in _CHANGE_WORDS and lw not in _NAME_FIELD_WORDS and lw not in _CHANGE_FILLER]
+    return candidate_name(" ".join(left)) if left else None
+
+
 def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
     """The booking turn's deterministic reading (see _before_model), plus: an age said in the sentence is taken out first (so it is never read as a
     phone digit) and kept; a name spelled \"S for September, A for Alpha\" (or letter by letter) is read back for a yes."""
     text = nato_letters.collapse(text)
+    if _active(st) and st.action == "book_appointment" and st.name_confirmed and not st.pending_name:
+        new_name = name_change(text)
+        if new_name and new_name != st.name_confirmed:
+            # the name was given and confirmed; now the caller CHANGES it: the new one is read back for a yes (owner, 2026-10-18)
+            st.slots.pop("patient_name", None)
+            st.name_confirmed = None
+            st.pending_name = new_name
+            if st.stage in ("confirming", "awaiting_charge_confirm"):
+                st.stage = "collecting"
+            plan = TurnPlan()
+            plan.speak = readback(st, lang, "name", new_name)
+            return plan
     age, text = split_age(text) if _active(st) else (None, text)
+    if age and _active(st) and st.slots.get("patient_age") and age != st.slots["patient_age"]:
+        # a CHANGE of the age: read back for a yes, like the first time
+        st.slots["_age_pending"] = age
+        st.slots.pop("patient_age", None)
+        if st.stage in ("confirming", "awaiting_charge_confirm"):
+            st.stage = "collecting"
+        plan = TurnPlan()
+        plan.speak = readback(st, lang, "age", age)
+        return plan
     plan = _before_model(st, text, lang, window=window, today=today)
     if age:
         plan.age = age

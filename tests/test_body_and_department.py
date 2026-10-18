@@ -29,8 +29,18 @@ def test_body_part_pictures_in_bengali_hindi_and_english():
 
 
 def test_a_named_test_a_price_or_a_symptom_is_not_a_body_picture_request():
-    for t in ["বুকের এক্স রে", "বুকের ছবির দাম কত", "আমার বুকে ব্যথা", "chest x-ray price", "ডাক্তার দেখাব"]:
+    for t in ["বুকের এক্স রে", "আমার বুকে ব্যথা", "chest x-ray price", "ডাক্তার দেখাব", "আমার বুকিং কনফার্ম করুন বুকের ছবি"]:
         assert bi.detect(t) is None, t
+
+
+def test_a_picture_of_a_part_with_a_price_or_a_doctor_in_the_same_breath_is_still_a_picture_request():
+    # SPEC CHANGE 2026-10-18: "পেটের ছবি তুলব, কোন টেস্ট মনে নাই, ডাক্তার বলেছিল, কখন আসব, কত টাকা পড়বে" -> the tests for that part, with their rates
+    long = "আমার ওই পেটের ছবি তুলব কোন টেস্ট এ আমার মনে নাই পেটের ছবি তুলতে হবে ডাক্তার বলেছিল কখন আসবো কত টাকা পড়বে"
+    assert bi.detect(long) == "abdomen" and bi.asks_price(long)
+    assert bi.detect("বুকের ছবির দাম কত") == "chest" and bi.detect("হাতের ছবি তুলতে চাই কত লাগবে") == "hand"
+    assert not bi.asks_price("মাথার ছবি তুলব")
+    assert bi.listing("abdomen", [("পেটের আলট্রাসাউন্ড", 1500)], "bn") == "পেটের ছবির জন্য আমাদের এখানে এই টেস্টগুলো হয়: পেটের আলট্রাসাউন্ড 1500 টাকা।"
+    assert "আমাদের এখানে ছবির যে টেস্টগুলো হয়" in bi.listing(None, [("বুকের এক্স-রে", None)], "bn")
 
 
 def test_candidates_come_only_from_the_catalogue():
