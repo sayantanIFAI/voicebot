@@ -209,13 +209,14 @@ def test_prescription_and_routing_phrases_exist_in_three_languages():
 
 # ---- issues from the 2026-10-18 pod calls
 def test_sonoscan_is_recognised_in_whatever_spelling_the_recogniser_writes():
-    # the real transcript was "এটা কি সোনস্কান কলকাতা" -- crystal clear, but spelled without the ো and the ্য the cue list knew
-    for q in ("এটা কি সোনস্কান কলকাতা", "এটা কি সোনোস্ক্যান", "আপনারা কি সোনোস্কেন কলকাতা", "সোনো স্ক্যান কলকাতা তো"):
-        assert owner_answers.branch_identity(q, "bn").startswith("জি")
+    # the real transcript was "এটা কি সোনস্কান কলকাতা" -- crystal clear, but spelled without the ো and the ্য the cue list knew. In Bengali the answer starts "হ্যাঁ", not "জি"
+    for q in ("এটা কি সোনস্কান কলকাতা", "এটা কি সোনোস্ক্যান", "আপনারা কি সোনোস্কেন কলকাতা", "সোনো স্ক্যান কলকাতা তো", "আমি কি সোনা স্কান এর সাথে কথা বলছি"):
+        assert owner_answers.branch_identity(q, "bn").startswith("হ্যাঁ, আপনি সোনোস্ক্যান কলকাতা")
     assert owner_answers.branch_identity("सोनोस्कैन कोलकाता है क्या", "hi").startswith("जी")
     assert owner_answers.branch_identity("is this sonoscan", "en").startswith("Yes")
     assert owner_answers.branch_identity("এটা কি সোনস্কান মালদা", "bn").startswith("না")
     assert owner_answers.branch_identity("এটা কি স্ক্যান সেন্টার", "bn") is None
+
 
 
 def test_a_hindi_theek_after_the_name_is_read_back_is_a_yes_and_is_not_withheld():
@@ -225,26 +226,27 @@ def test_a_hindi_theek_after_the_name_is_read_back_is_a_yes_and_is_not_withheld(
     assert plan.skip_model and plan.readback_answer and plan.slots == {"patient_name": "সায়ন দাস"} and st.name_confirmed == "সায়ন দাস"
 
 
-def test_the_age_and_the_address_are_asked_one_at_a_time_and_each_is_read_back_for_a_yes():
+def test_the_age_is_read_back_with_the_address_question_and_the_address_asks_for_the_police_station():
     st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
     st.asked_fields.add("patient_age")
     plan = bc.before_model(st, "৪৫", "bn")
-    assert plan.speak == "রোগীর বয়স 45 বছর, ঠিক আছে?" and st.slots["_age_pending"] == 45 and not plan.skip_model
+    assert plan.speak == "রোগীর বয়স 45 বছর। ঠিকানাটা বলবেন?" and st.slots["_age_pending"] == 45 and not plan.skip_model  # the next question is asked in the same breath
     plan = bc.before_model(st, "হ্যাঁ", "bn")
     assert plan.skip_model and plan.readback_answer and plan.slots == {"patient_age": 45}
     st.slots["patient_age"] = 45
     st.asked_fields.add("patient_address")
     plan = bc.before_model(st, "বেনিয়াপুকুর কলকাতা", "bn")
-    assert plan.speak == "ঠিকানা বেনিয়াপুকুর কলকাতা। ঠিক আছে?"
-    plan = bc.before_model(st, "না", "bn")
-    assert plan.speak == "ঠিক আছে। ঠিকানাটা আবার বলবেন?" and "_address_pending" not in st.slots
-    plan = bc.before_model(st, "বেনিয়াপুকুর", "bn")
-    plan = bc.before_model(st, "ঠিক", "bn")
-    assert plan.slots == {"patient_address": "বেনিয়াপুকুর"}
+    assert plan.speak == "থানার নামটা বলবেন?" and st.slots["_ps_pending"] == "বেনিয়াপুকুর কলকাতা"  # no police station was given: it is asked
+    plan = bc.before_model(st, "বেনিয়াপুকুর থানা", "bn")
+    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা"}
     other = _booking(doctor_name="Sen", patient_name="A B", phone="9876543210")
     other.asked_fields.add("patient_address")
-    assert bc.before_model(other, "না", "bn").slots == {}  # a refusal is let go, never asked twice
+    assert bc.before_model(other, "বেনিয়াপুকুর থানা কলকাতা", "bn").slots == {"patient_address": "বেনিয়াপুকুর থানা কলকাতা"}  # the station is there: no question
+    third = _booking(doctor_name="Sen", patient_name="A B", phone="9876543210")
+    third.asked_fields.add("patient_address")
+    assert bc.before_model(third, "না", "bn").slots == {}  # a refusal is let go, never asked twice
     assert bc.bare_age("পঁয়তাল্লিশ") == 45 and bc.bare_age("ষাট বছর") == 60 and bc.bare_age("হ্যাঁ") is None
+
 
 
 
@@ -329,3 +331,65 @@ def test_a_number_started_again_replaces_the_pieces_instead_of_adding_to_them():
     assert step.status == "complete" and step.number == "9635583014"
     step2 = absorb("9876", "five four three", True)  # a real continuation is still added
     assert step2.status == "partial" and step2.buffer == "9876543"
+
+
+# ---- confirmations are chained with the next question; a clipped "ह" is a yes (real calls 2026-10-18)
+def test_a_read_back_asks_the_next_question_in_the_same_breath_and_the_next_answer_is_the_yes():
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00")
+    st.pending_name = "সায়ন দাস"
+    assert bc.readback(st, "bn", "name", "সায়ন দাস") == "আমি নামটা শুনেছি সায়ন দাস। আপনার নম্বরটা বলবেন প্লিজ? ওই নম্বরে কনফার্মেশন পাঠাব।"
+    plan = bc.before_model(st, "9876543210", "bn")  # the number, not a "yes": it IS the yes for the name
+    assert st.name_confirmed == "সায়ন দাস" and st.pending_name is None and plan.slots == {"patient_name": "সায়ন দাস", "phone": "9876543210"}
+    st2 = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
+    st2.slots["_phone_pending"] = "9876543210"
+    assert bc.readback(st2, "bn", "phone", "9 8 7 6 5 4 3 2 1 0") == "আমি নম্বরটা শুনেছি 9 8 7 6 5 4 3 2 1 0। রোগীর বয়স কত?"
+    plan = bc.before_model(st2, "৪৫", "bn")  # the age is the yes for the number
+    assert st2.slots["_phone_ok"] == "9876543210" and "_phone_pending" not in st2.slots and st2.slots["_age_pending"] == 45
+    assert plan.speak.startswith("রোগীর বয়স 45 বছর")
+
+
+def test_a_single_letter_ha_is_a_yes_and_never_a_name():
+    assert bc.candidate_name("ह") is None and bc.candidate_name("হ") is None
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00")
+    st.pending_name = "সায়ন দাস"
+    plan = bc.before_model(st, "ह", "bn")
+    assert plan.skip_model and plan.slots == {"patient_name": "সায়ন দাস"} and st.pending_name is None
+    st.pending_name = "সায়ন দাস"
+    assert bc.confirm_answer("हम्म हम्म", "bn") == "yes"
+
+
+def test_a_corrected_name_after_the_chained_question_is_read_back_again():
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00")
+    st.pending_name = "সায়ন দাস"
+    plan = bc.before_model(st, "না, সুমন দাস", "bn")
+    assert st.pending_name == "সুমন দাস" and plan.speak.startswith("আমি নামটা শুনেছি সুমন দাস। আপনার নম্বরটা বলবেন")
+
+
+# ---- anything the AI says can be asked back; clinical words are found by sound, more easily in context; "yes, we do these tests" comes first
+def test_a_word_asked_back_is_found_by_sound_across_scripts():
+    from agent import echo_check
+
+    last = "हमारे क्लिनिक का पता ४४, सी आई टी रोड, लेडीज़ पार्क के पास, बेनियापुकुर, कोलकाता है।"
+    found = echo_check.find("বেনিয়া পুকুর কেয়া", last)  # Bengali letters, two words, against one Devanagari word
+    assert found and found[0] == "বেনিয়া পুকুর" and "बेनियापुकुर" in found[1]
+    assert echo_check.find("লেডিজ পার্ক কি", last)[0] == "লেডিজ পার্ক"
+    assert echo_check.find("শিয়ালদা কেয়া", last) is None and echo_check.find("ঠিক", last) is None and echo_check.find("আপনার নাম কি", last) is None
+    assert echo_check.skeleton("বেনিয়াপুকুর") == echo_check.skeleton("बेनियापुकुर") == echo_check.skeleton("Beniapukur")
+
+
+def test_prescription_is_found_even_when_mangled_but_not_confused_with_ordinary_words():
+    from agent import clinical_terms
+
+    said = "টেস্টের বুকিং আর পেমেন্ট আমাদের কাউন্টারে গিয়ে করতে হয়। প্রেসক্রিপশন নিয়ে কাউন্টারে চলে আসুন।"
+    for heard in ("আমার কাছে প্রেস্কৃপ্তিন এ লেখা নাই", "আমাকে হয়তো প্রেস্কৃপ্তিন নাই", "আমার প্রেসক্রিপশন আছে"):
+        assert clinical_terms.mentions("prescription", heard, context=said)
+    for other in ("পরিষ্কার নাই", "প্রেসার নাই", "প্রসঙ্গ নাই", "আমার ব্লাড টেস্ট"):
+        assert not clinical_terms.mentions("prescription", other, context=said)
+
+
+def test_the_caller_asked_whether_the_tests_are_done_here_is_told_yes_first():
+    from agent import test_availability
+
+    q = "আমাকে বলুন তো ওখানে আপনাদের ওই ক্ব আর লিপিড প্রোফাইল এই দুটো টেস্ট করবো হয় কি এই দুটো টেস্ট CBC"
+    assert test_availability.mentions_done_here(q) and test_availability.mentions_done_here("do you do the lipid profile test")
+    assert not test_availability.mentions_done_here("লিপিড প্রোফাইলের দাম কত") and not test_availability.mentions_done_here("সিবিসি টেস্টের রেট কত")

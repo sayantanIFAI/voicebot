@@ -295,7 +295,8 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") ->
         # Owner, 2026-10-17: the name and the number were each confirmed already, so the final read-back does not say the ten digits again (15 s of speech).
         from agent import slot_proposal
 
-        return slot_proposal.arrival_question(slots.get("date"), shown_time(slots), "bn")
+        heard = f"ঠিকানা {slots['patient_address']} শুনেছি। " if slots.get("patient_address") else ""
+        return heard + slot_proposal.arrival_question(slots.get("date"), shown_time(slots), "bn")
     if action == "book_test":
         # ", " not the ideographic "、" -- a stray full-width character
         # from an earlier edit, inconsistent with every other list-join

@@ -108,7 +108,7 @@ def branch_identity(text: str, lang: str) -> str | None:
     en_here, bn_here, hi_here = next(((v[0], v[1], v[2]) for k, v in PLACES.items() if k == here_key), (CLINIC_BRANCH, CLINIC_BRANCH, CLINIC_BRANCH))
     if place is None or place == here_key:
         return {
-            "bn": f"জি, আপনি সোনোস্ক্যান {bn_here}-তে কথা বলছেন। বলুন, কীভাবে সাহায্য করতে পারি?",
+            "bn": f"হ্যাঁ, আপনি সোনোস্ক্যান {bn_here}তে কথা বলছেন। বলুন, কীভাবে সাহায্য করতে পারি?",
             "hi": f"जी, आप सोनोस्कैन {hi_here} में बात कर रहे हैं। बताइए, मैं क्या मदद कर सकती हूँ?",
             "en": f"Yes, you have reached Sonoscan {en_here}. How can I help you?",
         }.get(lang, "")

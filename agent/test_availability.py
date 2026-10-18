@@ -99,6 +99,19 @@ def have_frame_name(text: str) -> str | None:
     return " ".join(x) if x and sum(len(w) for w in x) >= 3 else None
 
 
+_DONE_HERE = (
+    "হয় কি", "করা হয়", "করা যায়", "করবো হয়", "করানো যায়", "করেন কি", "পাওয়া যায়", "আছে কি", "হয় তো", "হয়?", "होता है क्या", "करते हैं क्या", "हो जाता है क्या", "मिलता है क्या",
+    "available", "do you do", "do you have", "is it done", "can i get",
+)
+
+
+def mentions_done_here(text: str) -> bool:
+    """Loosely: does the caller ask whether a test is DONE here ("করবো হয় কি", "होता है क्या", "do you do ...") -- anywhere in the sentence, however long. Not a router (that is
+    asks_if_test_is_available, narrow on purpose): only decides to open the rate answer with "Yes, we do these tests"."""
+    t = _norm(text)
+    return bool(t) and _contains_cue(t, _DONE_HERE)
+
+
 def asks_if_test_is_available(text: str, lang: str) -> bool:
     """True for "is the X test done here?" in any of the three languages. Deliberately narrow: a sentence that also
     asks a price, a preparation, a report time, or asks to book is NOT an availability question -- those have their

@@ -413,7 +413,10 @@ def _shown(slots: dict, held: str | None = None) -> str:
 def booking_confirmation_readback(slots: dict, action: str, lang: str) -> str:
     hi = lang == "hi"
     if action == "book_appointment":
-        return slot_proposal.arrival_question(slots.get("date"), _shown(slots), "hi" if hi else "en")
+        heard = ""
+        if slots.get("patient_address"):
+            heard = f"पता {slots['patient_address']} सुना। " if hi else f"I have the address as {slots['patient_address']}. "
+        return heard + slot_proposal.arrival_question(slots.get("date"), _shown(slots), "hi" if hi else "en")
     if action == "book_test":
         tests = ", ".join(slots.get("_test_names_display", [])) or ("टेस्ट" if hi else "the tests")
         if hi:

@@ -70,6 +70,40 @@ def test_the_number_given_in_pieces_and_then_again_whole_is_the_whole_one():
     )
     assert "9 6 3 5 5 8 3 0 1 4। এটা কি ঠিক?" in _said(t, 6)
 
+def test_in_bengali_the_answer_starts_with_hanyan_not_ji():
+    t = _run("আমি কি সোনা স্কান এর সাথে কথা বলছি")
+    assert _said(t, 0).startswith("হ্যাঁ, আপনি সোনোস্ক্যান কলকাতা")
+
+
+def test_anything_the_agent_said_can_be_asked_back_across_scripts():
+    t = _run("आप लोगों का एड्रेस क्या है", "বেনিয়া পুকুর কেয়া")
+    assert "बेनियापुकुर" in _said(t, 0)
+    assert "सही" in _said(t, 1) and "बेनियापुकुर" in _said(t, 1) and "समझ नहीं पाई" not in _said(t, 1)
+
+
+def test_a_test_that_needs_a_prescription_asks_for_it_and_understands_a_mangled_no():
+    t = _run("এইচ আই ভি টেস্ট করাতে চাই", "আমার কাছে প্রেস্কৃপ্তিন এ লেখা নাই")
+    assert "প্রেসক্রিপশন আছে?" in _said(t, 0)
+    assert "হোয়াটসঅ্যাপ নম্বরে" in _said(t, 1) and "৯৬৩৫৫৮৮৩০৬" in _said(t, 1) and "বুঝতে পারিনি" not in _said(t, 1)
+
+
+def test_asked_whether_the_tests_are_done_here_the_answer_starts_with_yes():
+    t = _run("আমাকে বলুন তো ওখানে আপনাদের ওই সিবিসি আর লিপিড প্রোফাইল এই দুটো টেস্ট করবো হয় কি")
+    assert _said(t, 0).startswith("হ্যাঁ, এই টেস্টগুলো আমাদের এখানে হয়।") and "টাকা" in _said(t, 0)
+
+
+def test_each_read_back_asks_the_next_question_and_the_next_answer_is_the_yes():
+    t = _run(
+        "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "9876543210", "৪৫", "বেনিয়াপুকুর কলকাতা", "বেনিয়াপুকুর থানা",
+    )
+    assert "আপনার নামটা বলবেন" in _said(t, 1)
+    assert "আমি নামটা শুনেছি সায়ন দাস। আপনার নম্বরটা বলবেন" in _said(t, 2) and "এটা কি ঠিক?" not in _said(t, 2)
+    assert "আমি নম্বরটা শুনেছি 9 8 7 6 5 4 3 2 1 0। রোগীর বয়স কত?" in _said(t, 3)  # the number was the yes for the name
+    assert "রোগীর বয়স 45 বছর। ঠিকানাটা বলবেন?" in _said(t, 4)  # the age was the yes for the number
+    assert "থানার নামটা বলবেন?" in _said(t, 5)  # no police station in the address
+    last = _said(t, 6)
+    assert "ঠিকানা বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা শুনেছি" in last and last.rstrip().endswith("ঠিক আছে?")  # the address goes into the closing question
+
 
 def test_the_whole_order_name_number_age_address_each_read_back_then_payment_notice_then_the_arrival_question():
     t = _run(

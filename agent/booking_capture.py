@@ -293,6 +293,8 @@ def candidate_name(text: str) -> str | None:
     if any(w.lower() in _NOT_A_NAME or w.lower() in _HEDGES for w in words):
         return None
     name = " ".join(words)
+    if sum(1 for ch in name if ch.isalpha()) < 2:
+        return None  # one letter is a clipped "yes", never a name (real call 2026-10-18: "ह" was read back as the name)
     return name.title() if name.isascii() else name
 
 
@@ -716,6 +718,13 @@ _PROMPTS = {
         "hi": "ठीक है। पता दोबारा बताइए।",
         "bn": "ঠিক আছে। ঠিকানাটা আবার বলবেন?",
     },
+    "name_heard": {"en": "I heard the name {value}.", "hi": "मैंने नाम {value} सुना।", "bn": "আমি নামটা শুনেছি {value}।"},
+    "phone_heard": {"en": "I heard the number {value}.", "hi": "मैंने नंबर {value} सुना।", "bn": "আমি নম্বরটা শুনেছি {value}।"},
+    "age_heard": {"en": "The patient's age is {value}.", "hi": "मरीज़ की उम्र {value} साल है।", "bn": "রোগীর বয়স {value} বছর।"},
+    "is_right": {"en": "Is that correct?", "hi": "क्या यह सही है?", "bn": "এটা কি ঠিক?"},
+    "ask_age": {"en": "What is the patient's age?", "hi": "मरीज़ की उम्र क्या है?", "bn": "রোগীর বয়স কত?"},
+    "ask_address": {"en": "Could you tell me the address?", "hi": "पता बताइए?", "bn": "ঠিকানাটা বলবেন?"},
+    "ps_ask": {"en": "Which police station is that under?", "hi": "वह किस थाने के अंतर्गत है?", "bn": "থানার নামটা বলবেন?"},
     "name_again": {
         "en": "Sorry about that. Please tell me the patient's name again.",
         "hi": "माफ़ कीजिए। कृपया मरीज़ का नाम दोबारा बताइए।",
@@ -753,7 +762,37 @@ def phone_invalid_prompt(step: "PhoneStep", lang: str) -> str:
     return prompt("phone_invalid", lang)
 
 
-_HUMS = frozenset({"hmm", "hm", "hmmm", "mhm", "mm", "হুম", "হুঁ", "হু", "হম", "हम्म", "हूँ", "हूं", "हम"})
+_DETAIL_ORDER = ("phone", "patient_age", "patient_address")
+
+
+def next_ask(st, lang: str, after: str) -> str | None:
+    """The question that FOLLOWS the field just read back, asked in the same breath as the read-back (owner, 2026-10-18: not "is that right?" after every answer, but
+    "I heard the name Sayan Das. Please tell me your number."). The next field still unanswered after `after`; None when nothing is left to ask. The field is marked asked."""
+    from agent import reply_templates
+
+    start = {"patient_name": 0, "phone": 1, "patient_age": 2}.get(after, 0)
+    for field in _DETAIL_ORDER[start:]:
+        if field == "phone":
+            if st.slots.get("phone") or st.phone_declined:
+                continue
+            st.asked_fields.add("phone")
+            return reply_templates.missing_slot_prompt("book_appointment", "phone", lang)
+        tag = "age" if field == "patient_age" else "address"
+        if st.slots.get(field) or st.slots.get(f"_{tag}_done"):
+            continue
+        st.asked_fields.add(field)
+        return prompt(f"ask_{tag}", lang)
+    return None
+
+
+def readback(st, lang: str, kind: str, value) -> str:
+    """"I heard the name X. <the next question>" -- or, when nothing is left to ask, "I heard the name X. Is that correct?". kind: name | phone | age."""
+    heard = prompt(f"{kind}_heard", lang, value=value)
+    nxt = next_ask(st, lang, {"name": "patient_name", "phone": "phone", "age": "patient_age"}[kind])
+    return f"{heard} {nxt}" if nxt else f"{heard} {prompt('is_right', lang)}"
+
+
+_HUMS = frozenset({"hmm", "hm", "hmmm", "mhm", "mm", "হুম", "হুঁ", "হু", "হম", "हम्म", "हूँ", "हूं", "हम", "ह", "हं", "हँ", "হ", "হঁ"})  # "ह" / "হ": the recogniser clips "हाँ" / "হ্যাঁ" to its first letter
 
 
 def confirm_answer(text: str, lang: str) -> str | None:
@@ -805,7 +844,7 @@ def _active(st) -> bool:
 
 def _bare_no(text: str) -> str:
     """`text` without a leading no-word ("no, Rahul Das" -> "Rahul Das")."""
-    return re.sub(r"^\s*(no|nope|nahi|nahin|na|না|নয়|नहीं|नही)\b[\s,।.!]*", "", text or "", flags=re.I)
+    return re.sub(r"^\s*(no|nope|nahi|nahin|na|না|নয়|नहीं|नही)(?=[\s,।.!]|$)[\s,।.!]*", "", text or "", flags=re.I)
 
 
 _PHONE_CUES = frozenset({"number", "phone", "mobile", "contact", "नंबर", "नम्बर", "फोन", "फ़ोन", "मोबाइल", "নম্বর", "নাম্বার", "ফোন", "মোবাইল", "nombor", "nambar", "namber", "no."})  # fmt: skip
@@ -827,15 +866,31 @@ def split_age(text: str) -> tuple[int | None, str]:
     return None, text
 
 
-def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, tag: str) -> bool:
-    """One of the details asked after the name and the number (the age, the address). The bare answer is the value; it is READ BACK and only a yes keeps it, a no
-    asks again, another value replaces it and is read back. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
-    from agent.booking_flow import classify_yes_no  # noqa: F401 - confirm_answer wraps it
+_STATION_WORDS = ("থানা", "थाना", "थाने", "police", "পুলিশ", "पुलिस", " p.s", " ps ")
 
+
+def _lacks_police_station(address: str) -> bool:
+    low = f" {address.lower()} "
+    return not any(w in low for w in _STATION_WORDS)
+
+
+def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, tag: str) -> bool:
+    """One of the details asked after the name and the number (the age, then the address). Owner, 2026-10-18: each is asked alone; the AGE is read back with the next
+    question in the same breath ("the patient is 45. What is the address?"), the answer to which also counts as its yes; the ADDRESS goes straight on to the closing question,
+    after asking the police station when the caller did not give one. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
     pend_key, done_key = f"_{tag}_pending", f"_{tag}_done"
+    if tag == "address" and st.slots.get("_ps_pending"):
+        address = st.slots.pop("_ps_pending")
+        station = " ".join((text or "").split()).strip(" ,.।")
+        refused = len(station) < 2 or station.lower() in _NO_ADDRESS or len(station.split()) > 5
+        word = {"bn": "থানা", "hi": "थाना"}.get(lang, "police station")
+        st.slots[done_key] = "1"
+        plan.slots, plan.skip_model = {field: address if refused else f"{address}, {word} {station}"}, True
+        return True
     pend = st.slots.get(pend_key)
     if pend is not None:
         answer = confirm_answer(text, lang)
+        value = parse(text)
         if answer == "yes":
             st.slots.pop(pend_key, None)
             plan.slots, plan.skip_model, plan.readback_answer = {field: pend}, True, True
@@ -846,21 +901,32 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
             st.asked_fields.add(field)
             plan.speak = prompt(f"{tag}_again", lang)
             return True
-        value = parse(text)
+        if answer is None and not value and tag == "age" and "patient_address" in st.asked_fields and not st.slots.get("patient_address") and bare_address(text):
+            st.slots.pop(pend_key, None)
+            st.slots["patient_age"] = pend  # the read-back asked the address next, and the address was the answer: the age is accepted, the address is taken next
+            return False
         if value:
             st.slots[pend_key] = value
-            plan.speak = prompt(f"{tag}_confirm", lang, value=value)
+            plan.speak = readback(st, lang, "age", value)
             return True
-        plan.speak = prompt(f"{tag}_confirm", lang, value=pend)  # neither a yes, a no nor a value: the same question once more
+        plan.speak = readback(st, lang, "age", pend)  # neither a yes, a no nor a value: the same read-back once more
         return True
     if field in st.asked_fields and not st.slots.get(field) and not st.slots.get(done_key):
         value = parse(text)
-        if value:
-            st.slots[pend_key] = value
-            plan.speak = prompt(f"{tag}_confirm", lang, value=value)
+        if not value:
+            st.slots[done_key] = "1"  # no value in this answer: let it go
+            plan.slots, plan.skip_model = {}, True
             return True
-        st.slots[done_key] = "1"  # no value in this answer: let it go
-        plan.slots, plan.skip_model = {}, True
+        if tag == "age":
+            st.slots[pend_key] = value
+            plan.speak = readback(st, lang, "age", value)
+            return True
+        if _lacks_police_station(value):
+            st.slots["_ps_pending"] = value
+            plan.speak = prompt("ps_ask", lang)
+            return True
+        st.slots[done_key] = "1"
+        plan.slots, plan.skip_model = {field: value}, True
         return True
     return False
 
@@ -913,7 +979,7 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
         if spelled and not plan.digits:
             name = spelled.title()
             st.pending_name = name
-            plan.speak = prompt("name_confirm", lang, name=name)
+            plan.speak = readback(st, lang, "name", name)
     return plan
 
 
@@ -926,59 +992,66 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     if not _active(st):
         return plan
 
-    # 1. A name read back and waiting for the caller's yes/no.
+    # 1. A name read back. The read-back already asked the NEXT question (owner, 2026-10-18), so the caller's reaction is a yes (which moves on), a no or a corrected
+    #    name, or simply the ANSWER to the next question (digits for the number) -- which is a yes as well.
     if st.pending_name:
         answer = confirm_answer(text, lang)
-        repeated = candidate_name(text) if answer is None and read_digits(text)[1] >= 1 else None
-        if repeated:
-            # Real call 2026-10-17: to "I heard the name আবু আবু আলী. Is that right?" the caller said "abu ali" and their number. That is an answer: the name
-            # as heard now is the name, the number is taken, and nothing but the confirmation is asked.
-            st.pending_name, st.name_confirmed = None, repeated
-            plan.slots, plan.skip_model = {"patient_name": repeated}, True
-        elif answer == "yes":
-            name, st.pending_name = st.pending_name, None
-            st.name_confirmed = name
-            plan.slots, plan.skip_model, plan.readback_answer = {"patient_name": name}, True, True
-            return plan
-        if repeated:
-            pass
-        elif answer == "no":
+        digits_said = read_digits(text)[1]
+        named = candidate_name(_bare_no(text)) if answer in (None, "no") else None
+        if answer == "no":
             st.pending_name = None
-            fresh = candidate_name(_bare_no(text))
-            if fresh:
-                st.pending_name = fresh
-                plan.speak = prompt("name_confirm", lang, name=fresh)
+            if named:
+                st.pending_name = named
+                plan.speak = readback(st, lang, "name", named)
             else:
                 plan.speak = prompt("name_again", lang)
             return plan
-        fresh = None if repeated else candidate_name(text)  # neither yes nor no: if it is a name, it is the corrected name
-        st.pending_name = None
-        if fresh:
-            st.pending_name = fresh
-            plan.speak = prompt("name_confirm", lang, name=fresh)
-            return plan
+        if answer == "yes" or (answer is None and (digits_said >= 1 or bare_age(text)) and not named):
+            name, st.pending_name = st.pending_name, None
+            st.name_confirmed = name
+            plan.slots, plan.skip_model, plan.readback_answer = {"patient_name": name}, True, True
+            if digits_said == 0 or answer == "yes" and digits_said < 1:
+                return plan
+            # the answer to the next question came with it ("9876543210"): carry on and take it below
+        elif answer is None and named:
+            if digits_said >= 1:
+                # Real call 2026-10-17: to "I heard the name আবু আবু আলী" the caller said "abu ali" and their number. That is an answer: the name as heard now is
+                # the name, the number is taken.
+                st.pending_name, st.name_confirmed = None, named
+                plan.slots, plan.skip_model = {"patient_name": named}, True
+            else:  # a different name: the corrected name, read back
+                st.pending_name = named
+                plan.speak = readback(st, lang, "name", named)
+                return plan
+        else:
+            st.pending_name = None  # nothing usable: the flow below asks again
 
     # 1b. A phone number read back and waiting for the caller's yes/no (owner, 2026-10-17: the number is confirmed like the name).
     pending_phone = st.slots.get("_phone_pending")
     if pending_phone:
         answer = confirm_answer(text, lang)
-        said_digits = read_digits(text)[1] >= 7  # a whole new number in this sentence
-        if answer == "yes" and not said_digits:
+        new_number = read_digits(text)[1] >= 7  # a whole new number in this sentence
+        if answer == "yes" and not new_number:
             st.slots.pop("_phone_pending", None)
             st.slots["_phone_ok"] = pending_phone
-            plan.slots, plan.skip_model, plan.readback_answer = {}, True, True
+            plan.slots, plan.skip_model, plan.readback_answer = dict(plan.slots or {}), True, True
             return plan
-        st.slots.pop("_phone_pending", None)
-        if answer == "no" or said_digits:
+        if answer is None and not new_number and bare_age(text):
+            # the read-back asked the age next, and the age was the answer: the number is accepted and the age is taken below
+            st.slots.pop("_phone_pending", None)
+            st.slots["_phone_ok"] = pending_phone
+            plan.skip_model, plan.readback_answer = True, True
+            plan.slots = dict(plan.slots or {})
+        elif answer == "no" or new_number:
+            st.slots.pop("_phone_pending", None)
             for key in ("phone", "contact_phone", "_phone_ok", "_conflict_checked"):
                 st.slots.pop(key, None)
             st.phone_buffer = ""
-            if not said_digits:
+            if not new_number:
                 plan.speak = prompt("phone_cleared", lang)
                 return plan
-        else:  # neither: ask the same question again, once more
-            st.slots["_phone_pending"] = pending_phone
-            plan.speak = prompt("phone_confirm", lang, digits=" ".join(pending_phone))
+        else:  # neither a yes, a no nor an age: the same read-back once more
+            plan.speak = readback(st, lang, "phone", " ".join(pending_phone))
             return plan
 
     # 1c. The age, then the address, each asked alone and each read back for a yes (owner, 2026-10-18).
@@ -1006,7 +1079,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         plan.phone = step.number
         plan.digits = True
         if step.pure:
-            plan.slots, plan.skip_model = {"phone": step.number}, True
+            plan.slots, plan.skip_model = {**(plan.slots or {}), "phone": step.number}, True
     elif step.status == "partial":
         st.phone_buffer = step.buffer
         plan.digits = True
@@ -1118,7 +1191,7 @@ def _after_model(st, text: str, lang: str, slots: dict, plan: TurnPlan, window=N
             heard = candidate_name(text)
             if heard:
                 st.pending_name = heard
-                return slots, prompt("name_confirm", lang, name=heard)
+                return slots, readback(st, lang, "name", heard)
             return slots, prompt("name_again", lang)
         return slots, None
     missing = missing_required(st)
@@ -1126,7 +1199,7 @@ def _after_model(st, text: str, lang: str, slots: dict, plan: TurnPlan, window=N
         fresh = candidate_name(text)  # the model gave no name although one was asked for: read it from the caller's words
         if fresh:
             st.pending_name = fresh
-            return slots, prompt("name_confirm", lang, name=fresh)
+            return slots, readback(st, lang, "name", fresh)
     return slots, None
 
 
@@ -1143,7 +1216,7 @@ def recover_name_without_model(st, text: str, lang: str) -> str | None:
         fresh = candidate_name(text)
         if fresh:
             st.pending_name = fresh
-            return prompt("name_confirm", lang, name=fresh)
+            return readback(st, lang, "name", fresh)
     return None
 
 

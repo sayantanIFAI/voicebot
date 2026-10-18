@@ -147,7 +147,7 @@ from agent import test_availability  # real call 2026-10-14: "is the X test done
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
 from agent import slot_proposal  # the machine picks the appointment time and says it
-from agent import doctor_search, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import clinical_terms, doctor_search, echo_check, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -1381,19 +1381,38 @@ async def _clinic_cancelled_reply(session: CallSession, lang: str, phone: str | 
 
 
 # ---- 7. "do you have the prescription?" answered ---------------------------------------------------------------------------------------------
+_RX_NEGATIVE = ("নাই", "নেই", "নেয়", "নাহ", "ছিল না", "নহে", "নয়", "नहीं", "नही", "नाहीं", "nahi", "nai", "dont have", "don't have", "do not have", "not have", "no ", "without", "haven't", "have not")
+_RX_POSITIVE = ("আছে", "আছে", "অছে", "है", "हाँ", "हां", "hai", "have", "yes", "হ্যাঁ", "হ্যা", "নিয়ে আসব", "আনব", "लाऊंगा", "लाऊँगा")
+
+
 async def _answer_prescription(session: CallSession, text: str, lang: str) -> bool:
+    """"Do you have the prescription?" answered -- also when the agent only SAID "bring the prescription" and the caller replies about it. The word is found by sound
+    (agent/clinical_terms.py): "প্রেস্কৃপ্তিন" is "prescription" when the agent has just been talking about prescriptions (a lower bar in that context), while "পরিষ্কার" is not.
+    No prescription -> the doctor's WhatsApp message to the clinic's number; yes -> bring it."""
     pend = getattr(session, "pending_prescription", None)
-    if not pend or session.turn_count - pend[1] > 2:
+    asked = bool(pend) and session.turn_count - pend[1] <= 2
+    last = getattr(session, "last_spoken", "") or ""
+    mentioned = clinical_terms.mentions("prescription", text, context=last)
+    if not (asked or (mentioned and clinical_terms.mentions("prescription", last))):
         return False
+    low = " " + " ".join(text.lower().split()) + " "
     answer = booking_capture.confirm_answer(text, lang)
-    if answer is None:
+    negative = answer == "no" or any(c in low for c in _RX_NEGATIVE)
+    positive = answer == "yes" or any(c in low for c in _RX_POSITIVE)
+    if not (mentioned or answer is not None):
+        return False
+    if negative:
+        answer = "no"
+    elif positive:
+        answer = "yes"
+    else:
         return False
     session.pending_prescription = None
     if answer == "yes":
         await _speak(session, _with_resume(session, phrase("rx_yes", lang), lang), lang)
         return True
     await _speak(session, _with_resume(session, phrase("rx_no", lang), lang), lang)
-    await _queue_prescription_callback(session, f"prescription_missing:{pend[0]}", text, lang)
+    await _queue_prescription_callback(session, "prescription_missing", text, lang)
     return True
 
 
@@ -2002,6 +2021,36 @@ _NO_BOOKING_FOR_NUMBER = {
 }
 
 
+_DONE_HERE_REPLY = {
+    ("bn", True): "হ্যাঁ, এই টেস্টগুলো আমাদের এখানে হয়। ",
+    ("bn", False): "হ্যাঁ, এই টেস্টটা আমাদের এখানে হয়। ",
+    ("hi", True): "हाँ, ये टेस्ट हमारे यहाँ होते हैं। ",
+    ("hi", False): "हाँ, यह टेस्ट हमारे यहाँ होता है। ",
+    ("en", True): "Yes, we do these tests here. ",
+    ("en", False): "Yes, we do this test here. ",
+}
+
+
+def _done_here(text: str | None, lang: str, plural: bool, all_found: bool) -> str:
+    """Owner, 2026-10-18: asked whether the tests are done here, the answer STARTS with the yes ("হ্যাঁ, এই টেস্টগুলো আমাদের এখানে হয়।") and only then the rates. Only when every test asked
+    about is in the clinic's list, and the caller did ask whether they are done."""
+    if not all_found or not text or not test_availability.mentions_done_here(text):
+        return ""
+    return _DONE_HERE_REPLY.get((lang if lang in ("bn", "hi") else "en", plural), "")
+
+
+async def _any_test_needs_prescription(slots: dict) -> bool:
+    """Is any test named in `slots` marked "prescription required" in the clinic's lab-test table? A failed lookup is simply "no": the normal counter message stands."""
+    names = [n for n in list((slots or {}).get("test_names") or []) + [(slots or {}).get("test_name")] if n][:5]
+    for name in names:
+        try:
+            if (await _tools.get_test_rate(name)).get("prescription_required"):
+                return True
+        except Exception:  # noqa: BLE001 - advisory
+            continue
+    return False
+
+
 def _readback_pending(session: CallSession) -> bool:
     b = session.booking
     return b is not None and b.action == "book_appointment" and bool(b.pending_name or b.slots.get("_phone_pending"))
@@ -2241,14 +2290,14 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
                 _suggested.set({"intent": "test_rate", "slot": "test_names", "slots": {}, "name": canonical})
                 return question
             _priced_names.set((_priced_names.get() or []) + [n for n, r in results if r.get("found")])
-            return multi_test_rate_reply(results, lang)
+            return _done_here(_turn_text.get(), lang, True, all(r.get("found") for _n, r in results)) + multi_test_rate_reply(results, lang)
         if not slots.get("test_name"):
             return None
         result = await _tools.get_test_rate(slots["test_name"])
         _note_suggestion(intent, "test_name", slots, result)
         if result.get("found"):
             _priced_names.set((_priced_names.get() or []) + [slots["test_name"]])
-        reply = test_rate_reply(slots, result, lang)
+        reply = _done_here(_turn_text.get(), lang, False, bool(result.get("found"))) + test_rate_reply(slots, result, lang)
         if result.get("found") and result.get("prescription_required"):
             _rx_asked.set(slots["test_name"])  # owner 2026-10-18: a test that needs a prescription -> ask whether the caller has one
             reply = f"{reply} {phrase('rx_ask', lang)}"
@@ -2847,17 +2896,35 @@ def _digit_words(n: int, lang: str) -> str:
     return " ".join(table[int(d)] for d in str(n))
 
 
+async def _answer_echo(session: CallSession, text: str, lang: str) -> bool:
+    """The caller asks back about a WORD of what was just said ("বেনিয়া পুকুর কেয়া?" after the address): found by sound, across scripts (agent/echo_check.py), and answered
+    "yes, that is right" with the sentence again. Nothing is claimed for a word that is not there: then the turn goes on as a new question."""
+    found = echo_check.find(text, getattr(session, "last_spoken", "") or "")
+    if not found:
+        return False
+    words, sentence = found
+    spoken = {
+        "bn": f"হ্যাঁ, ঠিক ধরেছেন, {words}। আবার বলছি: {sentence}",
+        "hi": f"हाँ, आपने सही सुना, {words}। फिर से बताती हूँ: {sentence}",
+        "en": f"Yes, that is right: {words}. Once more: {sentence}",
+    }[lang if lang in ("bn", "hi") else "en"]
+    await _speak(session, spoken, lang)
+    return True
+
+
 async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool:
     """The caller wants to be sure of a word in what was just said ("চুয়াল্লিশ বললেন?", "did you say forty-four?"). A number they name is looked for in the last
     thing the agent said: if it is there, it is confirmed digit by digit and the sentence is said again; if it is not, they are told plainly it was not said and
     what was. Only for a short sentence that asks (a checking word) about a number -- never a guess about anything else."""
     last = getattr(session, "last_spoken", "") or ""
     low = " ".join(text.lower().split())
-    if not last or len(low.split()) > 10 or not any(c in low for c in _CHECK_CUES):
+    if not last or len(low.split()) > 10:
         return False
+    if not any(c in low for c in _CHECK_CUES):
+        return await _answer_echo(session, text, lang)  # no "did you say": a word asked back by sound ("বেনিয়া পুকুর কেয়া?")
     n = owner_answers.spoken_number(text)
     if n is None:
-        return False
+        return await _answer_echo(session, text, lang)
     said = re.sub(r"(?<=\d),(?=\d)", "", last.translate(_ANY_DIGITS))
     present = re.search(rf"(?<!\d){n}(?!\d)", said) is not None
     sentences = [s.strip() for s in re.split(r"(?<=[।.?!])\s+", last) if s.strip()]
@@ -2865,7 +2932,7 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
     digits = _digit_words(n, lang)
     if present:
         spoken = {
-            "bn": f"জি, ঠিক ধরেছেন। {n} মানে {digits}। আবার বলছি: {holder}",
+            "bn": f"হ্যাঁ, ঠিক ধরেছেন। {n} মানে {digits}। আবার বলছি: {holder}",
             "hi": f"जी, आपने सही सुना। {n} यानी {digits}। फिर से बताती हूँ: {holder}",
             "en": f"Yes, that is right: {n} is {digits}. Once more: {holder}",
         }[lang if lang in ("bn", "hi") else "en"]
@@ -4366,13 +4433,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             ):
                 # the number is read back for a yes, like the name, before the whole booking is read out
                 st.slots["_phone_pending"] = effective_phone(st)
-                await _speak(session, booking_capture.prompt("phone_confirm", lang, digits=" ".join(effective_phone(st))), lang)
+                await _speak(session, booking_capture.readback(st, lang, "phone", " ".join(effective_phone(st))), lang)
                 return
-            extra = [f for f in ("patient_age", "patient_address") if not st.slots.get(f) and f not in st.asked_fields]
+            extra = [f for f in ("patient_age", "patient_address") if not st.slots.get(f) and not st.slots.get("_age_done" if f == "patient_age" else "_address_done")]
             if is_ready_to_confirm(st) and extra:
-                # owner, 2026-10-18: the age, then the address -- one question each, after the name and the number are confirmed
+                # owner, 2026-10-18: the age, then the address -- one question each, after the name and the number are confirmed (a read-back may already have asked it:
+                # a bare "yes" to that leaves it unanswered, so it is asked again, until it is answered or let go)
                 st.asked_fields.add(extra[0])
-                await _speak(session, _EXTRA_QUESTION[extra[0]].get(lang, _EXTRA_QUESTION[extra[0]]["en"]), lang)
+                await _speak(session, booking_capture.prompt("ask_age" if extra[0] == "patient_age" else "ask_address", lang), lang)
                 return
             if is_ready_to_confirm(st):
                 mark_confirming(st)
@@ -4384,7 +4452,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             # A lab test is paid and booked at the counter, never over the call (clinic-api/booking_service.
             # send_payment_link's docstring says the same from the other side: a lab test's confirmation_id is
             # never found there). No booking task is entered -- there is nothing to collect slots for.
-            await _speak(session, phrase("lab_test_counter_only", lang), lang)
+            counter = phrase("lab_test_counter_only", lang)
+            if await _any_test_needs_prescription(slots):
+                counter = f"{counter} {phrase('rx_ask', lang)}"  # the table says a prescription is needed: ask whether the caller has it (owner, 2026-10-18)
+                session.pending_prescription = ("tests", session.turn_count)
+            await _speak(session, counter, lang)
 
         elif intent == "reschedule_appointment":
             st = _enter_task(session, "reschedule_appointment")
