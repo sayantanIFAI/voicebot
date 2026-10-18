@@ -26,8 +26,11 @@ def _run(*utterances):
     return asyncio.run(text_call_sim.run(list(utterances)))
 
 
+_FILLERS = ("আচ্ছা, বলছি।", "अच्छा, बताती हूँ।", "Alright, let me tell you.")  # the holding phrase said when the intent model is slow: not part of the answer
+
+
 def _said(turns, i):
-    return " ".join(turns[i][1])
+    return " ".join(r for r in turns[i][1] if r not in _FILLERS)
 
 
 def test_asked_in_one_breath_whether_he_sits_the_doctor_sitting_is_told_first_then_the_name():
