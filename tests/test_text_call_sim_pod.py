@@ -60,7 +60,7 @@ def test_a_number_that_came_out_one_digit_short_is_read_back_so_far_and_never_gi
         "নাইন সিক্স থ্রি ডবল ফাইভল নাইট থ্রি জিরো ওন", "ঠিক আছে",
     )
     assert "9 6 3 5 5 8 3 0 1 পেয়েছি" in _said(t, 4)  # "ফাইভল" is a five; nine digits so far
-    assert "রোগীর বয়স" not in _said(t, 5) and "নম্বর" in _said(t, 5)  # still asking for the number, not on to the age
+    assert "বয়স" not in _said(t, 5) and "9 6 3 5 5 8 3 0 1 পেয়েছি। বাকিটা বলুন" in _said(t, 5)  # still on the number (what was heard, and the rest asked for), not on to the age
 
 
 def test_the_number_given_in_pieces_and_then_again_whole_is_the_whole_one():
