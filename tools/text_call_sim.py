@@ -60,6 +60,12 @@ class _Recorder:
         return None
 
 
+def main_module():
+    import main
+
+    return main
+
+
 async def run(utterances: list[str], lang: str = "bn") -> list[tuple[str, list[str]]]:
     import main
     from agent.asr import ASRResult

@@ -4146,6 +4146,13 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             if (slots or {}).get("date") and slots["date"] < slot_proposal.clinic_now().date().isoformat():
                 logger.info("[%s] a past day (%s) is not a booking day: ignored", session.call_id, slots["date"])
                 slots = {k: v for k, v in slots.items() if k != "date"}
+            # The caller's own day word is the day (owner, 2026-10-18: "না, পরশু করুন" after "he sits tomorrow" was booked for TOMORROW, the day already told): it beats
+            # the model's reading and the day carried over from the last answer. In a short sentence, or when no day is held yet.
+            _held_day = session.booking.slots.get("date") if session.booking is not None else None
+            if not _held_day or len(text.split()) <= 6:
+                _said_day = booking_capture.read_when(text, False, want_day=True).date
+                if _said_day and _said_day >= slot_proposal.clinic_now().date().isoformat():
+                    slots = {**(slots or {}), "date": _said_day}
             # sourav, 2026-10-14: "book him / for that day" right after a doctor-availability answer -> that doctor (and date).
             slots = booking_carryover.carry_over(
                 session.last_doctor_enquiry,
