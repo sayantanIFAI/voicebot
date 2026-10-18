@@ -2011,22 +2011,26 @@ _NO_BOOKING_FOR_NUMBER = {
 }
 
 
-_DONE_HERE_REPLY = {
-    ("bn", True): "হ্যাঁ, এই টেস্টগুলো আমাদের এখানে হয়। ",
-    ("bn", False): "হ্যাঁ, এই টেস্টটা আমাদের এখানে হয়। ",
-    ("hi", True): "हाँ, ये टेस्ट हमारे यहाँ होते हैं। ",
-    ("hi", False): "हाँ, यह टेस्ट हमारे यहाँ होता है। ",
-    ("en", True): "Yes, we do these tests here. ",
-    ("en", False): "Yes, we do this test here. ",
-}
-
-
-def _done_here(text: str | None, lang: str, plural: bool, all_found: bool) -> str:
-    """Owner, 2026-10-18: asked whether the tests are done here, the answer STARTS with the yes ("হ্যাঁ, এই টেস্টগুলো আমাদের এখানে হয়।") and only then the rates. Only when every test asked
-    about is in the clinic's list, and the caller did ask whether they are done."""
-    if not all_found or not text or not test_availability.mentions_done_here(text):
+def _done_here(text: str | None, lang: str, found: list[str]) -> str:
+    """Owner, 2026-10-18: asked whether the tests are done here, the answer STARTS with the yes naming them ("হ্যাঁ, লিপিড প্রোফাইল আর সিবিসি আমাদের এখানে হয়।") and only then the
+    rates. `found` = the spoken names of the tests that ARE in the clinic's list; a name that is not found is never part of the yes. Only when the caller did ask whether they are done."""
+    if not found or not text or not test_availability.mentions_done_here(text):
         return ""
-    return _DONE_HERE_REPLY.get((lang if lang in ("bn", "hi") else "en", plural), "")
+    sep = {"bn": " আর ", "hi": " और "}.get(lang, " and ")
+    names = sep.join(found) if len(found) <= 3 else sep.join(found[:3])
+    return {
+        "bn": f"হ্যাঁ, {names} আমাদের এখানে হয়। ",
+        "hi": f"हाँ, {names} हमारे यहाँ होता है। ",
+        "en": f"Yes, we do {names} here. ",
+    }[lang if lang in ("bn", "hi") else "en"]
+
+
+def _found_names(results: list[tuple[str, dict]], lang: str) -> list[str]:
+    out = []
+    for requested, r in results:
+        if r.get("found"):
+            out.append({"hi": r.get("test_name_hi"), "en": r.get("test_name")}.get(lang) or r.get("test_name_bn") or requested)
+    return out
 
 
 async def _any_test_needs_prescription(slots: dict) -> bool:
@@ -2280,14 +2284,14 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
                 _suggested.set({"intent": "test_rate", "slot": "test_names", "slots": {}, "name": canonical})
                 return question
             _priced_names.set((_priced_names.get() or []) + [n for n, r in results if r.get("found")])
-            return _done_here(_turn_text.get(), lang, True, all(r.get("found") for _n, r in results)) + multi_test_rate_reply(results, lang)
+            return _done_here(_turn_text.get(), lang, _found_names(results, lang)) + multi_test_rate_reply(results, lang)
         if not slots.get("test_name"):
             return None
         result = await _tools.get_test_rate(slots["test_name"])
         _note_suggestion(intent, "test_name", slots, result)
         if result.get("found"):
             _priced_names.set((_priced_names.get() or []) + [slots["test_name"]])
-        reply = _done_here(_turn_text.get(), lang, False, bool(result.get("found"))) + test_rate_reply(slots, result, lang)
+        reply = _done_here(_turn_text.get(), lang, _found_names([(slots["test_name"], result)], lang)) + test_rate_reply(slots, result, lang)
         if result.get("found") and result.get("prescription_required"):
             _rx_asked.set(slots["test_name"])  # owner 2026-10-18: a test that needs a prescription -> ask whether the caller has one
             reply = f"{reply} {phrase('rx_ask', lang)}"
@@ -3013,7 +3017,7 @@ async def _answer_named_total(session: CallSession, text: str, lang: str) -> boo
     for n in names:
         if n.strip().lower() not in [x.strip().lower() for x in session.priced_tests]:
             session.priced_tests.append(n)
-    prefix = _done_here(text, lang, True, all(r.get("found") for _n, r in results))  # "Yes, we do these tests here." first, when that was the question
+    prefix = _done_here(text, lang, _found_names(results, lang))  # "Yes, we do <the tests> here." first, when that was the question
     await _speak(session, _with_resume(session, prefix + multi_test_rate_reply(results, lang), lang), lang)
     return True
 

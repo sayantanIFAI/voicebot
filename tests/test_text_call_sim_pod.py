@@ -90,7 +90,7 @@ def test_a_test_that_needs_a_prescription_asks_for_it_and_understands_a_mangled_
 
 def test_asked_whether_the_tests_are_done_here_the_answer_starts_with_yes():
     t = _run("আমাকে বলুন তো ওখানে আপনাদের ওই সিবিসি আর লিপিড প্রোফাইল এই দুটো টেস্ট করবো হয় কি")
-    assert _said(t, 0).startswith("হ্যাঁ, এই টেস্টগুলো আমাদের এখানে হয়।") and "টাকা" in _said(t, 0)
+    assert _said(t, 0).startswith("হ্যাঁ, ") and "আমাদের এখানে হয়।" in _said(t, 0).split("।")[0] + "।" and "টাকা" in _said(t, 0)  # the yes names the tests, then the rates
 
 
 def test_each_read_back_asks_the_next_question_and_the_next_answer_is_the_yes():
