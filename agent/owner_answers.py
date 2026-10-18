@@ -59,6 +59,35 @@ _IDENTITY_CUES = ("কি", "কী", "এটা", "ওটা", "is it", "is thi
 _NOT_IDENTITY = ("price", "rate", "দাম", "রেট", "কত", "book", "বুক", "appointment", "অ্যাপয়েন্টমেন্ট", "test", "টেস্ট", "doctor", "ডাক্তার", "report", "রিপোর্ট")
 
 
+_BN_SIGNS = re.compile("[ািীুূৃেৈোৌংঁ্]")
+_HI_SIGNS = re.compile("[ािीुूृेैोौंँ्]")
+
+
+def _skeleton(word: str) -> str:
+    """The consonants of a word, however its vowels are written: "সোনোস্ক্যান", "সোনস্কান", "সোনোস্কেন" -> "সনসকন"; "sonoscan", "sonoscen" -> "snscn";
+    "सोनोस्कैन" -> "सनसकन". A recogniser spells the same name many ways; the consonants hold still."""
+    w = unicodedata.normalize("NFC", word or "").lower().replace("়", "").replace("़", "")
+    w = w.replace("্য", "").replace("्य", "")  # ya-phala: "স্ক্যান" -> "স্কান"
+    w = _BN_SIGNS.sub("", w)
+    w = _HI_SIGNS.sub("", w)
+    w = re.sub(r"[aeiouy]", "", w) if w.isascii() else w
+    return w
+
+
+_SONOSCAN_SKELETONS = frozenset({"snscn", "সনসকন", "सनसकन"})
+
+
+def _mentions_sonoscan(t: str) -> bool:
+    """"Sonoscan" in any spelling, written as one word or two ("sono scan", "সোনো স্ক্যান")."""
+    tokens = t.split()
+    for i, tok in enumerate(tokens):
+        if _skeleton(tok) in _SONOSCAN_SKELETONS:
+            return True
+        if i + 1 < len(tokens) and _skeleton(tok + tokens[i + 1]) in _SONOSCAN_SKELETONS:
+            return True
+    return False
+
+
 def _place_in(t: str) -> str | None:
     for key, (_en, _bn, _hi, forms) in PLACES.items():
         if _has(t, forms):
@@ -69,7 +98,7 @@ def _place_in(t: str) -> str | None:
 def branch_identity(text: str, lang: str) -> str | None:
     """"Is it Sonoscan?" / "Malda Sonoscan?" / "কলকাতা সোনোস্ক্যান?" -- answered from the branch this agent is configured for."""
     t = _norm(text)
-    if not t or len(t.split()) > 10 or not _has(t, _SONOSCAN):
+    if not t or len(t.split()) > 10 or not (_has(t, _SONOSCAN) or _mentions_sonoscan(t)):
         return None
     place = _place_in(t)
     if place is None and (not _has(t, _IDENTITY_CUES) or _has(t, _NOT_IDENTITY)):
@@ -189,7 +218,8 @@ def token_number(text: str) -> int | None:
         return n if 1 <= n <= 300 else None
     for table in (_BN_NUM, _HI_NUM, _EN_NUM):
         for word in sorted(table, key=len, reverse=True):
-            if (word in t.split()) or (not word.isascii() and word in t):
+            w = _norm(word)  # the text is normalised (no nukta), so the key is too
+            if (w in t.split()) or (not w.isascii() and w in t):
                 return table[word]
     return None
 

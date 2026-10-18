@@ -330,8 +330,8 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
     if result.get("success"):
         doctor = _doctor_name(slots, result, lang)
         if hi:
-            return f"{doctor}, {result['date']}, समय {_shown(slots, result['time_slot'])}।"
-        return f"{doctor}, {result['date']}, at {_shown(slots, result['time_slot'])}."
+            return slot_proposal.conclusion(doctor, result["date"], _shown(slots, result["time_slot"]), "hi")
+        return slot_proposal.conclusion(doctor, result["date"], _shown(slots, result["time_slot"]), "en")
 
     reason = result.get("reason")
     if reason == "slot_taken":

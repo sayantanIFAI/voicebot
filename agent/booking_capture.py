@@ -752,6 +752,7 @@ class TurnPlan:
     digits: bool = False  # phone digits (complete or not) were heard: the sentence belongs to the booking, never to a lookup
     after_speak: str | None = None  # asked after this turn's slots are merged, unless another question is due first
     compound: bool = False  # the number was said as a number ("four hundred ..."): ask for it digit by digit
+    readback_answer: bool = False  # the sentence was the yes to a name / number read back: settled here, not withheld for low recogniser agreement
     age: int | None = None  # an age said in this sentence ("বয়স ৪৫", "45 years"), taken out BEFORE the digits are read as the phone number
 
 
@@ -786,6 +787,35 @@ def split_age(text: str) -> tuple[int | None, str]:
         if m and 0 < int(m.group(1)) <= 120:
             return int(m.group(1)), (t[: m.start()] + " " + t[m.end():]).strip()
     return None, text
+
+
+_BN_TENS = {"দশ": 10, "বিশ": 20, "ত্রিশ": 30, "চল্লিশ": 40, "পঞ্চাশ": 50, "ষাট": 60, "সত্তর": 70, "আশি": 80, "নব্বই": 90}
+
+
+def bare_age(text: str) -> int | None:
+    """An age said on its own: "৪৫", "45 years", "পঁয়তাল্লিশ", "ষাট বছর". None when no age (1 to 120) is there."""
+    t = (text or "").translate(_DIGITS_ANY)
+    m = re.search(r"(?<!\d)(\d{1,3})(?!\d)", t)
+    if m and 0 < int(m.group(1)) <= 120:
+        return int(m.group(1))
+    from agent import owner_answers
+
+    for word, n in {**_BN_TENS}.items():
+        if word in t:
+            return n
+    n = owner_answers.token_number(t)
+    return n if n and 0 < n <= 120 else None
+
+
+_NO_ADDRESS = {"না", "নেই", "জানি না", "বলব না", "দেব না", "নয়", "skip", "no", "none", "नहीं", "पता नहीं", "बताऊंगा नहीं", "বলব না", "থাক"}
+
+
+def bare_address(text: str) -> str | None:
+    """The address as said (the whole answer), or None for a refusal / a non-answer."""
+    t = " ".join((text or "").split()).strip(" ,.।")
+    if len(t) < 3 or t.lower() in _NO_ADDRESS:
+        return None
+    return t[:160]
 
 
 def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
@@ -832,7 +862,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         elif answer == "yes":
             name, st.pending_name = st.pending_name, None
             st.name_confirmed = name
-            plan.slots, plan.skip_model = {"patient_name": name}, True
+            plan.slots, plan.skip_model, plan.readback_answer = {"patient_name": name}, True, True
             return plan
         if repeated:
             pass
@@ -860,7 +890,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         if answer == "yes" and not said_digits:
             st.slots.pop("_phone_pending", None)
             st.slots["_phone_ok"] = pending_phone
-            plan.slots, plan.skip_model = {}, True
+            plan.slots, plan.skip_model, plan.readback_answer = {}, True, True
             return plan
         st.slots.pop("_phone_pending", None)
         if answer == "no" or said_digits:
@@ -873,6 +903,19 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         else:  # neither: ask the same question again, once more
             st.slots["_phone_pending"] = pending_phone
             plan.speak = prompt("phone_confirm", lang, digits=" ".join(pending_phone))
+            return plan
+
+    # 1c. The age or the address, asked one at a time (owner, 2026-10-18): the bare answer is that field.
+    if st.action == "book_appointment" and st.slots.get("patient_name") and (st.slots.get("phone") or st.phone_declined):
+        if "patient_age" in st.asked_fields and not st.slots.get("patient_age") and not st.slots.get("_age_done"):
+            st.slots["_age_done"] = "1"
+            age = bare_age(text)
+            plan.slots, plan.skip_model = ({"patient_age": age} if age else {}), True  # an answer that is no age is let go, never asked twice
+            return plan
+        if "patient_address" in st.asked_fields and not st.slots.get("patient_address") and not st.slots.get("_address_done"):
+            st.slots["_address_done"] = "1"
+            address = bare_address(text)
+            plan.slots, plan.skip_model = ({"patient_address": address} if address else {}), True
             return plan
 
     # 2. "the first one / the second one" after the clinic offered other slots.

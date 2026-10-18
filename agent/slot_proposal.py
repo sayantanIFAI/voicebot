@@ -161,6 +161,20 @@ def proposal(doctor: str, date_iso: str, slot: str, lang: str, now: datetime.dat
     return _SITS[lang].format(doc=doctor, when=when, time=sits_at or slot)
 
 
+_CONCLUDE = {
+    "bn": "ডাক্তার {doc} {when} {time}-এ বসবেন। আপনি ওই সময়ে চলে আসুন, হাতে এক থেকে দুই ঘণ্টা সময় নিয়ে আসবেন।",
+    "hi": "डॉक्टर {doc} {when} {time} बजे बैठेंगे। आप उसी समय आ जाइए, हाथ में एक से दो घंटे का समय लेकर आइए।",
+    "en": "Doctor {doc} sits {when} at {time}. Please come at that time, with one to two hours in hand.",
+}
+
+
+def conclusion(doctor: str, date_iso: str, time: str, lang: str, now: datetime.datetime | None = None) -> str:
+    """The same sentence as the proposal, without the question: said at the END of the booking to conclude it (owner, 2026-10-18)."""
+    lang = lang if lang in _CONCLUDE else "en"
+    doctor = doctor.replace("Dr. ", "", 1).replace("Dr ", "", 1).replace("ডাঃ ", "", 1).replace("ডাক্তার ", "", 1).replace("डॉ. ", "", 1)  # the sentence already says "Doctor"
+    return _CONCLUDE[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time)
+
+
 _CALL_AGAIN = {
     "bn": "দুঃখিত, এই ডাক্তারের জন্য এখন কোনো ফাঁকা দিন বা সময় নেই। দয়া করে পরের তারিখের কথা জানতে আবার ফোন করবেন।",
     "hi": "माफ़ कीजिए, इस डॉक्टर के लिए अभी कोई खाली दिन या समय नहीं है। कृपया अगली तारीख के बारे में पूछने के लिए दोबारा फ़ोन कीजिए।",

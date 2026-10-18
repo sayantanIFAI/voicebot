@@ -224,7 +224,9 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         return _i18n.booking_reply(slots, result, lang)
     if result.get("success"):
         # The booking ID is given only after payment (owner, 2026-10-17); the payment-link sentence that follows says so.
-        return f"{_spoken_doctor_name(slots, result)}, {result['date']}, সময় {shown_time(slots, result['time_slot'])}।"
+        from agent import slot_proposal
+
+        return slot_proposal.conclusion(_spoken_doctor_name(slots, result), result["date"], shown_time(slots, result["time_slot"]), "bn")
 
     reason = result.get("reason")
     if reason == "slot_taken":

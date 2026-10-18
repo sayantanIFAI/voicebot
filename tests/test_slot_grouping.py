@@ -41,7 +41,7 @@ def test_the_first_missing_field_decides_the_group_and_only_that_groups_missing_
     m = ["doctor_name", "date", "time_slot", "patient_name", "phone"]
     assert next_fields("book_appointment", m, 2) == ["doctor_name", "date", "time_slot"]
     assert next_fields("book_appointment", m[1:], 2) == ["date", "time_slot"]  # the doctor is known
-    assert next_fields("book_appointment", m[3:], 2) == ["patient_name", "phone"]
+    assert next_fields("book_appointment", m[3:], 2) == ["patient_name"]  # SPEC CHANGE 2026-10-18: name, number, age, address are asked one at a time
     assert next_fields("book_appointment", ["phone"], 2) == ["phone"]
     assert next_fields("book_test", ["test_names", "date", "patient_name", "phone"], 2) == ["test_names", "date"]
 
@@ -82,7 +82,7 @@ def test_a_field_already_asked_is_asked_alone_the_next_time():
     m = ["date", "time_slot", "patient_name", "phone"]
     assert next_fields("book_appointment", m, 2, asked={"date", "time_slot"}) == ["date"]
     assert next_fields("book_appointment", m, 2, asked={"time_slot"}) == ["date"]  # any repeat means: one at a time
-    assert next_fields("book_appointment", m[2:], 2, asked={"date", "time_slot"}) == ["patient_name", "phone"]
+    assert next_fields("book_appointment", m[2:], 2, asked={"date", "time_slot"}) == ["patient_name"]  # SPEC CHANGE 2026-10-18
 
 
 # ==================================================================================================== wording

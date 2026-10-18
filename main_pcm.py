@@ -3939,9 +3939,16 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     # needs_entity_readback() gave here before; the entity itself is not yet resolved at this point in the
     # turn (the lookup has not run), so it is not passed -- exactly as those two functions never took it either.
     decoder_used = getattr(asr_result, "decoder_used", None)
+    # A "yes"/"ठीक"/"ঠিক" to a name or number just read back, or to the proposed time, is settled by the words themselves: the caller heard the very thing it
+    # confirms. The recognisers disagreeing on a one-word reply (one wrote three words around it) is no reason to ask for it again (real call 2026-10-18).
+    answering_open_question = capture_plan.readback_answer or (
+        session.booking is not None
+        and session.booking.slots.get("_time_ok") == "pending"
+        and classify_yes_no(text, lang) == "yes"
+    )
     gate_verdict = (
         action_gate.decide(intent, decoder_used=decoder_used, decoder_agreement=asr_result.decoder_agreement)
-        if not confirmed_entity
+        if not confirmed_entity and not answering_open_question
         else None
     )
     if gate_verdict is not None and gate_verdict.action == action_gate.REPEAT:
@@ -4239,9 +4246,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 await _speak(session, booking_capture.prompt("phone_confirm", lang, digits=" ".join(effective_phone(st))), lang)
                 return
             extra = [f for f in ("patient_age", "patient_address") if not st.slots.get(f) and f not in st.asked_fields]
-            if is_ready_to_confirm(st) and extra and session.policy.questions_per_turn > 1:
-                st.asked_fields.update(extra)
-                await _speak(session, slot_grouping.grouped_prompt(extra, lang) or _EXTRA_QUESTION[extra[0]].get(lang, _EXTRA_QUESTION[extra[0]]["en"]), lang)
+            if is_ready_to_confirm(st) and extra:
+                # owner, 2026-10-18: the age, then the address -- one question each, after the name and the number are confirmed
+                st.asked_fields.add(extra[0])
+                await _speak(session, _EXTRA_QUESTION[extra[0]].get(lang, _EXTRA_QUESTION[extra[0]]["en"]), lang)
                 return
             if is_ready_to_confirm(st):
                 mark_confirming(st)
@@ -4447,9 +4455,6 @@ _NAME_ONLY = {"bn": "আপনার নামটা বলবেন প্ল�
 def _next_question(session: CallSession, st, intent: str, missing: list[str], lang: str) -> str:
     """KCD-103: the next question, one field or a group. The caller-state table (`questions_per_turn`) always wins
     over grouping, and a field already asked is asked alone (agent/slot_grouping.py)."""
-    if st.action == "book_appointment" and missing and missing[0] in ("patient_name", "phone") and not any(f in st.asked_fields for f in missing[:2]):
-        # owner, 2026-10-18: the age and the address are asked in the same breath as the name and the number
-        missing = list(missing) + [f for f in ("patient_age", "patient_address") if not st.slots.get(f) and f not in st.asked_fields]
     fields = slot_grouping.next_fields(st.action, missing, session.policy.questions_per_turn, st.asked_fields)
     grouped = slot_grouping.grouped_prompt(fields, lang) if len(fields) > 1 else None
     if grouped is None:

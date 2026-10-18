@@ -40,7 +40,8 @@ def test_the_time_is_chosen_and_said_not_asked(monkeypatch):
     now = datetime.datetime(2026, 10, 17, 10, 12)
     done, st, spoken = _run(INFO, {"doctor_name": "Sen", "date": "2026-10-17"}, now=now, monkeypatch=monkeypatch)
     assert done and st.slots["time_slot"] == "10:45"
-    assert "আজই বসবেন" in spoken[0] and "10:45" in spoken[0] and "15 মিনিট আগে" in spoken[0]
+    # SPEC CHANGE 2026-10-18: the doctor's sitting hour and "come with one to two hours in hand", not a ten-minute slot
+    assert "আজই" in spoken[0] and "বসবেন" in spoken[0] and "10:45" in spoken[0] and "এক থেকে দুই ঘণ্টা" in spoken[0]
 
 
 def test_a_closing_time_taken_for_between_ten_and_twelve_is_replaced(monkeypatch):

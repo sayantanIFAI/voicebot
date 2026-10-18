@@ -34,9 +34,8 @@ from typing import TypedDict
 GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
     "book_appointment": (
         ("doctor_name", "date", "time_slot"),
-        ("patient_name", "phone", "patient_age", "patient_address"),
     ),
-    "book_test": (("test_names", "date"), ("patient_name", "phone")),
+    "book_test": (("test_names", "date"),),
 }
 
 # No question ever carries more fields than this, whatever the tables say.

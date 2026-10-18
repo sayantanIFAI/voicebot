@@ -188,3 +188,41 @@ def test_prescription_and_routing_phrases_exist_in_three_languages():
             assert phrases.PHRASES[lang][key]
     assert "9635588306" in phrases.PHRASES["en"]["rx_no"] and "doctor" in phrases.PHRASES["en"]["rx_no"]
     assert "better" in phrases.PHRASES["en"]["handoff_better"]
+
+
+# ---- issues from the 2026-10-18 pod calls
+def test_sonoscan_is_recognised_in_whatever_spelling_the_recogniser_writes():
+    # the real transcript was "এটা কি সোনস্কান কলকাতা" -- crystal clear, but spelled without the ো and the ্য the cue list knew
+    for q in ("এটা কি সোনস্কান কলকাতা", "এটা কি সোনোস্ক্যান", "আপনারা কি সোনোস্কেন কলকাতা", "সোনো স্ক্যান কলকাতা তো"):
+        assert owner_answers.branch_identity(q, "bn").startswith("জি")
+    assert owner_answers.branch_identity("सोनोस्कैन कोलकाता है क्या", "hi").startswith("जी")
+    assert owner_answers.branch_identity("is this sonoscan", "en").startswith("Yes")
+    assert owner_answers.branch_identity("এটা কি সোনস্কান মালদা", "bn").startswith("না")
+    assert owner_answers.branch_identity("এটা কি স্ক্যান সেন্টার", "bn") is None
+
+
+def test_a_hindi_theek_after_the_name_is_read_back_is_a_yes_and_is_not_withheld():
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00")
+    st.pending_name = "সায়ন দাস"
+    plan = bc.before_model(st, "ठीक", "bn")
+    assert plan.skip_model and plan.readback_answer and plan.slots == {"patient_name": "সায়ন দাস"} and st.name_confirmed == "সায়ন দাস"
+
+
+def test_the_age_and_the_address_are_taken_one_at_a_time_from_the_bare_answer():
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
+    st.asked_fields.add("patient_age")
+    plan = bc.before_model(st, "৪৫", "bn")
+    assert plan.skip_model and plan.slots == {"patient_age": 45}
+    st.asked_fields.add("patient_address")
+    plan = bc.before_model(st, "বেনিয়াপুকুর কলকাতা", "bn")
+    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা"}
+    other = _booking(doctor_name="Sen", patient_name="A B", phone="9876543210")
+    other.asked_fields.add("patient_address")
+    assert bc.before_model(other, "না", "bn").slots == {}  # a refusal is let go, never asked twice
+    assert bc.bare_age("পঁয়তাল্লিশ") == 45 and bc.bare_age("ষাট বছর") == 60 and bc.bare_age("হ্যাঁ") is None
+
+
+def test_the_booking_ends_with_the_sitting_hour_statement():
+    reply = rt.booking_reply({"_sits_start": "10:00"}, {"success": True, "doctor_name": "Dr. Biswajit Sen", "date": "2026-10-19", "time_slot": "10:10", "confirmation_id": "KCD-1"}, "en")
+    assert "sits" in reply and "one to two hours" in reply and "KCD-" not in reply and "10:10" not in reply
+    assert "এক থেকে দুই ঘণ্টা" in slot_proposal.conclusion("বিশ্বজিৎ সেন", "2026-10-19", "10:00", "bn")
