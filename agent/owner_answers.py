@@ -74,7 +74,8 @@ def _skeleton(word: str) -> str:
     return w
 
 
-_SONOSCAN_SKELETONS = frozenset({"snscn", "সনসকন", "सनसकन"})
+# "সংস্কান" (the recogniser sometimes drops the first ন into a nasal) is in too; the question still needs an identity cue or a branch name to count
+_SONOSCAN_SKELETONS = frozenset({"snscn", "সনসকন", "सनसकन", "সসকন", "ससकन"})
 
 
 def _mentions_sonoscan(t: str) -> bool:
