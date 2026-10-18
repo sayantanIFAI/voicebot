@@ -169,11 +169,15 @@ def test_when_nothing_is_free_the_patient_is_asked_to_call_again_for_the_next_da
 
 
 # ---- 1. the payment line, spoken
-def test_the_spoken_payment_line_says_forty_rupees_within_fifteen_minutes_or_the_link_expires():
-    assert "চল্লিশ টাকা পনেরো মিনিট" in phrases.PHRASES["bn"]["payment_link_sent"] and "বাতিল হয়ে যাবে" in phrases.PHRASES["bn"]["payment_link_sent"]
-    en = phrases.PHRASES["en"]["payment_link_sent"]
-    assert "forty rupees within fifteen minutes" in en and "expire automatically" in en
+def test_the_payment_notice_comes_before_the_last_question_and_the_closing_line_does_not_repeat_it():
+    bn = slot_proposal.arrival_question("2026-10-19", "10:00", "bn")
+    assert bn.index("চল্লিশ টাকা") < bn.index("ঠিক আছে?") and "হোয়াটসঅ্যাপে" in bn and "পনেরো মিনিটের মধ্যে" in bn and "বাতিল হয়ে যাবে" in bn
+    en = slot_proposal.arrival_question("2026-10-19", "10:00", "en")
+    assert "forty rupees within fifteen minutes" in en and "expire automatically" in en and en.endswith("?")
+    closing = phrases.PHRASES["bn"]["payment_link_sent"]
+    assert "বুকিং আইডি" in closing and "চল্লিশ" not in closing  # said once, before the question
     assert "KCD-" not in rt.booking_reply({}, {"success": True, "doctor_name": "Dr. Sen", "date": "2026-10-30", "time_slot": "10:10", "confirmation_id": "KCD-1"}, "en")
+
 
 
 # ---- 2. Bengali is faster
@@ -210,18 +214,27 @@ def test_a_hindi_theek_after_the_name_is_read_back_is_a_yes_and_is_not_withheld(
     assert plan.skip_model and plan.readback_answer and plan.slots == {"patient_name": "সায়ন দাস"} and st.name_confirmed == "সায়ন দাস"
 
 
-def test_the_age_and_the_address_are_taken_one_at_a_time_from_the_bare_answer():
+def test_the_age_and_the_address_are_asked_one_at_a_time_and_each_is_read_back_for_a_yes():
     st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
     st.asked_fields.add("patient_age")
     plan = bc.before_model(st, "৪৫", "bn")
-    assert plan.skip_model and plan.slots == {"patient_age": 45}
+    assert plan.speak == "রোগীর বয়স 45 বছর, ঠিক আছে?" and st.slots["_age_pending"] == 45 and not plan.skip_model
+    plan = bc.before_model(st, "হ্যাঁ", "bn")
+    assert plan.skip_model and plan.readback_answer and plan.slots == {"patient_age": 45}
+    st.slots["patient_age"] = 45
     st.asked_fields.add("patient_address")
     plan = bc.before_model(st, "বেনিয়াপুকুর কলকাতা", "bn")
-    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা"}
+    assert plan.speak == "ঠিকানা বেনিয়াপুকুর কলকাতা। ঠিক আছে?"
+    plan = bc.before_model(st, "না", "bn")
+    assert plan.speak == "ঠিক আছে। ঠিকানাটা আবার বলবেন?" and "_address_pending" not in st.slots
+    plan = bc.before_model(st, "বেনিয়াপুকুর", "bn")
+    plan = bc.before_model(st, "ঠিক", "bn")
+    assert plan.slots == {"patient_address": "বেনিয়াপুকুর"}
     other = _booking(doctor_name="Sen", patient_name="A B", phone="9876543210")
     other.asked_fields.add("patient_address")
     assert bc.before_model(other, "না", "bn").slots == {}  # a refusal is let go, never asked twice
     assert bc.bare_age("পঁয়তাল্লিশ") == 45 and bc.bare_age("ষাট বছর") == 60 and bc.bare_age("হ্যাঁ") is None
+
 
 
 def test_the_last_question_is_the_day_the_hour_and_come_with_one_to_two_hours_in_hand():
@@ -282,3 +295,17 @@ def test_the_caller_can_check_a_number_in_the_last_answer(monkeypatch):
     assert spoken[0].startswith("না, আমি 43 বলিনি")
     assert not asyncio.run(main._answer_word_check(session, "কালকে কে কে বসছে", "bn"))
     assert not asyncio.run(main._answer_word_check(types.SimpleNamespace(last_spoken=""), "চুয়াল্লিশ বললেন", "bn"))
+
+
+# ---- the call that lost the 19th: "কালকেই" is tomorrow, not yesterday
+def test_kalkei_is_tomorrow_and_the_callers_day_word_beats_the_models_reading():
+    import datetime
+
+    today = datetime.date(2026, 10, 18)
+    st = _booking(doctor_name="Biswajit Sen", date="2026-10-19")
+    plan = bc.before_model(st, "কালকেই দিল আমাকে অযাপ্ফোন্টমেন্ট টা", "bn", today=today)
+    assert plan.date is None  # the held day (the 19th) is already tomorrow: nothing to change
+    st2 = _booking(doctor_name="Biswajit Sen", date="2026-10-22")
+    plan2 = bc.before_model(st2, "কালকেই করে দিন", "bn", today=today)
+    assert plan2.date == "2026-10-19"
+    assert bc.read_when("পরশুই করুন", False, today=today).date == "2026-10-20" and bc.read_when("আজই", False, today=today).date == "2026-10-18"

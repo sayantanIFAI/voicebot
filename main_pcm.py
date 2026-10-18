@@ -3841,19 +3841,23 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             logger.info("[%s] phone slot %s replaced by the digits heard: %s", session.call_id, (slots or {}).get("phone"), number)
             slots = {**(slots or {}), "phone": number}
     if (
-        intent in ("book_test", "lookup_booking")
+        intent in ("book_test", "lookup_booking", "reschedule_appointment", "cancel_appointment", "add_test_booking")
         and session.booking is not None
         and session.booking.action == "book_appointment"
         and session.booking.stage == "collecting"
         and not session.booking.is_stale()
         and not confirmed_entity
+        and not (intent in ("reschedule_appointment", "cancel_appointment") and booking_carryover.mentions_change_or_cancel(text))
         and not (intent == "book_test" and _fast_path is not None and _fast_path.named_tests(text, language_of_script(text, lang)))
         and booking_carryover.continues_booking(text)
     ):
         # Real call 2026-10-17: a doctor booking was open and asked for the day; "এই সেদিনেরই করুন" was read as a lab-test booking and answered with
         # the counter message. An answer to the open doctor booking is never a lab-test request when no test is named.
         logger.info("[%s] %s read as the open doctor booking's answer", session.call_id, intent)
-        slots = {k: v for k, v in (slots or {}).items() if k in ("doctor_name", "date", "time_slot", "patient_name", "phone") and v}
+        slots = dict(slots or {})
+        slots["date"] = slots.get("date") or slots.get("new_date")  # a "reschedule" reading put the day where a new day goes
+        slots["time_slot"] = slots.get("time_slot") or slots.get("new_time_slot")
+        slots = {k: v for k, v in slots.items() if k in ("doctor_name", "date", "time_slot", "patient_name", "phone") and v}
         intent = "book_appointment"
     _mark(session, "intent")
     _rec(session, "intent", intent)
@@ -4123,6 +4127,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
         elif intent == "book_appointment":
+            # A day in the past is never a booking day (real call 2026-10-18: "কালকেই" was read as yesterday, 2026-10-17): it is dropped, and the day already
+            # held (or asked for) stands.
+            if (slots or {}).get("date") and slots["date"] < slot_proposal.clinic_now().date().isoformat():
+                logger.info("[%s] a past day (%s) is not a booking day: ignored", session.call_id, slots["date"])
+                slots = {k: v for k, v in slots.items() if k != "date"}
             # sourav, 2026-10-14: "book him / for that day" right after a doctor-availability answer -> that doctor (and date).
             slots = booking_carryover.carry_over(
                 session.last_doctor_enquiry,

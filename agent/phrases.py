@@ -303,16 +303,13 @@ PHRASES["en"]["lab_test_counter_only"] = (
 # Said as the closing line after a doctor's appointment is confirmed: the payment link has been sent, and the call
 # ends here (main.py's _end_call) -- the caller pays on their own phone, never a number spoken or taken on the call.
 PHRASES["bn"]["payment_link_sent"] = (
-    "আপনার স্লট রাখা হয়েছে। পেমেন্ট লিংক আপনার মোবাইলে এসএমএস আর হোয়াটসঅ্যাপে পাঠানো হয়েছে। চল্লিশ টাকা পনেরো মিনিটের মধ্যে পেমেন্ট করুন, না হলে লিংকটা নিজে থেকেই বাতিল হয়ে যাবে। "
-    "পেমেন্ট করলেই আপনি বুকিং আইডি পেয়ে যাবেন। ধন্যবাদ।"
+    "আপনার স্লট রাখা হয়েছে। পেমেন্ট লিংক আপনার মোবাইলে হোয়াটসঅ্যাপে আর এসএমএসে পাঠানো হয়েছে। পেমেন্ট করলেই আপনি বুকিং আইডি পেয়ে যাবেন। ধন্যবাদ।"
 )
 PHRASES["hi"]["payment_link_sent"] = (
-    "आपका स्लॉट रख लिया गया है। पेमेंट लिंक आपके मोबाइल पर एसएमएस और व्हाट्सऐप पर भेज दिया गया है। चालीस रुपये पंद्रह मिनट के अंदर भुगतान कीजिए, वरना लिंक अपने आप बंद हो जाएगा। "
-    "पेमेंट करते ही आपको बुकिंग आईडी मिल जाएगी। धन्यवाद।"
+    "आपका स्लॉट रख लिया गया है। पेमेंट लिंक आपके मोबाइल पर व्हाट्सऐप और एसएमएस पर भेज दिया गया है। पेमेंट करते ही आपको बुकिंग आईडी मिल जाएगी। धन्यवाद।"
 )
 PHRASES["en"]["payment_link_sent"] = (
-    "Your slot is held. A payment link has been sent to your phone by SMS and WhatsApp. Please pay forty rupees within fifteen minutes, otherwise the link will expire "
-    "automatically. Once you pay, you will get your booking ID. Thank you."
+    "Your slot is held. A payment link has been sent to your phone by WhatsApp and SMS. Once you pay, you will get your booking ID. Thank you."
 )
 
 # Spoken when a call is turned away before the caller has said a word, so

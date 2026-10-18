@@ -367,9 +367,10 @@ _MINUTE_WORD = {"thirty": 30, "fifteen": 15, "forty-five": 45, "fortyfive": 45}
 _AM = frozenset({"am", "a.m", "morning", "সকাল", "সকালে", "sokal", "shokal", "सुबह", "subah"})
 _PM = frozenset({"pm", "p.m", "afternoon", "evening", "night", "বিকেল", "বিকাল", "বিকেলে", "সন্ধ্যা", "সন্ধ্যে", "সন্ধে", "রাত", "রাতে", "bikel", "sondhe", "raat", "rat", "शाम", "रात", "sham"})  # fmt: skip
 _NOONISH = frozenset({"দুপুর", "দুপুরে", "dupur", "दोपहर", "dopahar", "noon"})  # "দুপুর ১১টা" is late morning; "দুপুর ২টা" is 2 pm
-_TOMORROW = frozenset({"tomorrow", "kal", "kaal", "কাল", "কালকে", "আগামীকাল", "আগামিকাল", "agamikal", "कल", "कलके"})
-_DAY_AFTER = frozenset({"parso", "parson", "পরশু", "পরশুদিন", "porshu", "परसों", "परसो"})
-_TODAY = frozenset({"today", "aaj", "aj", "আজ", "আজকে", "आज"})
+# Real call 2026-10-18: "কালকেই" (tomorrow itself, with the emphatic ই) was not a day word: the model read it as YESTERDAY (the 17th) and the booking for the 19th became a lookup.
+_TOMORROW = frozenset({"tomorrow", "kal", "kaal", "কাল", "কালকে", "আগামীকাল", "আগামিকাল", "agamikal", "कल", "कलके", "কালকেই", "কালই", "আগামীকালই", "আগামিকালই", "কালকেরই", "कल ही", "कलही"})
+_DAY_AFTER = frozenset({"parso", "parson", "পরশু", "পরশুদিন", "porshu", "परसों", "परसो", "পরশুই", "পরশুদিনই"})
+_TODAY = frozenset({"today", "aaj", "aj", "আজ", "আজকে", "आज", "আজই", "আজকেই", "आजही"})
 _FILLER = frozenset(
     {"at", "for", "around", "about", "by", "the", "time", "slot", "please", "okay", "ok", "yes", "haan", "han", "ji", "accha", "achha",
      "theek", "thik", "to", "me", "mein", "में", "ko", "को", "ke", "ka", "की", "के", "का", "liye", "लिए", "jonno", "জন্য", "সময়", "সময়ে",
@@ -678,6 +679,26 @@ _PROMPTS = {
         "hi": "मैंने नंबर {digits} सुना। क्या यह सही है?",
         "bn": "আমি নম্বরটা শুনেছি {digits}। এটা কি ঠিক?",
     },
+    "age_confirm": {
+        "en": "The patient's age is {value}. Is that right?",
+        "hi": "मरीज़ की उम्र {value} साल है, ठीक है?",
+        "bn": "রোগীর বয়স {value} বছর, ঠিক আছে?",
+    },
+    "age_again": {
+        "en": "All right. Please tell me the patient's age again.",
+        "hi": "ठीक है। मरीज़ की उम्र दोबारा बताइए।",
+        "bn": "ঠিক আছে। রোগীর বয়সটা আবার বলবেন?",
+    },
+    "address_confirm": {
+        "en": "The address is {value}. Is that right?",
+        "hi": "पता {value} है, ठीक है?",
+        "bn": "ঠিকানা {value}। ঠিক আছে?",
+    },
+    "address_again": {
+        "en": "All right. Please tell me the address again.",
+        "hi": "ठीक है। पता दोबारा बताइए।",
+        "bn": "ঠিক আছে। ঠিকানাটা আবার বলবেন?",
+    },
     "name_again": {
         "en": "Sorry about that. Please tell me the patient's name again.",
         "hi": "माफ़ कीजिए। कृपया मरीज़ का नाम दोबारा बताइए।",
@@ -787,6 +808,44 @@ def split_age(text: str) -> tuple[int | None, str]:
         if m and 0 < int(m.group(1)) <= 120:
             return int(m.group(1)), (t[: m.start()] + " " + t[m.end():]).strip()
     return None, text
+
+
+def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, tag: str) -> bool:
+    """One of the details asked after the name and the number (the age, the address). The bare answer is the value; it is READ BACK and only a yes keeps it, a no
+    asks again, another value replaces it and is read back. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
+    from agent.booking_flow import classify_yes_no  # noqa: F401 - confirm_answer wraps it
+
+    pend_key, done_key = f"_{tag}_pending", f"_{tag}_done"
+    pend = st.slots.get(pend_key)
+    if pend is not None:
+        answer = confirm_answer(text, lang)
+        if answer == "yes":
+            st.slots.pop(pend_key, None)
+            plan.slots, plan.skip_model, plan.readback_answer = {field: pend}, True, True
+            return True
+        if answer == "no":
+            st.slots.pop(pend_key, None)
+            st.slots.pop(done_key, None)
+            st.asked_fields.add(field)
+            plan.speak = prompt(f"{tag}_again", lang)
+            return True
+        value = parse(text)
+        if value:
+            st.slots[pend_key] = value
+            plan.speak = prompt(f"{tag}_confirm", lang, value=value)
+            return True
+        plan.speak = prompt(f"{tag}_confirm", lang, value=pend)  # neither a yes, a no nor a value: the same question once more
+        return True
+    if field in st.asked_fields and not st.slots.get(field) and not st.slots.get(done_key):
+        value = parse(text)
+        if value:
+            st.slots[pend_key] = value
+            plan.speak = prompt(f"{tag}_confirm", lang, value=value)
+            return True
+        st.slots[done_key] = "1"  # no value in this answer: let it go
+        plan.slots, plan.skip_model = {}, True
+        return True
+    return False
 
 
 _BN_TENS = {"দশ": 10, "বিশ": 20, "ত্রিশ": 30, "চল্লিশ": 40, "পঞ্চাশ": 50, "ষাট": 60, "সত্তর": 70, "আশি": 80, "নব্বই": 90}
@@ -905,17 +964,9 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
             plan.speak = prompt("phone_confirm", lang, digits=" ".join(pending_phone))
             return plan
 
-    # 1c. The age or the address, asked one at a time (owner, 2026-10-18): the bare answer is that field.
+    # 1c. The age, then the address, each asked alone and each read back for a yes (owner, 2026-10-18).
     if st.action == "book_appointment" and st.slots.get("patient_name") and (st.slots.get("phone") or st.phone_declined):
-        if "patient_age" in st.asked_fields and not st.slots.get("patient_age") and not st.slots.get("_age_done"):
-            st.slots["_age_done"] = "1"
-            age = bare_age(text)
-            plan.slots, plan.skip_model = ({"patient_age": age} if age else {}), True  # an answer that is no age is let go, never asked twice
-            return plan
-        if "patient_address" in st.asked_fields and not st.slots.get("patient_address") and not st.slots.get("_address_done"):
-            st.slots["_address_done"] = "1"
-            address = bare_address(text)
-            plan.slots, plan.skip_model = ({"patient_address": address} if address else {}), True
+        if _detail_turn(st, text, lang, plan, "patient_age", bare_age, "age") or _detail_turn(st, text, lang, plan, "patient_address", bare_address, "address"):
             return plan
 
     # 2. "the first one / the second one" after the clinic offered other slots.
@@ -976,7 +1027,8 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         asked_time = "time_slot" in missing and (missing[0] == "time_slot" or "time_slot" in st.asked_fields)
         asked_day = "date" in missing
         if asked_time or asked_day or plan.phone is None:
-            when = read_when(text, asked_time, window=window, today=today, want_day=not st.slots.get("date"))
+            # a short answer ("কালকেই দিন") may also CHANGE a day already held; in a long sentence a day word is more likely history ("আজ সকাল থেকে জ্বর")
+            when = read_when(text, asked_time, window=window, today=today, want_day=(not st.slots.get("date")) or len(text.split()) <= 7)
             if when.time and not st.slots.get("time_slot") or when.time and asked_time:
                 plan.time = when.time
             elif when.time and st.slots.get("time_slot") and when.time != st.slots.get("time_slot"):
@@ -986,8 +1038,8 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
                 hh, mm = (int(x) for x in plan.time.split(":"))
                 if not window or not any(a <= hh * 60 + mm < b for a, b in window):
                     plan.time = None
-            if when.date and not st.slots.get("date"):
-                plan.date = when.date
+            if when.date and when.date != st.slots.get("date"):
+                plan.date = when.date  # the caller's own day word beats the model's reading of it
             if (plan.time or plan.date) and when.pure and not plan.digits:
                 found = {k: v for k, v in (("time_slot", plan.time), ("date", plan.date)) if v}
                 if asked_time or asked_day or len(found) == 2:

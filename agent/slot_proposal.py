@@ -175,6 +175,11 @@ def conclusion(doctor: str, date_iso: str, time: str, lang: str, now: datetime.d
     return _CONCLUDE[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time)
 
 
+_PAY_NOTICE = {
+    "bn": "আপনার হোয়াটসঅ্যাপে একটা পেমেন্ট লিংক পাঠানো হবে। পনেরো মিনিটের মধ্যে চল্লিশ টাকা পেমেন্ট করবেন, না হলে লিংকটা নিজে থেকেই বাতিল হয়ে যাবে। ",
+    "hi": "आपके व्हाट्सऐप पर एक पेमेंट लिंक भेजा जाएगा। पंद्रह मिनट के अंदर चालीस रुपये भुगतान कीजिए, वरना लिंक अपने आप बंद हो जाएगा। ",
+    "en": "A payment link will be sent to your WhatsApp. Please pay forty rupees within fifteen minutes, otherwise the link will expire automatically. ",
+}
 _ARRIVAL = {
     "bn": "{when} {time}-এ আপনি ওই সময়ে চলে আসুন, হাতে এক থেকে দুই ঘণ্টা সময় নিয়ে আসবেন। ঠিক আছে?",
     "hi": "{when} {time} बजे आप उसी समय आ जाइए, हाथ में एक से दो घंटे का समय लेकर आइए। ठीक है?",
@@ -186,7 +191,8 @@ def arrival_question(date_iso: str, time: str, lang: str, now: datetime.datetime
     """The LAST thing asked before a doctor booking is written (owner, 2026-10-18), after the name, the number, the age and the address have each been taken and
     confirmed one at a time: the day, the hour, and to come then with one to two hours in hand. The caller's "ঠিক আছে" books it."""
     lang = lang if lang in _ARRIVAL else "en"
-    return _ARRIVAL[lang].format(when=when_phrase(date_iso, lang, now), time=time)
+    # Owner, 2026-10-18: first what to pay and by when (the link goes to WhatsApp), THEN the day, the hour and "come with one to two hours in hand".
+    return _PAY_NOTICE[lang] + _ARRIVAL[lang].format(when=when_phrase(date_iso, lang, now), time=time)
 
 
 _CALL_AGAIN = {
