@@ -223,10 +223,9 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.booking_reply(slots, result, lang)
     if result.get("success"):
-        # The booking ID is given only after payment (owner, 2026-10-17); the payment-link sentence that follows says so.
-        from agent import slot_proposal
-
-        return slot_proposal.conclusion(_spoken_doctor_name(slots, result), result["date"], shown_time(slots, result["time_slot"]), "bn")
+        # The booking ID is given only after payment (owner, 2026-10-17); the payment-link sentence that follows says so. The day, the hour and "come with one to two
+        # hours in hand" were the question just answered with a yes (owner, 2026-10-18), so they are not said again.
+        return "ধন্যবাদ।"
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -294,10 +293,9 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str = "bn") ->
         # in main.py, before this readback runs) so it is omitted here
         # rather than repeated.
         # Owner, 2026-10-17: the name and the number were each confirmed already, so the final read-back does not say the ten digits again (15 s of speech).
-        return (
-            f"তাহলে {slots.get('doctor_name')} ডাক্তারের কাছে {slots.get('date')} তারিখে, "
-            f"সময় {shown_time(slots)}-এ, রোগীর নাম {slots.get('patient_name')} -- কনফার্ম করব?"
-        )
+        from agent import slot_proposal
+
+        return slot_proposal.arrival_question(slots.get("date"), shown_time(slots), "bn")
     if action == "book_test":
         # ", " not the ideographic "、" -- a stray full-width character
         # from an earlier edit, inconsistent with every other list-join

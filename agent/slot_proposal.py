@@ -175,6 +175,20 @@ def conclusion(doctor: str, date_iso: str, time: str, lang: str, now: datetime.d
     return _CONCLUDE[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time)
 
 
+_ARRIVAL = {
+    "bn": "{when} {time}-এ আপনি ওই সময়ে চলে আসুন, হাতে এক থেকে দুই ঘণ্টা সময় নিয়ে আসবেন। ঠিক আছে?",
+    "hi": "{when} {time} बजे आप उसी समय आ जाइए, हाथ में एक से दो घंटे का समय लेकर आइए। ठीक है?",
+    "en": "{when} at {time}, please come at that time, with one to two hours in hand. Is that all right?",
+}
+
+
+def arrival_question(date_iso: str, time: str, lang: str, now: datetime.datetime | None = None) -> str:
+    """The LAST thing asked before a doctor booking is written (owner, 2026-10-18), after the name, the number, the age and the address have each been taken and
+    confirmed one at a time: the day, the hour, and to come then with one to two hours in hand. The caller's "ঠিক আছে" books it."""
+    lang = lang if lang in _ARRIVAL else "en"
+    return _ARRIVAL[lang].format(when=when_phrase(date_iso, lang, now), time=time)
+
+
 _CALL_AGAIN = {
     "bn": "দুঃখিত, এই ডাক্তারের জন্য এখন কোনো ফাঁকা দিন বা সময় নেই। দয়া করে পরের তারিখের কথা জানতে আবার ফোন করবেন।",
     "hi": "माफ़ कीजिए, इस डॉक्टर के लिए अभी कोई खाली दिन या समय नहीं है। कृपया अगली तारीख के बारे में पूछने के लिए दोबारा फ़ोन कीजिए।",

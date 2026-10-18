@@ -224,10 +224,15 @@ def test_the_age_and_the_address_are_taken_one_at_a_time_from_the_bare_answer():
     assert bc.bare_age("পঁয়তাল্লিশ") == 45 and bc.bare_age("ষাট বছর") == 60 and bc.bare_age("হ্যাঁ") is None
 
 
-def test_the_booking_ends_with_the_sitting_hour_statement():
-    reply = rt.booking_reply({"_sits_start": "10:00"}, {"success": True, "doctor_name": "Dr. Biswajit Sen", "date": "2026-10-19", "time_slot": "10:10", "confirmation_id": "KCD-1"}, "en")
-    assert "sits" in reply and "one to two hours" in reply and "KCD-" not in reply and "10:10" not in reply
-    assert "এক থেকে দুই ঘণ্টা" in slot_proposal.conclusion("বিশ্বজিৎ সেন", "2026-10-19", "10:00", "bn")
+def test_the_last_question_is_the_day_the_hour_and_come_with_one_to_two_hours_in_hand():
+    slots = {"date": "2026-10-19", "time_slot": "10:10", "_sits_start": "10:00"}
+    bn = rt.booking_confirmation_readback(slots, "book_appointment", "bn")
+    assert bn.endswith("ঠিক আছে?") and "10:00-এ আপনি ওই সময়ে চলে আসুন" in bn and "এক থেকে দুই ঘণ্টা সময় নিয়ে আসবেন" in bn and "10:10" not in bn
+    en = rt.booking_confirmation_readback(slots, "book_appointment", "en")
+    assert "one to two hours in hand" in en and en.endswith("?")
+    # after the caller's yes the booking reply only thanks; the payment-link line follows
+    assert rt.booking_reply({}, {"success": True, "doctor_name": "Dr. Sen", "date": "2026-10-19", "time_slot": "10:10", "confirmation_id": "KCD-1"}, "bn") == "ধন্যবাদ।"
+
 
 
 # ---- 2026-10-18 calls: "who sits TOMORROW", "কে কে" is not a doctor, and "did you say forty-four?"
@@ -260,6 +265,8 @@ def test_the_caller_can_check_a_number_in_the_last_answer(monkeypatch):
     import types
 
     main = pytest.importorskip("main")
+    if not hasattr(main, "_answer_word_check"):
+        pytest.skip("`main` is the clinic API module here (another test imported it first): runs on the pod and alone")
     spoken = []
 
     async def fake_speak(session, text, lang=None, **kw):

@@ -2405,6 +2405,8 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         await _speak(session, f"{slot_proposal.not_sitting(lang)} {slot_proposal.proposal(doctor, nxt['date'], nxt['time_slot'], lang, sits_at=await _sits_start(st, nxt['date'], info))}", lang)
         return True
     if given and given in (info.get("free_slots") or []):
+        st.slots["_time_explicit"] = "1"  # the caller named this time: it is the one told back
+        st.slots["_time_ok"] = "yes"
         return False  # the caller named a time that is free: the normal hold secures it
     slot = slot_proposal.pick(info.get("free_slots") or [], st.slots["date"], skip=st.slots.get("_time_skip") or ())
     new_date = None
@@ -2420,14 +2422,17 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     key = {"bn": "doctor_name_bn", "hi": "doctor_name_hi"}.get(lang, "doctor_name")
     doctor = _bare_doctor_name(info.get(key) or info.get("doctor_name") or st.slots["doctor_name"])
     st.slots["time_slot"] = slot
-    st.slots["_time_ok"] = "pending"  # the name and number are asked only after the caller accepts this time
     sits = await _sits_start(st, new_date or st.slots["date"], info)
     if new_date:
+        # the day had to move (nothing left on the asked day): that IS a question for the caller
+        st.slots["_time_ok"] = "pending"
         st.slots["date"] = new_date
         await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.proposal(doctor, new_date, slot, lang, sits_at=sits)}", lang)
         return True
-    await _speak(session, slot_proposal.proposal(doctor, st.slots["date"], slot, lang, sits_at=sits), lang)
-    return True
+    # Owner, 2026-10-18: the day is the caller's own and the doctor sits that day. Nothing is asked about the time here: the slot is held quietly, the name, the number,
+    # the age and the address are asked one at a time, and the day / hour / "come with one to two hours in hand" is the last question (agent/slot_proposal.arrival_question).
+    st.slots["_time_ok"] = "yes"
+    return False
 
 
 _THESE = ("এইগুলোই", "এগুলোই", "এইগুলো", "এগুলো", "ওইগুলো", "ওগুলো", "এই টেস্ট", "এই টেস্টগুলো", "এইটাই", "এটাই", "सब यही", "यही", "ये ही", "यही सब", "ये सब", "वही सब",

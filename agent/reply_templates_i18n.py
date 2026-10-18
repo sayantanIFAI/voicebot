@@ -328,10 +328,7 @@ def clinic_faq_reply(slots: dict, result: dict, lang: str) -> str:
 def booking_reply(slots: dict, result: dict, lang: str) -> str:
     hi = lang == "hi"
     if result.get("success"):
-        doctor = _doctor_name(slots, result, lang)
-        if hi:
-            return slot_proposal.conclusion(doctor, result["date"], _shown(slots, result["time_slot"]), "hi")
-        return slot_proposal.conclusion(doctor, result["date"], _shown(slots, result["time_slot"]), "en")
+        return "धन्यवाद।" if hi else "Thank you."  # the day, hour and "come with one to two hours in hand" were the question just answered with a yes
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -416,15 +413,7 @@ def _shown(slots: dict, held: str | None = None) -> str:
 def booking_confirmation_readback(slots: dict, action: str, lang: str) -> str:
     hi = lang == "hi"
     if action == "book_appointment":
-        if hi:
-            return (
-                f"तो {slots.get('doctor_name')} डॉक्टर के पास {slots.get('date')} को, "
-                f"समय {_shown(slots)} पर, मरीज़ का नाम {slots.get('patient_name')} -- कन्फ़र्म कर दूँ?"
-            )
-        return (
-            f"So, with Dr. {slots.get('doctor_name')} on {slots.get('date')} at {_shown(slots)}, "
-            f"for {slots.get('patient_name')} -- shall I confirm this?"
-        )
+        return slot_proposal.arrival_question(slots.get("date"), _shown(slots), "hi" if hi else "en")
     if action == "book_test":
         tests = ", ".join(slots.get("_test_names_display", [])) or ("टेस्ट" if hi else "the tests")
         if hi:

@@ -16,6 +16,7 @@ _BENGALI = re.compile(r"[ঀ-৿]")
 
 
 def _script(text: str) -> str:
+    text = text.replace("।", "").replace("॥", "")  # the danda "।" is shared by Bengali and Hindi: it says nothing about the script
     if _DEVANAGARI.search(text):
         return "hi"
     if _BENGALI.search(text):
@@ -33,9 +34,11 @@ def test_booking_confirmation_readback_all_languages():
     }
     for lang in ("bn", "hi", "en"):
         reply = rt.booking_confirmation_readback(slots, "book_appointment", lang)
-        # SPEC CHANGE 2026-10-17: the number is confirmed on its own, so the final read-back does not repeat the ten digits
-        assert "2026-10-01" in reply and "18:15" in reply and "Ravi" in reply and "9800000001" not in reply
-        assert _script(reply) == lang or lang == "en"  # english readback embeds a latin doctor name either way
+        # SPEC CHANGE 2026-10-18: the name, the number, the age and the address were each confirmed one at a time, so the LAST question is the day, the hour and
+        # "come then with one to two hours in hand" -- and it ends in a question the caller's "ঠিক আছে" books
+        assert "2026-10-01" in reply and "18:15" in reply and "9800000001" not in reply and "Ravi" not in reply
+        assert reply.rstrip().endswith("?")
+        assert _script(reply) == lang or lang == "en"
 
 
 def test_reschedule_reply_success_and_failure_all_languages():
