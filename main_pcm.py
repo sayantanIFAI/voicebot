@@ -1039,6 +1039,7 @@ class CallSession:
         # acknowledgement is spoken once per state entry, not every turn.
         self.reask = ReaskTracker()
         self.dept_pending = None  # a question asked by agent/doctor_search.py and waiting for its answer
+        self.last_spoken = ""  # the last thing said to the caller (not the holding filler)
         self.last_route = None  # the department just suggested for a symptom (so a push-back is answered with the same suggestion)
         self.pending_prescription = None  # (test, turn): "do you have the prescription?" was just asked
         self.caller_numbers: list[str] = []  # numbers the caller has SAID in this call, newest last (used to call back an unresolved call)
@@ -1292,6 +1293,8 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
     if stacked:
         apology_events.record("stacked_removed", "reply", lang)
     await session.send_json("AI", text)
+    if not session.speaking_filler:
+        session.last_spoken = text  # the caller may ask about a word of it ("চুয়াল্লিশ বললেন?")
     clauses = split_into_clauses(text) or [text]
 
     total_duration = 0.0
@@ -2793,18 +2796,78 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
 
 
 
+# ---- the caller checks a word of the answer: "চুয়াল্লিশ বললেন?" ("did you say forty-four?") -----------------------------------------------------------
+_CHECK_CUES = (
+    "বললেন", "বলেছেন", "বলছেন", "বললে", "বলেছিলেন", "বলল", "মানে", "বলেছিলে",
+    "did you say", "you said", "you mean", "do you mean", "is it", "was it",
+    "क्या कहा", "आपने कहा", "कहा आपने", "कहा", "मतलब", "बोला", "बोले",
+)
+_BN_DIGIT_WORD = ["শূন্য", "এক", "দুই", "তিন", "চার", "পাঁচ", "ছয়", "সাত", "আট", "নয়"]
+_HI_DIGIT_WORD = ["शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ"]
+_EN_DIGIT_WORD = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+_ANY_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯०१२३४५६७८९", "01234567890123456789")
+
+
+def _digit_words(n: int, lang: str) -> str:
+    table = {"bn": _BN_DIGIT_WORD, "hi": _HI_DIGIT_WORD}.get(lang, _EN_DIGIT_WORD)
+    return " ".join(table[int(d)] for d in str(n))
+
+
+async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool:
+    """The caller wants to be sure of a word in what was just said ("চুয়াল্লিশ বললেন?", "did you say forty-four?"). A number they name is looked for in the last
+    thing the agent said: if it is there, it is confirmed digit by digit and the sentence is said again; if it is not, they are told plainly it was not said and
+    what was. Only for a short sentence that asks (a checking word) about a number -- never a guess about anything else."""
+    last = getattr(session, "last_spoken", "") or ""
+    low = " ".join(text.lower().split())
+    if not last or len(low.split()) > 10 or not any(c in low for c in _CHECK_CUES):
+        return False
+    n = owner_answers.spoken_number(text)
+    if n is None:
+        return False
+    said = re.sub(r"(?<=\d),(?=\d)", "", last.translate(_ANY_DIGITS))
+    present = re.search(rf"(?<!\d){n}(?!\d)", said) is not None
+    sentences = [s.strip() for s in re.split(r"(?<=[।.?!])\s+", last) if s.strip()]
+    holder = next((s for s in sentences if re.search(rf"(?<!\d){n}(?!\d)", re.sub(r"(?<=\d),(?=\d)", "", s.translate(_ANY_DIGITS)))), last)
+    digits = _digit_words(n, lang)
+    if present:
+        spoken = {
+            "bn": f"জি, ঠিক ধরেছেন। {n} মানে {digits}। আবার বলছি: {holder}",
+            "hi": f"जी, आपने सही सुना। {n} यानी {digits}। फिर से बताती हूँ: {holder}",
+            "en": f"Yes, that is right: {n} is {digits}. Once more: {holder}",
+        }[lang if lang in ("bn", "hi") else "en"]
+    else:
+        spoken = {
+            "bn": f"না, আমি {n} বলিনি। আমি বলেছিলাম: {last}",
+            "hi": f"नहीं, मैंने {n} नहीं कहा। मैंने कहा था: {last}",
+            "en": f"No, I did not say {n}. What I said was: {last}",
+        }[lang if lang in ("bn", "hi") else "en"]
+    await _speak(session, spoken, lang)
+    return True
+
+
 async def _answer_department_doctors(session: CallSession, text: str, lang: str) -> bool:
     """"who are the doctors in cardio" (agent/dept_list.py): the department's short form is resolved by the clinic API; the answer is the real list,
     who sits today first, and the caller chooses. No advice, no test, no medicine."""
     if not dept_list.asks_doctor_list(text):
         return False
+    # Real call 2026-10-18: "কার্ডিওলজি বিভাগে কালকে কোন কোন ডাক্তার বসছে" (who sits TOMORROW) was answered with the list and "nobody sits today". A day or an hour in the
+    # question is the day / hour asked about: the doctors who really sit then, with their hours.
+    when = booking_capture.read_when(text, False, want_day=True)
+    on_date, at_time = (when.date or None), (when.time or None)
     try:
-        result = await _tools.department_doctors(text, lang)
+        result = await _tools.department_doctors(text, lang, on_date=on_date, at_time=at_time)
     except ToolCallError:
         return False
     if not result.get("matched"):
         return False
-    await _speak(session, _with_resume(session, department_route_reply(result, "", lang), lang), lang)
+    if on_date or at_time:
+        sitting = result.get("sitting") or []
+        label = _dept_label(result["department_name"], lang)
+        if sitting:
+            session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count}
+        await _speak(session, _with_resume(session, doctor_search.sitting_list_reply(sitting, _when_phrase(on_date, at_time, lang), label, lang), lang), lang)
+        return True
+    await _speak(session, _with_resume(session, department_route_reply({**result, "department_name": _dept_label(result["department_name"], lang)}, "", lang), lang), lang)
     return True
 
 
@@ -3669,6 +3732,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # call -- decided here, before the model (which only ever sees this one sentence), and answered from live
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
+            return
+        if await _answer_word_check(session, text, lang):
             return
         if await _answer_prescription(session, text, lang):
             return

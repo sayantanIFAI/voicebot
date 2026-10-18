@@ -31,6 +31,20 @@ def _has(t: str, words: tuple[str, ...]) -> bool:
     return any((f" {w} " in padded) if w.isascii() else (w in t) for w in words)
 
 
+_SITS = (
+    "বসছে", "বসছেন", "বসবে", "বসবেন", "বসেন", "বসে", "বসতেন", "বসেছেন", "বসছে।",
+    "बैठ", "बैठते", "बैठेंगे", "बैठ रहे", "बैठती",
+    "sits", "sitting", "sit ", "available", "consulting", "attending", "are there", "will be there",
+)
+
+
+def asks_who_sits(text: str) -> bool:
+    """"কালকে কে কে বসছে কার্ডিওলজি" -- who sits (in a department) on a day. There is no doctor word in it, and "কে কে" ("who, who") is a question about people, never a
+    doctor named "কে কে" (real call 2026-10-18)."""
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 16 and _has(t, _LIST) and _has(t, _SITS)
+
+
 def asks_doctor_list(text: str) -> bool:
     t = _norm(text)
-    return bool(t) and len(t.split()) <= 16 and _has(t, _DOCTOR) and _has(t, _LIST)
+    return bool(t) and len(t.split()) <= 16 and ((_has(t, _DOCTOR) and _has(t, _LIST)) or asks_who_sits(text))

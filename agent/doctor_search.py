@@ -188,6 +188,22 @@ def sitting_pick_question(names: list[str], when_phrase: str, lang: str) -> str:
     }[lang]
 
 
+def sitting_list_reply(sitting: list[dict], when_phrase: str, dept_label: str, lang: str) -> str:
+    """"Who sits in cardiology tomorrow": each doctor with the hours, from the real schedule. Never today's list for a question about tomorrow."""
+    def one(s: dict) -> str:
+        hours = f" ({s['start']}-{s['end']})" if s.get("start") and s.get("end") else ""
+        return f"{s['name']}{hours}"
+
+    names = [one(s) for s in sitting]
+    if not names:
+        return nobody_sits(when_phrase, [], lang)
+    return {
+        "bn": f"{when_phrase} {dept_label} বিভাগে বসছেন {_join(names, lang)}। কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
+        "hi": f"{when_phrase} {dept_label} विभाग में बैठ रहे हैं {_join(names, lang)}। किसके पास अपॉइंटमेंट चाहिए?",
+        "en": f"{when_phrase} in {dept_label}: {_join(names, lang)}. Whom would you like an appointment with?",
+    }[lang]
+
+
 def nobody_sits(when_phrase: str, others: list[str], lang: str) -> str:
     if others:
         return {

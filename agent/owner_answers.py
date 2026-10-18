@@ -201,7 +201,8 @@ _BN_NUM = {
 }
 _HI_NUM = {
     "एक": 1, "दो": 2, "तीन": 3, "चार": 4, "पाँच": 5, "पांच": 5, "छह": 6, "छः": 6, "सात": 7, "आठ": 8, "नौ": 9, "दस": 10, "ग्यारह": 11, "बारह": 12, "तेरह": 13, "चौदह": 14, "पंद्रह": 15,
-    "सोलह": 16, "सत्रह": 17, "अठारह": 18, "उन्नीस": 19, "बीस": 20, "इक्कीस": 21, "बाईस": 22, "तेईस": 23, "चौबीस": 24, "पच्चीस": 25, "तीस": 30, "चालीस": 40, "पचास": 50,
+    "सोलह": 16, "सत्रह": 17, "अठारह": 18, "उन्नीस": 19, "बीस": 20, "इक्कीस": 21, "बाईस": 22, "तेईस": 23, "चौबीस": 24, "पच्चीस": 25, "छब्बीस": 26, "सत्ताईस": 27, "अट्ठाईस": 28, "उनतीस": 29, "तीस": 30,
+    "इकतीस": 31, "बत्तीस": 32, "तैंतीस": 33, "चौंतीस": 34, "पैंतीस": 35, "छत्तीस": 36, "सैंतीस": 37, "अड़तीस": 38, "उनतालीस": 39, "चालीस": 40, "इकतालीस": 41, "बयालीस": 42, "तैंतालीस": 43, "चौवालीस": 44, "पैंतालीस": 45, "छियालीस": 46, "सैंतालीस": 47, "अड़तालीस": 48, "उनचास": 49, "पचास": 50,
 }
 _EN_NUM = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
@@ -223,6 +224,21 @@ def token_number(text: str) -> int | None:
             if (w in t.split()) or (not w.isascii() and w in t):
                 return table[word]
     return None
+
+
+def spoken_number(text: str) -> int | None:
+    """A number said in the sentence -- digits, a Bengali / Hindi number word, or an English one, compound ("forty four") included."""
+    t = _norm(text).translate(_DIG)
+    m = re.search(r"(?<!\d)(\d{1,4})(?!\d)", t)
+    if m:
+        return int(m.group(1))
+    words = t.split()
+    tens = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
+    for i, w in enumerate(words):
+        if w in tens:
+            unit = _EN_NUM.get(words[i + 1]) if i + 1 < len(words) else None
+            return tens[w] + (unit if unit and unit < 10 else 0)
+    return token_number(text)
 
 
 def asks_token_arrival(text: str) -> bool:

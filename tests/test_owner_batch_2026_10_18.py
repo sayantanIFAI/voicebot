@@ -3,6 +3,8 @@
 import os
 import sys
 
+import pytest
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -226,3 +228,50 @@ def test_the_booking_ends_with_the_sitting_hour_statement():
     reply = rt.booking_reply({"_sits_start": "10:00"}, {"success": True, "doctor_name": "Dr. Biswajit Sen", "date": "2026-10-19", "time_slot": "10:10", "confirmation_id": "KCD-1"}, "en")
     assert "sits" in reply and "one to two hours" in reply and "KCD-" not in reply and "10:10" not in reply
     assert "এক থেকে দুই ঘণ্টা" in slot_proposal.conclusion("বিশ্বজিৎ সেন", "2026-10-19", "10:00", "bn")
+
+
+# ---- 2026-10-18 calls: "who sits TOMORROW", "কে কে" is not a doctor, and "did you say forty-four?"
+def test_who_sits_tomorrow_in_a_department_is_a_list_question_with_or_without_the_word_doctor():
+    from agent import dept_list
+
+    assert dept_list.asks_doctor_list("কার্ডিওলজি বিভাগে কালকে কোন কোন ডাক্তার বসছে")
+    assert dept_list.asks_doctor_list("কালকে কে কে বসছে কার্ডিওলজি")  # no doctor word: "কে কে" is "who, who"
+    assert dept_list.asks_doctor_list("आज कौन कौन बैठ रहे हैं कार्डियोलॉजी")
+    assert not dept_list.asks_doctor_list("কার্ডিওলজির ডাক্তার কেমন")
+
+
+def test_the_list_for_a_day_names_the_doctors_and_their_hours_never_todays_list():
+    sitting = [{"name": "কৌশিক ভট্টাচার্য", "start": "10:00", "end": "12:00"}, {"name": "নির্মল রায়", "start": "10:00", "end": "12:00"}]
+    text = doctor_search.sitting_list_reply(sitting, "আগামীকাল", "কার্ডিওলজি", "bn")
+    assert "আগামীকাল" in text and "কৌশিক ভট্টাচার্য (10:00-12:00)" in text and "আজ" not in text
+    assert "Nobody" in doctor_search.sitting_list_reply([], "tomorrow", "Cardiology", "en")
+
+
+def test_a_spoken_number_is_read_from_digits_and_from_words_in_three_languages():
+    assert owner_answers.spoken_number("চুয়াল্লিশ বললেন") == 44
+    assert owner_answers.spoken_number("অযাড্ড্রেস টাই চুয়াল্লিশ বললেন") == 44
+    assert owner_answers.spoken_number("did you say forty four") == 44
+    assert owner_answers.spoken_number("आपने पैंतालीस कहा") == 45
+    assert owner_answers.spoken_number("৪৪ বললেন") == 44
+
+
+def test_the_caller_can_check_a_number_in_the_last_answer(monkeypatch):
+    import asyncio
+    import types
+
+    main = pytest.importorskip("main")
+    spoken = []
+
+    async def fake_speak(session, text, lang=None, **kw):
+        spoken.append(text)
+
+    monkeypatch.setattr(main, "_speak", fake_speak)
+    last = "আমাদের ক্লিনিকের ঠিকানা ৪৪, সি আই টি রোড, লেডিজ পার্কের কাছে, বেনিয়াপুকুর, কলকাতা।"
+    session = types.SimpleNamespace(last_spoken=last)
+    assert asyncio.run(main._answer_word_check(session, "চুয়াল্লিশ বললেন", "bn"))
+    assert "ঠিক ধরেছেন" in spoken[0] and "চার চার" in spoken[0] and "সি আই টি রোড" in spoken[0]
+    spoken.clear()
+    assert asyncio.run(main._answer_word_check(session, "তেতাল্লিশ বললেন", "bn"))
+    assert spoken[0].startswith("না, আমি 43 বলিনি")
+    assert not asyncio.run(main._answer_word_check(session, "কালকে কে কে বসছে", "bn"))
+    assert not asyncio.run(main._answer_word_check(types.SimpleNamespace(last_spoken=""), "চুয়াল্লিশ বললেন", "bn"))
