@@ -144,8 +144,19 @@ def test_a_number_said_in_groups_is_answered_with_ok_in_each_gap():
     st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey")
     st.asked_fields.add("phone")
     assert bc.before_model(st, "98 76", "en").speak == "Okay, go on."
-    assert bc.before_model(st, "54 32", "en").speak == "Okay, go on."
+    # six digits or more and still short: what was heard is said, so a caller who FINISHED the number knows it came out short (real call 2026-10-18)
+    assert bc.before_model(st, "54 32", "en").speak == "Okay, I have 9 8 7 6 5 4 3 2 so far. Please say the rest."
     assert bc.prompt("phone_partial", "bn", n=4) == "ঠিক আছে, বলুন।"
+
+
+def test_a_digit_word_the_recogniser_lengthened_is_still_that_digit():
+    assert bc.read_digits("নাইন সিক্স থ্রি ডবল ফাইভল নাইট থ্রি জিরো ওন")[0] == "963558301"  # "ফাইভল" is a five, "ডবল" doubles it
+    assert bc.read_digits("এইটা আমার নাম")[0] == "" and bc.read_digits("তিনি এসেছেন")[0] == ""  # "this one" / "he" are no digits
+
+
+def test_the_payment_notice_ends_with_the_serial_number_line():
+    assert "আপনি সিরিয়াল নম্বর পেয়ে যাবেন।" in slot_proposal.arrival_question("2026-10-19", "10:00", "bn")
+    assert "You will get your serial number." in slot_proposal.arrival_question("2026-10-19", "10:00", "en")
 
 
 # ---- 1 / 5. the doctor sits at ... come then with one to two hours in hand; nothing free -> call again

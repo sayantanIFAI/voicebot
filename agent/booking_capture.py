@@ -78,6 +78,11 @@ _PLURAL_DIGIT = {"zeros": "0", "ones": "1", "twos": "2", "threes": "3", "fours":
 _COUNT_WORD = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 
 
+# English digit words written in Bengali / Devanagari letters: the recogniser often adds a letter or two ("ফাইভল", "সেভেনে", "नाइनटा"). Real call 2026-10-18: "ফাইভল" was
+# not a digit, the number came out seven digits long and the caller was only told "ok".
+_LOAN_DIGIT_WORDS = {w: d for w, d in _EXTRA_DIGIT_WORD.items() if not w.isascii() and len(w) >= 3 and w != "এইট"}  # "এইটা" is "this one", never an eight
+
+
 def _digit_of(tok: str) -> str | None:
     tok = tok.lstrip("+")
     if tok.isdigit() and len(tok) == 1:
@@ -86,6 +91,9 @@ def _digit_of(tok: str) -> str | None:
         return _DIGIT_WORDS[tok]
     if tok in _PLURAL_DIGIT:
         return _PLURAL_DIGIT[tok]
+    for word in sorted(_LOAN_DIGIT_WORDS, key=len, reverse=True):
+        if tok.startswith(word) and len(tok) - len(word) <= 2:
+            return _LOAN_DIGIT_WORDS[word]
     return None
 
 
@@ -123,6 +131,8 @@ def read_digits(text: str) -> tuple[str, int, int]:
             digit = _DIGIT_WORDS[tok]
         elif tok in _PLURAL_DIGIT:
             digit = _PLURAL_DIGIT[tok]
+        elif _digit_of(tok) is not None:
+            digit = _digit_of(tok)  # a digit word the recogniser lengthened ("ফাইভল")
         else:
             times = 1
             continue
@@ -644,6 +654,11 @@ _PROMPTS = {
         "hi": "ठीक है, बोलिए।",
         "bn": "ঠিক আছে, বলুন।",
     },
+    "phone_partial_long": {
+        "en": "Okay, I have {digits} so far. Please say the rest.",
+        "hi": "ठीक है, अभी तक {digits} मिला है। बाकी बताइए।",
+        "bn": "ঠিক আছে, এখন পর্যন্ত {digits} পেয়েছি। বাকিটা বলুন।",
+    },
     "phone_invalid": {
         "en": "That does not look like a 10-digit mobile number. Please say it again, digit by digit.",
         "hi": "यह 10 अंकों का मोबाइल नंबर नहीं लग रहा। कृपया एक-एक अंक करके दोबारा बताइए।",
@@ -993,7 +1008,9 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     elif step.status == "partial":
         st.phone_buffer = step.buffer
         plan.digits = True
-        spoken = prompt("phone_partial", lang, n=len(step.buffer))
+        # a few digits so far: "ok, go on" (a number said in groups). Nearly all of it (6 or more): say what was heard, so a caller who FINISHED a number that came out short
+        # knows which digits are missing -- an "ok" alone made them think it was complete (real call 2026-10-18).
+        spoken = prompt("phone_partial_long" if len(step.buffer) >= 6 else "phone_partial", lang, n=len(step.buffer), digits=" ".join(step.buffer))
         if step.pure:
             plan.speak = spoken
         else:
