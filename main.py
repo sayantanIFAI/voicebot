@@ -1492,7 +1492,7 @@ async def _queue_unresolved_callback(session: CallSession) -> None:
 
 
 
-async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[str, ...] | None = None):
+async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[str, ...] | None = None, announce: bool = True):
     """Tell the caller and the telephony bridge that a person is taking over.
 
     The `handoff_human` frame is the machine-readable half: the SBC/bridge
@@ -1526,7 +1526,7 @@ async def _handoff_to_human(session: CallSession, reason: str, languages: tuple[
     with contextlib.suppress(Exception):
         await session.ws.send_text(json.dumps({"type": "handoff_human", "reason": reason}))
     total = 0.0
-    for lang in languages or (session.lang,):
+    for lang in (languages or (session.lang,)) if announce else ():  # announce=False: the caller was already told why (phrase "handoff_better")
         with contextlib.suppress(Exception):
             total += await _speak(session, phrase("handoff", lang), lang)
     # Let the notice finish playing before the socket closes under it.
@@ -1557,7 +1557,7 @@ async def _reask_or_handoff(
     if decision.action == "handoff":
         for lg in langs:
             await _speak(session, phrase("reask_final", lg) + " " + phrase("handoff_better", lg), lg)
-        await _handoff_to_human(session, f"unintelligible:{decision.reason}", langs)
+        await _handoff_to_human(session, f"unintelligible:{decision.reason}", langs, announce=False)
         return
     for lg in langs:
         text = phrase(decision.phrase_key, lg)
@@ -2731,6 +2731,15 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                     await _speak(session, _with_resume(session, department_route_reply({**result, "department_name": _dept_label(result["department_name"], lang)}, "", lang), lang), lang)
                     return True
             return False
+        if pend["kind"] == "confirm_one":
+            if booking_capture.confirm_answer(text, lang) == "yes":
+                item = pend["doctor"]
+                session.last_doctor_enquiry = {
+                    "doctor_name": _resolve_doctor_for_booking(item), "date": pend["date"],
+                    "window": f"{item.get('start')}-{item.get('end')}" if item.get("start") else None, "turn": session.turn_count,
+                }  # the sitting was just told: the booking does not tell it again
+                return {"intent": "book_appointment", "slots": {"doctor_name": _resolve_doctor_for_booking(item), "date": pend["date"], "time_slot": pend.get("time")}}
+            return False
         if pend["kind"] == "pick":
             low = text.lower()
             hits = [
@@ -2744,6 +2753,10 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                     if idx < len(pend["doctors"]) and doctor_search._has(doctor_search._norm(text), words) and len(text.split()) <= 4:  # noqa: SLF001
                         hits = [pend["doctors"][idx]]
             if len(hits) == 1:
+                session.last_doctor_enquiry = {  # the list just said when each of them sits: the booking does not say it again
+                    "doctor_name": _resolve_doctor_for_booking(hits[0]), "date": pend.get("date"),
+                    "window": f"{hits[0].get('start')}-{hits[0].get('end')}" if hits[0].get("start") else None, "turn": session.turn_count,
+                }
                 return {
                     "intent": "book_appointment",
                     "slots": {"doctor_name": _resolve_doctor_for_booking(hits[0]), "date": pend.get("date"), "time_slot": pend.get("time")},
@@ -2786,7 +2799,9 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
         phrase_when = _when_phrase(on_date, at_time, lang)
         if len(sitting) == 1:
             item = sitting[0]
-            return {"intent": "book_appointment", "slots": {"doctor_name": _resolve_doctor_for_booking(item), "date": on_date, "time_slot": at_time}}
+            session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": on_date, "time": at_time, "turn": session.turn_count}
+            await _speak(session, slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang), lang)
+            return True
         if len(sitting) > 1:
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count}
             await _speak(session, doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang), lang)
@@ -3999,7 +4014,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             if session.unclear_streak >= 3:
                 # owner 2026-10-18: after three tries the AI could not answer, it says it is routing the caller to a person to help better
                 await _speak(session, phrase("handoff_better", lang), lang)
-                await _handoff_to_human(session, "unanswered_x3", (lang,))
+                await _handoff_to_human(session, "unanswered_x3", (lang,), announce=False)
                 return
             await _speak(session, phrase("unclear", lang), lang)
             return

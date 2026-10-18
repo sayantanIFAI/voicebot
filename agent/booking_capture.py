@@ -205,6 +205,8 @@ def absorb(buffer: str, text: str, asked: bool) -> PhoneStep:
         candidate = digits  # the caller repeated what they already said, then went on
     elif buffer and buffer.endswith(digits):
         candidate = buffer  # the same tail repeated: do not add it twice
+    elif buffer and len(buffer) + len(digits) > 10 and len(digits) >= 7:
+        candidate = digits  # more than a number's worth of digits, and the new ones are nearly a whole number: the caller started again
     else:
         candidate = buffer + digits
     done = phone_from_digits(candidate)

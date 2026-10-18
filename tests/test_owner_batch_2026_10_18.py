@@ -320,3 +320,12 @@ def test_kalkei_is_tomorrow_and_the_callers_day_word_beats_the_models_reading():
     plan2 = bc.before_model(st2, "কালকেই করে দিন", "bn", today=today)
     assert plan2.date == "2026-10-19"
     assert bc.read_when("পরশুই করুন", False, today=today).date == "2026-10-20" and bc.read_when("আজই", False, today=today).date == "2026-10-18"
+
+
+def test_a_number_started_again_replaces_the_pieces_instead_of_adding_to_them():
+    from agent.booking_capture import absorb
+
+    step = absorb("9876", "নাইন সিক্স থ্রি ডবল ফাইভ এইট থ্রি জিরো ওয়ান ফোর", True)  # 4 old digits + a whole new number: the caller started over
+    assert step.status == "complete" and step.number == "9635583014"
+    step2 = absorb("9876", "five four three", True)  # a real continuation is still added
+    assert step2.status == "partial" and step2.buffer == "9876543"
