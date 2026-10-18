@@ -3023,7 +3023,8 @@ async def _answer_named_total(session: CallSession, text: str, lang: str) -> boo
     for n in names:
         if n.strip().lower() not in [x.strip().lower() for x in session.priced_tests]:
             session.priced_tests.append(n)
-    await _speak(session, _with_resume(session, multi_test_rate_reply(results, lang), lang), lang)
+    prefix = _done_here(text, lang, True, all(r.get("found") for _n, r in results))  # "Yes, we do these tests here." first, when that was the question
+    await _speak(session, _with_resume(session, prefix + multi_test_rate_reply(results, lang), lang), lang)
     return True
 
 

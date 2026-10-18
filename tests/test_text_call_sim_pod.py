@@ -68,7 +68,7 @@ def test_the_number_given_in_pieces_and_then_again_whole_is_the_whole_one():
         "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "ঠিক", "নয় আট", "সাত ছয়",
         "নাইন সিক্স থ্রি ডবল ফাইভ এইট থ্রি জিরো ওয়ান ফোর",
     )
-    assert "9 6 3 5 5 8 3 0 1 4। এটা কি ঠিক?" in _said(t, 6)
+    assert "আমি নম্বরটা শুনেছি 9 6 3 5 5 8 3 0 1 4। রোগীর বয়স কত?" in _said(t, 6)  # the whole number, read back, with the age asked next
 
 def test_in_bengali_the_answer_starts_with_hanyan_not_ji():
     t = _run("আমি কি সোনা স্কান এর সাথে কথা বলছি")
@@ -76,7 +76,8 @@ def test_in_bengali_the_answer_starts_with_hanyan_not_ji():
 
 
 def test_anything_the_agent_said_can_be_asked_back_across_scripts():
-    t = _run("आप लोगों का एड्रेस क्या है", "বেনিয়া পুকুর কেয়া")
+    # the call is in Hindi (the caller asked for it); the address is read in Hindi, the caller asks back in Bengali letters
+    t = asyncio.run(text_call_sim.run(["आप लोगों का एड्रेस क्या है", "বেনিয়া পুকুর কেয়া"], lang="hi"))
     assert "बेनियापुकुर" in _said(t, 0)
     assert "सही" in _said(t, 1) and "बेनियापुकुर" in _said(t, 1) and "समझ नहीं पाई" not in _said(t, 1)
 
@@ -108,19 +109,20 @@ def test_each_read_back_asks_the_next_question_and_the_next_answer_is_the_yes():
 def test_the_whole_order_name_number_age_address_each_read_back_then_payment_notice_then_the_arrival_question():
     t = _run(
         "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই দিল আমাকে অযাপ্ফোন্টমেন্ট টা", "সায়ন দাস", "ठीक",
-        "নয় আট সাত ছয় পাঁচ চার তিন দুই এক শূন্য", "হ্যাঁ", "পঁয়তাল্লিশ", "ঠিক আছে", "বেনিয়াপুকুর কলকাতা", "হ্যাঁ ঠিক আছে", "হ্যাঁ ঠিক আছে",
+        "নয় আট সাত ছয় পাঁচ চার তিন দুই এক শূন্য", "হ্যাঁ", "পঁয়তাল্লিশ", "ঠিক আছে", "বেনিয়াপুকুর কলকাতা", "বেনিয়াপুকুর থানা", "হ্যাঁ ঠিক আছে", "হ্যাঁ ঠিক আছে",
     )
     assert "আপনার নামটা বলবেন" in _said(t, 1)
-    assert "এটা কি ঠিক?" in _said(t, 2)  # the name, read back
-    assert "আপনার নম্বরটা বলবেন" in _said(t, 3)  # a Hindi "ठीक" is a yes
-    assert "এটা কি ঠিক?" in _said(t, 4) and "9 8 7 6 5 4 3 2 1 0" in _said(t, 4)  # the number, read back
-    assert "রোগীর বয়স কত?" in _said(t, 5)
-    assert "বয়স 45 বছর, ঠিক আছে?" in _said(t, 6)
+    assert "আমি নামটা শুনেছি সায়ন দাস। আপনার নম্বরটা বলবেন" in _said(t, 2)  # the name, with the number asked in the same breath
+    assert "আপনার নম্বরটা বলবেন" in _said(t, 3)  # a Hindi "ठीক" is a yes; the number is asked again
+    assert "আমি নম্বরটা শুনেছি 9 8 7 6 5 4 3 2 1 0। রোগীর বয়স কত?" in _said(t, 4)  # the number, with the age asked next
+    assert "রোগীর বয়স কত?" in _said(t, 5)  # a bare yes: the age is asked again
+    assert "রোগীর বয়স 45 বছর। ঠিকানাটা বলবেন?" in _said(t, 6)
     assert "ঠিকানাটা বলবেন?" in _said(t, 7)
-    assert "ঠিকানা বেনিয়াপুকুর কলকাতা। ঠিক আছে?" in _said(t, 8)
+    assert "থানার নামটা বলবেন?" in _said(t, 8)  # no police station in the address
     last_question = _said(t, 9)
+    assert "ঠিকানা বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা শুনেছি" in last_question
     assert last_question.index("চল্লিশ টাকা") < last_question.index("চলে আসুন") and last_question.rstrip().endswith("ঠিক আছে?")
-    assert "এক থেকে দুই ঘণ্টা সময় নিয়ে আসবেন" in last_question
+    assert "আপনি সিরিয়াল নম্বর পেয়ে যাবেন" in last_question and "এক থেকে দুই ঘণ্টা সময় নিয়ে আসবেন" in last_question
     closing = _said(t, 10)
     assert "স্লট রাখা হয়েছে" in closing and "বুকিং আইডি" in closing and "KCD-" not in closing
 

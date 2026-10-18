@@ -51,12 +51,22 @@ def _tokens(text: str) -> list[str]:
     return [t for t in re.split(r"[\s,।.?!;:\-()\"']+", unicodedata.normalize("NFC", text or "")) if t]
 
 
+# Little words that answer or soften a sentence are never the thing asked back ("ঠিক আছে" is an answer, not a question about the words "ঠিক আছে" in the agent's last sentence).
+_STOP = frozenset(
+    "ঠিক আছে আছে হ্যাঁ হ্যা হাঁ না নাকি কি কী কেয়া তো ই জি ওকে এটা ওটা এই ওই সেই এ ও আর এবং তাই সঠিক বলুন বলবেন বললেন বলেছেন "
+    "ठीक है हाँ हां जी नहीं ना क्या ही तो यह वह ये वो और सही बताइए "
+    "ok okay yes no is it that the a an right correct ji haan han hai ki kya".split()
+)
+
+
 def _candidates(tokens: list[str]) -> list[tuple[str, str]]:
     """(the words as said, their skeleton) for every word and every run of two or three words joined: "বেনিয়া পুকুর" is the one word "বেনিয়াপুকুর" in the agent's sentence."""
     out = []
     for n in (1, 2, 3):
         for i in range(len(tokens) - n + 1):
             chunk = tokens[i : i + n]
+            if all(t.lower() in _STOP for t in chunk):
+                continue
             sk = skeleton("".join(chunk))
             if len(sk) >= 3:
                 out.append((" ".join(chunk), sk))
