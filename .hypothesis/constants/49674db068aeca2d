@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\tools\history_audit.py
+# hypothesis_version: 6.168.1
+
+['--statuses', '__main__', 'ambiguous', 'ask_phone', 'ask_which_test', 'cannot_confirm', 'cannot_see', 'clean', 'continuity_offer', 'due', 'due:no', 'due:yes', 'events', 'fixed', 'grounded', 'history', 'id', 'kind', 'known', 'needs_verification', 'no_record', 'ok_anything_else', 'orphans', 'payload', 'security_failed', 'security_not_matched', 'security_question', 'security_verified', 'senior_opening', 'spoken', 'statements', 'timeline', 'utf-8']

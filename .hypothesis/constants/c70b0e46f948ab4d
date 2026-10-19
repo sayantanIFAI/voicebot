@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\tools\asr_eval.py
+# hypothesis_version: 6.168.1
+
+['  n/a', '--catalogue', '--hyp', '--json', '--lock', '--manifest', '--split', '/api/v1/catalogue', '__main__', 'bn', 'by_language', 'by_tag', 'cer', 'dev', 'difficulty tag', 'en', 'entities', 'hi', 'hyp', 'id', 'kind', 'language', 'normalized', 'normalized_by_caller', 'normalized_wer', 'overall', 'real', 'store_true', 'synthetic', 'test', 'tests', 'train', 'utf-8', 'utterances', 'value', 'w', 'wer']

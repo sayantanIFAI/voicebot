@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\history_templates.py
+# hypothesis_version: 6.168.1
+
+['ambiguous', 'ask_phone', 'ask_which_test', 'bn', 'cannot_confirm', 'cannot_find', 'cannot_see', 'confirmation_id', 'confirmed', 'date', 'doctor_name', 'due', 'due:no', 'due:yes', 'en', 'fields', 'hi', 'medicine_name', 'needs_verification', 'no_record', 'ok_anything_else', 'performed_on', 'prescribed_on', 'status', 'test_name', 'time_slot']

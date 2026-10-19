@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\tts_server.py
+# hypothesis_version: 6.168.1
+
+[422, 22050, '-', '/health', '/speakers', '/synthesize', '1.08', 'PCM_16', 'TTS_CHECKPOINTS_ROOT', 'TTS_LENGTH_SCALE', 'TTS_SPEAKER', 'WAV', '_', 'application/json', 'audio/wav', 'bn', 'default', 'en', 'female', 'hi', 'languages', 'length_scale', 'ok', 'prosody_defaults', 'sample_rates', 'sentence', 'speaker', 'speakers', 'status']

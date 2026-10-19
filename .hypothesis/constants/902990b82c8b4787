@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\audio_quality.py
+# hypothesis_version: 6.168.1
+
+[-120.0, -100.0, -50.0, -38.0, -30.0, -24.0, -22.0, 1e-12, 1e-09, 1e-06, 0.001, 0.01, 0.04, 0.05, 0.07, 0.1, 0.12, 0.2, 0.25, 0.35, 0.4, 0.45, 0.5, 0.6, 0.85, 0.92, 0.97, 0.99, 1.0, 2.0, 2.5, 5.0, 10.0, 20.0, 24.0, 25.0, 70.0, 400.0, 128, 512, 16000, '[A-Za-z]', '[ऀ-ॿ]', '[ঀ-\u09ff]', '\\S+', 'bn', 'clipped', 'crosstalk', 'decoders_disagree', 'empty', 'en', 'fragment', 'hi', 'no_speech', 'noisy', 'repetitive', 'shattered', 'too_quiet', 'too_short', 'unvoiced_mumble', 'wrong_script']

@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\speech_policy.py
+# hypothesis_version: 6.168.1
+
+[0.85, 0.93, 1.0, '(?<=[।.!?؟])\\s+', '[?؟]', '[।.?!\\n]+', 'acknowledge_first', 'angry', 'confirmation', 'confused', 'default', 'distressed', 'emergency', 'escalation_threshold', 'explicit_acknowledge', 'explicit_offer_human', 'explicit_repeat_back', 'high', 'implicit', 'low', 'lowered', 'max_sentence_words', 'neutral', 'normal', 'offer_human', 'patient', 'questions_per_turn', 'response_length', 'senior', 'short', 'slow', 'slow-normal', 'speech_rate', 'very_high', 'very_short']

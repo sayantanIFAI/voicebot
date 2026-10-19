@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\tools\conditioning_eval.py
+# hypothesis_version: 6.168.1
+
+[-42.0, -30.0, -1.0, 1e-09, 0.01, 1.0, 5.0, 10.0, 20.0, 30.0, 32767.0, 32768.0, 16000, '--engine', '--engine-module', '--json', '--no-degrade', '.json', '.txt', '.wav', '/', '/transcribe', ':', '=', 'HELPS', 'HURTS', 'LANG=URL', 'MOD:FACTORY', 'NFC', 'PATH', '[^\\w\\s]', '__main__', 'append', 'as_recorded', 'change', 'clip', 'clips_dir', 'condition', 'en', 'lang', 'n', 'no clear effect', 'noise_10dB', 'noise_20dB', 'noise_5dB', 'quiet_-30dBFS', 'rb', 'reason', 'rows', 'store_true', 'suppressed', 'table', 'tests', 'text', 'too few clips to say', 'utf-8', 'very_quiet_-42dBFS', 'w', 'wav_path', 'wb', 'wer_conditioned', 'wer_raw']

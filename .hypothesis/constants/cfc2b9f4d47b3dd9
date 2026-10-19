@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\scripts\check_boundaries.py
+# hypothesis_version: 6.168.1
+
+['*.py', '.', '.venv', '__import__', '__main__', 'agent', 'anthropic', 'google.generativeai', 'import_module', 'openai', 'providers', 'replace', 'site-packages', 'utf-8', 'venv', 'vertexai', '|']

@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\channel_quality.py
+# hypothesis_version: 6.168.1
+
+[0.02, 0.05, 0.1, 0.15, 1.0, 1000, 3400, 8000, 'clean_16k', 'cross_talk', 'narrowband_8k', 'noisy']

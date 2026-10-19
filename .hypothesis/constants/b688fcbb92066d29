@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\admission.py
+# hypothesis_version: 6.168.1
+
+[0.5, 0.95, 3.0, 5.0, 120, 200, 'AI bypass %s by %s', 'ENABLED', 'active_calls', 'admission', 'admitted', 'backend %s recovered', 'backends_down', 'bypass', 'bypass_by', 'capacity', 'cleared', 'closed_reason', 'counters', 'latency_samples', 'latency_shed', 'max_calls', 'ok', 'open', 'peak_active', 'probe returned false', 'turn_latency_p50_s', 'turn_latency_p95_s', 'unhealthy', 'unknown']

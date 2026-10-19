@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\reask_policy.py
+# hypothesis_version: 6.168.1
+
+['crosstalk', 'decoders_disagree', 'empty', 'fragment', 'handoff', 'noisy', 'proceed', 'reask', 'reask_crosstalk', 'reask_final', 'reask_generic', 'reask_low_volume', 'reask_mumbled', 'reask_noisy', 'repetitive', 'shattered', 'too_quiet', 'unclear', 'unvoiced_mumble', 'wrong_script']

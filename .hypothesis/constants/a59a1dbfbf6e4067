@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\call_record.py
+# hypothesis_version: 6.168.1
+
+[0.2, 0.5, 1.0, 2.0, 25.0, 'action', 'channel', 'confirmed', 'disclosure_version', 'end', 'escalation', 'history', 'intent', 'language', 'name', 'outcome', 'patient', 'patient_ref', 'reason', 'ref', 'satisfaction', 'slots', 'start', 'statements', 'str | None', 'voice']

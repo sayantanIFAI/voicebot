@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\tts.py
+# hypothesis_version: 6.168.1
+
+[0.8, 1.0, 400, 3000, '..', '20', 'TTS_TIMEOUT_S', 'TTS_URL', 'asr_empty', 'bn', 'cached_clips', 'check_failed.wav', 'evictions', 'fallback_audio', 'hit_rate', 'hits', 'lang', 'llm_failure', 'max_clips', 'misses', 'pinned_clips', 'prewarmed_clips', 'rb', 'sorry_repeat.wav', 'speed', 'static', 'system_busy.wav', 'text', 'tool_failure', 'tts', 'tts_failure', 'utf-8']

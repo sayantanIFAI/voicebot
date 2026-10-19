@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\intent_schema.py
+# hypothesis_version: 6.168.1
+
+[130, 'add_test_booking', 'after', 'before', 'book_appointment', 'book_test', 'cancel_appointment', 'clinic_faq', 'confirmation_id', 'contact_number', 'contact_phone', 'date', 'department_query', 'direct_reply_bn', 'doctor_availability', 'doctor_name', 'faq_topic', 'home_collection', 'hours', 'ignore', 'insurance', 'intent', 'invalid intent', 'location', 'lookup_booking', 'new_date', 'new_time_slot', 'parking', 'patient_age', 'patient_name', 'payment_methods', 'phone', 'relationship', 'report_collection', 'resend_confirmation', 'secondary_intent', 'secondary_slots', 'slots', 'slots: expected', 'smalltalk', 'spelled_letters', 'symptom_description', 'test_name', 'test_names', 'test_prep', 'test_rate', 'time_slot', 'unclear']

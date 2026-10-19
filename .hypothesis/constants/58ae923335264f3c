@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\tools\hygiene_scan.py
+# hypothesis_version: 6.168.1
+
+['"', '" "', '(', ')', '.git', '.py', '.pytest_cache', '.venv', '<src>', 'BaseModel', '__main__', '__pycache__', 'dataclass', 'dataclass-mutable', 'defaultdict', 'deque', 'dict', 'endswith', 'implicit-concat-item', 'isinstance', 'isinstance-list', 'lineno', 'list', 'mutable-default', 'node_modules', 'pydantic-mutable', 'set', 'startswith', 'startswith-list', 'static', 'str-in-str', 'syntax', 'tuple-of-one-str', 'utf-8', 'venv']

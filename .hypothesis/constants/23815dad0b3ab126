@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\tools\calibrate_endpointing.py
+# hypothesis_version: 6.168.1
+
+[0.02, 1000.0, 32768.0, '*.wav', '--out', '--target-false-cut', '--vad', '.json', 'MEASURED', '__main__', 'channel', 'directory', 'energy', 'false_cut_ci95', 'language', 'note', 'rb', 'silero', 'status', 'table', 'turn_end_ms', 'utf-8']

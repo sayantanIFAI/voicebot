@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\llm.py
+# hypothesis_version: 6.168.1
+
+[12.0, 1000000.0, 1000, '%A', '%Y-%m-%d', ', ', '0', 'Bengali', 'Content-Type', 'English', 'Hindi', 'OLLAMA_NUM_CTX', 'application/json', 'attempts', 'bn', 'classic', 'deadline_s', 'decode_ms', 'default', 'en', 'errors', 'eval_count', 'eval_duration', 'fast', 'format', 'hi', 'json', 'keep_alive', 'llm', 'load_duration', 'load_ms', 'model', 'model_timing', 'no attempt was made', 'num_ctx', 'options', 'output_tokens', 'prefill_ms', 'prompt', 'prompt_eval_count', 'prompt_eval_duration', 'prompt_tokens', 'qwen2.5:7b', 'response', 'stats', 'stream', 'temperature', 'tokens_per_s', 'total_duration', 'total_ms', 'total_time_s', 'utf-8', '{faq_topics}', '{language_name}', '{today_iso}']

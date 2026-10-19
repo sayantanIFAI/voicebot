@@ -3891,6 +3891,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
+        if owner_answers.branch_identity(text, lang) and await _answer_owner_faq(session, text, lang):
+            return  # "আপনারা কি সোনু স্কান বলছেন" is a question about the clinic's name, answered as such -- not an echo of the greeting (owner, 2026-10-19)
         if await _answer_word_check(session, text, lang):
             return
         if await _answer_prescription(session, text, lang):

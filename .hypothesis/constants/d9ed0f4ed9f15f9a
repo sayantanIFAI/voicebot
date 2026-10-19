@@ -1,0 +1,4 @@
+# file: C:\Users\Dell\AppData\Local\Temp\claude\D--Claude\86253b28-9111-4b7d-9ec5-e8d9eab56dc7\scratchpad\vb\agent\phrases.py
+# hypothesis_version: 6.168.1
+
+['(?<=[।.!?])\\s+', 'How can I help you?', 'Sonoscan Vaani.', 'abuse_final', 'abuse_first', 'abuse_second', 'ask_test_category', 'asr_empty', 'bn', 'cancel_aborted', 'emergency_hint', 'emergency_notice', 'en', 'greeting', 'greeting_identity', 'handoff', 'hi', 'idle_close', 'language_switched', 'llm_failure', 'name_not_caught', 'offer_switch', 'payment_link_sent', 'please_wait', 'reask_crosstalk', 'reask_final', 'reask_generic', 'reask_low_volume', 'reask_mumbled', 'reask_noisy', 'reverify_notice', 'silence_go_on', 'silence_goodbye', 'silence_prompt', 'smalltalk_default', 'tool_failure', 'unclear', 'अच्छा, बताती हूँ।', 'जी, बताइए।', 'सोनोस्कैन वाणी।', 'আচ্ছা, বলছি।', 'জি, বলুন।', 'সোনোস্ক্যান বাণী।']

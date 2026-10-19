@@ -12,6 +12,7 @@ to five minutes per patient) are named constants here and nowhere else.
 
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import unicodedata
@@ -55,8 +56,11 @@ PLACES: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
     "krishnanagar": ("Krishnanagar", "কৃষ্ণনগর", "कृष्णानगर", ("krishnanagar", "কৃষ্ণনগর", "कृष्णानगर")),
 }
 _SONOSCAN = ("sonoscan", "sono scan", "sonoscen", "sonosken", "সোনোস্ক্যান", "সোনোস্কেন", "সোনো স্ক্যান", "সোনোস্ক্যান", "सोनोस्कैन", "सोनो स्कैन", "सोनोस्कैन")
-_IDENTITY_CUES = ("কি", "কী", "এটা", "ওটা", "is it", "is this", "this is", "are you", "hai", "है", "क्या", "ye", "ইয়ে", "naki", "নাকি", "ki", "এই")
-_NOT_IDENTITY = ("price", "rate", "দাম", "রেট", "কত", "book", "বুক", "appointment", "অ্যাপয়েন্টমেন্ট", "test", "টেস্ট", "doctor", "ডাক্তার", "report", "রিপোর্ট")
+_IDENTITY_CUES = ("কি", "কী", "এটা", "ওটা", "এটাই", "আপনারা", "আপনি", "is it", "is this", "this is", "are you", "you are", "hai", "है", "क्या", "आप", "ye", "ইয়ে", "naki", "নাকি", "ki", "eta", "এই", "আপনাদের")
+_NOT_IDENTITY = (
+    "price", "rate", "দাম", "রেট", "কত", "book", "বুক", "appointment", "অ্যাপয়েন্টমেন্ট", "test", "টেস্ট", "doctor", "ডাক্তার", "report", "রিপোর্ট", "cbc", "সিবিসি", "usg", "ইউএসজি",
+    "x-ray", "xray", "এক্সরে", "mri", "এমআরআই", "ecg", "ইসিজি", "সময়", "খোলা", "বন্ধ", "কখন", "কবে", "ঠিকানা", "address", "দূর", "টাকা", "रेट", "दाम", "कीमत", "बुकिंग", "डॉक्टर", "रिपोर्ट",
+)
 
 
 _BN_SIGNS = re.compile("[ািীুূৃেৈোৌংঁ্]")
@@ -78,14 +82,40 @@ def _skeleton(word: str) -> str:
 _SONOSCAN_SKELETONS = frozenset({"snscn", "সনসকন", "सनसकन", "সসকন", "ससकन"})
 
 
+# ---- by SOUND: the consonants of a word as a few sound classes, the same for Bengali, Hindi and Latin spellings. "সোনু স্কান", "সোনস্থান", "সংস্কান", "सोनो स्कैन",
+# "sono scan", "sonuscan" all come out as S-N-S-K-N (the stops k/kh/g/t/th are one class: a recogniser hears "স্ক্যান" as "স্থান" as easily as not).
+_SOUND_CLASSES = {
+    "S": "সশষসসศसशषszSZ", "N": "নণংঙঞनणंङञn", "K": "কখগঘতথটঠক্ষकखगघतथटठkcqgtx", "D": "দধডঢदधडढd", "M": "মमm", "R": "রড়ঢ়रड़ढ़r", "L": "লलl",
+    "B": "বভबभbv", "P": "পফपफpf", "J": "জঝচছযजझचछयj",
+}
+_SOUND_OF = {ch: cls for cls, chars in _SOUND_CLASSES.items() for ch in chars}
+_SONOSCAN_SOUND = "SNSKN"
+
+
+def _sound(word: str) -> str:
+    """The sound-class string of `word`: vowels, signs, h and y dropped; repeats collapsed ("sonoscan" -> "SNSKN")."""
+    out: list[str] = []
+    w = unicodedata.normalize("NFC", word or "").lower().replace("্য", "").replace("्य", "").replace("য়", "").replace("य़", "")  # ya-phala / y: "স্ক্যান" is "স্কান"
+    for ch in w:
+        cls = _SOUND_OF.get(ch)
+        if cls and (not out or out[-1] != cls):
+            out.append(cls)
+    return "".join(out)
+
+
 def _mentions_sonoscan(t: str) -> bool:
-    """"Sonoscan" in any spelling, written as one word or two ("sono scan", "সোনো স্ক্যান")."""
+    """"Sonoscan" in any spelling, however the recogniser breaks it into words ("sono scan", "সোনো স্ক্যান", "সোনু স্কান", "সোন স্ক্যান", "সোনস্থান"): one to three
+    neighbouring words whose consonants sound like S-N-S-K-N, allowing one consonant lost or added."""
     tokens = t.split()
-    for i, tok in enumerate(tokens):
-        if _skeleton(tok) in _SONOSCAN_SKELETONS:
-            return True
-        if i + 1 < len(tokens) and _skeleton(tok + tokens[i + 1]) in _SONOSCAN_SKELETONS:
-            return True
+    for i in range(len(tokens)):
+        for width in (1, 2, 3):
+            if i + width > len(tokens):
+                break
+            if width > 1 and any(len(_sound(w)) > 3 for w in tokens[i : i + width]):
+                continue  # a long word in the middle is a different word, not a piece of the name
+            snd = _sound("".join(tokens[i : i + width]))
+            if 4 <= len(snd) <= 6 and difflib.SequenceMatcher(None, snd, _SONOSCAN_SOUND).ratio() >= 0.85:
+                return True
     return False
 
 
@@ -102,7 +132,11 @@ def branch_identity(text: str, lang: str) -> str | None:
     if not t or len(t.split()) > 10 or not (_has(t, _SONOSCAN) or _mentions_sonoscan(t)):
         return None
     place = _place_in(t)
-    if place is None and (not _has(t, _IDENTITY_CUES) or _has(t, _NOT_IDENTITY)):
+    # "আপনারা কলকাতা সোনোস্ক্যান", "ETA সোনোস্ক্যান", "সোন স্ক্যান", "আপনারা কি সোনু স্কান বলছেন": the clinic's name in a short sentence IS the question "is this Sonoscan?" -- a cue word
+    # is only needed when the sentence is long enough to be about something else; any word of another request rules it out.
+    if _has(t, _NOT_IDENTITY) and place is None:
+        return None
+    if place is None and len(t.split()) > 6 and not _has(t, _IDENTITY_CUES):
         return None
     here_key = _place_in(_norm(CLINIC_BRANCH)) or _norm(CLINIC_BRANCH)
     en_here, bn_here, hi_here = next(((v[0], v[1], v[2]) for k, v in PLACES.items() if k == here_key), (CLINIC_BRANCH, CLINIC_BRANCH, CLINIC_BRANCH))
