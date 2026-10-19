@@ -216,6 +216,31 @@ def _merge(out: list[str]) -> str:
     return "".join(merged)
 
 
+_HBA1C = frozenset({"HBA1C", "HB1AC", "HBA1", "A1C", "HBAIC", "HBA1CTEST"})
+
+
+def latin_test_tokens(text: str, codes) -> list[str]:
+    """Test names written in Latin letters in the sentence, in order: a token that IS a catalogue code ("CBC", "tmt"), HbA1c in its spellings, and an UPPER-CASE token one letter
+    from exactly one code ("DSH" for TSH) -- that one is handed on as said, so the catalogue lookup asks "did you mean TSH?" (a near match suggests, it never resolves).
+    Real call 2026-10-19: "CBC ... TMT ... DSH" -- only one of them was ever looked up."""
+    codes = {c.upper() for c in codes}
+    out: list[str] = []
+    for tok in re.findall(r"[A-Za-z][A-Za-z0-9]{1,6}", text or ""):
+        up = tok.upper()
+        if up in _HBA1C:
+            cand = "HbA1c"
+        elif up in codes:
+            cand = up
+        elif tok.isupper() and tok.isalpha() and len(up) >= 3:
+            near = {c for c in codes if len(c) >= 3 and _one_apart(up, c)}
+            cand = up if len(near) == 1 else None
+        else:
+            cand = None
+        if cand and cand not in out:
+            out.append(cand)
+    return out
+
+
 def _name_sound(code: str) -> str:
     out: list[str] = []
     for ch in code.lower():

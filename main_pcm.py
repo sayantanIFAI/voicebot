@@ -2109,6 +2109,29 @@ async def _answer_scan_followup(session: CallSession, text: str, lang: str) -> b
     return True
 
 
+async def _answer_after_date(session: CallSession, text: str, lang: str) -> bool:
+    """"একুশ তারিখের পরের কোনো দিন, কালকে হবে না": a booking is open with a doctor, and the caller rules a day out and asks for a later one. The doctor's next sitting AFTER
+    that day is found and told (agent/slot_proposal.py), exactly as when the caller names a day -- never read as a question about lab tests."""
+    st = session.booking
+    if st is None or st.action != "book_appointment" or not st.slots.get("doctor_name"):
+        return False
+    today = slot_proposal.clinic_now().date()
+    after = booking_capture.after_date(text, today)
+    if not after:
+        return False
+    import datetime as _dt
+
+    target = (_dt.date.fromisoformat(after) + _dt.timedelta(days=1)).isoformat()
+    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit"):
+        st.slots.pop(k, None)
+    st.hold_token, st.hold_doctor_id = None, None
+    st.slots["date"] = target
+    if await _propose_slot(session, st, lang):
+        return True
+    await _speak(session, slot_proposal.book_that_day_question(target, lang), lang)
+    return True
+
+
 async def _answer_where_in_address(session: CallSession, text: str, lang: str) -> bool:
     """"বিনিয়া পুকুরটা কোথায়" -- a where-question about a piece of the address. Voice cannot place it: Google Maps, or the WhatsApp number to send the location to.
     The number, when said next, is read and the location is queued to it (placeholder provider, like every message here)."""
@@ -2315,7 +2338,36 @@ async def _ground_model_slots(session: CallSession, text: str, lang: str, data: 
         logger.info(
             "[%s] dropped %d name(s) the model produced that the caller never said", session.call_id, total_dropped
         )
+    cleaned = await _augment_test_slots(text, cleaned)
     return _repair_day_slots(session, text, cleaned)
+
+
+async def _augment_test_slots(text: str, data: dict) -> dict:
+    """Test codes in the sentence (CBC, TMT, "DSH" for TSH, HbA1c) are added to the test names the model found -- or to none at all, when it found none. The model returns one name of
+    three, or an empty list, on a garbled mixed-script sentence; the codes written in Latin letters are right there to read (owner, 2026-10-19: "never understood any test name")."""
+    try:
+        if data.get("intent") not in ("test_rate", "book_test", "test_prep", "test_availability"):
+            return data
+        slots = data.get("slots")
+        if not isinstance(slots, dict):
+            return data
+        codes = await _catalogue_codes()
+        found = spelled_letters.latin_test_tokens(text, codes)
+        if not found:
+            return data
+        names = [n for n in list(slots.get("test_names") or []) + ([slots["test_name"]] if slots.get("test_name") else []) if n]
+        low = {n.strip().lower() for n in names}
+        extra = [c for c in found if c.lower() not in low and not any(c.lower() == str(k).lower() for k in low)]
+        if not extra:
+            return data
+        merged = names + extra
+        new = {**slots, "test_names": merged}
+        if len(merged) > 1:
+            new.pop("test_name", None)
+        return {**data, "slots": new}
+    except Exception as e:  # noqa: BLE001 - advisory
+        logger.warning("test-code augmentation skipped: %s", e)
+        return data
 
 
 _DAY_WORDS = booking_capture._TODAY | booking_capture._TOMORROW | booking_capture._DAY_AFTER
@@ -4019,6 +4071,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
+        if await _answer_after_date(session, text, lang):
+            return  # "any day after the 21st" while a doctor is being booked (owner, 2026-10-19)
         if await _answer_where_in_address(session, text, lang):
             return  # a where-question about the address (or the number for the location that follows it) is not an echo of the address (owner, 2026-10-19)
         if await _answer_scan_followup(session, text, lang):

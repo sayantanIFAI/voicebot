@@ -566,6 +566,31 @@ def day_of_month(words: list[str], today) -> tuple[str | None, set[int]]:
     return None, set()
 
 
+_AFTER_WORDS = frozenset({"পরের", "পরে", "পরেই", "পরের", "পর", "বাদে", "बाद", "के बाद", "after", "beyond", "later"})
+_NOT_THAT_DAY = ("হবে না", "হবেনা", "পারব না", "পারবো না", "সম্ভব না", "চলবে না", "नहीं हो", "नहीं होगा", "नहीं आ", "won't work", "wont work", "cannot", "can't", "not possible", "no good")
+
+
+def after_date(text: str, today) -> str | None:
+    """"একুশ তারিখের পরের কোনো দিন" / "after the 21st" / "21 के बाद" / "কালকের পরে" -> the ISO date AFTER WHICH a day is wanted (the named day itself is ruled out). None when the
+    sentence names no day with an "after" word beside it. Real call 2026-10-19: "tomorrow (the 21st) will not do, any day after it" was heard as a question about lab tests."""
+    import datetime
+
+    words = _words(text)
+    if not any(w in _AFTER_WORDS for w in words):
+        return None
+    base, used = day_of_month(words, today)  # a named day of the month beats a relative word ("after the 21st, tomorrow will not do")
+    if not base:
+        base, used = day_from_words(words, today)
+    if not base:
+        return None
+    # the "after" word must stand within three words of the day
+    if not any(w in _AFTER_WORDS for w in words[max(0, min(used) - 3) : max(used) + 4]):
+        return None
+    d = datetime.date.fromisoformat(base)
+    # "tomorrow" and "after the day": the day named is excluded from the answer either way
+    return d.isoformat()
+
+
 def day_from_words(words: list[str], today) -> tuple[str | None, set[int]]:
     """"tomorrow" / "কাল" / "कल" (also "day after tomorrow", "today") -> ISO date relative to `today`. In a booking, a bare
     কাল / कल always means tomorrow (the words also mean 'yesterday', but nobody books yesterday)."""
