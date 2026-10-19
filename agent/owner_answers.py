@@ -176,12 +176,25 @@ def scheme_cover(text: str, lang: str) -> str | None:
 # --------------------------------------------------------------------------------------------------------------------------------------- distance
 
 _FAR = ("কত দূর", "কতদূর", "দূরত্ব", "কতটা দূর", "দূরে", "কতক্ষণ", "কত সময় লাগ", "কত টাইম", "koto dur", "koto door", "kotodur", "koto dure", "distance", "how far", "how long", "how much time", "kitna door", "kitni door", "कितनी दूर", "कितना दूर", "दूरी", "कितना समय", "कितना टाइम")
+_ROUTE = (
+    "কি করে যাব", "কী করে যাব", "কিভাবে যাব", "কীভাবে যাব", "কেমন করে যাব", "কি করে আসব", "কী করে আসব", "কিভাবে আসব", "কীভাবে আসব", "কেমনে যাব", "কেমনে আসব", "যেতে পারব", "আসতে পারব", "যাওয়া যাবে",
+    "যাব", "যাবো", "আসব", "আসবো", "পৌঁছ", "পৌছ", "রাস্তা", "রুট", "কোন দিক", "যাওয়ার", "আসার",
+    "how to go", "how do i go", "how to come", "how do i come", "how to reach", "how can i reach", "how can i come", "how can i go", "route", "which way", "way to", "get there",
+    "kaise jau", "kemne jabo", "kibhabe jabo", "ki kore jabo", "ki kore asbo",
+    "कैसे जाऊं", "कैसे जाऊँ", "कैसे जाएं", "कैसे जायें", "कैसे आऊं", "कैसे आऊँ", "कैसे पहुँच", "कैसे पहुंच", "रास्ता", "रूट", "कैसे आना", "कैसे जाना",
+)
+# "station" as a recogniser writes it: "স্তেতিওন", "স্টেসন", "ইস্টিশন", "stesan"...
+_STATION_WORD = (
+    "স্টেশন", "স্টেসন", "স্তেশন", "স্তেসন", "স্তেতিওন", "স্টেতিওন", "স্তেতিয়ন", "স্টেটিয়ন", "স্তেশান", "স্টেশান", "ইস্টিশন", "ইষ্টিশন", "ইস্টেশন", "ইস্তিশন", "স্টেসান", "স্তেসান",
+    "station", "stesan", "stashan", "istishan", "स्टेशन", "स्टेसन", "इस्टेशन",
+)
 _STATIONS: dict[str, tuple[str, str, str, tuple[str, ...]]] = {
     "bus": ("the bus stand", "বাসস্ট্যান্ড", "बस स्टैंड", ("bus stand", "busstand", "bus stop", "বাস স্ট্যান্ড", "বাসস্ট্যান্ড", "বাস স্ট্যাণ্ড", "বাসস্ট্যাণ্ড", "বাস স্টপ", "बस स्टैंड", "बस स्टैण्ड")),
-    "sealdah": ("Sealdah station", "শিয়ালদা স্টেশন", "सियालदह स्टेशन", ("sealdah", "sealdaha", "শিয়ালদা", "শিয়ালদহ", "সিয়ালদা", "सियालदह", "सियालदा")),
-    "howrah": ("Howrah station", "হাওড়া স্টেশন", "हावड़ा स्टेशन", ("howrah", "haora", "হাওড়া", "हावड़ा", "हावडा")),
-    "chitpur": ("Chitpur station", "চিতপুর স্টেশন", "चितपुर स्टेशन", ("chitpur", "chitpore", "চিতপুর", "चितपुर")),
+    "sealdah": ("Sealdah station", "শিয়ালদা স্টেশন", "सियालदह स्टेशन", ("sealdah", "sealdaha", "sealdoho", "sealdaho", "sealda", "shealdah", "শিয়ালদা", "শিয়ালদহ", "শিয়ালদাহ", "শিয়ালদ", "সিয়ালদা", "সিয়ালদহ", "শেয়ালদা", "শেয়ালদহ", "शियालदह", "शियालदा", "सियालदह", "सियालदा", "सियालदाह")),
+    "howrah": ("Howrah station", "হাওড়া স্টেশন", "हावड़ा स्टेशन", ("howrah", "haora", "howra", "haowra", "howrha", "হাওড়া", "হাউড়া", "হাওরা", "হাউরা", "हावड़ा", "हावडा", "हावरा", "हाओड़ा")),
+    "chitpur": ("Chitpur station", "চিতপুর স্টেশন", "चितपुर स्टेशन", ("chitpur", "chitpore", "chitpoor", "চিতপুর", "চিৎপুর", "চিত্পুর", "চিতপূর", "चितपुर", "चित्पुर", "चितपूर")),
     "kolkata_station": ("Kolkata station", "কলকাতা স্টেশন", "कोलकाता स्टेशन", ("kolkata station", "calcutta station", "কলকাতা স্টেশন", "কোলকাতা স্টেশন", "कोलकाता स्टेशन")),
+    "station": ("your station", "ওই স্টেশন", "उस स्टेशन", ()),
 }
 _DRIVER = ("driver", "ড্রাইভার", "ড্রাইভারকে", "ট্যাক্সি", "taxi", "cab", "অটো", "auto", "টোটো", "ड्राइवर", "टैक्सी", "ऑटो")
 _ADDRESS_FALLBACK = {
@@ -194,12 +207,15 @@ _ADDRESS_FALLBACK = {
 def distance_from(text: str) -> str | None:
     """The station / stand the caller asks the distance from, or None. A distance (or travel-time, or driver) word AND one of the places."""
     t = _norm(text)
-    if not t or not (_has(t, _FAR) or _has(t, _DRIVER)):
+    if not t or not (_has(t, _FAR) or _has(t, _DRIVER) or _has(t, _ROUTE)):
         return None
     # "kolkata station" before the bare "kolkata"; a station is only ever matched whole
     for key in ("kolkata_station", "chitpur", "sealdah", "howrah", "bus"):
         if _has(t, _STATIONS[key][3]):
             return key
+    # "স্তেতিওন থেকে কি করে যাবো" -- a station, which one not made out: the same answer (Google Maps, tell the driver the address), without naming a station
+    if _has(t, _STATION_WORD) and (_has(t, _ROUTE) or _has(t, _FAR)):
+        return "station"
     return None
 
 
@@ -211,6 +227,51 @@ def distance_reply(key: str, lang: str, address: str | None = None) -> str:
         "hi": f"{hi_p} से ठीक कितनी दूरी है, यह मुझे नहीं पता। गूगल मैप देख लीजिए; हर जगह से आमतौर पर 30 मिनट से 1 घंटा लगता है। ड्राइवर को साफ़ समझा दीजिएगा। हमारा पता फिर से बताती हूँ: {addr}।",
         "en": f"I do not know the exact distance from {en_p}. Please check Google Maps; from each of these places it usually takes about 30 minutes to 1 hour. Please explain clearly to the driver. Our address again: {addr}.",
     }.get(lang, "")
+
+
+# ------------------------------------------------------------------------------------------------------------------------------------ where in the address
+
+_WHERE = ("কোথায়", "কোথা", "কোথাকার", "কোনখানে", "কোন জায়গায়", "কোন দিকে", "কোনদিকে", "কই", "kothay", "kothai", "where", "कहाँ", "कहां", "किधर", "किस तरफ")
+_ADDRESS_PARTS = (
+    "লেডিজ", "লাডিজ", "লেডিস", "লাডিস", "ladies", "পার্ক", "park", "বেনিয়া", "বিনিয়া", "বেনিআ", "বিনিআ", "benia", "beniya", "beniapukur", "পুকুর",
+    "সি আই টি", "সিআইটি", "সিআই টি", "cit road", "c i t", "लेडीज़", "लेडीज", "पार्क", "बेनिया", "सी आई टी",
+)
+_WHERE_REPLY = {
+    "bn": "জায়গাটা মুখে ঠিকঠাক বুঝিয়ে বলা একটু কঠিন। আপনি গুগল ম্যাপে দেখে নেবেন। অথবা আপনার যে নম্বরে হোয়াটসঅ্যাপ আছে সেটা বলুন, আমরা লোকেশনটা পাঠিয়ে দিচ্ছি।",
+    "hi": "जगह मुँह से ठीक से समझाना थोड़ा मुश्किल है। आप गूगल मैप में देख लीजिए। या आपके जिस नंबर पर व्हाट्सऐप है वह बताइए, हम लोकेशन भेज देते हैं।",
+    "en": "It is a little hard to explain the spot by voice. Please look it up on Google Maps. Or tell me the number you have WhatsApp on, and we will send you the location.",
+}
+_LOCATION_SENT = {
+    "bn": "ধন্যবাদ। {digits} এই নম্বরের হোয়াটসঅ্যাপে লোকেশন পাঠিয়ে দেওয়া হবে।",
+    "hi": "धन्यवाद। {digits} इस नंबर के व्हाट्सऐप पर लोकेशन भेज दी जाएगी।",
+    "en": "Thank you. The location will be sent to the WhatsApp on {digits}.",
+}
+_LOCATION_AGAIN = {
+    "bn": "নম্বরটা পুরোটা শুনতে পাইনি। হোয়াটসঅ্যাপ নম্বরটা, দশটা সংখ্যা, আরেকবার বলবেন?",
+    "hi": "नंबर पूरा सुनाई नहीं दिया। व्हाट्सऐप नंबर, दस अंक, एक बार फिर बताइए।",
+    "en": "I did not catch the whole number. Please say the ten-digit WhatsApp number once more.",
+}
+
+
+def asks_where_in_address(text: str) -> bool:
+    """"বিনিয়া পুকুরটা কোথায়" / "কোথায় এটা লাডিজ পার্ক এর কাছে": a WHERE question about a part of the clinic's address. Voice cannot place a spot like that; the answer is
+    Google Maps, or the number on WhatsApp to send the location to (owner, 2026-10-19). A where-word AND a word of the address, in a short sentence."""
+    t = _norm(text)
+    if not t or len(t.split()) > 14:
+        return False
+    return _has(t, _WHERE) and _has(t, _ADDRESS_PARTS)
+
+
+def where_reply(lang: str) -> str:
+    return _WHERE_REPLY.get(lang, _WHERE_REPLY["en"])
+
+
+def location_sent(digits: str, lang: str) -> str:
+    return _LOCATION_SENT.get(lang, _LOCATION_SENT["en"]).format(digits=" ".join(digits))
+
+
+def location_again(lang: str) -> str:
+    return _LOCATION_AGAIN.get(lang, _LOCATION_AGAIN["en"])
 
 
 # ------------------------------------------------------------------------------------------------------------------------------ token and arrival

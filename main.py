@@ -1055,6 +1055,7 @@ class CallSession:
         self.last_spoken = ""  # the last thing said to the caller (not the holding filler)
         self.last_route = None  # the department just suggested for a symptom (so a push-back is answered with the same suggestion)
         self.pending_prescription = None  # (test, turn): "do you have the prescription?" was just asked
+        self.location_pending = None  # turn number: "tell me the WhatsApp number and we send the location" was just said
         self.caller_numbers: list[str] = []  # numbers the caller has SAID in this call, newest last (used to call back an unresolved call)
         self.unclear_streak = 0  # consecutive turns the agent could not answer
         self.senior_evidence = SeniorEvidence()
@@ -2038,6 +2039,94 @@ def _found_names(results: list[tuple[str, dict]], lang: str) -> list[str]:
     return out
 
 
+_SCAN_WORDS = ("ইউএসজি", "यूएसजी", "usg", "আলট্রাসাউন্ড", "আল্ট্রাসাউন্ড", "সোনোগ্রাফি", "अल्ट्रासाउंड", "सोनोग्राफी", "ultrasound", "sonography", "ইউ এস জি")
+_SCAN_Q = {"bn": "আপনি কোনটার কথা বলছেন?", "hi": "आप किसकी बात कर रहे हैं?", "en": "Which one do you mean?"}
+
+
+def _is_scan_name(name: str | None) -> bool:
+    low = (name or "").lower()
+    return any(w in low for w in _SCAN_WORDS)
+
+
+async def _usg_list(lang: str) -> str:
+    """The scan tests (USG ...) in the catalogue, spoken in the caller's language: "A, B"."""
+    try:
+        cat = await _cached_catalogue()
+        key = {"bn": "aliases_bn", "hi": "aliases_hi"}.get(lang)
+        out = []
+        for t in cat.get("tests", []):
+            if "usg" not in str(t.get("name") or "").lower():
+                continue
+            aliases = [a for a in (t.get(key) or []) if a and _is_scan_name(a)] if key else []
+            out.append(max(aliases, key=lambda a: len(a.split())) if aliases else str(t["name"]))
+        return ", ".join(out)
+    except Exception:  # noqa: BLE001 - advisory
+        return ""
+
+
+async def _scan_unlisted_reply(lang: str) -> str:
+    """A scan the caller named is not in the table (or is only "USG"): say which scans we DO have and ask which one they mean; if theirs is not among them, a colleague takes over."""
+    names = await _usg_list(lang)
+    ask = _SCAN_Q.get(lang, _SCAN_Q["en"])
+    if lang == "bn":
+        head = f"ইউএসজির মধ্যে আমাদের এখানে এই টেস্টগুলো হয়: {names}। " if names else ""
+        return f"{head}{ask} এগুলোর মধ্যে আপনারটা না থাকলে বলুন, আমি আমাদের কর্মীর কাছে লাইনটা দিয়ে দিচ্ছি।"
+    if lang == "hi":
+        head = f"अल्ट्रासाउंड में हमारे यहाँ ये टेस्ट होते हैं: {names}। " if names else ""
+        return f"{head}{ask} इनमें आपका वाला न हो तो बताइए, मैं हमारे कर्मचारी को लाइन दे देती हूँ।"
+    head = f"For ultrasound we do these tests here: {names}. " if names else ""
+    return f"{head}{ask} If yours is not among them, tell me and I will pass you to a colleague."
+
+
+async def _multi_reply(results: list, lang: str) -> str:
+    """multi_test_rate_reply, except that a scan the table does not hold is never reported as "no such test": the scans we do have are listed and the caller is asked which one."""
+    scan = [n for n, r in results if not r.get("found") and _is_scan_name(n)]
+    if not scan:
+        return multi_test_rate_reply(results, lang)
+    rest = [(n, r) for n, r in results if n not in scan]
+    head = multi_test_rate_reply(rest, lang) + " " if rest and any(r.get("found") for _n, r in rest) else ""
+    return head + await _scan_unlisted_reply(lang)
+
+
+async def _answer_scan_followup(session: CallSession, text: str, lang: str) -> bool:
+    """After "which scan do you mean? if yours is not among them I will pass you to a colleague": a "no / another" answer is the handoff."""
+    last = getattr(session, "last_spoken", "") or ""
+    if _SCAN_Q.get(lang, "") not in last and not any(q in last for q in _SCAN_Q.values()):
+        return False
+    if booking_capture.confirm_answer(text, lang) != "no" and not any(w in text.lower() for w in ("অন্য", "আলাদা", "নেই", "এগুলো না", "other", "another", "none", "दूसरा", "अलग", "इनमें नहीं")):
+        return False
+    await _handoff_to_human(session, "unlisted_scan", (lang,))
+    return True
+
+
+async def _answer_where_in_address(session: CallSession, text: str, lang: str) -> bool:
+    """"বিনিয়া পুকুরটা কোথায়" -- a where-question about a piece of the address. Voice cannot place it: Google Maps, or the WhatsApp number to send the location to.
+    The number, when said next, is read and the location is queued to it (placeholder provider, like every message here)."""
+    pend = getattr(session, "location_pending", None)
+    if pend is not None and session.turn_count - pend <= 3:
+        digits = booking_capture.read_digits(text)[0]
+        if len(digits) >= 10:
+            number = booking_capture.phone_from_digits(digits[-10:] if len(digits) > 10 else digits) or digits[:10]
+            session.location_pending = None
+            session.caller_numbers.append(number)
+            await _speak(session, owner_answers.location_sent(number, lang), lang)
+            phone = number
+            try:
+                summary = build_call_summary("send_location_whatsapp", lang=lang, transcript=text, phone=phone, call_id=session.call_id)
+                await asyncio.wait_for(_tools.request_callback(phone, session.call_id, "asap", "send_location_whatsapp", summary), 4.0)
+            except Exception as e:  # noqa: BLE001 - advisory: the caller was told what to expect, a failed queue must not break the call
+                logger.warning("[%s] could not queue the location message: %s", session.call_id, e)
+            return True
+        if digits and not owner_answers.asks_where_in_address(text):
+            await _speak(session, owner_answers.location_again(lang), lang)
+            return True
+    if owner_answers.asks_where_in_address(text):
+        session.location_pending = session.turn_count
+        await _speak(session, owner_answers.where_reply(lang), lang)
+        return True
+    return False
+
+
 async def _any_test_needs_prescription(slots: dict) -> bool:
     """Is any test named in `slots` marked "prescription required" in the clinic's lab-test table? A failed lookup is simply "no": the normal counter message stands."""
     names = [n for n in list((slots or {}).get("test_names") or []) + [(slots or {}).get("test_name")] if n][:5]
@@ -2289,13 +2378,15 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
                 _suggested.set({"intent": "test_rate", "slot": "test_names", "slots": {}, "name": canonical})
                 return question
             _priced_names.set((_priced_names.get() or []) + [n for n, r in results if r.get("found")])
-            return _done_here(_turn_text.get(), lang, _found_names(results, lang)) + multi_test_rate_reply(results, lang)
+            return _done_here(_turn_text.get(), lang, _found_names(results, lang)) + await _multi_reply(results, lang)
         if not slots.get("test_name"):
             return None
         result = await _tools.get_test_rate(slots["test_name"])
         _note_suggestion(intent, "test_name", slots, result)
         if result.get("found"):
             _priced_names.set((_priced_names.get() or []) + [slots["test_name"]])
+        if not result.get("found") and _is_scan_name(slots["test_name"]):
+            return await _scan_unlisted_reply(lang)
         reply = _done_here(_turn_text.get(), lang, _found_names([(slots["test_name"], result)], lang)) + test_rate_reply(slots, result, lang)
         if result.get("found") and result.get("prescription_required"):
             _rx_asked.set(slots["test_name"])  # owner 2026-10-18: a test that needs a prescription -> ask whether the caller has one
@@ -2520,7 +2611,7 @@ async def _resume_after_unclear(session: CallSession, text: str, lang: str) -> b
         session.last_multi = None
         session.lapsed_pending = None
         _priced_names.set([n for n, r in results if r.get("found")])
-        await _speak(session, multi_test_rate_reply(results, lang), lang)
+        await _speak(session, await _multi_reply(results, lang), lang)
         return True
     if lapsed and session.turn_count - lapsed[1] <= 2:
         pending, _turn = lapsed
@@ -3056,7 +3147,7 @@ async def _answer_named_total(session: CallSession, text: str, lang: str) -> boo
         if n.strip().lower() not in [x.strip().lower() for x in session.priced_tests]:
             session.priced_tests.append(n)
     prefix = _done_here(text, lang, _found_names(results, lang))  # "Yes, we do <the tests> here." first, when that was the question
-    await _speak(session, _with_resume(session, prefix + multi_test_rate_reply(results, lang), lang), lang)
+    await _speak(session, _with_resume(session, prefix + await _multi_reply(results, lang), lang), lang)
     return True
 
 
@@ -3883,6 +3974,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # call -- decided here, before the model (which only ever sees this one sentence), and answered from live
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
+            return
+        if await _answer_where_in_address(session, text, lang):
+            return  # a where-question about the address (or the number for the location that follows it) is not an echo of the address (owner, 2026-10-19)
+        if await _answer_scan_followup(session, text, lang):
             return
         if owner_answers.branch_identity(text, lang) and await _answer_owner_faq(session, text, lang):
             return  # "আপনারা কি সোনু স্কান বলছেন" is a question about the clinic's name, answered as such -- not an echo of the greeting (owner, 2026-10-19)

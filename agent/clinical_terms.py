@@ -18,6 +18,7 @@ TERMS: dict[str, tuple[str, ...]] = {
     "sample": ("স্যাম্পল", "सैंपल", "sample"),
     "appointment": ("অ্যাপয়েন্টমেন্ট", "अपॉइंटमेंट", "appointment"),
     "whatsapp": ("হোয়াটসঅ্যাপ", "व्हाट्सऐप", "whatsapp"),
+    "abdomen": ("অ্যাবডোমেন", "আবডোমেন", "এবডোমেন", "অ্যাবডোমিন", "abdomen", "एब्डोमेन", "अब्डोमेन", "एब्डोमन"),
 }
 _STRICT = 0.88
 _IN_CONTEXT = 0.78
