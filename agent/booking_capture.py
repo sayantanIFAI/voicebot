@@ -961,6 +961,39 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
 
 _BN_TENS = {"দশ": 10, "বিশ": 20, "ত্রিশ": 30, "চল্লিশ": 40, "পঞ্চাশ": 50, "ষাট": 60, "সত্তর": 70, "আশি": 80, "নব্বই": 90}
 
+# Ages as words, with the spellings a recogniser really writes: Hindi "तेरा साल" (thirteen years), Bengali "তেরা সাল", English said in Devanagari / Bengali script
+# ("थर्टी फाइव", "ফিফটি"). Real call 2026-10-19: "तेरा साल" was not read as an age and the number read-back looped.
+_AGE_WORDS = {
+    "तेरा": 13, "तेरे": 13, "तेरह": 13, "তেরা": 13, "তেরো": 13, "তের": 13, "তেরহ": 13, "चौदह": 14, "चौदा": 14, "চোদ্দ": 14, "চৌদ্দ": 14, "চৌদ্দো": 14,
+    "पंद्रह": 15, "पन्द्रह": 15, "पंदरा": 15, "पंद्रा": 15, "पन्द्रा": 15, "পনেরো": 15, "পনের": 15, "পনেরা": 15, "सोलह": 16, "सोला": 16, "ষোলো": 16, "ষোল": 16, "ষোলা": 16,
+    "सत्रह": 17, "सत्रा": 17, "সতেরো": 17, "সতের": 17, "অঠারো": 18, "अठारह": 18, "अठारा": 18, "अट्ठारह": 18, "আঠারো": 18, "আঠার": 18, "उन्नीस": 19, "उन्निस": 19, "উনিশ": 19,
+    "बीस": 20, "বিশ": 20, "तीस": 30, "चालीस": 40, "पचास": 50, "साठ": 60, "सत्तर": 70, "अस्सी": 80, "नब्बे": 90, "सौ": 100, "একশ": 100, "একশো": 100,
+    # English tens and teens, in Devanagari and in Bengali script
+    "थर्टीन": 13, "फोर्टीन": 14, "फिफ्टीन": 15, "सिक्स्टीन": 16, "सेवेंटीन": 17, "एटीन": 18, "नाइनटीन": 19, "ट्वेंटी": 20, "थर्टी": 30, "फोर्टी": 40, "फिफ्टी": 50, "सिक्स्टी": 60,
+    "सेवंटी": 70, "सेवेंटी": 70, "एटी": 80, "नाइंटी": 90, "নাইনটি": 90, "থার্টিন": 13, "ফোর্টিন": 14, "ফিফটিন": 15, "সিক্সটিন": 16, "সেভেনটিন": 17, "এইটিন": 18, "নাইনটিন": 19,
+    "টোয়েন্টি": 20, "থার্টি": 30, "ফোর্টি": 40, "ফিফটি": 50, "সিক্সটি": 60, "সেভেন্টি": 70, "এইটি": 80,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_AGE_UNITS = {
+    "वन": 1, "टू": 2, "थ्री": 3, "फोर": 4, "फाइव": 5, "सिक्स": 6, "सेवन": 7, "एट": 8, "नाइन": 9, "ওয়ান": 1, "টু": 2, "থ্রি": 3, "ফোর": 4, "ফাইভ": 5, "সিক্স": 6, "সেভেন": 7, "এইট": 8, "নাইন": 9,
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+}
+
+
+def _age_from_words(text: str) -> int | None:
+    """An age said as words (see _AGE_WORDS): a tens/teens word, with an English unit after a tens word ("थर्टी फाइव" = 35). None when there is none."""
+    toks = [unicodedata.normalize("NFC", w.strip(".,;:!?।")).lower() for w in (text or "").split()]
+    for i, w in enumerate(toks):
+        n = _AGE_WORDS.get(w)
+        if n:
+            if n % 10 == 0 and n >= 20 and i + 1 < len(toks):
+                unit = _AGE_UNITS.get(toks[i + 1])
+                if unit:
+                    return n + unit
+            return n
+    return None
+
 
 def bare_age(text: str) -> int | None:
     """An age said on its own: "৪৫", "45 years", "পঁয়তাল্লিশ", "ষাট বছর". None when no age (1 to 120) is there."""
@@ -970,6 +1003,9 @@ def bare_age(text: str) -> int | None:
         return int(m.group(1))
     from agent import owner_answers
 
+    spoken = _age_from_words(t)
+    if spoken and 0 < spoken <= 120:
+        return spoken
     for word, n in {**_BN_TENS}.items():
         if word in t:
             return n

@@ -3656,6 +3656,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # Owner, 2026-10-18 (a first turn of noise heard as English locked the whole call to English; the caller then spoke Bengali and kept being answered in English):
         # a clear sentence in Bengali or Hindi -- four words or more, nearly all in that script -- is answered in that language at once, whatever the call was locked to.
         _heard = (asr_result.text or "").strip()
+        _digits_said, _digit_hits, _digit_total = booking_capture.read_digits(_heard)
+        if len(_digits_said) >= 3 and _digit_hits * 2 >= _digit_total:
+            # Real call 2026-10-19: a Bengali caller said the phone number's digit words and the recogniser wrote them in Devanagari ("नाइन थ्री फोर ...");
+            # the reply language jumped to Hindi for the rest of the call. Digit words say nothing about the language: it stays what it was.
+            lang = _keep_language(session, prior_lang)
+            detected_lang = lang
         if (
             session.lang_locked
             and detected_lang in ("bn", "hi")
