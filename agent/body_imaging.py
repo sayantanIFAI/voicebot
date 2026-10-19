@@ -25,7 +25,10 @@ REGIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "leg": (("পায়ের", "পা", "পায়ে", "উরু", "পা'র", "टांग", "पैर", "पाँव", "leg", "foot", "ankle", "payer", "paer", "pair ki"), ("leg", "foot", "ankle", "femur", "tibia")),
     "knee": (("হাঁটুর", "হাঁটু", "घुटने", "घुटना", "knee", "hantur"), ("knee",)),
     "spine": (("পিঠের", "পিঠ", "কোমরের", "কোমর", "মেরুদণ্ডের", "মেরুদণ্ড", "पीठ", "कमर", "रीढ़", "back", "spine", "pither", "komorer"), ("spine", "spinal", "lumbar", "back")),
-    "neck": (("গলার", "ঘাড়ের", "ঘাড়", "गर्दन", "गले", "neck", "ghar"), ("neck", "cervical", "thyroid")),
+    "neck": (
+        ("গলার", "ঘাড়ের", "ঘাড়", "थाइरॉइड", "गर्दन", "गले", "neck", "ghar", "থাইরয়েড গ্ল্যান্ড", "থাইরয়েডের", "थायरॉइड ग्लैंड", "thyroid gland", "thyroid"),
+        ("neck", "cervical", "thyroid"),
+    ),
 }
 
 # a word that says the caller wants a PICTURE / scan of it
@@ -59,6 +62,11 @@ def _has_word(text: str, words: tuple[str, ...]) -> bool:
     return False
 
 
+# A scan word: "USG of the thyroid gland" needs no "picture" word. Only the neck / thyroid region is claimed this way: "পেটের ইউএসজি" is a test the clinic lists by name and goes the normal test-lookup route.
+_SCAN_WORDS = ("ইউএসজি", "यूएसजी", "usg", "আলট্রাসাউন্ড", "আল্ট্রাসাউন্ড", "আলট্রাসোনোগ্রাফি", "সোনোগ্রাফি", "अल्ट्रासाउंड", "सोनोग्राफी", "ultrasound", "sonography")
+_NECK_ONLY = ("থাইরয়েড গ্ল্যান্ড", "थायरॉइड ग्लैंड", "थायराइड ग्लैंड", "thyroid gland", "গলার", "ঘাড়ের", "गर्दन", "neck")
+
+
 def detect(text: str) -> str | None:
     """The body region a caller wants a picture of ("chest", "head", "abdomen", "hand", "leg", "knee", "spine", "neck"), or None.
     Needs BOTH a body-part word and a picture word, and no price / doctor / booking question in the same breath."""
@@ -67,6 +75,8 @@ def detect(text: str) -> str | None:
         return None
     if _has_word(t, _OTHER) or _has_word(t, _NAMES_A_TEST):
         return None
+    if _has_word(t, _SCAN_WORDS) and _has_word(t, _NECK_ONLY):
+        return "neck"
     if not _has_word(t, _PICTURE):
         return None
     hits = [(len(w), region) for region, (names, _) in REGIONS.items() for w in names if _has_word(t, (w,))]

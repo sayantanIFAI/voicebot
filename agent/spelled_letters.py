@@ -177,3 +177,84 @@ def normalise_spelled_codes(text: str, codes) -> tuple[str, list[str]]:
                     out[k] = None
         i = j
     return " ".join(t for t in out if t is not None), found
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# A code said FAST, so the recogniser wrote it as ONE made-up word: "উসগ" for U-S-G, "সিবিসি"-like "ক্বক" for C-B-C, "টিএসএইচ" as "টসক". The consonants of the letter names
+# survive such a word; the vowels do not. So a Bengali / Hindi word whose consonant sounds equal the letter names of exactly ONE catalogue code is that code, for every code
+# in the catalogue (owner, 2026-10-19: "for any abbreviation of test it must work on similar"). Believed only when
+#   * the word is at least 3 letters, the code's sound string at least 3 classes and unique among the codes (two codes that sound alike -> neither is guessed), and
+#   * the sentence is about a test (a test cue word is present).
+# An everyday word that happens to share the consonants is the risk this guards: the cue and the uniqueness are the guard, and the result is only ever used by the catalogue
+# lookup, which treats a code it knows as named and still asks before anything is booked.
+_LETTER_SOUND = {
+    "a": "", "e": "", "i": "", "o": "", "u": "", "y": "", "b": "P", "p": "P", "f": "P", "v": "P", "c": "S", "s": "S", "d": "D", "g": "K", "j": "K", "k": "K", "q": "K", "t": "K",
+    "h": "K", "l": "L", "m": "M", "n": "N", "r": "R", "x": "KS", "z": "KD", "w": "DP",
+}
+_CHAR_SOUND = {}
+for _cls, _chars in {
+    "S": "সশষस श ष".replace(" ", ""), "N": "নণংঙঞनणंङञ", "K": "কখগঘজঝতথটঠচছक खगघजझतथटठचछ", "D": "দধডঢदधडढ", "M": "মम", "R": "রড়ঢ়रड़ढ़", "L": "লल", "P": "বভপফबभपफ",
+}.items():
+    for _ch in _chars:
+        _CHAR_SOUND[_ch] = _cls
+_TEST_CUES = ("টেস্ট", "পরীক্ষা", "রেট", "দাম", "টাকা", "কত", "হয়", "হবে", "করা", "করাতে", "করতে", "করব", "रेट", "दाम", "टेस्ट", "जांच", "होता", "कराना", "कितना", "test", "rate", "price", "cost", "available")
+
+
+# A word the recogniser MADE UP from fast letter names ("উসগ", "ক্বক", "টসক") has bare consonants and no vowel signs; nearly every real word ("টেস্ট", "সকাল", "সিবিসি") has at least one. That is the
+# main guard: a word with a vowel sign is never read as a code here.
+_MATRA = re.compile("[া-ৄেৈোৌा-ौ]")
+
+
+def _merge(out: list[str]) -> str:
+    """S and K are one class when comparing: the letter C is said "see" (S) and written by the recogniser with a K as readily ("ক্বক" for CBC). The price is that two codes that differ only
+    there (CBC / KFT) are the same sound and neither is guessed -- the right trade: a code is only ever taken when no other code could have been meant."""
+    merged: list[str] = []
+    for cls in out:
+        cls = "K" if cls == "S" else cls
+        if not merged or merged[-1] != cls:
+            merged.append(cls)
+    return "".join(merged)
+
+
+def _name_sound(code: str) -> str:
+    out: list[str] = []
+    for ch in code.lower():
+        for cls in _LETTER_SOUND.get(ch, ""):
+            if not out or out[-1] != cls:
+                out.append(cls)
+    return _merge(out)
+
+
+def _word_sound(word: str) -> str:
+    w = unicodedata.normalize("NFC", word).lower().replace("্য", "").replace("्य", "").replace("য়", "")
+    out: list[str] = []
+    for ch in w:
+        cls = _CHAR_SOUND.get(ch)
+        if cls and (not out or out[-1] != cls):
+            out.append(cls)
+    return _merge(out)
+
+
+def sound_codes(text: str, codes) -> tuple[str, list[str]]:
+    """(text with each run-together made-up word that sounds like a catalogue code replaced by the code, the codes found). See the comment above for the guard."""
+    low = (text or "").lower()
+    if not text or not any(c in low for c in _TEST_CUES):
+        return text, []
+    by_sound: dict[str, set[str]] = {}
+    for c in {c.upper() for c in codes}:
+        snd = _name_sound(c)
+        if len(snd) >= 3:
+            by_sound.setdefault(snd, set()).add(c)
+    unique = {snd: next(iter(cs)) for snd, cs in by_sound.items() if len(cs) == 1}
+    found: list[str] = []
+    out = []
+    for tok in text.split():
+        core = tok.strip(_EDGE)
+        if len(core) >= 3 and not core.isascii() and not _MATRA.search(core):
+            code = unique.get(_word_sound(core))
+            if code:
+                found.append(code)
+                out.append(tok.replace(core, code))
+                continue
+        out.append(tok)
+    return " ".join(out), found

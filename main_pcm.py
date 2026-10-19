@@ -147,7 +147,7 @@ from agent import test_availability  # real call 2026-10-14: "is the X test done
 from agent.combined_question import add_implied_second_question  # "price AND fasting?" in one breath: answer both
 from agent import fastpath_guards  # refuse a quick answer that cannot be right for the sentence
 from agent import slot_proposal  # the machine picks the appointment time and says it
-from agent import clinical_terms, doctor_search, echo_check, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import clinical_terms, doctor_search, echo_check, imaging_words, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -3262,6 +3262,8 @@ async def _normalise_spelled(text: str) -> str:
     try:
         codes = await _catalogue_codes()
         new_text, found = spelled_letters.normalise_spelled_codes(text, codes)
+        new_text, sounded = spelled_letters.sound_codes(new_text, codes)  # a code said fast and written as one made-up word ("উসগ")
+        found = list(found) + sounded
         if found or new_text != text:
             logger.info("spelled letters read as code(s) %s: %r -> %r", found or "(near)", text, new_text)
         return new_text
@@ -3584,6 +3586,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if detected_lang == "en":
             text = fix_asr_confusables(text)
         if text:
+            text = imaging_words.normalise(text)  # "উসগ" is USG, "থাইরাইড গ্লিন্ট" is the thyroid gland: one spelling for the whole pipeline (real call 2026-10-19)
             text = await _normalise_spelled(text)  # letters said one by one ("টি এস এইচ") are the code they spell ("TSH") for the whole turn
         if not text:
             logger.info("[%s] ASR returned empty text", session.call_id)
