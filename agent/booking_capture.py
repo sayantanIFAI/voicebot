@@ -530,6 +530,42 @@ def _period_of(words: list[str]) -> tuple[str | None, set[int]]:
     return period, used
 
 
+_DATE_MARKERS = frozenset({"তারিখ", "তারিখে", "তারিখের", "তারীখ", "তারিখটা", "तारीख", "तारीख़", "तारिख", "तारीखको", "tarikh", "tarik", "tarikhe", "date", "dated"})
+
+
+def day_of_month(words: list[str], today) -> tuple[str | None, set[int]]:
+    """"একুশ তারিখ" / "21 তারিখে" / "२१ तारीख" / "21st" -> the ISO date of that day of the month: this month when the day is still to come (or today), next month when it has passed.
+    Needs the word for date after the number (or a 1st/2nd/21st ordinal), so a bare number is never read as a day."""
+    import datetime
+
+    from agent import owner_answers
+
+    for i, w in enumerate(words):
+        n = None
+        used = {i}
+        m = re.fullmatch(r"(\d{1,2})(?:st|nd|rd|th)", w)
+        if m:
+            n = int(m.group(1))
+        elif w in _DATE_MARKERS and i > 0:
+            prev = words[i - 1]
+            used = {i, i - 1}
+            m = re.fullmatch(r"(\d{1,2})(?:st|nd|rd|th|শে|ই|ও)?", prev)
+            if m:
+                n = int(m.group(1))
+            else:
+                base = re.sub(r"(শে|ই|ও)$", "", prev)
+                n = owner_answers.token_number(base) if base else None
+        if n and 1 <= n <= 31:
+            year, month = today.year, today.month
+            if n < today.day:
+                year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+            try:
+                return datetime.date(year, month, n).isoformat(), used
+            except ValueError:
+                return None, set()
+    return None, set()
+
+
 def day_from_words(words: list[str], today) -> tuple[str | None, set[int]]:
     """"tomorrow" / "কাল" / "कल" (also "day after tomorrow", "today") -> ISO date relative to `today`. In a booking, a bare
     কাল / कल always means tomorrow (the words also mean 'yesterday', but nobody books yesterday)."""
@@ -544,7 +580,7 @@ def day_from_words(words: list[str], today) -> tuple[str | None, set[int]]:
             return (today + datetime.timedelta(days=1)).isoformat(), {i}
         if w in _TODAY:
             return today.isoformat(), {i}
-    return None, set()
+    return day_of_month(words, today)
 
 
 def _fuzzy_hours(words: list[str], used: set[int]) -> tuple[set[int], set[int]]:

@@ -230,6 +230,19 @@ _CALL_AGAIN = {
 }
 
 
+_BOOK_THAT_DAY = {
+    "bn": "ডাক্তার যে সময়ে বসেন, সেই সময়েই আপনার অ্যাপয়েন্টমেন্ট করে দেব। {when} অ্যাপয়েন্টমেন্ট করব?",
+    "hi": "डॉक्टर जिस समय बैठते हैं, उसी समय आपका अपॉइंटमेंट कर दूँगी। {when} अपॉइंटमेंट कर दूँ?",
+    "en": "I will book you for the time the doctor sits. Shall I book {when}?",
+}
+
+
+def book_that_day_question(date_iso: str, lang: str, now: datetime.datetime | None = None) -> str:
+    """The question that stands in for "what time?" -- which is never asked: whether to book the day, the sitting time being the doctor's own."""
+    lang = lang if lang in _BOOK_THAT_DAY else "en"
+    return _BOOK_THAT_DAY[lang].format(when=when_phrase(date_iso, lang, now))
+
+
 def call_again(lang: str) -> str:
     """Owner, 2026-10-18: when no date and time is available for the doctor, the patient is asked to call again to ask about the next date."""
     return _CALL_AGAIN.get(lang, _CALL_AGAIN["en"])

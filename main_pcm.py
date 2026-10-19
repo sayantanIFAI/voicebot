@@ -2315,7 +2315,35 @@ async def _ground_model_slots(session: CallSession, text: str, lang: str, data: 
         logger.info(
             "[%s] dropped %d name(s) the model produced that the caller never said", session.call_id, total_dropped
         )
-    return cleaned
+    return _repair_day_slots(session, text, cleaned)
+
+
+_DAY_WORDS = booking_capture._TODAY | booking_capture._TOMORROW | booking_capture._DAY_AFTER
+
+
+def _repair_day_slots(session: CallSession, text: str, data: dict) -> dict:
+    """Real call 2026-10-19: "কখন বসবেন পরশু উনি" (when will he sit the day after tomorrow) was heard as a doctor called "পরশু", and "একুশ তারিখ" (the 21st) gave no date at all, so the
+    answer was for TODAY. A day word is never a doctor's name -- the doctor the call was just talking about stays, and the day word is the date; "<number> তারিখ" is a date."""
+    slots = data.get("slots")
+    if not isinstance(slots, dict):
+        return data
+    today = slot_proposal.clinic_now().date()
+    words = booking_capture._words(text)
+    new = dict(slots)
+    name = str(new.get("doctor_name") or "").strip().lower()
+    if name and (name in _DAY_WORDS or all(w in _DAY_WORDS for w in name.split())):
+        new.pop("doctor_name", None)
+        ctx = getattr(session, "last_doctor_enquiry", None)
+        booked = session.booking.slots.get("doctor_name") if session.booking is not None else None
+        known = booked or ((ctx or {}).get("doctor_name") if booking_carryover.recent(ctx, session.turn_count) else None)
+        if known:
+            new["doctor_name"] = known
+    date, _used = booking_capture.day_from_words(words, today)
+    if date:
+        new["date"] = date
+    if new == slots:
+        return data
+    return {**data, "slots": new}
 
 
 async def _answer_test_availability(slots: dict, lang: str) -> tuple[str, dict]:
@@ -4821,6 +4849,14 @@ _NAME_ONLY = {"bn": "আপনার নামটা বলবেন প্ল�
 def _next_question(session: CallSession, st, intent: str, missing: list[str], lang: str) -> str:
     """KCD-103: the next question, one field or a group. The caller-state table (`questions_per_turn`) always wins
     over grouping, and a field already asked is asked alone (agent/slot_grouping.py)."""
+    if "time_slot" in missing and st.action == "book_appointment":
+        # Owner, 2026-10-19 (fixed twice before): the caller is NEVER asked what time to come. The time is the doctor's sitting, told by the agent. If the doctor and the day are known the
+        # question is whether to book that day (the sitting time is then said with it); if one is not known, that one is asked instead.
+        missing = [m for m in missing if m != "time_slot"]
+        if not missing and st.slots.get("doctor_name") and st.slots.get("date"):
+            return slot_proposal.book_that_day_question(st.slots["date"], lang)
+        if not missing:
+            return missing_slot_prompt(st.action, "date", lang)
     fields = slot_grouping.next_fields(st.action, missing, session.policy.questions_per_turn, st.asked_fields)
     grouped = slot_grouping.grouped_prompt(fields, lang) if len(fields) > 1 else None
     if grouped is None:
