@@ -113,3 +113,9 @@ if [ -f /workspace/.admission_token ]; then
     export ADMISSION_ADMIN_TOKEN
     ADMISSION_ADMIN_TOKEN=$(cat /workspace/.admission_token)
 fi
+
+# sourav, 2026-10-21: Twilio phone calls (agent/twilio_bridge.py). Put the secrets in the pod's environment or a .env file, never in git.
+#   export TWILIO_AUTH_TOKEN=...            # required: the Twilio Auth Token (also read from AuthToken in a .env file)
+#   export TWILIO_PUBLIC_BASE_URL=https://<POD_ID>-8888.proxy.runpod.net   # the exact public URL Twilio calls
+#   export TWILIO_ALLOWED_CALLERS=919830012345,91...   # optional: only these callers are answered (digits, comma separated)
+#   export TWILIO_BRIDGE=0                  # optional: switch the phone bridge off

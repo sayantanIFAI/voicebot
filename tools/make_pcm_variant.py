@@ -105,6 +105,22 @@ POLL_NEW = """        sr = session.audio.sample_rate
         result"""
 
 
+# sourav, 2026-10-21: Twilio phone-call bridge (PCM entrypoint only). Why: a phone call reaches the agent through the same
+# ws_audio turn loop as the browser; agent/twilio_bridge.py only wraps Twilio's stream so it looks like the browser socket.
+# Flow: register /twilio/voice, /twilio/stream, /twilio/health BEFORE the static mount (which would swallow them). The try/except
+# means a problem in the bridge can never stop the voice agent from starting. TWILIO_BRIDGE=0 turns it off.
+TWILIO_HOOK = (
+    "# sourav, 2026-10-21: Twilio phone bridge -- see agent/twilio_bridge.py (registered before the static mount below).\n"
+    "try:\n"
+    "    from agent import twilio_bridge as _twilio_bridge\n"
+    "\n"
+    "    _twilio_bridge.install(app, ws_audio)\n"
+    "except Exception:  # never let telephony block the agent from starting\n"
+    '    logger.exception("Twilio bridge not installed")\n'
+    "\n"
+)
+
+
 def main() -> None:
     src = open("main.py", encoding="utf-8").read()
     s = src
@@ -220,7 +236,7 @@ def main() -> None:
     )
     rep(
         'app.mount("/", StaticFiles(directory="static", html=True), name="static")',
-        'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
+        TWILIO_HOOK + 'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
         "mount",
     )
 

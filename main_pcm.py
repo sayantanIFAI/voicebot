@@ -6093,4 +6093,12 @@ async def ws_audio(ws: WebSocket):
         logger.info("[%s] call ended (%d active)", session.call_id, _admission.active_calls)
 
 
+# sourav, 2026-10-21: Twilio phone bridge -- see agent/twilio_bridge.py (registered before the static mount below).
+try:
+    from agent import twilio_bridge as _twilio_bridge
+
+    _twilio_bridge.install(app, ws_audio)
+except Exception:  # never let telephony block the agent from starting
+    logger.exception("Twilio bridge not installed")
+
 app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")
