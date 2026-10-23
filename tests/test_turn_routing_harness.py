@@ -27,7 +27,8 @@ RUNNER = os.path.join(REPO_ROOT, "tests", "_turn_harness_runner.py")
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from agent import owner_answers  # noqa: E402
+from agent import doctor_enquiry_cues, owner_answers  # noqa: E402
+from agent.reply_templates import missing_slot_prompt  # noqa: E402
 
 ENTRY_POINTS = ("main", "main_pcm")
 
@@ -67,12 +68,80 @@ CASES = [
     # --- a department the clinic does not have is never invented
     ("My eyes hurt.", "en"),
     ("Ami jhapsa dekhchi.", "bn"),
+    # --- 2026-10-23: payment link not received / which doctor is good / which days / next if absent (no doctor named)
+    ("I did not get the payment link", "en"),
+    ("লিংক আসেনি", "bn"),
+    ("valo doctor ke ache", "en"),
+    ("কোন কোন দিন বসেন", "bn"),
+    ("aj doctor na pele next kobe", "en"),
+    # --- items 24 and 21
+    ("what time should I come", "en"),
+    ("What is my serial number?", "en"),
+    ("সিরিয়াল নম্বর কখন পাব", "bn"),
+    ("सीरियल नंबर कब मिलेगा", "hi"),
+    ("serial number kobe pabo", "en"),
+    ("what time do I need to reach", "en"),
+]
+
+
+# item 24: a doctor was just told about, who sits from 10:00 (the runner presets his chamber hours)
+WINDOW = "10:00-12:00"
+ROUND4_CASES = [
+    ("PHONEPAY HOBENA", "en"),
+    ("ফোনপে হবে না", "bn"),
+    ("फोनपे नहीं है", "hi"),
+    ("can I come and book at the clinic", "en"),
+    ("bolchi ekta naam lekhanor chhilo", "en"),
+    ("নাম লেখানোর ছিল", "bn"),
+]
+ROUND4_WINDOW_CASES = [("kota theke kota bose", "en"), ("কটা থেকে কটা বসেন", "bn"), ("कितने बजे से कितने बजे तक बैठते हैं", "hi")]
+ROUND5_CASES = [
+    ("usg of thyroid gland", "en"),
+    ("tb test in ear", "en"),
+    ("থাইরয়েড গ্ল্যান্ডের ইউএসজি", "bn"),
+    ("कान का टीबी टेस्ट", "hi"),
+    ("USG whole abdomen koto", "en"),
+]
+ROUND5_WINDOW_CASES = [
+    ("samner robibar doctor sen ke pabo", "en"),
+    ("ei robibar", "en"),
+    ("সামনের রবিবার ডাক্তার সেন কি বসবেন", "bn"),
+    ("अगले इतवार डॉक्टर सेन बैठेंगे", "hi"),
+]
+ROUND6_CASES = [
+    ("achha thik ache", "bn"),
+    ("ok thik ache", "en"),
+    ("আচ্ছা ঠিক আছে", "bn"),
+    ("अच्छा ठीक है", "hi"),
+    ("okay thank you", "en"),
+    ("achha thik ache, ar ekta kotha chilo", "bn"),
+]
+ROUND6_OPEN_CASES = [("Thik ache!", "en"), ("ঠিক আছে!", "bn")]  # the agent had just asked a question: the same words are a YES
+ROUND7_CASES = [
+    ("আমার কোমরে ব্যথা হচ্ছে কোন ডাক্তার দেখালে ভালো হয়", "bn"),
+    ("কানে ব্যথা কোন ডাক্তার ভালো", "bn"),
+    ("मेरी कमर में दर्द है कौन सा डॉक्टर अच्छा रहेगा", "hi"),
+    ("I have back pain which doctor is good", "en"),
+    ("I have ear pain which doctor is good", "en"),
+]
+ROUND7_WINDOW_CASES = [("ami ekta naam likhabo.", "bn"), ("amar naam likhabo .", "bn"), ("नाम लिखवाना है।", "hi"), ("I want to write a name.", "en")]  # a doctor was just discussed
+WINDOW_CASES = [
+    ("When should I come?", "en"),
+    ("কখন আসতে হবে", "bn"),
+    ("कितने बजे आना है", "hi"),
+    ("kokhon asbo", "en"),
+    ("kab aaun", "hi"),
 ]
 
 
 @pytest.fixture(scope="module")
 def turns():
-    payload = json.dumps([{"text": t, "lang": lg} for t, lg in CASES], ensure_ascii=False)
+    payload = json.dumps(
+        [{"text": t, "lang": lg} for t, lg in CASES + ROUND4_CASES + ROUND5_CASES + ROUND6_CASES + ROUND7_CASES]
+        + [{"text": t, "lang": lg, "answering": True} for t, lg in ROUND6_OPEN_CASES]
+        + [{"text": t, "lang": lg, "window": WINDOW} for t, lg in WINDOW_CASES + ROUND4_WINDOW_CASES + ROUND5_WINDOW_CASES + ROUND7_WINDOW_CASES],
+        ensure_ascii=False,
+    )
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     proc = subprocess.run(
         [sys.executable, RUNNER], input=payload.encode("utf-8"), capture_output=True, env=env, timeout=600
@@ -189,3 +258,191 @@ def test_a_symptom_the_model_could_not_place_is_routed_to_a_department_with_real
 def test_a_department_the_clinic_does_not_have_is_never_invented(turns, entry, text):
     said = _one_reply(_run(turns, entry, text))
     assert "Dr." not in said and "ডা" not in said, said
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text,lang", [("I did not get the payment link", "en"), ("লিংক আসেনি", "bn")])
+def test_a_missing_payment_link_is_a_network_issue_wait_fifteen_minutes(turns, entry, text, lang):
+    r = _run(turns, entry, text)
+    assert _one_reply(r) == owner_answers.payment_link_missing_reply(lang)
+    assert not r["model_called"] and not r["handoffs"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_which_doctor_is_good_recommends_no_one_and_asks_the_problem(turns, entry):
+    r = _run(turns, entry, "valo doctor ke ache")
+    said = _one_reply(r)
+    assert "cannot say which doctor" in said and "problem" in said and not r["model_called"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_which_days_with_no_doctor_named_asks_which_doctor(turns, entry):
+    r = _run(turns, entry, "কোন কোন দিন বসেন")
+    assert len(r["said"]) == 1 and not r["model_called"] and not r["handoffs"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_next_if_absent_with_no_doctor_named_asks_the_problem(turns, entry):
+    r = _run(turns, entry, "aj doctor na pele next kobe")
+    said = _one_reply(r)
+    assert "problem" in said and not r["model_called"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_when_to_come_with_no_doctor_known_asks_which_doctor(turns, entry):
+    r = _run(turns, entry, "what time should I come")  # no doctor context on this turn: hours are never invented
+    assert _one_reply(r) == "Which doctor are you asking about?" and not r["model_called"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text,lang", WINDOW_CASES)
+def test_when_to_come_tells_the_sitting_start_time_and_to_keep_one_to_two_hours_in_hand(turns, entry, text, lang):
+    r = _run(turns, entry, text)
+    said = _one_reply(r)
+    assert not r["model_called"] and "10:00" in said and "12:00" not in said, said  # the START time only
+    hours = {"en": "one to two hours", "bn": "এক থেকে দুই ঘণ্টা", "hi": "एक से दो घंटे"}[lang]
+    assert hours in said, said
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize(
+    "text,lang",
+    [
+        ("What is my serial number?", "en"),
+        ("সিরিয়াল নম্বর কখন পাব", "bn"),
+        ("सीरियल नंबर कब मिलेगा", "hi"),
+        ("serial number kobe pabo", "en"),
+    ],
+)
+def test_the_serial_number_question_is_answered_whatsapp_after_payment(turns, entry, text, lang):
+    r = _run(turns, entry, text)
+    assert _one_reply(r) == doctor_enquiry_cues.serial_number_reply(lang) and not r["model_called"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_what_time_do_i_reach_is_no_longer_answered_with_the_insurance_text(turns, entry):
+    r = _run(turns, entry, "what time do I need to reach")
+    assert "insurance" not in " ".join(r["said"]).lower() and "cashless" not in " ".join(r["said"]).lower()
+
+
+# ----------------------------------------------------------------------------------- item 20: three "hello"s, then the call is cut
+@pytest.fixture(scope="module")
+def silence():
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", HARNESS_SILENCE="1")
+    proc = subprocess.run([sys.executable, RUNNER], input=b"[]", capture_output=True, env=env, timeout=600)
+    out = proc.stdout.decode("utf-8", "replace")
+    assert "@@RESULT@@" in out, proc.stderr.decode("utf-8", "replace")[-2000:]
+    return json.loads(out.split("@@RESULT@@", 1)[1].strip().splitlines()[0])
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_a_caller_who_never_speaks_hears_hello_three_times_and_the_call_is_cut(silence, entry):
+    steps = silence[entry]["never_spoke"]
+    spoken = [s["said"][0] for s in steps if s["said"]]
+    assert spoken == ["Hello? Can you hear me?"] * 3, spoken
+    assert steps[-1]["ended"] is True and not steps[-1]["said"]  # cut at once, nothing said
+    assert not any(s["ended"] for s in steps[:-1])
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_a_caller_who_has_spoken_keeps_the_anything_else_prompt_then_close(silence, entry):
+    steps = silence[entry]["had_spoken"]
+    assert any("anything else" in t for s in steps for t in s["said"]), steps  # the existing prompt, unchanged
+    assert not any("Hello? Can you hear me?" in s["said"] for s in steps)
+    assert steps[-1]["ended"] is True
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text,lang", [("PHONEPAY HOBENA", "en"), ("ফোনপে হবে না", "bn"), ("फोनपे नहीं है", "hi")])
+def test_item_17_a_caller_who_cannot_pay_online_is_told_to_take_help_and_call_again(turns, entry, text, lang):
+    r = _run(turns, entry, text)
+    assert _one_reply(r) == doctor_enquiry_cues.cannot_pay_online_reply(lang) and not r["model_called"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_item_17_coming_to_the_clinic_to_book_is_allowed_but_the_date_may_be_full(turns, entry):
+    r = _run(turns, entry, "can I come and book at the clinic")
+    assert _one_reply(r) == doctor_enquiry_cues.come_to_clinic_reply("en") and not r["model_called"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text,lang", ROUND4_WINDOW_CASES)
+def test_item_16_kota_theke_kota_tells_the_hours_from_and_to(turns, entry, text, lang):
+    r = _run(turns, entry, text)
+    said = _one_reply(r)
+    assert "10:00" in said and "12:00" in said and not r["model_called"], said
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text", ["bolchi ekta naam lekhanor chhilo", "নাম লেখানোর ছিল"])
+def test_item_22_a_name_to_write_with_no_doctor_asks_which_doctor(turns, entry, text):
+    r = _run(turns, entry, text)
+    said = _one_reply(r)
+    assert (
+        said in ("Which doctor would you like to book with?", "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?")
+        and not r["model_called"]
+    ), said
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text", [c[0] for c in ROUND5_CASES[:4]])
+def test_item_7_a_rare_test_not_in_the_table_reaches_the_human_handoff(turns, entry, text):
+    r = _run(turns, entry, text)
+    assert r["handoffs"] == ["unlisted_test"], r
+    assert not r["model_called"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_item_7_a_listed_scan_is_not_sent_to_a_person(turns, entry):
+    assert _run(turns, entry, "USG whole abdomen koto")["handoffs"] == []
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text", [c[0] for c in ROUND5_WINDOW_CASES])
+def test_item_25_a_doctor_asked_about_on_a_weekday_is_answered_for_that_day(turns, entry, text):
+    r = _run(turns, entry, text)
+    said = _one_reply(r)
+    assert "10:00" in said and not r["model_called"], said
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text", [c[0] for c in ROUND6_CASES[:5]])
+def test_item_6_a_bare_okay_with_nothing_open_says_goodbye_and_cuts_the_call(turns, entry, text):
+    r = _run(turns, entry, text)
+    assert r["closed"] and len(r["said"]) == 1 and not r["model_called"], r
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_item_6_an_okay_with_more_in_the_sentence_does_not_cut_the_call(turns, entry):
+    assert not _run(turns, entry, ROUND6_CASES[5][0])["closed"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text", [c[0] for c in ROUND6_OPEN_CASES])
+def test_item_6_the_same_words_after_a_question_are_a_yes_and_do_not_cut_the_call(turns, entry, text):
+    assert not _run(turns, entry, text)["closed"]
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text,lang", ROUND7_CASES)
+def test_item_8_a_problem_in_the_sentence_is_routed_to_its_department_not_asked_for_again(turns, entry, text, lang):
+    said = _one_reply(_run(turns, entry, text))
+    assert "General Medicine" not in said and "জেনারেল মেডিসিন" not in said and "जनरल मेडिसिन" not in said, said  # the generic "tell me your problem" answer
+    assert any(n in said for n in ("Orthopaedics", "অর্থোপেডিক্স", "ऑर्थोपेडिक्स", "ENT", "ইএনটি", "ই এন টি", "ईएनटी", "ई एन टी")), said  # the department the symptom belongs to, with its doctors
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text,lang", ROUND7_WINDOW_CASES)
+def test_item_22_a_name_to_write_with_a_doctor_just_discussed_still_asks_which_doctor(turns, entry, text, lang):
+    r = _run(turns, entry, text)
+    assert _one_reply(r) == missing_slot_prompt("book_appointment", "doctor_name", lang) and not r["model_called"], r
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_a_caller_who_is_quiet_while_a_booking_question_is_open_is_told_to_take_their_time_not_asked_anything_else(silence, entry):
+    from agent.phrases import phrase
+
+    rounds = silence[entry]["booking_open"]
+    first = next(r for r in rounds if r["said"])
+    assert first["said"] == [phrase("booking_wait", "en")] and not first["ended"], rounds
+    assert all(phrase("silence_prompt", "en") not in r["said"] for r in rounds), rounds  # "anything else?" is never asked: a later "no" would end the call and lose the booking

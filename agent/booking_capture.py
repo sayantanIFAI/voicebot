@@ -26,7 +26,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from agent import nato_letters, phonetic_match, spoken_codes, slot_grounding
+from agent import nato_letters, phonetic_match, spoken_codes, slot_grounding, whatsapp_cues
 
 # ----------------------------------------------------------------------------------------------------------------- digits
 
@@ -747,6 +747,12 @@ _PROMPTS = {
         "hi": "ठीक है, बोलिए।",
         "bn": "ঠিক আছে, বলুন।",
     },
+    # Owner, 2026-10-23: a caller who stops after TWO digits is told what was heard and asked for the other eight (a number said in groups keeps the short "ok" above).
+    "phone_partial_two": {
+        "en": "Okay, I have {digits}. Please say the other eight digits.",
+        "hi": "ठीक है, {digits} मिला है। बाकी आठ अंक बताइए।",
+        "bn": "ঠিক আছে, {digits} পেয়েছি। বাকি আটটা সংখ্যা বলুন।",
+    },
     "phone_partial_long": {
         "en": "Okay, I have {digits} so far. Please say the rest.",
         "hi": "ठीक है, अभी तक {digits} मिला है। बाकी बताइए।",
@@ -814,6 +820,32 @@ _PROMPTS = {
     "ask_age": {"en": "What is the patient's age?", "hi": "मरीज़ की उम्र क्या है?", "bn": "রোগীর বয়স কত?"},
     "ask_address": {"en": "Could you tell me the address?", "hi": "पता बताइए?", "bn": "ঠিকানাটা বলবেন?"},
     "ps_ask": {"en": "Which police station is that under?", "hi": "वह किस थाने के अंतर्गत है?", "bn": "থানার নামটা বলবেন?"},
+    "ps_again": {
+        "en": "Please say the police station name. It is needed to book the appointment.",
+        "hi": "कृपया थाने का नाम बताइए। अपॉइंटमेंट के लिए यह ज़रूरी है।",
+        "bn": "দয়া করে থানার নামটা বলুন। অ্যাপয়েন্টমেন্টের জন্য এটা দরকার।",
+    },
+    # Owner, 2026-10-23 (item 15): the number is always asked about -- the payment link and the serial number go to WhatsApp.
+    "ask_whatsapp": {
+        "en": "Does the number {digits} have WhatsApp?",
+        "hi": "क्या {digits} इस नंबर पर व्हाट्सऐप है?",
+        "bn": "{digits} এই নম্বরে কি হোয়াটসঅ্যাপ আছে?",
+    },
+    "whatsapp_again": {
+        "en": "Sorry, I did not catch that. Does the number {digits} have WhatsApp, yes or no?",
+        "hi": "माफ़ कीजिए, समझ नहीं आया। क्या {digits} पर व्हाट्सऐप है, हाँ या नहीं?",
+        "bn": "দুঃখিত, বুঝতে পারিনি। {digits} এই নম্বরে কি হোয়াটসঅ্যাপ আছে, হ্যাঁ নাকি না?",
+    },
+    "whatsapp_number": {
+        "en": "Okay. Please tell me the number that has WhatsApp, all ten digits.",
+        "hi": "ठीक है। जिस नंबर पर व्हाट्सऐप है, वह दस अंकों का नंबर बताइए।",
+        "bn": "ঠিক আছে। যে নম্বরে হোয়াটসঅ্যাপ আছে, সেই দশ সংখ্যার নম্বরটা বলুন।",
+    },
+    "whatsapp_number_again": {
+        "en": "I did not catch the number. Please say the ten-digit WhatsApp number once more.",
+        "hi": "नंबर समझ नहीं आया। व्हाट्सऐप का दस अंकों का नंबर एक बार फिर बताइए।",
+        "bn": "নম্বরটা বুঝতে পারিনি। হোয়াটসঅ্যাপের দশ সংখ্যার নম্বরটা আরেকবার বলুন।",
+    },
     "name_again": {
         "en": "Sorry about that. Please tell me the patient's name again.",
         "hi": "माफ़ कीजिए। कृपया मरीज़ का नाम दोबारा बताइए।",
@@ -957,6 +989,43 @@ def split_age(text: str) -> tuple[int | None, str]:
 
 _STATION_WORDS = ("থানা", "थाना", "थाने", "police", "পুলিশ", "पुलिस", " p.s", " ps ")
 
+# Owner, 2026-10-23: after "which police station?" an answer that REFUSES or does not know it is not a station name. The station is asked for again before the booking
+# goes on to its closing question -- at most _PS_MAX_REASKS times, so a caller who cannot be moved is still booked (the address is then kept as said).
+_PS_MAX_REASKS = 2
+_PS_BARE_NO = frozenset({"no", "nope", "na", "nah", "nahi", "nhi", "nahin", "nai", "nei", "नहीं", "नही", "ना", "না", "নয়", "নাই", "নেই"})
+_PS_REFUSAL_PHRASES = (
+    # Bengali
+    "জানি না", "জানিনা", "জানা নেই", "জানা নাই", "মনে নেই", "মনে নাই", "মনে পড়ছে না", "মনে পড়ছেনা", "বলব না", "বলবো না", "বলবনা", "বলতে পারব না", "বলতে পারবো না",
+    "বলতে চাই না", "দেব না", "দেবো না", "দিতে পারব না", "থানা নেই", "থানার নাম নেই", "থানা জানি না", "থানা মনে নেই",
+    # Hindi
+    "पता नहीं", "पता नही", "नहीं पता", "नही पता", "मालूम नहीं", "मालूम नही", "नहीं मालूम", "नही मालूम", "याद नहीं", "याद नही", "नहीं याद", "नही याद",
+    "नहीं बताऊंगा", "नहीं बताऊँगा", "नहीं बताउंगा", "नहीं बताऊंगी", "नहीं बताऊँगी", "नहीं बताउंगी", "नहीं बताना", "नहीं बताएंगे", "नहीं बोलूंगा", "नहीं बोलूँगा", "नहीं देना",
+    "भूल गया", "भूल गई", "भूल गयी", "पता ही नहीं", "थाना नहीं",
+)
+_PS_REFUSAL_ROMAN = re.compile(
+    r"\b(?:"
+    # English
+    r"(?:don'?t|do not|dont|didn'?t|can'?t|cannot|can not|won'?t|will not|wont|not going to)\s+(?:know|remember|recall|say|tell|give|want to (?:say|tell|give))"
+    r"|no idea|not sure|forgot(?:ten)?|not telling|unknown|nothing|none|skip|i have no|there is no"
+    # Hindi, written in Latin letters
+    r"|(?:nahi|nhi|nahin|nai|na)\s*(?:pata|pta|malum|maloom|yaad|yad|bataunga|batauga|bataungi|batungi|bolunga|bolungi|batana|batani|jaanta|janta|jaanti|janti|dunga|dungi)"
+    r"|(?:pata|pta|malum|maloom|yaad|yad|jaanta|janta)\s*(?:nahi|nhi|nahin|nai|na)|(?:bhool|bhul)\s*(?:gaya|gayi|gai)"
+    # Bengali, written in Latin letters
+    r"|nei|jani\s*na[h]?|janina|jana\s*(?:nei|nai)|mone\s*(?:nei|nai|porche\s*na[h]?|hocche\s*na[h]?)|bolbo\s*na[h]?|bolbona|bolte\s*parbo\s*na[h]?|bolchi\s*na[h]?"
+    r"|dibo\s*na[h]?|dite\s*parbo\s*na[h]?|bolte\s*chai\s*na[h]?"
+    r")\b",
+    re.I,
+)
+
+
+def _refuses_station(answer: str) -> bool:
+    """True when the answer to "which police station?" REFUSES or does not know it (\"nei\", \"jani na\", \"nahi pata\", \"yaad nahi\", \"bolbo nah\", \"don't know\") or holds nothing
+    at all -- in English, Hindi and Bengali, written in their own scripts or in Latin letters."""
+    t = " ".join((answer or "").lower().split()).strip(" ,.।!?")
+    if len(t) < 2 or t in _NO_ADDRESS or t in _PS_BARE_NO:
+        return True
+    return any(p in t for p in _PS_REFUSAL_PHRASES) or _PS_REFUSAL_ROMAN.search(t) is not None
+
 
 def _lacks_police_station(address: str) -> bool:
     low = f" {address.lower()} "
@@ -969,9 +1038,23 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
     after asking the police station when the caller did not give one. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
     pend_key, done_key = f"_{tag}_pending", f"_{tag}_done"
     if tag == "address" and st.slots.get("_ps_pending"):
-        address = st.slots.pop("_ps_pending")
         station = " ".join((text or "").split()).strip(" ,.।")
-        refused = len(station) < 2 or station.lower() in _NO_ADDRESS or len(station.split()) > 5
+        asked = int(st.slots.get("_ps_asks") or 0)
+        # Item 19: main.py checked the answer against the geography tables. A station they know (even spelled as the recogniser heard it) is stored under the table's own name;
+        # a refusal that outlasts the re-asks falls back to the station of a place the ADDRESS names, when the tables give exactly one.
+        matched = st.slots.pop("_ps_match", None)
+        from_place = st.slots.pop("_ps_place", None)
+        if matched:
+            station = matched
+        if not matched and _refuses_station(station) and asked < _PS_MAX_REASKS:
+            st.slots["_ps_asks"] = asked + 1  # "_ps_pending" stays: the very next answer is read as the station again, and the closing question waits for it
+            plan.speak = prompt("ps_again", lang)
+            return True
+        address = st.slots.pop("_ps_pending")
+        st.slots.pop("_ps_asks", None)
+        refused = not matched and (_refuses_station(station) or len(station.split()) > 5)
+        if refused and from_place:
+            station, refused = from_place, False
         word = {"bn": "থানা", "hi": "थाना"}.get(lang, "police station")
         st.slots[done_key] = "1"
         plan.slots, plan.skip_model = {field: address if refused else f"{address}, {word} {station}"}, True
@@ -1018,6 +1101,76 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
         plan.slots, plan.skip_model = {field: value}, True
         return True
     return False
+
+
+# ---- the WhatsApp question (owner, 2026-10-23, item 15)
+# The payment link and the serial number go to WhatsApp, so every booking is asked ONCE whether the number it holds has it. A yes carries on; a no (or "another number") asks for
+# the number that has WhatsApp and reads it back like any phone number. A caller who answers neither twice is let go: the booking is never held up by this question.
+
+
+def whatsapp_due(st) -> bool:
+    """True when the booking holds a number nobody has asked about yet."""
+    if st.action != "book_appointment" or st.phone_declined or st.slots.get("_wa_asked"):
+        return False
+    return bool(st.slots.get("contact_phone") or st.slots.get("phone"))
+
+
+def ask_whatsapp(st, lang: str) -> str:
+    st.slots["_wa_asked"] = "1"
+    return prompt("ask_whatsapp", lang, digits=" ".join(str(st.slots.get("contact_phone") or st.slots.get("phone"))))
+
+
+def _use_whatsapp_number(st, number: str, plan: "TurnPlan") -> bool:
+    """The number that has WhatsApp replaces the booking's number, which is then read back for a yes like any other (the existing phone read-back runs on its own)."""
+    st.slots["_wa_done"] = "1"
+    for key in ("_wa_number", "_wa_tries", "contact_phone", "_phone_ok", "_conflict_checked"):
+        st.slots.pop(key, None)
+    st.phone_buffer = ""
+    plan.phone, plan.digits = number, True
+    plan.slots, plan.skip_model = {"phone": number}, True
+    return True
+
+
+def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
+    """The caller's answer to "does this number have WhatsApp?" (or, after a no, the number that does). True when this sentence was that answer."""
+    if st.action != "book_appointment" or not st.slots.get("_wa_asked") or st.slots.get("_wa_done"):
+        return False
+    text = whatsapp_cues.canonicalise(text)
+    number = phone_from_digits(read_digits(text)[0])
+    if number and number != st.slots.get("phone"):
+        return _use_whatsapp_number(st, number, plan)  # "no, 98765 43210" / the number itself
+    tries = int(st.slots.get("_wa_tries") or 0)
+    if st.slots.get("_wa_number"):
+        step = absorb(st.phone_buffer, text, True)
+        if step.status == "partial":
+            st.phone_buffer = step.buffer
+            plan.speak = prompt("phone_partial_two" if len(step.buffer) == 2 else "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial", lang, n=len(step.buffer), digits=" ".join(step.buffer))
+            return True
+        if step.status in ("invalid", "compound", "cleared"):
+            st.phone_buffer = ""
+            plan.speak = phone_invalid_prompt(step, lang) if step.status == "invalid" else prompt("phone_digit_by_digit" if step.status == "compound" else "phone_cleared", lang)
+            return True
+        if whatsapp_cues.asks_if_same_number(text) or tries >= 1:
+            st.slots["_wa_done"] = "1"  # "this one" -- or the second miss: the number the booking holds stays, the booking goes on
+            st.slots.pop("_wa_number", None)
+            plan.slots, plan.skip_model = {}, True
+            return True
+        st.slots["_wa_tries"] = tries + 1
+        plan.speak = prompt("whatsapp_number_again", lang)
+        return True
+    answer = whatsapp_cues.answer(text, lang) or confirm_answer(text, lang)
+    if answer == "no":
+        st.slots["_wa_number"] = "1"
+        st.slots.pop("_wa_tries", None)
+        plan.speak = prompt("whatsapp_number", lang)
+        return True
+    if answer == "yes" or tries >= 1:
+        st.slots["_wa_done"] = "1"
+        plan.slots, plan.skip_model = {}, True
+        return True
+    st.slots["_wa_tries"] = tries + 1
+    plan.speak = prompt("whatsapp_again", lang, digits=" ".join(str(st.slots.get("phone") or "")))
+    return True
 
 
 _BN_TENS = {"দশ": 10, "বিশ": 20, "ত্রিশ": 30, "চল্লিশ": 40, "পঞ্চাশ": 50, "ষাট": 60, "সত্তর": 70, "আশি": 80, "নব্বই": 90}
@@ -1221,6 +1374,10 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
             plan.speak = readback(st, lang, "phone", " ".join(pending_phone))
             return plan
 
+    # 1c-wa. The answer to "does this number have WhatsApp?" (owner, 2026-10-23).
+    if _whatsapp_turn(st, text, lang, plan):
+        return plan
+
     # 1c. The age, then the address, each asked alone and each read back for a yes (owner, 2026-10-18).
     if st.action == "book_appointment" and st.slots.get("patient_name") and (st.slots.get("phone") or st.phone_declined):
         if _detail_turn(st, text, lang, plan, "patient_age", bare_age, "age") or _detail_turn(st, text, lang, plan, "patient_address", bare_address, "address"):
@@ -1253,7 +1410,12 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         st.retry_counts.pop("phone", None)  # digits were heard: that is progress, not a miss (the phone is never given up on mid-number)
         # a few digits so far: "ok, go on" (a number said in groups). Nearly all of it (6 or more): say what was heard, so a caller who FINISHED a number that came out short
         # knows which digits are missing -- an "ok" alone made them think it was complete (real call 2026-10-18).
-        spoken = prompt("phone_partial_long" if len(step.buffer) >= 6 else "phone_partial", lang, n=len(step.buffer), digits=" ".join(step.buffer))
+        spoken = prompt(
+            "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial_two" if len(step.buffer) == 2 else "phone_partial",
+            lang,
+            n=len(step.buffer),
+            digits=" ".join(step.buffer),
+        )
         if step.pure:
             plan.speak = spoken
         else:

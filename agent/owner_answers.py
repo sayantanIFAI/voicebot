@@ -293,8 +293,10 @@ _WITH_NUMBER = {"bn": " আমাদের {n} নম্বরে", "hi": " ह�
 # (a conjunct may be written প্যাকেজ / প্যাকেজ / প্যাকেজের ...) must all be caught -- the whole-word tuple used before refused "packages" because it padded
 # "package" with spaces. A bare "package" is enough in this domain (a diagnostic clinic): nothing else a caller says "package" about is on offer here.
 _HEALTH_PACKAGE_RE = re.compile(
-    r"\bpackages?\b|\bpkgs?\b|master health ?check|health ?check ?up (?:plan|scheme|offer)|full body (?:check|checkup|check-up).{0,12}(?:offer|plan|scheme)"
-    r"|প্যাকেজ|প্যাকেট|পেকেজ|पैकेज|पेकेज|पैकिज",
+    r"\bpackages?\b|\bpkgs?\b|\bpackej\b|\bpakej\b|\bpaikej\b|\bpackeg\b|master health ?check|health ?check ?up"
+    r"|(?:full|whole|complete|total) body (?:check|checkup|check-up)|(?:full|complete|preventive|annual) health (?:check|checkup|check-up)|body (?:check|checkup|check-up) (?:plan|scheme|offer)"
+    r"|প্যাকেজ|প্যাকেট|পেকেজ|পাকেজ|পেকেজ|ফুল বডি চেকআপ|মাস্টার হেলথ|সম্পূর্ণ (?:স্বাস্থ্য|শরীর)(?:ের)? ?(?:পরীক্ষা|চেকআপ)|হেলথ চেকআপ"
+    r"|पैकेज|पेकेज|पैकिज|फुल बॉडी चेकअप|फुल बॉडी चैकअप|मास्टर हेल्थ|पूरा (?:हेल्थ )?चेकअप|संपूर्ण (?:स्वास्थ्य|शरीर) (?:जांच|चेकअप)|हेल्थ चेकअप",
     re.I,
 )
 _HEALTH_PACKAGE_REPLY = {
@@ -316,6 +318,19 @@ def health_package_reply(lang: str) -> str:
     not-found path (deterministic, pre-model, same reason asks_for_a_person runs before intent extraction) so the
     caller is never told "no such test" for something that was never a test name to begin with."""
     return _HEALTH_PACKAGE_REPLY.get(lang, _HEALTH_PACKAGE_REPLY["en"])
+
+
+# Owner, 2026-10-23: a caller who did not get the booking payment link is told it is a network issue, to wait fifteen minutes, and to call back if it still has
+# not come -- nothing is looked up and no promise is made about the link itself.
+_PAYMENT_LINK_MISSING = {
+    "bn": "নেটওয়ার্কে একটা সমস্যা হচ্ছে। দয়া করে পনেরো মিনিট অপেক্ষা করুন। তারপরও লিংক না পেলে আবার ফোন করবেন, আমরা আপনাকে সাহায্য করব।",
+    "hi": "नेटवर्क में कुछ समस्या हो रही है। कृपया पंद्रह मिनट इंतज़ार कीजिए। फिर भी लिंक न मिले तो दोबारा फ़ोन कीजिए, हम आपकी मदद करेंगे।",
+    "en": "There is a network issue. Please wait fifteen minutes. If you still do not get the link, please call back again and we will help you.",
+}
+
+
+def payment_link_missing_reply(lang: str) -> str:
+    return _PAYMENT_LINK_MISSING.get(lang, _PAYMENT_LINK_MISSING["en"])
 
 
 def billing_dues_reply(lang: str) -> str:

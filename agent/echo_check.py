@@ -75,7 +75,9 @@ def _candidates(tokens: list[str]) -> list[tuple[str, str]]:
 
 def asks_back(text: str) -> bool:
     t = unicodedata.normalize("NFC", text or "").lower()
-    return any(c in t for c in _CUES)
+    words = set(_tokens(t))
+    # a short cue ("কি", "ঠিক", "ki") counts only as a whole word: inside "বাকিটা" or "ঠিকানা" it is just letters (real call 2026-10-23: "বাকিটা হচ্ছে ফাইভ সিক্স…" was taken for a question)
+    return any((c in words) if len(c) <= 3 and c != "?" else (c in t) for c in _CUES)
 
 
 def find(user_text: str, last_spoken: str) -> tuple[str, str] | None:
@@ -98,4 +100,10 @@ def find(user_text: str, last_spoken: str) -> tuple[str, str] | None:
                 need = 1.0 if min(len(sk), len(sk2)) <= 4 else 0.86
                 if ratio >= need and (best is None or ratio > best[0] or (ratio == best[0] and len(sk) > len(best[3]))):
                     best = (ratio, words, sentence, sk)
-    return (best[1], best[2]) if best else None
+    if best is None:
+        return None
+    # the words asked back must be most of what was said: one matching word inside a long ordinary question ("… কি বাড়ি গিয়ে নমুনা সংগ্রহ করেন") is not it
+    content = [t for t in said if t.lower() not in _STOP and skeleton(t) not in cue_skeletons]
+    if len(best[1].split()) * 2 < len(content):
+        return None
+    return best[1], best[2]

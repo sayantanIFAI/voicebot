@@ -101,6 +101,31 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:
             raise ToolCallError(f"free_slots({doctor_name!r}, {date!r}): {e}") from e
 
+    async def doctor_weekdays(self, doctor_name: str) -> dict:
+        """The weekdays a doctor sits, with hours (GET /api/v1/doctors/weekdays) -- the weekly pattern, never dates."""
+        try:
+            r = await self._client.get("/api/v1/doctors/weekdays", params={"name": doctor_name})
+            r.raise_for_status()
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("weekdays did not return an object")
+            return data
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"doctor_weekdays({doctor_name!r}): {e}") from e
+
+    async def geo_match(self, text: str) -> dict:
+        """Item 19: which district / police station / block / place of the clinic's geography tables a phrase names, and the police station that gives
+        (GET /api/v1/geo/match). Candidates only -- see clinic-api/geo_service.py."""
+        try:
+            r = await self._client.get("/api/v1/geo/match", params={"q": text})
+            r.raise_for_status()
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("geo/match did not return an object")
+            return data
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"geo_match({text!r}): {e}") from e
+
     async def department_alternatives(self, doctor_name: str, date: str, lang: str = "bn") -> dict:
         """KCD-lead-6: other doctors in `doctor_name`'s department who actually have a free slot on `date`
         (GET /api/v1/doctors/department-alternatives) -- used when that doctor is full that day and the caller

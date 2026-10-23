@@ -133,6 +133,19 @@ class FakeTools:
 
     async def get_doctor_availability(self, name, date=None):
         self.calls.append(("get_doctor_availability", name))
+        if (
+            "sen" in (name or "").lower()
+        ):  # one real-looking doctor who sits 10:00-12:00 every day, so hours can be told
+            import datetime
+
+            return {
+                "found": True,
+                "doctor_name": name,
+                "date": date or datetime.date.today().isoformat(),
+                "available": True,
+                "chamber_hours": "10:00-12:00",
+                "next_available_date": None,
+            }
         return {"found": False, "query": name}
 
     async def department_doctors(self, name, lang="bn", sex=None, on_date=None, at_time=None):
@@ -177,6 +190,7 @@ class _Recorder:
     def __init__(self):
         self.said: list[str] = []
         self.frames: list[dict] = []
+        self.closed = False
 
     async def send_text(self, data: str):
         try:
@@ -195,7 +209,7 @@ class _Recorder:
         return None
 
     async def close(self, *a, **k):
-        return None
+        self.closed = True
 
 
 def _load(name: str, filename: str):
@@ -304,7 +318,10 @@ async def run_entry(mod, utterances: list[tuple[str, str]], with_fast_path: bool
 
     out = []
     with tempfile.TemporaryDirectory() as tmp:
-        for i, (text, lang) in enumerate(utterances):
+        for i, item in enumerate(utterances):
+            text, lang = item[0], item[1]
+            window = item[2] if len(item) > 2 else None
+            question_open = len(item) > 3 and bool(item[3])  # the agent's last words were a question: "thik ache" is then a yes
             ws = _Recorder()
             session = mod.CallSession(ws)
             session.lang, session.lang_locked = lang, True
@@ -324,6 +341,15 @@ async def run_entry(mod, utterances: list[tuple[str, str]], with_fast_path: bool
                 f.write(
                     _silence_wav(max(1.0, 0.7 * len(text.split())))
                 )  # long enough for the words: a 0.3 s clip with 7 words is a "jumbled transcript"
+            if window:  # a doctor was just told about, with these chamber hours ("10:00-12:00")
+                session.last_doctor_enquiry = {
+                    "doctor_name": "Dr. A. Sen",
+                    "date": None,
+                    "window": window,
+                    "turn": session.turn_count,
+                }
+            if question_open:
+                session.awaiting_answer = True
             tools.calls.clear()
             model_calls.clear()
             handoffs.clear()
@@ -338,6 +364,7 @@ async def run_entry(mod, utterances: list[tuple[str, str]], with_fast_path: bool
                     "lang": lang,
                     "said": list(ws.said),
                     "handoffs": list(handoffs),
+                    "closed": ws.closed,
                     "model_called": bool(model_calls),
                     "clinic_calls": [c[0] for c in tools.calls],
                     "error": err,
@@ -346,11 +373,54 @@ async def run_entry(mod, utterances: list[tuple[str, str]], with_fast_path: bool
     return out
 
 
+async def run_silence(mod) -> dict:
+    """The silence handler, driven directly: a caller who never spoke is called "hello" SILENCE_HELLOS times then cut; a caller who HAS spoken keeps the old
+    "anything else?" prompt then close."""
+    spoken: list[str] = []
+
+    async def fake_speak(session, text, lang=None, fallback_reason=None):
+        spoken.append(text)
+        return 0.0
+
+    mod._speak = fake_speak
+    mod.SILENCE_PROMPT_S = 0.0
+    mod.SILENCE_CLOSE_S = 0.0
+
+    async def drive(spoke_before: bool, booking_open: bool = False) -> list[dict]:
+        ws = _Recorder()
+        session = mod.CallSession(ws)
+        session.lang = "en"
+        session.turn_count = 1 if spoke_before else 0
+        if booking_open:  # a booking question is waiting (the phone number, say)
+            from agent.booking_flow import new_state
+
+            session.booking = new_state("book_appointment")
+        out = []
+        for _ in range(8):
+            spoken.clear()
+            ended = await mod._handle_silence(session, True)
+            out.append({"ended": ended, "said": list(spoken)})
+            if ended:
+                break
+        return out
+
+    return {"never_spoke": await drive(False), "had_spoken": await drive(True), "booking_open": await drive(True, booking_open=True)}
+
+
 def main() -> None:
+    if os.environ.get("HARNESS_SILENCE"):
+        result = {}
+        for name, filename in (("main", "main.py"), ("main_pcm", "main_pcm.py")):
+            result[name] = asyncio.run(run_silence(_load("voicebot_" + name, filename)))
+        print("@@RESULT@@" + json.dumps(result, ensure_ascii=False))
+        return
     cases = json.loads(sys.stdin.read())
-    utter = [(c["text"], c["lang"]) for c in cases]
+    utter = [(c["text"], c["lang"], c.get("window"), c.get("answering")) for c in cases]
+    entries = os.environ.get("HARNESS_ENTRIES", "main,main_pcm").split(",")
     result = {}
     for name, filename in (("main", "main.py"), ("main_pcm", "main_pcm.py")):
+        if name not in entries:
+            continue
         mod = _load("voicebot_" + name, filename)
         result[name] = asyncio.run(run_entry(mod, utter, with_fast_path=True))
     print("@@RESULT@@" + json.dumps(result, ensure_ascii=False))

@@ -422,7 +422,7 @@ def _en_spell(s: str) -> str:
 
 
 # Owner, 2026-10-17: the English voice must say UPI as the three letters, "you pee eye".
-_EN_LETTER_WORDS = {"UPI": "you pee eye", "OTP": "O T P", "SMS": "S M S", "CBC": "C B C", "ECG": "E C G", "TSH": "T S H"}
+_EN_LETTER_WORDS = {"UPI": "you pee eye", "OTP": "O T P", "SMS": "S M S", "CBC": "C B C", "ECG": "E C G", "TSH": "T S H", "WhatsApp": "Whats App"}
 _RE_EN_LETTER_WORDS = re.compile(r"\b(" + "|".join(_EN_LETTER_WORDS) + r")\b")
 
 

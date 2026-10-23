@@ -178,10 +178,22 @@ def test_the_order_is_fixed_and_documented():
         er.PERSON,
         er.DOCTOR_DIRECT,
         er.COMPLAINT,
+        er.LINK_MISSING,
+        er.CANNOT_PAY_ONLINE,
         er.DUES,
         er.HEALTH_PACKAGE,
+        er.RARE_TEST,
         er.REPORT_PICKUP,
         er.REFERRAL,
+        er.GOOD_DOCTOR,
+        er.DAY_AVAILABILITY,
+        er.DOCTOR_WEEKDAYS,
+        er.NEXT_IF_ABSENT,
+        er.SITTING_HOURS,
+        er.WHEN_TO_COME,
+        er.SERIAL_NUMBER,
+        er.COME_TO_CLINIC,
+        er.WRITE_NAME,
     )
 
 

@@ -312,6 +312,12 @@ PHRASES["en"]["payment_link_sent"] = (
     "Your slot is held. A payment link has been sent to your phone by WhatsApp and SMS. Once you pay, you will get your booking ID. Thank you."
 )
 
+# ---------------------------------------------------------------------------------------------------------------- hello check
+# Said (up to SILENCE_HELLOS times, main.py's _handle_silence) to a caller who has said NOTHING since the greeting; if nobody answers the third, the call is cut.
+PHRASES["bn"]["hello_check"] = "হ্যালো? আপনি কি আমার কথা শুনতে পাচ্ছেন?"
+PHRASES["hi"]["hello_check"] = "हेलो? क्या आप मेरी आवाज़ सुन पा रहे हैं?"
+PHRASES["en"]["hello_check"] = "Hello? Can you hear me?"
+
 # Spoken when a call is turned away before the caller has said a word, so
 # there is no language to choose: all three, shortest first is not worth the
 # complexity -- they are pre-synthesized and cached, so this costs no GPU
@@ -330,3 +336,8 @@ def phrase(key: str, lang: str = DEFAULT_LANGUAGE) -> str:
 
 def prewarm_lines() -> dict[str, list[str]]:
     return {lang: list(table.values()) for lang, table in PHRASES.items()}
+
+# Owner, 2026-10-23: a caller who is quiet while a booking question is open (looking for a number, an address) is told to take their time -- not asked "anything else?".
+PHRASES["bn"]["booking_wait"] = "ঠিক আছে, আপনি সময় নিন, আমি অপেক্ষা করছি।"
+PHRASES["hi"]["booking_wait"] = "ठीक है, आप समय लीजिए, मैं इंतज़ार कर रही हूँ।"
+PHRASES["en"]["booking_wait"] = "Take your time, I am waiting for your answer."

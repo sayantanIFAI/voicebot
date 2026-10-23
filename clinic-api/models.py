@@ -872,3 +872,49 @@ class AuditLog(Base):
     action = Column(String, nullable=False, index=True)
     outcome = Column(String, nullable=False, default="ok")  # ok | denied | failed | locked
     detail_json = Column(Text, nullable=False, default="{}")
+
+
+# ---- West Bengal administrative geography (owner, 2026-10-23, item 19): four DISTRIBUTED 3NF tables, not one master. The `code` columns keep the ids of the
+# source dataset (DIST_01, PS_0101, SB_0101, PL_0101); the foreign keys are the real relationships. Seed rows: geo_data.py; matching: geo_service.py.
+class GeoDistrict(Base):
+    __tablename__ = "geo_districts"
+    id = Column(Integer, primary_key=True)
+    code = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False)
+    division = Column(String, nullable=False, default="", server_default="")
+    aliases_en = Column(String, nullable=False, default="", server_default="")  # other Latin spellings, "|"-joined
+    aliases_bn = Column(String, nullable=False, default="", server_default="")
+    aliases_hi = Column(String, nullable=False, default="", server_default="")
+
+
+class GeoPoliceStation(Base):
+    __tablename__ = "geo_police_stations"
+    id = Column(Integer, primary_key=True)
+    code = Column(String, nullable=False, unique=True)
+    district_id = Column(Integer, ForeignKey("geo_districts.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)  # as the dataset writes it: "Shyampukur PS"
+    aliases_en = Column(String, nullable=False, default="", server_default="")
+    aliases_bn = Column(String, nullable=False, default="", server_default="")
+    aliases_hi = Column(String, nullable=False, default="", server_default="")
+
+
+class GeoSubdivisionBlock(Base):
+    __tablename__ = "geo_subdivisions_blocks"
+    id = Column(Integer, primary_key=True)
+    code = Column(String, nullable=False, unique=True)
+    district_id = Column(Integer, ForeignKey("geo_districts.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    unit_type = Column(String, nullable=False, default="", server_default="")
+
+
+class GeoPlace(Base):
+    __tablename__ = "geo_places"
+    id = Column(Integer, primary_key=True)
+    code = Column(String, nullable=False, unique=True)
+    district_id = Column(Integer, ForeignKey("geo_districts.id"), nullable=False, index=True)
+    police_station_id = Column(Integer, ForeignKey("geo_police_stations.id"), nullable=True, index=True)  # NULL: the dataset names none that exists
+    name = Column(String, nullable=False)
+    place_type = Column(String, nullable=False, default="", server_default="")
+    aliases_en = Column(String, nullable=False, default="", server_default="")
+    aliases_bn = Column(String, nullable=False, default="", server_default="")
+    aliases_hi = Column(String, nullable=False, default="", server_default="")

@@ -147,6 +147,9 @@ def _ensure_seeded():
         import clinic_extras
 
         logging.getLogger("clinic-api").info("owner extras (sex, departments, routes, relationships): %s", clinic_extras.apply_extras(db))
+        import geo_service
+
+        logging.getLogger("clinic-api").info("geography tables (districts, police stations, blocks, places): %s inserted", geo_service.seed_geo(db))
         from patient_seed import seed_patient_context
 
         logging.getLogger("clinic-api").info("agent messages: %s inserted", am.seed_defaults(db))
@@ -1275,6 +1278,36 @@ def doctor_free_slots(name: str = Query(...), date: str = Query(...), db: Sessio
         # when nothing is left on this date (the sitting hours are over, or every slot is taken): the next day with a free slot
         "next": bs.earliest_available(db, doctor.id, target + datetime.timedelta(days=1)),
     }
+
+
+@app.get("/api/v1/doctors/weekdays")
+def doctor_weekdays(name: str = Query(...), db: Session = Depends(get_db)):
+    """The WEEKDAYS a doctor sits (0 = Monday), with each day's hours -- the weekly pattern from the schedule table, never a date. The agent says them as
+    "সোম বুধ শুক্র বারে বসেন" (agent/doctor_enquiry_cues.weekdays_reply)."""
+    amb = _ambiguous_doctor(db, name)
+    if amb is not None:
+        return amb
+    doctor = _find_doctor(db, name)
+    if not doctor:
+        return {"found": False, "query": name}
+    rows = db.query(DoctorSchedule).filter_by(doctor_id=doctor.id).order_by(DoctorSchedule.weekday).all()
+    return {
+        "found": True,
+        "doctor_name": _doctor_ref(db, doctor),
+        "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+        "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
+        "weekdays": [r.weekday for r in rows],
+        "hours": {str(r.weekday): f"{r.start_time}-{r.end_time}" for r in rows},
+    }
+
+
+@app.get("/api/v1/geo/match")
+def geo_match(q: str = Query(..., min_length=1), db: Session = Depends(get_db)):
+    """Item 19: which district / police station / block / place of the geo_* tables a spoken or written phrase names, and the police station that gives
+    (a place's is its parent row). Candidates only; nothing is resolved that the tables do not hold (geo_service.py)."""
+    import geo_service
+
+    return geo_service.match_geo(db, q)
 
 
 @app.get("/api/v1/doctors/department-alternatives")

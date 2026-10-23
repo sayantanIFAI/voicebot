@@ -142,6 +142,7 @@ async def test_silence_starts_a_timer_and_speech_or_a_busy_turn_cancels_it(m, en
 @pytest.mark.asyncio
 async def test_after_five_seconds_it_asks_once_whether_there_is_anything_else(m, env):
     s = env.session
+    s.turn_count = 1  # the caller HAS spoken (a caller who never has is called "hello" instead -- owner, 2026-10-23)
     s.lang = "en"
     s.silence_since = time.monotonic() - (m.SILENCE_PROMPT_S + 0.1)
     assert await m._handle_silence(s, True) is False
@@ -160,6 +161,7 @@ async def test_four_seconds_is_not_enough(m, env):
 @pytest.mark.asyncio
 async def test_still_silent_after_the_prompt_the_call_ends_politely(m, env, monkeypatch):
     s = env.session
+    s.turn_count = 1  # the caller HAS spoken (a caller who never has is called "hello" instead -- owner, 2026-10-23)
     s.lang = "en"
     s.silence_prompts = 1
     s.silence_since = time.monotonic() - (m.SILENCE_CLOSE_S + 0.1)

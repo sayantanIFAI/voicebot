@@ -262,8 +262,6 @@ def test_a_volunteered_address_without_the_police_station_still_gets_asked_for_o
     assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা"}
 
 
-
-
 def test_the_last_question_is_the_day_the_hour_and_come_with_one_to_two_hours_in_hand():
     slots = {"date": "2026-10-19", "time_slot": "10:10", "_sits_start": "10:00"}
     bn = rt.booking_confirmation_readback(slots, "book_appointment", "bn")
@@ -471,6 +469,75 @@ def test_a_health_package_query_is_recognised_and_declined_in_every_language():
     assert owner_answers.asks_about_health_package("कोई हेल्थ पैकेज है क्या")
     assert not owner_answers.asks_about_health_package("what is the price of CBC")
     assert not owner_answers.asks_about_health_package("")
-    for lang, words in (("en", ("Sonoscan", "does not offer")), ("bn", ("সোনোস্ক্যানে", "নেই")), ("hi", ("सोनोस्कैन", "नहीं है"))):
+    for lang, words in (
+        ("en", ("Sonoscan", "does not offer")),
+        ("bn", ("সোনোস্ক্যানে", "নেই")),
+        ("hi", ("सोनोस्कैन", "नहीं है")),
+    ):
         reply = owner_answers.health_package_reply(lang)
         assert all(w in reply for w in words)
+
+
+def test_a_police_station_refusal_is_asked_again_before_the_booking_goes_on():
+    """Owner, 2026-10-23: "nei", "jani na", "nahi pata", "yaad nahi", "bolbo nah", "don't know" are not station names -- the station is asked for again."""
+    for refusal, lang in (
+        ("nei", "bn"),
+        ("jani na", "bn"),
+        ("ami bolbo nah", "bn"),
+        ("মনে নেই", "bn"),
+        ("nahi pata", "hi"),
+        ("nhi malum", "hi"),
+        ("yaad nhi", "hi"),
+        ("मैं नहीं बताऊंगा", "hi"),
+        ("I don't know", "en"),
+        ("no idea", "en"),
+    ):
+        st = _booking(
+            doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210"
+        )
+        st.slots["patient_age"] = 45
+        st.slots["_ps_pending"] = "বেনিয়াপুকুর কলকাতা"
+        plan = bc.before_model(st, refusal, lang)
+        assert plan.speak == bc.prompt("ps_again", lang) and not plan.slots and st.slots["_ps_pending"], (
+            refusal
+        )  # asked again; the closing question waits
+        plan = bc.before_model(st, "বেনিয়াপুকুর থানা", "bn")  # the station, now given: no problem
+        assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা"}, refusal
+
+
+def test_a_caller_who_keeps_refusing_the_station_is_still_booked_after_two_re_asks():
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
+    st.slots["patient_age"] = 45
+    st.slots["_ps_pending"] = "Behala Kolkata"
+    assert bc.before_model(st, "jani na", "bn").speak == bc.prompt("ps_again", "bn")
+    assert bc.before_model(st, "bolbo na", "bn").speak == bc.prompt("ps_again", "bn")
+    plan = bc.before_model(st, "bolbo na", "bn")  # a third refusal: never blocked forever, the address is kept as said
+    assert plan.skip_model and plan.slots == {"patient_address": "Behala Kolkata"} and "_ps_pending" not in st.slots
+
+
+def test_health_package_wording_in_all_three_languages_gets_the_no_package_answer():
+    for text in (
+        "health checkup",
+        "full body check up",
+        "pakej ache?",
+        "हेल्थ चेकअप होता है?",
+        "पूरा चेकअप",
+        "হেলথ চেকআপ আছে",
+        "ফুল বডি চেকআপ",
+    ):
+        assert owner_answers.asks_about_health_package(text), text
+    assert not owner_answers.asks_about_health_package("Do you accept cashless insurance?")
+
+
+def test_a_caller_who_stops_after_two_digits_is_told_to_say_the_other_eight_in_every_language():
+    """Owner, 2026-10-23 (item 18): two digits, then silence -> what was heard and "the other eight"; a number said in groups of three or four keeps its short "ok"."""
+    for text, lang, word in (("98", "en", "other eight digits"), ("98", "bn", "আটটা"), ("९८", "hi", "आठ")):
+        st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey")
+        st.asked_fields.add("phone")
+        plan = bc.before_model(st, text, lang)
+        assert word in (plan.speak or "") and st.phone_buffer in ("98",), (text, plan.speak)
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey")
+    st.asked_fields.add("phone")
+    assert (
+        bc.before_model(st, "987", "en").speak == "Okay, go on."
+    )  # three digits: the short "ok" of a number said in groups, unchanged
