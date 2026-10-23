@@ -274,6 +274,59 @@ def location_again(lang: str) -> str:
     return _LOCATION_AGAIN.get(lang, _LOCATION_AGAIN["en"])
 
 
+# ------------------------------------------------------------------------------------------------------------------------ billing dues (KCD-lead-9)
+
+# Owner, 2026-10-22: a real number is set per deployment; left blank, the caller is told "our WhatsApp number"
+# without reciting a figure that does not exist -- same discipline as the contact_number FAQ answer
+# (clinic-api/seed.py), which also never states a number it cannot verify, only describes how one is delivered.
+CLINIC_WHATSAPP_NUMBER = os.environ.get("CLINIC_WHATSAPP_NUMBER", "")
+
+_BILLING_DUES = {
+    "bn": "পেমেন্টের প্রমাণ{number} হোয়াটসঅ্যাপে পাঠিয়ে দিন, কেউ আপনাকে ফিরে ফোন করে জানিয়ে দেবে।",
+    "hi": "पेमेंट का प्रमाण{number} व्हाट्सऐप पर भेज दीजिए, कोई आपको वापस फ़ोन करके बता देगा।",
+    "en": "Please send proof of payment{number} on WhatsApp, and someone will call you back about it.",
+}
+_WITH_NUMBER = {"bn": " আমাদের {n} নম্বরে", "hi": " हमारे {n} नंबर पर", "en": " to our number {n}"}
+
+
+# KCD-lead-B: "packages" (plural), "health checkup package", "full body package", "master health check", and the Bengali / Hindi words for package
+# (a conjunct may be written প্যাকেজ / প্যাকেজ / প্যাকেজের ...) must all be caught -- the whole-word tuple used before refused "packages" because it padded
+# "package" with spaces. A bare "package" is enough in this domain (a diagnostic clinic): nothing else a caller says "package" about is on offer here.
+_HEALTH_PACKAGE_RE = re.compile(
+    r"\bpackages?\b|\bpkgs?\b|master health ?check|health ?check ?up (?:plan|scheme|offer)|full body (?:check|checkup|check-up).{0,12}(?:offer|plan|scheme)"
+    r"|প্যাকেজ|প্যাকেট|পেকেজ|पैकेज|पेकेज|पैकिज",
+    re.I,
+)
+_HEALTH_PACKAGE_REPLY = {
+    "bn": "দুঃখিত, সোনোস্ক্যানে কোনো হেলথ প্যাকেজ বা চেকআপ প্যাকেজ নেই। নির্দিষ্ট কোনো টেস্ট বা ডাক্তারের অ্যাপয়েন্টমেন্ট বুক করতে চান?",
+    "hi": "माफ़ कीजिए, सोनोस्कैन में कोई हेल्थ पैकेज या चेकअप पैकेज नहीं है। कोई खास टेस्ट या डॉक्टर का अपॉइंटमेंट बुक करना चाहेंगे?",
+    "en": "Sorry, Sonoscan does not offer any health package or checkup package. Would you like to book a specific test or a doctor's appointment instead?",
+}
+
+
+def asks_about_health_package(text: str) -> bool:
+    t = _norm(text)
+    return bool(t) and _HEALTH_PACKAGE_RE.search(t) is not None
+
+
+def health_package_reply(lang: str) -> str:
+    """Owner, 2026-10-22 (KCD-lead-13): Sonoscan has no health-package offering -- a caller asking about one is
+    told so plainly and redirected to a real test or doctor booking, the same "no package offer" framing
+    agent/reply_templates.test_rate_reply already documents for an unmatched test name, said BEFORE that generic
+    not-found path (deterministic, pre-model, same reason asks_for_a_person runs before intent extraction) so the
+    caller is never told "no such test" for something that was never a test name to begin with."""
+    return _HEALTH_PACKAGE_REPLY.get(lang, _HEALTH_PACKAGE_REPLY["en"])
+
+
+def billing_dues_reply(lang: str) -> str:
+    """Owner, 2026-10-22 (KCD-lead-9): a caller asking whether they owe money is never read a balance over the
+    phone -- they are asked to send payment proof on WhatsApp, and told a human will call back. CLINIC_WHATSAPP_NUMBER
+    unset means the sentence still makes sense without reciting a number that was never configured."""
+    lang = lang if lang in _BILLING_DUES else "en"
+    number = _WITH_NUMBER[lang].format(n=CLINIC_WHATSAPP_NUMBER) if CLINIC_WHATSAPP_NUMBER else ""
+    return _BILLING_DUES[lang].format(number=number)
+
+
 # ------------------------------------------------------------------------------------------------------------------------------ token and arrival
 
 _TOKEN = ("টোকেন", "token", "সিরিয়াল", "serial", "ক্রমিক", "टोकन", "सीरियल", "নম্বর পড়েছে", "number pore")

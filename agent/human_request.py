@@ -90,3 +90,101 @@ def asks_for_a_person(text: str, lang: str = "en") -> bool:
                 continue
             return True
     return False
+
+
+
+
+# ---------------------------------------------------------------------------------------------------- KCD-lead-10
+# "Book me with the doctor" / "when does Dr. Sen sit" are ordinary turns and must NOT hand off. What marks a request to
+# reach the doctor HIMSELF is a TALKING verb joined to "the doctor" -- talk / speak / connect me / put me through /
+# (Bengali) kotha bolte / (Hindi) baat karni -- with or without "directly / personally / myself". A bare "doctor" never
+# fires: that is why asks_for_a_person's own word list leaves "doctor" out. Same provisional, non-native, deterministic,
+# pre-model discipline as asks_for_a_person above.
+
+_I = re.I
+_EN_DOC = r"(?:the |a |my |our |that |this |his |her )?(?:doctor|dr\b\.?|physician|specialist)"
+_EN_DOCTOR_PERSONAL = [
+    re.compile(r"\b(talk|speak|connect|transfer|put me|get me|pass me|patch me|link me|chat)\b.{0,30}?\b(to|with|through to)\b\s*" + _EN_DOC, _I),
+    re.compile(r"\b(i )?(personally|myself|directly) (want|need|would like|wish) to (talk|speak)\b.{0,20}\b(doctor|dr\b|physician)", _I),
+    re.compile(r"\b(doctor|physician)\b.{0,12}\b(himself|herself)\b.{0,15}\b(talk|speak)", _I),
+]
+_BN_DOCTOR_PERSONAL = [
+    re.compile(r"ডাক্তার\S*\s*(?:(?:সাথে|সঙ্গে|সংগে|সাথেই)\s*)?.{0,15}?কথা"),
+    re.compile(r"(নিজে|সরাসরি)\s*ডাক্তার"),
+    re.compile(r"ডাক্তার\S*\s*(?:নিজে|স্বয়ং)\s*কথা"),
+]
+_HI_DOCTOR_PERSONAL = [
+    re.compile(r"डॉक्टर\S*\s*(?:साहब\s*)?(?:से|को)\s*.{0,15}?(?:बात|कनेक्ट|जोड़|बोल)"),
+    re.compile(r"(खुद|सीधे)\s*डॉक्टर\S*\s*(?:से|को)\s*.{0,10}?(?:बात|मिल)"),
+]
+_RM_DOCTOR_PERSONAL = [
+    re.compile(r"\bdoctor\S{0,3}\s*(?:er|ke|se)?\s*(?:sathe|shathe|songe|sange|se|ke)\b.{0,25}\b(?:kotha|baat|bat|connect|bolte|bolbo|karni|karna|karunga)\b", _I),
+    re.compile(r"\b(?:kotha|baat)\b.{0,15}\bdoctor\b", _I),
+]
+_DOCTOR_PERSONAL_PATTERNS = {
+    "en": _EN_DOCTOR_PERSONAL + _RM_DOCTOR_PERSONAL,
+    "bn": _BN_DOCTOR_PERSONAL + _RM_DOCTOR_PERSONAL,
+    "hi": _HI_DOCTOR_PERSONAL + _RM_DOCTOR_PERSONAL,
+}
+
+
+def wants_doctor_directly(text: str, lang: str = "en") -> bool:
+    """True when the caller asks to TALK to the doctor himself (talk/speak/connect + doctor). An ordinary "book me with the doctor" /
+    "when is the doctor available" never matches -- there is no talking verb in it. Negation handled the same way asks_for_a_person does."""
+    t = _nfc(text).strip()
+    if not t:
+        return False
+    for lg in dict.fromkeys((lang, "en", "bn", "hi")):
+        if any(p.search(t) for p in _DOCTOR_PERSONAL_PATTERNS.get(lg, [])):
+            if _NEGATED.get(lg) and _NEGATED[lg].search(t):
+                continue
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------------------------------- KCD-lead-12
+# A caller lodging a complaint is routed to a human, same immediacy rule as asks_for_a_person. "No complaints, everything is
+# fine" and a passing grumble ("the wait was long") must not fire -- hence the dedicated negation guard, and the requirement
+# that the dissatisfaction be aimed at something (staff / service / treatment) or be named a complaint outright.
+
+_EN_COMPLAINT = [
+    re.compile(r"\bcomplain(?:t|ts|ing|ed)?\b", _I),
+    re.compile(r"\b(unhappy|dissatisfied|not happy|not satisfied|upset|disappointed|angry|annoyed)\b.{0,15}\b(with|about|at)\b.{0,20}\b(staff|service|treatment|behaviou?r|doctor|clinic|hospital|reception\w*|nurse)\b", _I),
+    re.compile(r"\b(bad|terrible|horrible|poor|awful|worst)\s+(experience|service|behaviou?r|treatment)\b", _I),
+    re.compile(r"\b(staff|doctor|receptionist|nurse)\b.{0,15}\b(was|were|is|are)\s+(rude|misbehaving)\b|\b(rude|misbehaved)\b.{0,15}\b(staff|doctor|receptionist|nurse)\b", _I),
+]
+_BN_COMPLAINT = [
+    re.compile(r"অভিযোগ"),
+    re.compile(r"(কমপ্লেইন|কমপ্লেন|কম্প্লেইন|কম্প্লেন|কমপ্লেইন্ট|কমপ্লেন্ট|কমপ্লেইনট)"),
+    re.compile(r"(খারাপ|বাজে)\s*(অভিজ্ঞতা|ব্যবহার|সার্ভিস)"),
+]
+_HI_COMPLAINT = [
+    re.compile(r"शिकायत"),
+    re.compile(r"(कंप्लेंट|कम्प्लेंट|कंप्लेन|कम्प्लेन|कंप्लेन्ट)"),
+    re.compile(r"(खराब|बुरा|बुरी)\s*(अनुभव|व्यवहार|सर्विस|सेवा)"),
+]
+_RM_COMPLAINT = [
+    re.compile(r"\b(obhijog|ovijog|obhijug|shikayat|shikayet|sikayat|complen)\b", _I),
+]
+_COMPLAINT_PATTERNS = {"en": _EN_COMPLAINT + _RM_COMPLAINT, "bn": _BN_COMPLAINT + _RM_COMPLAINT, "hi": _HI_COMPLAINT + _RM_COMPLAINT}
+
+_NO_COMPLAINT_EN = re.compile(r"\b(no|not|without|never|nothing|don'?t have|do not have|zero)\b.{0,15}\bcomplain|\bnothing to complain\b|\b(don'?t|do not) (want|wish|need) to complain\b", _I)
+_NO_COMPLAINT_BN = re.compile(r"(অভিযোগ নেই|অভিযোগ নাই|অভিযোগ করার কিছু নেই|কোনো অভিযোগ নেই|অভিযোগ করতে চাই না)")
+_NO_COMPLAINT_HI = re.compile(r"(शिकायत नहीं|शिकायत नही|शिकायत करने की जरूरत नहीं|शिकायत करना नहीं)")
+_NO_COMPLAINT_RM = re.compile(r"\b(obhijog|ovijog|shikayat)\s+(nei|nai|nahi)\b", _I)
+_NO_COMPLAINT = {"en": _NO_COMPLAINT_EN, "bn": _NO_COMPLAINT_BN, "hi": _NO_COMPLAINT_HI}
+
+
+def wants_to_complain(text: str, lang: str = "en") -> bool:
+    """True if the caller is lodging a complaint. "No complaints, everything is fine" must not match."""
+    t = _nfc(text).strip()
+    if not t:
+        return False
+    if _NO_COMPLAINT_RM.search(t):
+        return False
+    for lg in dict.fromkeys((lang, "en", "bn", "hi")):
+        if any(p.search(t) for p in _COMPLAINT_PATTERNS.get(lg, [])):
+            if _NO_COMPLAINT.get(lg) and _NO_COMPLAINT[lg].search(t):
+                continue
+            return True
+    return False

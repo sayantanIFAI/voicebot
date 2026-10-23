@@ -48,3 +48,23 @@ def asks_who_sits(text: str) -> bool:
 def asks_doctor_list(text: str) -> bool:
     t = _norm(text)
     return bool(t) and len(t.split()) <= 16 and ((_has(t, _DOCTOR) and _has(t, _LIST)) or asks_who_sits(text))
+
+
+# KCD-lead-A: "There is an orthopedic doctor." / "I want to see an orthopaedic doctor." / "Do you have a dentist?" -- a request for a SPECIALTY, with no
+# list word in it ("who are", "which doctors"). asks_doctor_list() above needs one, so such a sentence fell to the intent model, which took the
+# specialty for a doctor's NAME ("Orthopaedics Doctor") and answered "we have no doctor called ...". This only recognises that a doctor / specialist /
+# department is being asked for; WHICH department it is (any department in the clinic's database, by its own name or a short form) is decided by the
+# clinic API, never here, so a department added to the database later needs no change in this file.
+_DOCTOR_REQUEST_RE = re.compile(
+    r"\b(doctors?|docs?|dr|specialists?|physicians?|consultants?|surgeons?|dentists?|departments?|dept|daktar|dactar|docter)\b"
+    r"|ডাক্তার|ডাক্তর|বিশেষজ্ঞ|বিভাগ|डॉक्टर|डाक्टर|विशेषज्ञ|विभाग",
+    re.I,
+)
+
+
+def mentions_doctor_request(text: str) -> bool:
+    """True when a short sentence asks for / about a doctor, specialist or department at all -- the gate before the clinic API is asked which
+    department (if any) it means. A named doctor is excluded by the caller (it knows the clinic's doctor catalogue); a sentence about no
+    department at all ("book a doctor") simply comes back unmatched from the API and the turn goes on unchanged."""
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 20 and _DOCTOR_REQUEST_RE.search(t) is not None

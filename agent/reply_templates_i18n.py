@@ -26,6 +26,7 @@ _LATIN = re.compile(r"[A-Za-z]")
 _HI_MISSING = {
     ("test_rate", "test_name"): "किस टेस्ट की कीमत जाननी है, ज़रा बताइए?",
     ("doctor_availability", "doctor_name"): "किन डॉक्टर के बारे में पूछ रहे हैं?",
+    ("department_query", "symptom_description"): "किस समस्या के लिए डॉक्टर को दिखाना चाहते हैं, ज़रा बताइए?",
     ("book_appointment", "doctor_name"): "किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहते हैं?",
     ("book_appointment", "date"): "किस दिन के लिए अपॉइंटमेंट चाहिए?",
     ("book_appointment", "time_slot"): "किस समय के लिए अपॉइंटमेंट चाहिए?",
@@ -50,6 +51,7 @@ _HI_MISSING_DEFAULT = "माफ़ कीजिए, क्या आप थो�
 _EN_MISSING = {
     ("test_rate", "test_name"): "Which test would you like the price of?",
     ("doctor_availability", "doctor_name"): "Which doctor are you asking about?",
+    ("department_query", "symptom_description"): "What problem would you like a doctor for, could you tell me?",
     ("book_appointment", "doctor_name"): "Which doctor would you like to book with?",
     ("book_appointment", "date"): "Which day would you like the appointment for?",
     ("book_appointment", "time_slot"): "What time would you like the appointment?",

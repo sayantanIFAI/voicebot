@@ -369,6 +369,16 @@ def test_a_lone_weekday_or_tonight_is_read_by_the_fast_path(catalogue_payload):
     assert _served(fp, "डॉक्टर सेन सोमवार को कब बैठेंगे", "hi")[1]["date"] == monday
 
 
+def test_misheard_bengali_weekdays_are_still_understood(catalogue_payload):
+    """Bespatibar/Sukkurbar are common ASR mishearings of Brihospotibar (Thursday) / Shukrobar (Friday); both must
+    resolve to the same date as the correctly-heard word would."""
+    fp = FastPath(Catalogue(catalogue_payload), today=TODAY)
+    thursday = (TODAY + datetime.timedelta(days=(3 - TODAY.weekday()) % 7)).isoformat()
+    friday = (TODAY + datetime.timedelta(days=(4 - TODAY.weekday()) % 7)).isoformat()
+    assert _served(fp, "when does doctor Sen sit on bespatibar", "en") == ("doctor_availability", {"doctor_name": "sen", "date": thursday})
+    assert _served(fp, "when does doctor Sen sit on sukkurbar", "en") == ("doctor_availability", {"doctor_name": "sen", "date": friday})
+
+
 def test_a_short_surname_is_not_read_out_of_an_ordinary_word(catalogue_payload):
     """'days' scores 0.86 against the surname 'Das'; for English and Hindi a short form must match exactly."""
     fp = FastPath(Catalogue(catalogue_payload), today=TODAY)

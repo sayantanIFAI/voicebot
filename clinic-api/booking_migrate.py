@@ -191,6 +191,27 @@ def rebuild_appointments_partial_unique_index() -> bool:
     return True
 
 
+DOCTOR_SCHEDULE_COLUMNS: dict[str, str] = {
+    # KCD-lead-14: a per-weekday cap on how many patients a doctor takes, independent of the time-grid's own
+    # slot count. NULL (the ALTER default) means uncapped -- see models.DoctorSchedule's docstring.
+    "max_bookings_per_day": "INTEGER",
+}
+
+
+def add_doctor_schedule_columns() -> list[str]:
+    added = []
+    insp = inspect(engine)
+    if "doctor_schedule" not in insp.get_table_names():
+        return added
+    have = {c["name"] for c in insp.get_columns("doctor_schedule")}
+    with engine.begin() as conn:
+        for col, decl in DOCTOR_SCHEDULE_COLUMNS.items():
+            if col not in have:
+                conn.execute(text(f"ALTER TABLE doctor_schedule ADD COLUMN {col} {decl}"))
+                added.append(f"doctor_schedule.{col}")
+    return added
+
+
 def add_patient_columns() -> list[str]:
     added = []
     insp = inspect(engine)
@@ -293,15 +314,22 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
         # only "my hand/body hurts" (no fever, no clearly bone/joint framing) genuinely could mean either a GP visit
         # or an orthopaedic one -- route_department() already returns both as candidates when a query matches more
         # than one department's keywords, rather than guessing; this is what makes that happen here.
-        ["হাড়ে ব্যথা", "গাঁটে ব্যথা", "কোমরে ব্যথা", "পিঠে ব্যথা", "হাতে ব্যথা", "পায়ে ব্যথা"],
-        ["हड्डी में दर्द", "जोड़ों में दर्द", "कमर दर्द", "पीठ दर्द", "हाथ में दर्द", "पैर में दर्द"],
-        ["bone pain", "joint pain", "back pain", "knee pain", "hand pain", "leg pain"],
+        ["হাড়ে ব্যথা", "গাঁটে ব্যথা", "কোমরে ব্যথা", "পিঠে ব্যথা", "হাতে ব্যথা", "পায়ে ব্যথা",
+         "পা ভেঙে", "পা ভাঙা", "হাড় ভেঙে", "ফ্র্যাকচার", "পায়ে চোট", "অ্যাক্সিডেন্ট", "পায়ে আঘাত"],
+        ["हड्डी में दर्द", "जोड़ों में दर्द", "कमर दर्द", "पीठ दर्द", "हाथ में दर्द", "पैर में दर्द",
+         "हड्डियों में दर्द", "पैर टूट", "हड्डी टूट", "फ्रैक्चर", "फ्रेक्चर", "पैर में चोट", "एक्सीडेंट"],
+        # romanized Bengali sits in this column too: the recogniser writes what it hears in whichever script it likes
+        ["bone pain", "joint pain", "back pain", "knee pain", "hand pain", "leg pain",
+         "pain in my bones", "bones hurt", "leg hurt", "foot hurt", "foot is broken", "leg is broken", "broken leg", "broken foot", "broke my leg", "fracture", "fractured",
+         "hurt his leg", "hurt her leg", "leg injury", "foot injury", "accident",
+         "har-e byatha", "hare byatha", "har e byatha", "payer byatha", "paye byatha", "pa bhenge", "pa venge", "paye fracture", "accident hoyeche", "paye chot"],
     ),
     (
         "ENT",
-        ["কানে ব্যথা", "গলা ব্যথা", "নাক বন্ধ", "শুনতে অসুবিধা"],
-        ["कान में दर्द", "गले में दर्द", "नाक बंद"],
-        ["ear pain", "throat pain", "sore throat", "blocked nose"],
+        ["কানে ব্যথা", "গলা ব্যথা", "নাক বন্ধ", "শুনতে অসুবিধা", "শুনতে পাচ্ছি না", "শুনতে পাই না", "কানে শুনতে"],
+        ["कान में दर्द", "गले में दर्द", "नाक बंद", "सुनाई नहीं", "सुनाई नही", "ठीक से सुनाई"],
+        ["ear pain", "ear ache", "earache", "throat pain", "sore throat", "blocked nose", "cannot hear", "can't hear", "hearing problem", "not able to hear",
+         "kane byatha", "kane shunte", "shunte pachhi na", "shunte pai na"],
     ),
     (
         "Dermatology",
@@ -336,9 +364,9 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
     ),
     (
         "Dentistry",
-        ["দাঁতে ব্যথা", "দাঁতের সমস্যা", "মাড়িতে ব্যথা", "দাঁত ব্যথা"],
-        ["दांत में दर्द", "दांत का दर्द", "मसूड़ों में दर्द", "दांतों की समस्या"],
-        ["tooth pain", "toothache", "teeth pain", "gum pain"],
+        ["দাঁতে ব্যথা", "দাঁতের সমস্যা", "মাড়িতে ব্যথা", "দাঁত ব্যথা", "দাঁতের ডাক্তার"],
+        ["दांत में दर्द", "दांत का दर्द", "मसूड़ों में दर्द", "दांतों की समस्या", "दांत के लिए", "दांत के डॉक्टर"],
+        ["tooth pain", "toothache", "teeth pain", "gum pain", "my tooth", "my teeth", "for my tooth", "daante byatha", "dante byatha", "dater byatha", "dat e byatha"],
     ),
 ]
 
@@ -488,6 +516,7 @@ def migrate_booking_schema() -> dict:
     columns_added = (
         add_appointment_booking_columns()
         + add_doctor_booking_columns()
+        + add_doctor_schedule_columns()
         + add_patient_columns()
         + add_call_record_columns()
     )

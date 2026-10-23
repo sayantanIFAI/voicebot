@@ -279,6 +279,81 @@ def test_available_slots_excludes_already_passed_times_today(clinic_modules):
         db.close()
 
 
+def test_available_slots_is_unchanged_when_max_bookings_per_day_is_unset(clinic_modules):
+    """KCD-lead-14: every existing/unconfigured DoctorSchedule row has max_bookings_per_day = NULL, which must mean
+    exactly today's grid-only behaviour -- no clinician has set a real number, so nothing should change."""
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        sched = db.query(m.DoctorSchedule).filter_by(doctor_id=doc.id, weekday=doc.schedule[0].weekday).first()
+        assert sched.max_bookings_per_day is None  # the column's default on every seeded row
+        grid_only = [s for s in bs._generate_slots(sched.start_time, sched.end_time)]
+        assert bs.available_slots(db, doc.id, date) == grid_only
+    finally:
+        db.close()
+
+
+def test_available_slots_is_capped_by_max_bookings_per_day(clinic_modules):
+    """Once a clinician sets a real daily cap, available_slots() must stop offering more than that many -- counting
+    confirmed/held bookings already taken, never just truncating the grid blind to what is actually booked."""
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        sched = db.query(m.DoctorSchedule).filter_by(doctor_id=doc.id, weekday=doc.schedule[0].weekday).first()
+        sched.max_bookings_per_day = 2
+        db.commit()
+
+        free = bs.available_slots(db, doc.id, date)
+        assert len(free) == 2
+
+        hold = bs.hold_slot(db, doc.id, date, free[0])
+        assert hold["success"]
+        bs.confirm_booking(db, hold["hold_token"], doc.id, date, free[0], "Ravi Das", "9800000099", "9800000099")
+
+        after_one_booking = bs.available_slots(db, doc.id, date)
+        assert len(after_one_booking) == 1  # cap minus the one now taken, not the grid minus one
+
+        hold2 = bs.hold_slot(db, doc.id, date, after_one_booking[0])
+        bs.confirm_booking(db, hold2["hold_token"], doc.id, date, after_one_booking[0], "Mina Das", "9800000098", "9800000098")
+
+        assert bs.available_slots(db, doc.id, date) == []  # day is now full even though the time grid is not
+    finally:
+        db.close()
+
+
+def test_doctors_with_free_slots_finds_an_alternate_in_the_same_department(clinic_modules):
+    """KCD-lead-6: when a caller's own doctor is full that day, another doctor in the SAME department who still
+    has a real free slot is found -- a doctor who is merely rostered on but also full must not be offered."""
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        weekday = doc.schedule[0].weekday if doc.schedule else 0
+        date = _next_weekday(weekday)
+        colleague = db.query(m.Doctor).filter(m.Doctor.department_id == doc.department_id, m.Doctor.id != doc.id).first()
+        assert colleague is not None  # every seeded department has more than one doctor
+        colleague_sched = db.query(m.DoctorSchedule).filter_by(doctor_id=colleague.id, weekday=weekday).first()
+        if colleague_sched:
+            colleague_sched.start_time, colleague_sched.end_time = "09:00", "11:00"
+        else:
+            db.add(m.DoctorSchedule(doctor_id=colleague.id, weekday=weekday, start_time="09:00", end_time="11:00"))
+        doc_sched = db.query(m.DoctorSchedule).filter_by(doctor_id=doc.id, weekday=weekday).first()
+        doc_sched.max_bookings_per_day = 0  # doc is fully booked for the day before anyone even calls
+        db.commit()
+
+        assert bs.available_slots(db, doc.id, date) == []
+        alternatives = bs.doctors_with_free_slots(db, doc.department_id, date, exclude_doctor_id=doc.id)
+        found_ids = {a["doctor_id"] for a in alternatives}
+        assert colleague.id in found_ids
+        assert doc.id not in found_ids  # excluded, even though scheduled -- it's the one that's full
+    finally:
+        db.close()
+
+
 def test_reschedule_moves_the_appointment_and_frees_the_old_slot(clinic_modules):
     bs, db_mod, m = clinic_modules
     db = db_mod.SessionLocal()
@@ -749,6 +824,60 @@ def test_send_payment_link_with_no_phone_on_file_is_refused_not_queued(clinic_mo
             db, hold["hold_token"], doc.id, date, slot, "Ravi Das", bs.NOT_PROVIDED_PHONE, bs.NOT_PROVIDED_PHONE
         )
         result = bs.send_payment_link(db, booked["confirmation_id"])
+        assert result == {"success": False, "reason": "no_phone_on_file"}
+    finally:
+        db.close()
+
+
+def test_send_booking_confirmation_whatsapp_queues_the_warm_template(clinic_modules):
+    """KCD-lead-2: the lead's chosen Template B -- patient name, doctor, department, date/time, a 10-minutes-
+    early reminder, and the booking ID, in English and Bengali -- queued on the whatsapp channel, never claimed
+    as sent, same discipline as every other queue_sms call."""
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        dept = db.get(m.Department, doc.department_id)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        booked = bs.confirm_booking(db, hold["hold_token"], doc.id, date, slot, "Ravi Das", "9800000004", "9800000004")
+
+        result = bs.send_booking_confirmation_whatsapp(db, booked["confirmation_id"])
+        assert result == {"success": True, "confirmation_id": booked["confirmation_id"], "channel": "whatsapp"}
+
+        sms = (
+            db.query(m.SmsOutbox)
+            .filter_by(related_confirmation_id=booked["confirmation_id"], template_key="booking_confirmation_whatsapp")
+            .one()
+        )
+        assert sms.status == "queued"  # never claims "sent"
+        assert "Ravi Das" in sms.message and (doc.full_name or doc.name) in sms.message and dept.name in sms.message
+        assert date in sms.message and slot in sms.message and booked["confirmation_id"] in sms.message
+        assert "10 minutes early" in sms.message and "১০ মিনিট আগে" in sms.message  # bilingual, same convention as send_payment_link
+
+        # A lab test booking's confirmation_id lives in a different table entirely: never finds an appointment.
+        cbc = db.query(m.LabTest).filter_by(name="Complete Blood Count (CBC)").one()
+        tb_result = bs.book_tests(db, [cbc.id], date, "Ravi Das", "9800000005", "9800000005")
+        assert bs.send_booking_confirmation_whatsapp(db, tb_result["confirmation_id"]) == {"success": False, "reason": "not_found"}
+
+        assert bs.send_booking_confirmation_whatsapp(db, "KCD-NOPE") == {"success": False, "reason": "not_found"}
+    finally:
+        db.close()
+
+
+def test_send_booking_confirmation_whatsapp_with_no_phone_on_file_is_refused_not_queued(clinic_modules):
+    bs, db_mod, m = clinic_modules
+    db = db_mod.SessionLocal()
+    try:
+        doc = _doctor(db, m)
+        date = _next_weekday(doc.schedule[0].weekday if doc.schedule else 0)
+        slot = bs.available_slots(db, doc.id, date)[0]
+        hold = bs.hold_slot(db, doc.id, date, slot)
+        booked = bs.confirm_booking(
+            db, hold["hold_token"], doc.id, date, slot, "Ravi Das", bs.NOT_PROVIDED_PHONE, bs.NOT_PROVIDED_PHONE
+        )
+        result = bs.send_booking_confirmation_whatsapp(db, booked["confirmation_id"])
         assert result == {"success": False, "reason": "no_phone_on_file"}
     finally:
         db.close()

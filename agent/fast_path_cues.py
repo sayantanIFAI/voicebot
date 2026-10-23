@@ -580,7 +580,7 @@ _DOC_SCHEDULE = (
     "rahte", "subah", "shaam", "dopahar", "somvar", "mangalvar", "budhvar", "guruvar", "guruwar", "shukravar", "shanivar", "ravivar",
     "baithne", "baithna", "hafte", "saptah",
     "ashen", "asen", "ashben", "asben", "aschen", "thaken", "thakben", "kon din", "porer", "sokale", "bikele", "sondhye", "dupure", "shombar",
-    "mongolbar", "budhbar", "brihospotibar", "shukrobar", "shonibar", "robibar", "boshar", "shoptahe",
+    "mongolbar", "budhbar", "brihospotibar", "brihaspotibar", "bespatibar", "shukrobar", "sukrobar", "sukkurbar", "shonibar", "robibar", "boshar", "shoptahe",
 )  # fmt: skip
 _DOC_SEE = (
     "see", "meet", "consult", "consulting", "consultation", "show", "visit",
@@ -620,7 +620,8 @@ WEEKDAYS = {
     "सोमवार": 0, "मंगलवार": 1, "बुधवार": 2, "गुरुवार": 3, "शुक्रवार": 4, "शनिवार": 5, "रविवार": 6,
     "somvar": 0, "mangalvar": 1, "budhvar": 2, "guruvar": 3, "guruwar": 3, "shukravar": 4, "shanivar": 5, "ravivar": 6,
     "সোমবার": 0, "মঙ্গলবার": 1, "বুধবার": 2, "বৃহস্পতিবার": 3, "শুক্রবার": 4, "শনিবার": 5, "রবিবার": 6,
-    "shombar": 0, "mongolbar": 1, "budhbar": 2, "brihospotibar": 3, "shukrobar": 4, "shonibar": 5, "robibar": 6,
+    "shombar": 0, "mongolbar": 1, "budhbar": 2, "brihospotibar": 3, "brihaspotibar": 3, "bespatibar": 3,
+    "shukrobar": 4, "sukrobar": 4, "sukkurbar": 4, "shonibar": 5, "robibar": 6,
 }  # fmt: skip
 
 

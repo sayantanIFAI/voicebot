@@ -79,6 +79,12 @@ class DoctorSchedule(Base):
     weekday = Column(Integer, nullable=False)  # 0=Monday ... 6=Sunday (Python's convention)
     start_time = Column(String, nullable=False)  # "18:00"
     end_time = Column(String, nullable=False)  # "20:00"
+    # Owner, 2026-10-22: how many patients this doctor will take on THIS sitting day, independent of how many
+    # 10-minute slots the time-grid happens to generate -- a doctor may sit for two hours but only want to see
+    # 12 patients, not however many a bare grid division implies. NULL means "uncapped": booking_service.
+    # available_slots() falls back to the grid-only count exactly as before this column existed, so an
+    # existing/unconfigured row changes nothing until a clinician sets a real number per weekday.
+    max_bookings_per_day = Column(Integer, nullable=True)
 
     doctor = relationship("Doctor", back_populates="schedule")
 

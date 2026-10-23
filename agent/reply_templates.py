@@ -48,6 +48,7 @@ def missing_slot_prompt(intent: str, missing: str, lang: str = "bn") -> str:
     prompts = {
         ("test_rate", "test_name"): "কোন টেস্টের রেট জানতে চান, একটু বলবেন?",
         ("doctor_availability", "doctor_name"): "কোন ডাক্তারের কথা জিজ্ঞেস করছেন?",
+        ("department_query", "symptom_description"): "কোন সমস্যার জন্য ডাক্তার দেখাতে চান, একটু বলবেন?",
         ("book_appointment", "doctor_name"): "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?",
         ("book_appointment", "date"): "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?",
         ("book_appointment", "time_slot"): "কোন সময়ের জন্য অ্যাপয়েন্টমেন্ট চাই?",

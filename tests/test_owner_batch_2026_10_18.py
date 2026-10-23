@@ -249,6 +249,19 @@ def test_the_age_is_read_back_with_the_address_question_and_the_address_asks_for
     assert bc.bare_age("পঁয়তাল্লিশ") == 45 and bc.bare_age("ষাট বছর") == 60 and bc.bare_age("হ্যাঁ") is None
 
 
+def test_a_volunteered_address_without_the_police_station_still_gets_asked_for_one():
+    """KCD-lead-7: an address that arrives any way OTHER than _detail_turn's own direct question (e.g. main.py's
+    general slot-merge, when the caller volunteers an address unprompted, in the same sentence as other details)
+    must still be asked for the police station -- main.py stashes it as _ps_pending the same way _detail_turn's
+    own direct-ask path does, and resumption here must work regardless of how _ps_pending got set: patient_address
+    is deliberately NOT in asked_fields below, simulating exactly that volunteered-address case."""
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
+    st.slots["patient_age"] = 45
+    st.slots["_ps_pending"] = "বেনিয়াপুকুর কলকাতা"
+    plan = bc.before_model(st, "বেনিয়াপুকুর থানা", "bn")
+    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা"}
+
+
 
 
 def test_the_last_question_is_the_day_the_hour_and_come_with_one_to_two_hours_in_hand():
@@ -429,3 +442,35 @@ def test_the_day_the_doctor_does_not_sit_is_named_in_the_not_sitting_message():
 
     said = slot_proposal.sits_statement("বিশ্বজিৎ সেন", "2026-10-19", "10:00", "bn", moved=True, asked_date="2026-10-18")
     assert said.startswith("আজ ডাক্তার বসেন না।") and "2026-10-19" in said and "ঠিক আছে, বদলে" not in said
+
+
+def test_alternative_doctors_statement_names_every_language(monkeypatch):
+    """KCD-lead-6: when the caller's own doctor is full and they want the same day anyway, the alternates are
+    named in each language, joined with that language's own word for "or"."""
+    from agent import slot_proposal
+
+    en = slot_proposal.alternative_doctors_statement("Sen", ["Roy", "Banerjee"], "en")
+    assert "Sen" in en and "Roy or Banerjee" in en and "one of them" in en
+
+    bn = slot_proposal.alternative_doctors_statement("সেন", ["রায়", "ব্যানার্জী"], "bn")
+    assert "সেন" in bn and "রায় বা ব্যানার্জী" in bn
+
+    hi = slot_proposal.alternative_doctors_statement("सेन", ["रॉय", "बनर्जी"], "hi")
+    assert "सेन" in hi and "रॉय या बनर्जी" in hi
+
+    # more than 3 alternates: only the first 3 are read out, never an unbounded list
+    four = slot_proposal.alternative_doctors_statement("Sen", ["A", "B", "C", "D"], "en")
+    assert "A or B or C" in four and "D" not in four
+
+
+# ---- 17. health package (KCD-lead-13)
+def test_a_health_package_query_is_recognised_and_declined_in_every_language():
+    assert owner_answers.asks_about_health_package("do you have any health package")
+    assert owner_answers.asks_about_health_package("full body checkup package rate")
+    assert owner_answers.asks_about_health_package("হেলথ প্যাকেজ আছে কি")
+    assert owner_answers.asks_about_health_package("कोई हेल्थ पैकेज है क्या")
+    assert not owner_answers.asks_about_health_package("what is the price of CBC")
+    assert not owner_answers.asks_about_health_package("")
+    for lang, words in (("en", ("Sonoscan", "does not offer")), ("bn", ("সোনোস্ক্যানে", "নেই")), ("hi", ("सोनोस्कैन", "नहीं है"))):
+        reply = owner_answers.health_package_reply(lang)
+        assert all(w in reply for w in words)

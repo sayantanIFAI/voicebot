@@ -6,6 +6,9 @@ venv/
 *.db
 static/fallback_audio/*.wav
 
+# KCD-lead-1: runtime-accumulated patient data (names, phone numbers), same reason *.db is ignored above.
+clinic-api/data/*.csv
+
 # scripts/gate.sh run artifacts -- machine-generated evidence, regenerated
 # on every run; the point of gate-report.md is to be PASTED into a PR
 # description, not committed as a file.

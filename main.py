@@ -151,7 +151,9 @@ from agent.filler import await_with_filler
 from agent.full_duplex import FullDuplexProcessor, wav_to_pcm16k
 from agent.golden_buckets import channel_buckets
 from agent.history_intent import detect_history_question
-from agent.human_request import asks_for_a_person
+from agent import early_routing
+from agent import referral_cues
+from agent import report_pickup
 from agent.identity import IdentityState
 from agent.lang_select import (
     engines_needed,
@@ -1141,6 +1143,11 @@ class CallSession:
         self.suspended = None
         self.awaiting_resume = False
         self.pending_enquiry = None  # (intent, turn) when we just asked "which test / which doctor"
+        # KCD-lead-1: the turn we asked "patient's name, number, which doctor/department" after an inter-
+        # center referral call (agent/referral_cues.py); the ANSWER is read on the next turn regardless of
+        # what intent the model guesses for it, same discipline as pending_enquiry above.
+        self.pending_referral: int | None = None
+        self.referral_notes: str = ""
         # OWNER'S INSTRUCTION, 2026-10-12: set when the caller said they do not know the test's name at all and
         # was just asked "is it blood, urine, or imaging?" -- the NEXT turn is read as the answer to that
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
@@ -2112,7 +2119,7 @@ async def _answer_after_date(session: CallSession, text: str, lang: str) -> bool
     import datetime as _dt
 
     target = (_dt.date.fromisoformat(after) + _dt.timedelta(days=1)).isoformat()
-    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit"):
+    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit", "_day_full_from"):
         st.slots.pop(k, None)
     st.hold_token, st.hold_doctor_id = None, None
     st.slots["date"] = target
@@ -2181,7 +2188,7 @@ def _with_whole_doctor_name(data, text: str, lang: str):
     booking request for that doctor enters the booking flow. Never raises."""
     if _fast_path is None or not isinstance(data, dict) or not isinstance(data.get("slots"), dict):
         return data
-    if data.get("intent") not in ("doctor_availability", "book_appointment", "unclear", "lookup_booking", "reschedule_appointment", "cancel_appointment"):
+    if data.get("intent") not in ("department_query", "doctor_availability", "book_appointment", "unclear", "lookup_booking", "reschedule_appointment", "cancel_appointment"):
         return data
     try:
         name, form, score = _fast_path.catalogue.match(fast_path_normalize(text), "doctorfull", lang, 0.9)
@@ -2193,6 +2200,13 @@ def _with_whole_doctor_name(data, text: str, lang: str):
     whole = form or name
     if data["slots"].get("doctor_name") == whole:
         return data
+    # KCD-lead-3: "department_query" and "doctor_availability" are the two intents a real call (see the
+    # book_appointment re-route's own comment further down, for the mid-booking case) has shown the per-
+    # utterance classifier confuse on a terse answer. Outside that re-route's mid-booking scope, a confidently
+    # matched WHOLE doctor name settles it the same deterministic way this function already settles an
+    # ambiguous surname: naming a real doctor was never a department question.
+    if data.get("intent") == "department_query":
+        return {**data, "intent": "doctor_availability", "slots": {**data["slots"], "doctor_name": whole}}
     if data.get("intent") == "doctor_availability":
         hint = _doctor_booking_hint(text, lang)  # None for a schedule question, so only a booking request changes intent
         if hint is not None:
@@ -2477,6 +2491,16 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             return None
         result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
         _note_suggestion(intent, "doctor_name", slots, result)
+        if not result.get("found") and not result.get("ambiguous"):
+            # KCD-lead-A: "Orthopaedics Doctor" is a department the model put in the doctor slot -- not "no such doctor". Any department in the
+            # clinic's database is found by its own name or short form; the answer is its real doctors (never invented), exactly as department_query's.
+            try:
+                dept = await _tools.department_doctors(slots["doctor_name"], lang)
+            except ToolCallError:
+                dept = {}
+            if dept.get("matched"):
+                _route_found.set({"dept": dept["department_name"], "names": dept.get("doctors_today") or dept.get("doctors") or []})
+                return department_route_reply({**dept, "department_name": _dept_label(dept["department_name"], lang)}, "", lang)
         if result.get("found"):
             # sourav, 2026-10-14: if the doctor does NOT sit on the asked day the agent offered the next sitting day, so "book him that day"
             # means THAT day, not the day he is off.
@@ -2650,6 +2674,10 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         # the day had to move (nothing left on the asked day): that IS a question for the caller
         st.slots["_time_ok"] = "pending"
         st.slots["_sits_told"] = "1"
+        # KCD-lead-6: remember the day that was actually full (not "doesn't sit" -- `info.get("sits")` was True
+        # here), so that if the caller declines this moved day and wants THAT day anyway, department
+        # alternatives can be offered for it instead of silently re-deriving the same moved day again.
+        st.slots["_day_full_from"] = st.slots["date"]
         st.slots["date"] = new_date
         await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.sits_statement(doctor, new_date, sits or slot, lang)}", lang)
         return True
@@ -2668,6 +2696,32 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         return True
     st.slots["_time_ok"] = "yes"
     return False
+
+
+async def _offer_department_alternatives(session: CallSession, st, lang: str, date_iso: str, doctor_name: str) -> bool:
+    """KCD-lead-6: the caller's own doctor was full on `date_iso` and the caller wants that day anyway -- find
+    other doctors in the same department who actually have a free slot that day and offer them. True (and
+    spoken) only when at least one real alternative was found; False leaves the booking untouched so the
+    EXISTING "no slot, ask for another day" behaviour applies exactly as before this function existed."""
+    try:
+        info = await _tools.department_alternatives(doctor_name, date_iso, lang)
+    except ToolCallError as e:  # noqa: BLE001 - this is an aid; any failure falls back to the old behaviour
+        logger.warning("[%s] department_alternatives failed (%s)", session.call_id, e)
+        return False
+    alternatives = (info or {}).get("alternatives") or []
+    if not alternatives:
+        return False
+    doctor = _bare_doctor_name(doctor_name)
+    names = [_bare_doctor_name(a["name"]) for a in alternatives if a.get("name")]
+    if not names:
+        return False
+    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit", "_day_full_from"):
+        st.slots.pop(k, None)
+    st.hold_token, st.hold_doctor_id = None, None
+    st.slots["date"] = date_iso
+    st.slots["doctor_name"] = None  # the caller names one of the offered doctors next; the usual doctor_name pipeline picks it up
+    await _speak(session, slot_proposal.alternative_doctors_statement(doctor, names, lang), lang)
+    return True
 
 
 _THESE = ("এইগুলোই", "এগুলোই", "এইগুলো", "এগুলো", "ওইগুলো", "ওগুলো", "এই টেস্ট", "এই টেস্টগুলো", "এইটাই", "এটাই", "सब यही", "यही", "ये ही", "यही सब", "ये सब", "वही सब",
@@ -3152,8 +3206,14 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
 async def _answer_department_doctors(session: CallSession, text: str, lang: str) -> bool:
     """"who are the doctors in cardio" (agent/dept_list.py): the department's short form is resolved by the clinic API; the answer is the real list,
     who sits today first, and the caller chooses. No advice, no test, no medicine."""
-    if not dept_list.asks_doctor_list(text):
+    lists_doctors = dept_list.asks_doctor_list(text)
+    if not lists_doctors and not dept_list.mentions_doctor_request(text):
         return False
+    if not lists_doctors and _fast_path is not None:
+        # KCD-lead-A: "There is an orthopedic doctor." names a SPECIALTY, not a doctor -- but a sentence that names a real doctor stays on the normal path.
+        with contextlib.suppress(Exception):
+            if _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang)) is not None:  # noqa: SLF001
+                return False
     # Real call 2026-10-18: "কার্ডিওলজি বিভাগে কালকে কোন কোন ডাক্তার বসছে" (who sits TOMORROW) was answered with the list and "nobody sits today". A day or an hour in the
     # question is the day / hour asked about: the doctors who really sit then, with their hours.
     when = booking_capture.read_when(text, False, want_day=True)
@@ -3908,11 +3968,38 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         code_switch_buckets.record(mixture_bucket(text), "seen", lang)
 
-        # KCD-353: a request for a person is honoured IMMEDIATELY -- deterministic, before any
-        # model call, before intent extraction, with no "did you really mean it".
-        if asks_for_a_person(text, lang):
-            logger.info("[%s] caller asked for a person", session.call_id)
-            await _handoff_to_human(session, "caller_requested", (lang,))
+        # The requests that must never reach the intent model, checked in ONE fixed order (agent/early_routing.py -- shared with main_pcm.py so the two
+        # entry points cannot drift apart): a person (KCD-353), the doctor himself, a complaint, money still to pay, a health package, a report, another
+        # center's referral. Deterministic, before any model call, before intent extraction.
+        early = early_routing.classify(text, lang)
+        if early is not None:
+            logger.info("[%s] early route: %s", session.call_id, early)
+            if early in early_routing.HANDOFF_REASON:
+                await _handoff_to_human(session, early_routing.HANDOFF_REASON[early], (lang,))
+            elif early == early_routing.DUES:
+                # KCD-lead-9: never a balance read over the phone -- proof on WhatsApp, a human calls back. A callback is queued only when a phone is
+                # already known (no caller-ID in this stack, same rule _handoff_to_human follows).
+                await _speak(session, owner_answers.billing_dues_reply(lang), lang)
+                phone = _known_phone(session)
+                if phone:
+                    try:
+                        summary = build_call_summary("billing_dues_proof_requested", lang=lang, phone=phone, call_id=session.call_id)
+                        await asyncio.wait_for(_tools.request_callback(phone, session.call_id, "asap", "billing_dues_proof_requested", summary), 4.0)
+                    except Exception as e:  # noqa: BLE001 - advisory: the caller was already told what to do, a failed queue must not break the call
+                        logger.warning("[%s] could not queue the billing-dues callback: %s", session.call_id, e)
+            elif early == early_routing.HEALTH_PACKAGE:
+                await _speak(session, owner_answers.health_package_reply(lang), lang)
+            elif early == early_routing.REPORT_PICKUP:
+                # KCD-lead-8: never a guessed status. "today" in the caller's own words -> a human; otherwise call back on the visit day.
+                if report_pickup.mentions_today(text, lang):
+                    await _handoff_to_human(session, "report_status_on_visit_day", (lang,))
+                else:
+                    await _speak(session, report_pickup.report_pickup_defer_reply(lang), lang)
+            elif early == early_routing.REFERRAL:
+                # KCD-lead-1: another center passing a patient's number. One combined question, answered on the NEXT turn (session.pending_referral).
+                session.pending_referral = session.turn_count
+                session.referral_notes = text
+                await _speak(session, referral_cues.referral_ask_reply(lang), lang)
             return
 
         # KCD-353: the disclosure is in the greeting (Bengali); a caller who answers in another language
@@ -4123,6 +4210,41 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
+
+    # KCD-lead-1: the answer to referral_cues.referral_ask_reply's combined question -- read from THIS turn's
+    # slots regardless of what intent the model guessed for it (the model has no "referral" intent to guess;
+    # whatever patient_name/phone/doctor_name/symptom_description it extracted is exactly what is needed).
+    # Logged once, with whatever was actually said -- blank fields included, never asked twice.
+    pending_referral, session.pending_referral = session.pending_referral, None
+    if pending_referral is not None and session.turn_count - pending_referral <= 2:
+        notes = " | ".join(p for p in (session.referral_notes, text) if p)
+        try:
+            await _tools.log_referral(
+                patient_name=slots.get("patient_name") or "",
+                phone=slots.get("phone") or "",
+                doctor_name=slots.get("doctor_name") or "",
+                symptom_description=slots.get("symptom_description") or "",
+                notes=notes,
+            )
+            await _speak(session, referral_cues.referral_logged_reply(lang), lang)
+        except ToolCallError as e:
+            logger.warning("[%s] could not log the referral: %s", session.call_id, e)
+            await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
+        return
+
+    # KCD-lead-A: a symptom said in everyday words ("my leg hurts", "আমার কানে ব্যথা", "Amar daante byatha") that the model could not place is a
+    # department question, not "unclear". Asked of the clinic's own routing table only for turns the model gave up on, outside a booking; no match
+    # leaves the turn exactly as it was. (No department for eyes exists in the clinic's data: that stays an honest "could not tell which department".)
+    if intent in ("unclear", "smalltalk") and session.booking is None and _tools is not None and 2 <= len(text.split()) <= 20 and pending is None:
+        try:
+            routed = await _tools.route_department(text, lang)
+        except ToolCallError:
+            routed = {}
+        if routed.get("matched"):
+            intent = "department_query"
+            slots = {**slots, "symptom_description": text}
+            data = {**data, "intent": intent, "slots": slots}
+
     # Real call 2026-10-17: after "Dr Sen does not sit that day; next: 18 October", "ঠিক আছে ওই দিন আমার একটা বুকিং দিন" was read as a LOOKUP of an
     # existing booking ("from which number did you book?") and the phone digits then fell to the greeting. A request to book, straight after
     # a doctor was asked about, is a booking: the doctor and the day come from what was just said (booking_carryover).
@@ -4485,26 +4607,52 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             slots, ask_back = booking_capture.after_model(st, text, lang, slots, capture_plan, window=chamber_window)
             prior_slots = dict(st.slots)
             changed = merge_slots(st, slots)
+            # KCD-lead-7: an address can also arrive here -- volunteered in the same sentence as other
+            # details, or extracted by the model out of the order the clinic would have asked for it -- not
+            # only through agent/booking_capture._detail_turn's own direct "what's the address?" question and
+            # answer (which is the only place that already checks for a missing police station). Either way,
+            # the police station must still be asked for: stashing it the same way _detail_turn does (`_ps_
+            # pending`) means that function's own pre-model resumption check picks up the caller's very next
+            # turn correctly -- its gate (patient_name and phone already known) already holds by this point in
+            # a booking, so nothing else needs to change for the resumption to work.
+            if "patient_address" in changed and booking_capture._lacks_police_station(st.slots["patient_address"]):
+                st.slots["_ps_pending"] = st.slots.pop("patient_address")
+                await _speak(session, booking_capture.prompt("ps_ask", lang), lang)
+                return
             await _note_patient_relationship(session, st, text, slots)
             if st.slots.get("_time_ok") == "pending" and not ask_back:
                 # The time was proposed as a question. A different time ("এগারোটার সময় করুন") is taken and confirmed; a no moves to the next free slot; anything
                 # else -- a yes, or the name and number straight away -- accepts it. Only then are the name and number asked.
                 verdict = classify_yes_no(text, lang)
+                # KCD-lead-6: set only when this pending question is offering a day the caller's doctor was MOVED
+                # to because the originally-asked day was full (never for "doctor doesn't sit at all" -- that
+                # case never sets this). Read before anything below can pop it off st.slots.
+                day_full_from = st.slots.get("_day_full_from")
+                full_doctor_name = st.slots.get("doctor_name")
                 if "time_slot" in changed:
                     st.hold_token, st.hold_doctor_id = None, None
                     st.slots["_time_explicit"] = "1"  # the caller chose this time: it is the one told back
                     await _speak(session, slot_proposal.reconfirm(st.slots["time_slot"], lang), lang)
                     return
                 if "date" in changed:
+                    if day_full_from and st.slots.get("date") == day_full_from and full_doctor_name:
+                        # the caller re-named the EXACT day already found full for this doctor: offering the
+                        # same moved day again would just repeat what was already declined.
+                        if await _offer_department_alternatives(session, st, lang, day_full_from, full_doctor_name):
+                            return
                     # another day named ("না, পরশু করুন"): the doctor's sitting that day is told in its turn
-                    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit"):
+                    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit", "_day_full_from"):
                         st.slots.pop(k, None)
                     st.hold_token, st.hold_doctor_id = None, None
                     if await _propose_slot(session, st, lang):
                         return
                 elif verdict == "no":
+                    if day_full_from and full_doctor_name and await _offer_department_alternatives(
+                        session, st, lang, day_full_from, full_doctor_name
+                    ):
+                        return
                     # not that day: the day is asked again (the sitting of whichever day comes next is told then)
-                    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit", "date"):
+                    for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit", "date", "_day_full_from"):
                         st.slots.pop(k, None)
                     st.hold_token, st.hold_doctor_id = None, None
                 else:
@@ -4515,7 +4663,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             if "date" in changed and prior_slots.get("date") and st.slots.get("doctor_name") and st.slots.get("_time_ok") != "pending":
                 # The caller CHANGED the day ("আজকে পাওয়া যাবে?"). What they hear is whether the doctor sits THAT day (or "not today; next on ..."), not an
                 # acknowledgement of a day the doctor does not sit (real call 2026-10-18).
-                for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit"):
+                for k in ("_time_ok", "_sits_told", "time_slot", "_time_explicit", "_day_full_from"):
                     st.slots.pop(k, None)
                 st.hold_token, st.hold_doctor_id = None, None
                 if await _propose_slot(session, st, lang):
@@ -4811,7 +4959,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         elif intent == "department_query":
             reply = await _answer_enquiry_intent(intent, slots, lang)
             if reply is None:
-                await _speak(session, phrase("unclear", lang), lang)
+                # KCD-lead-3: a real "which department/symptom?" question, same courtesy and the same
+                # pending_enquiry follow-up mechanism doctor_availability's missing-slot path already gets,
+                # instead of a flat "sorry, unclear" that gives the caller nothing to answer.
+                session.pending_enquiry = (intent, session.turn_count)
+                await _speak(session, missing_slot_prompt(intent, "symptom_description", lang), lang)
                 return
             await _finish_enquiry_turn(session, text, lang, intent, slots, reply, data)
 
@@ -5128,6 +5280,12 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                 if confirmation_id:
                     with contextlib.suppress(ToolCallError):
                         await _tools.send_payment_link(confirmation_id)
+                    # KCD-lead-2: a separate, warm/friendly WhatsApp message confirming the appointment itself
+                    # (doctor, date, time, booking ID) -- distinct from send_payment_link's own message above,
+                    # which is about the payment hold. A failure here is logged only, same discipline as the
+                    # payment link: the appointment is confirmed either way, and the caller already heard so.
+                    with contextlib.suppress(ToolCallError):
+                        await _tools.send_booking_confirmation_whatsapp(confirmation_id)
                 session.suspended = None  # nothing is offered back after the socket closes below
                 await _end_call(session, lang, "payment_link_sent")
                 return

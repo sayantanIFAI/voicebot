@@ -1277,6 +1277,29 @@ def doctor_free_slots(name: str = Query(...), date: str = Query(...), db: Sessio
     }
 
 
+@app.get("/api/v1/doctors/department-alternatives")
+def doctor_department_alternatives(name: str = Query(...), date: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
+    """KCD-lead-6: when `name`'s own day is full, other doctors in the SAME department who actually have a free
+    slot on `date` -- for the caller who insists on the same day instead of the next day this doctor sits."""
+    amb = _ambiguous_doctor(db, name)
+    if amb is not None:
+        return amb
+    doctor = _find_doctor(db, name)
+    if not doctor:
+        return {"found": False, "query": name}
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError:
+        return {"found": False, "query": name}
+    dept = db.get(Department, doctor.department_id)
+    return {
+        "found": True,
+        "department_name": dept.name if dept else None,
+        "date": date,
+        "alternatives": bs.doctors_with_free_slots(db, doctor.department_id, date, lang, exclude_doctor_id=doctor.id),
+    }
+
+
 @app.get("/api/v1/departments/route")
 def department_route(query: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
     return bs.route_department(db, query, lang)
@@ -1514,6 +1537,23 @@ def callback_endpoint(req: CallbackRequestBody, db: Session = Depends(get_db)):
     return eq.request_callback(db, req.phone, req.call_id, req.requested_window, req.reason, req.call_summary)
 
 
+class ReferralRequest(BaseModel):
+    patient_name: str = ""
+    phone: str = ""
+    doctor_name: str = ""
+    symptom_description: str = ""
+    notes: str = ""
+
+
+@app.post("/api/v1/referrals")
+def referral_endpoint(req: ReferralRequest):
+    """KCD-lead-1: staff at another center passing along a patient's number for a later outbound call --
+    logged to a CSV worklist (referral_log.py), not a database table; no DB session needed."""
+    import referral_log
+
+    return referral_log.log_referral(req.patient_name, req.phone, req.doctor_name, req.symptom_description, req.notes)
+
+
 class PaymentLinkRequest(BaseModel):
     confirmation_id: str
 
@@ -1524,6 +1564,17 @@ def send_payment_link_endpoint(req: PaymentLinkRequest, db: Session = Depends(ge
     """Only a CONFIRMED DOCTOR appointment's confirmation_id ever gets a link back -- a lab test is paid and booked
     at the counter, never over the call (bs.send_payment_link's own docstring)."""
     return bs.send_payment_link(db, req.confirmation_id)
+
+
+class BookingConfirmationWhatsAppRequest(BaseModel):
+    confirmation_id: str
+
+
+@app.post("/api/v1/bookings/send-whatsapp-confirmation")
+@idempotent("bookings.send_whatsapp_confirmation")
+def send_booking_confirmation_whatsapp_endpoint(req: BookingConfirmationWhatsAppRequest, db: Session = Depends(get_db)):
+    """KCD-lead-2: the warm/friendly WhatsApp confirmation template, sent once a doctor appointment is confirmed."""
+    return bs.send_booking_confirmation_whatsapp(db, req.confirmation_id)
 
 
 @app.get("/api/v1/reports/status")

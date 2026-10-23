@@ -170,6 +170,11 @@ def available_slots(db: Session, doctor_id: int, date: str) -> list[str]:
         # time-of-day, so "today at 10am" stayed offerable at 3pm.
         now_minutes = now.hour * 60 + now.minute
         free = [s for s in free if _slot_minutes(s) > now_minutes]
+    # KCD-lead-14: a per-weekday cap on patients taken, separate from the time-grid's own slot count. NULL (every
+    # row until a clinician sets a real number) changes nothing -- same grid-only list as before this column existed.
+    if sched.max_bookings_per_day is not None:
+        remaining_capacity = sched.max_bookings_per_day - len(taken)
+        free = free[: max(remaining_capacity, 0)]
     return free
 
 
@@ -823,6 +828,41 @@ def send_payment_link(db: Session, confirmation_id: str) -> dict:
     return out
 
 
+def send_booking_confirmation_whatsapp(db: Session, confirmation_id: str) -> dict:
+    """KCD-lead-2: the warm/friendly WhatsApp confirmation message (the lead's chosen Template B), sent once a
+    doctor appointment is CONFIRMED -- separate from send_payment_link's own message above (sent earlier in the
+    same flow, about the payment hold, not the appointment itself). Same placeholder discipline: queue_sms stays
+    status="queued" until a real provider is wired in (clinic-api/notifications.py); nothing here ever claims a
+    message reached a caller's phone."""
+    appt = db.query(Appointment).filter_by(confirmation_id=confirmation_id, status="confirmed").first()
+    if not appt:
+        return {"success": False, "reason": "not_found"}
+    if appt.phone == NOT_PROVIDED_PHONE:
+        return {"success": False, "reason": "no_phone_on_file"}
+    doctor = db.get(Doctor, appt.doctor_id)
+    doctor_en = (doctor.full_name or doctor.name) if doctor else "Doctor"
+    doctor_bn = (doctor.full_name_bn or doctor.name) if doctor else "ডাক্তার"
+    department = db.get(Department, doctor.department_id) if doctor else None
+    dept_suffix = f" ({department.name})" if department else ""
+    message = (
+        f"Hi {appt.patient_name}, your appointment with {doctor_en}{dept_suffix} is booked for {appt.date}, {appt.time_slot}. "
+        f"Please arrive 10 minutes early. Booking ID: {confirmation_id}. "
+        f"-- হ্যালো {appt.patient_name}, {doctor_bn}{dept_suffix}-এর সাথে আপনার অ্যাপয়েন্টমেন্ট {appt.date}, {appt.time_slot}-এ বুক হয়েছে। "
+        f"১০ মিনিট আগে আসবেন। বুকিং আইডি: {confirmation_id}।"
+    )
+    result = queue_sms(db, appt.phone, "booking_confirmation_whatsapp", message, confirmation_id)
+    if result.get("queued") and not result.get("duplicate"):
+        delivery = notifications.send("whatsapp", appt.phone, message, confirmation_id)
+        row = db.get(SmsOutbox, result["id"])
+        if row is not None and delivery["status"] in ("sent", "failed"):
+            row.status = delivery["status"]  # stays "queued" while the placeholder is in place
+            db.commit()
+    out = {"success": result["queued"], "confirmation_id": confirmation_id, "channel": "whatsapp"}
+    if not result["queued"]:
+        out["reason"] = result.get("reason", "unknown")
+    return out
+
+
 def queue_sms(
     db: Session, to_phone: str, template_key: str, message: str, related_confirmation_id: str | None = None
 ) -> dict:
@@ -964,6 +1004,14 @@ _DEPT_ALIASES: dict[str, str] = {
     "neurosurgeon": "Neurosurgery", "neurosurgery": "Neurosurgery", "neuro surgeon": "Neurosurgery", "নিউরোসার্জন": "Neurosurgery", "নিউরো সার্জন": "Neurosurgery", "न्यूरोसर्जन": "Neurosurgery",
     "urologist": "Urology", "urology": "Urology", "ইউরোলজিস্ট": "Urology", "ইউরোলজি": "Urology", "यूरोलॉजिस्ट": "Urology",
     "orthopedician": "Orthopaedics", "paediatrician": "Paediatrics", "pediatrician": "Paediatrics", "dermatologist": "Dermatology", "endocrinologist": "Diabetology & Endocrinology", "diabetologist": "Diabetology & Endocrinology",
+    # KCD-lead-A: plural / "-ics" / "-ology" forms and specialist titles a caller says. The ASCII lookahead above refuses "orthopaedic" inside
+    # "orthopaedics", which is exactly how the department's own name is said ("There is an orthopaedics doctor"). Departments that exist in the
+    # database but have no entry here are still found by resolve_department_by_name() below, so a new department needs no alias to be reachable.
+    "orthopaedics": "Orthopaedics", "orthopaedician": "Orthopaedics", "bones": "Orthopaedics", "bone doctor": "Orthopaedics", "bone specialist": "Orthopaedics",
+    "অর্থোপেডিক": "Orthopaedics", "অর্থোপেডিক্স": "Orthopaedics", "হাড়": "Orthopaedics", "ऑर्थोपेडिक": "Orthopaedics", "ऑर्थोपेडिक्स": "Orthopaedics", "हड्डियों": "Orthopaedics", "हड्डी के": "Orthopaedics",
+    "cardiology": "Cardiology", "dermatology": "Dermatology", "paediatrics": "Paediatrics", "dentistry": "Dentistry", "toothache": "Dentistry", "tooth doctor": "Dentistry",
+    "দাঁত": "Dentistry", "दांतों": "Dentistry", "ear doctor": "ENT", "ear specialist": "ENT", "throat doctor": "ENT", "কানের": "ENT", "कान के": "ENT",
+    "general physician": "General Medicine", "family doctor": "General Medicine", "gp": "General Medicine",
 }
 
 
@@ -978,6 +1026,43 @@ def _alias_department(q: str) -> str | None:
         elif key in q:
             return _DEPT_ALIASES[key]
     return None
+
+
+_DEPT_NAME_STOP = frozenset({"and", "the", "general", "of"})
+
+
+def _dept_fold(s: str) -> str:
+    """Lower-case, British->American spelling folded ("Orthopaedics" == "orthopedics"), punctuation to spaces."""
+    import re
+
+    s = (s or "").lower().replace("ae", "e").replace("oe", "e")
+    return " ".join(re.sub(r"[^a-z0-9ঀ-৿ऀ-ॿ ]+", " ", s).split())
+
+
+def resolve_department_by_name(db: Session, text: str) -> Department | None:
+    """KCD-lead-A: the department a free-text request names, from the DEPARTMENTS TABLE ITSELF -- not from a hand-kept alias list -- so every department
+    in the clinic's database (and any added later) is reachable by its own name in any common spelling or ending: "orthopaedic doctor",
+    "Orthopaedics Doctor", "orthopedics", "neurologist" all find their department. Each significant word of a department's name is matched as a
+    word prefix (its first max(5, len-3) letters), so "-ics / -ic / -ist / -ology" endings do not matter; a very short name (ENT) must be a whole word.
+    Returns the single department that matches, or None when none or more than one does (never a guess between two)."""
+    import re
+
+    q = _dept_fold(text)
+    if not q:
+        return None
+    hits: list[Department] = []
+    for d in db.query(Department).order_by(Department.id).all():
+        words = [w for w in _dept_fold(d.name).split() if w not in _DEPT_NAME_STOP and len(w) >= 3]
+        for w in words:
+            if len(w) <= 4:
+                ok = re.search(rf"(?<![a-z]){re.escape(w)}(?![a-z])", q) is not None
+            else:
+                stem = w[: max(5, len(w) - 3)]
+                ok = re.search(rf"(?<![a-z]){re.escape(stem)}[a-z]*", q) is not None
+            if ok:
+                hits.append(d)
+                break
+    return hits[0] if len(hits) == 1 else None
 
 
 def _department_doctors_today(db: Session, department_id: int, lang: str = "bn") -> list[str]:
@@ -997,7 +1082,10 @@ def route_department(db: Session, query_text: str, lang: str) -> dict:
     q = query_text.lower()
     matches: list[int] = []
     for r in db.query(DepartmentRoute).all():
-        kws = {"bn": r.keywords_bn, "hi": r.keywords_hi, "en": r.keywords_en}.get(lang, r.keywords_en)
+        # KCD-lead-A: every language's keywords are checked, the caller's own language first in meaning only -- the call's sticky reply language says nothing
+        # about which script THIS sentence came back in (agent/main.py's own comment on language_of_script), and romanized Bengali ("amar payer byatha") lives
+        # in the English column. Strictly more permissive than checking one column: a phrase that matched before still matches.
+        kws = "|".join(k for k in (r.keywords_bn, r.keywords_hi, r.keywords_en) if k)
         if any(kw and phrase_matches(kw.lower(), q) for kw in kws.split("|")):
             matches.append(r.department_id)
     matches = list(dict.fromkeys(matches))
@@ -1055,6 +1143,46 @@ def sitting_doctors(
     return out
 
 
+def doctors_with_free_slots(
+    db: Session, department_id: int, date: str, lang: str = "bn", exclude_doctor_id: int | None = None
+) -> list[dict]:
+    """KCD-lead-6: OTHER doctors in a department who actually have a bookable slot left on `date` -- sitting,
+    not on leave, AND not already full (time-grid or the new max_bookings_per_day cap). Deliberately separate
+    from sitting_doctors() above, which only checks the schedule/leave and does NOT look at available_slots(),
+    so it would still list a doctor who is rostered on but has nothing left -- exactly the doctor a caller whose
+    OWN doctor is full that day must not be offered. Used when a caller is told their doctor has no slot left
+    that day and asks for the same day anyway, instead of only being offered a later day for the same doctor."""
+    from models import DoctorLeave
+
+    try:
+        wd = datetime.date.fromisoformat(date).weekday()
+    except ValueError:
+        return []
+    out = []
+    for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).all():
+        if exclude_doctor_id and d.id == exclude_doctor_id:
+            continue
+        sched = db.query(DoctorSchedule).filter_by(doctor_id=d.id, weekday=wd).first()
+        if not sched:
+            continue
+        if any(lv.start_date <= date <= lv.end_date for lv in db.query(DoctorLeave).filter_by(doctor_id=d.id).all()):
+            continue
+        free = available_slots(db, d.id, date)
+        if not free:
+            continue
+        out.append(
+            {
+                "doctor_id": d.id,
+                "name": _doctor_spoken_name(d, lang),
+                "full_name": d.full_name or d.name,
+                "chamber_hours": f"{sched.start_time}-{sched.end_time}",
+                "free_slots": free,
+                "visit_fee_inr": d.consultation_fee_inr,
+            }
+        )
+    return out
+
+
 def department_doctors(
     db: Session,
     department_name: str,
@@ -1076,8 +1204,23 @@ def department_doctors(
     alias = _alias_department(q)
     if alias:
         q = alias.lower()
-    dept = next(
-        (d for d in db.query(Department).all() if d.name.lower() == q or phrase_matches(d.name.lower(), q)), None
+    # KCD-lead-A: the EXACT name wins before any looser match. Before this, the alias for "dentist" -> q = "dentistry" was tested against every department with
+    # a plain substring match in database order, and the three-letter name "ENT" is a substring of "dentistry": every Dentistry request was answered with
+    # the ENT doctors. A name of four letters or fewer must be a whole word.
+    depts = db.query(Department).all()
+
+    def _named_in(name: str, text: str) -> bool:
+        n = name.lower()
+        if len(n) <= 4:
+            import re
+
+            return re.search(rf"(?<![a-z]){re.escape(n)}(?![a-z])", text) is not None
+        return phrase_matches(n, text)
+
+    dept = (
+        next((d for d in depts if d.name.lower() == q), None)
+        or next((d for d in depts if _named_in(d.name, q)), None)
+        or resolve_department_by_name(db, q)
     )
     if not dept:
         return {"matched": False}

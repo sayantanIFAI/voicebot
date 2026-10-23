@@ -211,6 +211,14 @@ def test_missing_slot_prompt_new_intents_all_languages():
             assert r and r != rt.missing_slot_prompt("unclear", "nonsense", lang)
 
 
+def test_department_query_missing_symptom_asks_a_real_question_not_the_generic_default():
+    """KCD-lead-3: a department_query with no symptom_description used to get a flat "sorry, unclear" in main.py
+    -- it now gets a real clarifying question, same courtesy doctor_availability's own missing-slot path gets."""
+    for lang in ("bn", "hi", "en"):
+        r = rt.missing_slot_prompt("department_query", "symptom_description", lang)
+        assert r and r != rt.missing_slot_prompt("unclear", "nonsense", lang)
+
+
 def test_spelling_prompt_and_readback_all_languages():
     for lang in ("bn", "hi", "en"):
         assert rt.spelling_prompt(lang)

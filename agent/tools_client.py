@@ -101,6 +101,22 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:
             raise ToolCallError(f"free_slots({doctor_name!r}, {date!r}): {e}") from e
 
+    async def department_alternatives(self, doctor_name: str, date: str, lang: str = "bn") -> dict:
+        """KCD-lead-6: other doctors in `doctor_name`'s department who actually have a free slot on `date`
+        (GET /api/v1/doctors/department-alternatives) -- used when that doctor is full that day and the caller
+        insists on the same day instead of the next day this doctor sits."""
+        try:
+            r = await self._client.get(
+                "/api/v1/doctors/department-alternatives", params={"name": doctor_name, "date": date, "lang": lang}
+            )
+            r.raise_for_status()
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("department-alternatives did not return an object")
+            return data
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"department_alternatives({doctor_name!r}, {date!r}): {e}") from e
+
     # ---- Tool 4: GET /api/v1/tests/prep?name=... ----
     # Expected response shape:
     #   found=true:  {"found": true, "test_name": "...", "test_name_bn": "...",
@@ -407,6 +423,50 @@ class ClinicToolsClient:
             return validated(SuccessAnswer, r.json(), "send_payment_link")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"send_payment_link({confirmation_id!r}): {e}") from e
+
+    async def send_booking_confirmation_whatsapp(self, confirmation_id: str) -> dict:
+        """KCD-lead-2: the warm/friendly WhatsApp confirmation template (clinic-api/booking_service.
+        send_booking_confirmation_whatsapp), sent once a doctor appointment is confirmed -- separate from
+        send_payment_link's own message above."""
+        try:
+            r = await self._client.post(
+                "/api/v1/bookings/send-whatsapp-confirmation",
+                json={"confirmation_id": confirmation_id},
+                headers={"Idempotency-Key": uuid.uuid4().hex},
+            )
+            r.raise_for_status()
+            return validated(SuccessAnswer, r.json(), "send_booking_confirmation_whatsapp")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"send_booking_confirmation_whatsapp({confirmation_id!r}): {e}") from e
+
+    async def log_referral(
+        self,
+        patient_name: str = "",
+        phone: str = "",
+        doctor_name: str = "",
+        symptom_description: str = "",
+        notes: str = "",
+    ) -> dict:
+        """KCD-lead-1: staff at another Sonoscan center passing along a patient's number for a later outbound
+        call (clinic-api/referral_log.py) -- a CSV worklist for staff, never a claim that the call was made."""
+        try:
+            r = await self._client.post(
+                "/api/v1/referrals",
+                json={
+                    "patient_name": patient_name,
+                    "phone": phone,
+                    "doctor_name": doctor_name,
+                    "symptom_description": symptom_description,
+                    "notes": notes,
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("referrals did not return an object")
+            return data
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"log_referral({patient_name!r}, {phone!r}): {e}") from e
 
     async def save_draft_booking(self, caller_phone: str, call_id: str, slots_json: str) -> dict:
         body = {"caller_phone": caller_phone, "call_id": call_id, "slots_json": slots_json}

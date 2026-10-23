@@ -246,3 +246,19 @@ def book_that_day_question(date_iso: str, lang: str, now: datetime.datetime | No
 def call_again(lang: str) -> str:
     """Owner, 2026-10-18: when no date and time is available for the doctor, the patient is asked to call again to ask about the next date."""
     return _CALL_AGAIN.get(lang, _CALL_AGAIN["en"])
+
+
+_ALT_DOCTORS = {
+    "bn": "{doctor}-এর ওই দিন আর কোনো স্লট নেই। একই বিভাগে {names} আজ বসছেন, ফাঁকা স্লট আছে। এঁদের মধ্যে কারও সাথে অ্যাপয়েন্টমেন্ট করব?",
+    "hi": "{doctor} के पास उस दिन कोई स्लॉट नहीं बचा। उसी विभाग में {names} आज बैठ रहे हैं, खाली स्लॉट है। इनमें से किसी के साथ अपॉइंटमेंट कर दूँ?",
+    "en": "There is no slot left with {doctor} that day. In the same department, {names} are sitting with a free slot that day. Shall I book you with one of them?",
+}
+
+
+def alternative_doctors_statement(doctor: str, names: list[str], lang: str) -> str:
+    """Owner, 2026-10-22 (KCD-lead-6): the caller's own doctor is full that day and they want THAT day anyway --
+    rather than only being offered a later day for the SAME doctor, other doctors in the same department who
+    actually still have a free slot are named (never a doctor who is merely rostered on but also full)."""
+    lang = lang if lang in _ALT_DOCTORS else "en"
+    joined = {"bn": " বা ", "hi": " या ", "en": " or "}[lang].join(names[:3])
+    return _ALT_DOCTORS[lang].format(doctor=doctor, names=joined)
