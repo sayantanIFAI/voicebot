@@ -52,6 +52,7 @@ CANNOT_PAY_ONLINE = "cannot_pay_online"
 SITTING_HOURS = "sitting_hours"
 COME_TO_CLINIC = "come_to_clinic"
 WRITE_NAME = "write_name"
+PAY_NOW = "pay_now"  # sourav, 2026-10-24: "do we have to pay now?" -> not paying now is fine, book later at the clinic, no slot guarantee
 RARE_TEST = "rare_test"
 DAY_AVAILABILITY = "day_availability"
 
@@ -61,6 +62,7 @@ ORDER = (
     COMPLAINT,
     LINK_MISSING,
     CANNOT_PAY_ONLINE,
+    PAY_NOW,
     DUES,
     HEALTH_PACKAGE,
     RARE_TEST,
@@ -100,6 +102,8 @@ def classify(text: str, lang: str = "en") -> str | None:
         return LINK_MISSING
     if doctor_enquiry_cues.cannot_pay_online(text, lang):
         return CANNOT_PAY_ONLINE
+    if doctor_enquiry_cues.asks_pay_now(text, lang):
+        return PAY_NOW
     if asks_about_dues(text, lang):
         return DUES
     if owner_answers.asks_about_health_package(text):

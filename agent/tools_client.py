@@ -32,6 +32,8 @@ from agent.api_models import (
     RouteAnswer,
     SuccessAnswer,
     TestAnswer,
+    NextSerialAnswer,
+    TestDaysAnswer,
     VerifyAnswer,
     validated,
 )
@@ -345,8 +347,10 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"doctor_earliest({doctor_name!r}): {e}") from e
 
-    async def route_department(self, query_text: str, lang: str = "bn") -> dict:
+    async def route_department(self, query_text: str, lang: str = "bn", age: int | None = None) -> dict:
         params = {"query": query_text, "lang": lang}
+        if age is not None:
+            params["age"] = age  # sourav, 2026-10-24: 13 or more is never sent to the paediatrician (clinic-api/lay_departments.py)
         try:
             r = await self._client.get("/api/v1/departments/route", params=params)
             r.raise_for_status()
@@ -372,6 +376,15 @@ class ClinicToolsClient:
             return validated(RouteAnswer, r.json(), "department_doctors")
         except (httpx.HTTPError, ValueError) as e:
             raise ToolCallError(f"department_doctors({params!r}): {e}") from e
+
+    async def doctor_department(self, name: str) -> dict:
+        """sourav, 2026-10-24: {found, department_name} of a named doctor (used by the paediatric age rule)."""
+        try:
+            r = await self._client.get("/api/v1/doctors/department", params={"name": name})
+            r.raise_for_status()
+            return validated(FoundAnswer, r.json(), "doctor_department")
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"doctor_department({name!r}): {e}") from e
 
     async def doctor_visit(self, name: str) -> dict:
         """What a doctor's visit costs, from the doctors table."""
@@ -433,6 +446,50 @@ class ClinicToolsClient:
             return validated(SuccessAnswer, r.json(), "request_callback")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"request_callback({body!r}): {e}") from e
+
+    async def next_serial(self, doctor_name: str, date: str) -> dict:
+        """sourav, 2026-10-24: "if I book today, what will my serial number be?" -- the number the next booking of this doctor on this date would get (clinic-api
+        /api/v1/bookings/next-serial; serials are simulated). found, doctor_name(_bn/_hi), date, available, next_serial, next_available_date."""
+        try:
+            r = await self._client.get("/api/v1/bookings/next-serial", params={"name": doctor_name, "date": date})
+            r.raise_for_status()
+            return validated(NextSerialAnswer, r.json(), "next_serial")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"next_serial({doctor_name!r}): {e}") from e
+
+    async def get_test_days(self, test_name: str) -> dict:
+        """sourav, 2026-10-24: the weekdays a lab test is done on (clinic-api /api/v1/tests/availability). Why: "is the CT scan done on Thursday?" is answered from the table.
+        The answer has found, test_name(_bn/_hi), available_days (Monday = 0), closed_days, every_day."""
+        try:
+            r = await self._client.get("/api/v1/tests/availability", params={"name": test_name})
+            r.raise_for_status()
+            return validated(TestDaysAnswer, r.json(), "get_test_days")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"get_test_days({test_name!r}): {e}") from e
+
+    async def lookup_serial(self, phone: str) -> dict:
+        """sourav, 2026-10-24: "I paid but my serial number never came on WhatsApp" -- what the database holds for this (confirmed) mobile number: found, bookings[] each with
+        confirmation_id, doctor_name, date, time_slot, patient_name, paid, serial_number (clinic-api /api/v1/bookings/serial)."""
+        try:
+            r = await self._client.get("/api/v1/bookings/serial", params={"phone": phone})
+            r.raise_for_status()
+            return validated(LookupAnswer, r.json(), "lookup_serial")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"lookup_serial: {e}") from e
+
+    async def resend_serial(self, phone: str, confirmation_id: str) -> dict:
+        """sourav, 2026-10-24: queue a paid booking's serial number to its WhatsApp number again (clinic-api /api/v1/bookings/serial/resend). The channel is a placeholder: the
+        answer says "success" when it was QUEUED, never that it reached the phone."""
+        try:
+            r = await self._client.post(
+                "/api/v1/bookings/serial/resend",
+                json={"phone": phone, "confirmation_id": confirmation_id},
+                headers={"Idempotency-Key": uuid.uuid4().hex},
+            )
+            r.raise_for_status()
+            return validated(SuccessAnswer, r.json(), "resend_serial")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"resend_serial({confirmation_id!r}): {e}") from e
 
     async def send_payment_link(self, confirmation_id: str) -> dict:
         """Only a confirmed DOCTOR appointment ever gets a link (clinic-api/booking_service.send_payment_link) -- a

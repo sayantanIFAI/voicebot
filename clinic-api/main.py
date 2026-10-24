@@ -90,9 +90,15 @@ def _ensure_seeded():
     every appointment booked since the last boot, turning a convenience
     into data loss.
     """
+    import db as _db_module
     from db import engine
     from models import Base, LabTest
 
+    if _db_module.USING_CLIENT_DB and not _db_module.CLIENT_DB_INIT:
+        # sourav, 2026-10-24: the CLIENT's database is connected (client_database.env). Their data is read as it is: nothing is created, altered, seeded or dropped
+        # unless CLIENT_DB_INIT=1 is set once on purpose. python tools/check_client_db.py says what their database still lacks.
+        logging.getLogger("clinic-api").info("client database in use: schema and seed steps skipped (set CLIENT_DB_INIT=1 once to prepare it)")
+        return
     Base.metadata.create_all(engine)
     from seed import add_i18n_columns
 
@@ -130,10 +136,11 @@ def _ensure_seeded():
             seed()
         else:
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
-            from seed import backfill_faq_keywords, backfill_i18n, backfill_test_alias_keywords
+            from seed import backfill_faq_keywords, backfill_i18n, backfill_test_alias_keywords, backfill_test_days
 
             logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
             logging.getLogger("clinic-api").info("test alias keywords backfilled: %s", backfill_test_alias_keywords())
+            logging.getLogger("clinic-api").info("test days backfilled: %s", backfill_test_days())  # sourav, 2026-10-24
             logging.getLogger("clinic-api").info("FAQ keywords backfilled: %s", backfill_faq_keywords())
 
         # Only now do departments/doctors/tests definitely have rows --
@@ -159,6 +166,11 @@ def _ensure_seeded():
 
         logging.getLogger("clinic-api").info("enquiry facts backfill: %s", backfill_enquiry_facts(db))
         logging.getLogger("clinic-api").info("enquiry demo data: %s", seed_enquiry_demo_data(db))
+        import booking_log
+
+        from db import engine as _engine
+
+        logging.getLogger("clinic-api").info("booking_log view (sourav, 2026-10-24): %s", booking_log.ensure_view(_engine))
     finally:
         db.close()
 
@@ -485,6 +497,40 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
     # Fuzzy fallback -- try both the English name and every Bengali alias,
     # so suggestions are useful regardless of which script the caller used.
     return _scripted(db, {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}, LabTest)
+
+
+@app.get("/api/v1/tests/availability")
+def test_availability(name: str = Query(...), date: str | None = Query(None), db: Session = Depends(get_db)):
+    """sourav, 2026-10-24: the weekdays a lab test is done on (models.LabTest.available_days), and -- when `date` (ISO) is given -- whether it is done on that date and the
+    next date it is. Why: the voice agent answers "is the CT scan done on Thursday?" / "which days?" from this, never from the model. Flow: the same name matching as
+    /tests/search (two equally good matches = ambiguous, none = not found with suggestions); then the column is read through clinic-api/lab_days.py."""
+    import lab_days
+
+    candidates = _find_test_candidates(db, name)
+    if len(candidates) > 1:
+        return _scripted(db, {"found": False, "query": name, "ambiguous": True, "did_you_mean": [t.name for t in candidates[:3]]}, LabTest)
+    found = candidates[0] if candidates else _find_test(db, name)
+    if not found:
+        return _scripted(db, {"found": False, "query": name, "did_you_mean": _test_suggestions(db, name)}, LabTest)
+    days = lab_days.parse_days(found.available_days)
+    out = {
+        **_test_reply_dict(found),
+        "available_days": days,
+        "closed_days": lab_days.closed_days(days),
+        "every_day": len(days) == 7,
+        "date": None,
+        "available_on_date": None,
+        "next_available_date": None,
+    }
+    if date:
+        try:
+            when = datetime.date.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+        out["date"] = when.isoformat()
+        out["available_on_date"] = lab_days.is_open_on(days, when)
+        out["next_available_date"] = lab_days.next_open_date(days, when, include_from=False).isoformat() if not out["available_on_date"] else when.isoformat()
+    return out
 
 
 # =============================================================================
@@ -1001,6 +1047,24 @@ def _validate_date_not_past(date_str: str) -> dict | None:
     return None
 
 
+# sourav, 2026-10-24 (owner): a doctor appointment can be taken at most 3 days ahead -- today and the next three days; a later date is refused and the caller is asked to call
+# again nearer the day. Applies to booking (hold) and rescheduling (both go through _validate_doctor_slot); lab tests are not affected. BOOKING_MAX_ADVANCE_DAYS changes it.
+MAX_ADVANCE_DAYS = int(os.environ.get("BOOKING_MAX_ADVANCE_DAYS", "3"))
+
+
+def _validate_not_too_far_ahead(date_str: str) -> dict | None:
+    """sourav, 2026-10-24: the booking-window rule. Returns the refusal (reason "too_far_ahead", with the limit and the last date that can be booked today) or None. Flow: the
+    date is compared with today + MAX_ADVANCE_DAYS; a past or unparseable date is not this check's business (the check before it already answered)."""
+    try:
+        target = datetime.date.fromisoformat(date_str)
+    except ValueError:
+        return None
+    last = datetime.date.today() + datetime.timedelta(days=MAX_ADVANCE_DAYS)
+    if target > last:
+        return {"success": False, "reason": "too_far_ahead", "max_advance_days": MAX_ADVANCE_DAYS, "last_bookable_date": last.isoformat()}
+    return None
+
+
 def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot: str) -> dict | None:
     """CodeRabbit-flagged: this used to live only inside hold_booking,
     which reschedule_booking never called -- it went straight to
@@ -1013,6 +1077,9 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
     parsing that date/time). Extracted so every endpoint that resolves a
     date+slot against a specific doctor applies the SAME checks."""
     err = _validate_date_not_past(date_str)
+    if err:
+        return err
+    err = _validate_not_too_far_ahead(date_str)
     if err:
         return err
     target = datetime.date.fromisoformat(date_str)
@@ -1333,9 +1400,22 @@ def doctor_department_alternatives(name: str = Query(...), date: str = Query(...
     }
 
 
+@app.get("/api/v1/doctors/department")
+def doctor_department(name: str = Query(...), db: Session = Depends(get_db)):
+    """sourav, 2026-10-24: the department a named doctor sits in -- the agent needs it for ONE rule: a patient of 13 or more is not booked with the paediatrician."""
+    exact = _doctor_exact_matches(db, name)
+    near = [] if exact else _find_doctor_candidates(db, name)
+    found = exact if len(exact) == 1 else (near if len(near) == 1 else [])
+    if not found:
+        return {"found": False}
+    dept = db.get(Department, found[0].department_id)
+    return {"found": True, "department_name": dept.name if dept else None}
+
+
 @app.get("/api/v1/departments/route")
-def department_route(query: str = Query(...), lang: str = Query("bn"), db: Session = Depends(get_db)):
-    return bs.route_department(db, query, lang)
+def department_route(query: str = Query(...), lang: str = Query("bn"), age: int | None = Query(None, ge=0, le=130), db: Session = Depends(get_db)):
+    # sourav, 2026-10-24: `age` (optional) -- a patient of 13 or more is never routed to the paediatrician (lay_departments.PAEDIATRIC_MAX_AGE)
+    return bs.route_department(db, query, lang, age)
 
 
 @app.get("/api/v1/departments/doctors")
@@ -1597,6 +1677,53 @@ def send_payment_link_endpoint(req: PaymentLinkRequest, db: Session = Depends(ge
     """Only a CONFIRMED DOCTOR appointment's confirmation_id ever gets a link back -- a lab test is paid and booked
     at the counter, never over the call (bs.send_payment_link's own docstring)."""
     return bs.send_payment_link(db, req.confirmation_id)
+
+
+@app.get("/api/v1/bookings/serial")
+def booking_serial_status(phone: str = Query(...), db: Session = Depends(get_db)):
+    """sourav, 2026-10-24: "I paid but my serial number never came on WhatsApp" -- what the database holds for this mobile number: each upcoming doctor appointment, whether it was
+    paid, and its serial number if so (booking_service.serial_status). Read-only; the same disclosure rule as /bookings/lookup."""
+    return bs.serial_status(db, phone)
+
+
+@app.get("/api/v1/bookings/next-serial")
+def booking_next_serial(name: str = Query(...), date: str | None = Query(None), db: Session = Depends(get_db)):
+    """sourav, 2026-10-24: "if I book today, what will my serial number be?" -- the number the next booking of this doctor on this date would get (booking_service.next_serial; serials are
+    simulated, generated with each booking). Read-only. A doctor who does not sit that day gets no number (available False) -- a serial is never promised for a day he is not in his chamber."""
+    exact = _doctor_exact_matches(db, name)
+    doctor = exact[0] if len(exact) == 1 else (None if exact else _find_doctor(db, name))
+    if not doctor:
+        return {"found": False, "query": name}
+    try:
+        target = datetime.date.fromisoformat(date) if date else datetime.date.today()
+    except ValueError:
+        return {"found": False, "query": name}
+    sched = _schedule_for_weekday(db, doctor.id, target.weekday())
+    out = {
+        "found": True,
+        "doctor_name": _doctor_ref(db, doctor),
+        "doctor_name_bn": (doctor.full_name_bn or _first_alias_bn(doctor.aliases_bn)),
+        "doctor_name_hi": (doctor.full_name_hi or _first_alias_bn(doctor.aliases_hi)),
+        "date": target.isoformat(),
+        "available": bool(sched),
+        "chamber_hours": f"{sched.start_time}-{sched.end_time}" if sched else None,
+        "next_serial": bs.next_serial(db, doctor.id, target.isoformat()) if sched else None,
+    }
+    if not sched:
+        out["next_available_date"] = _next_available_date(db, doctor.id, target + datetime.timedelta(days=1))
+    return out
+
+
+class SerialResendRequest(BaseModel):
+    phone: str
+    confirmation_id: str
+
+
+@app.post("/api/v1/bookings/serial/resend")
+@idempotent("bookings.serial_resend")
+def booking_serial_resend(req: SerialResendRequest, db: Session = Depends(get_db)):
+    """sourav, 2026-10-24: queue the serial number to the booking's WhatsApp number again (booking_service.resend_serial). Placeholder channel: recorded as queued, never claimed delivered."""
+    return bs.resend_serial(db, req.phone, req.confirmation_id)
 
 
 class BookingConfirmationWhatsAppRequest(BaseModel):

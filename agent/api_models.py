@@ -80,6 +80,33 @@ class LookupAnswer(FoundAnswer):
     bookings: list[dict[str, Any]] = []
 
 
+class NextSerialAnswer(FoundAnswer):
+    """sourav, 2026-10-24: /api/v1/bookings/next-serial -- the serial the next booking of a doctor on a date would get."""
+
+    doctor_name: str | None = None
+    doctor_name_bn: str | None = None
+    doctor_name_hi: str | None = None
+    date: str | None = None
+    available: StrictBool | None = None
+    chamber_hours: str | None = None
+    next_serial: StrictInt | None = None
+    next_available_date: str | None = None
+    query: str | None = None
+
+
+class TestDaysAnswer(FoundAnswer):
+    """sourav, 2026-10-24: /api/v1/tests/availability -- the weekdays a lab test is done on (Monday = 0)."""
+
+    __test__ = False  # not a pytest class, whatever the name says
+    test_name: str | None = None
+    available_days: list[StrictInt] = []
+    closed_days: list[StrictInt] = []
+    every_day: StrictBool | None = None
+    query: str | None = None
+    did_you_mean: list[str] | None = None
+    ambiguous: StrictBool | None = None
+
+
 class SuccessAnswer(_Answer):
     """A write: it either succeeded or says why not."""
 

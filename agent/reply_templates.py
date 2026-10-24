@@ -257,9 +257,31 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         # KCD-363: never silently rolled forward -- stated plainly, and
         # the caller is offered the same weekday next week.
         return "ওই তারিখটা তো চলে গেছে। আগামী সপ্তাহে ওই দিনের জন্য বুক করব?"
+    if reason == "too_far_ahead":
+        return too_far_ahead_reply(result, "bn")
     if reason == "hold_expired":
         return "দুঃখিত, সময়টা ধরে রাখা যায়নি, একটু দেরি হয়ে গেছে। আবার চেষ্টা করি?"
     return "দুঃখিত, অ্যাপয়েন্টমেন্ট বুক করা গেল না। একটু পরে আবার চেষ্টা করুন, অথবা কাউন্টারে যোগাযোগ করুন।"
+
+
+_DAYS_WORD = {"bn": {1: "এক", 2: "দুই", 3: "তিন", 4: "চার", 5: "পাঁচ", 6: "ছয়", 7: "সাত"}, "hi": {1: "एक", 2: "दो", 3: "तीन", 4: "चार", 5: "पाँच", 6: "छह", 7: "सात"}, "en": {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}}  # fmt: skip
+
+
+def too_far_ahead_reply(result: dict, lang: str, rescheduling: bool = False) -> str:
+    """sourav, 2026-10-24 (owner): an appointment can be taken only a few days ahead (3) -- a later date is not booked; the caller is asked to call again closer to the day.
+    Why a function of `result`: the number of days is the clinic API's own (max_advance_days), never typed here. Flow: bn / hi / en wording; `rescheduling` says the old
+    appointment stays as it is."""
+    n = int((result or {}).get("max_advance_days") or 3)
+    lg = lang if lang in ("bn", "hi") else "en"
+    d = _DAYS_WORD[lg].get(n, str(n))
+    if lg == "bn":
+        base = f"দুঃখিত, আমরা শুধু {d} দিন আগে পর্যন্ত অ্যাপয়েন্টমেন্ট নিতে পারি। অনুগ্রহ করে তারিখের কাছাকাছি সময়ে আবার ফোন করুন।"
+        return base + (" আপনার আগের অ্যাপয়েন্টমেন্টটা আগের মতোই আছে।" if rescheduling else "")
+    if lg == "hi":
+        base = f"माफ़ कीजिए, हम केवल {d} दिन पहले तक ही अपॉइंटमेंट ले सकते हैं। कृपया तारीख़ के नज़दीक फिर से फ़ोन कीजिए।"
+        return base + (" आपकी पुरानी अपॉइंटमेंट वैसी ही है।" if rescheduling else "")
+    base = f"Sorry, we can take appointments only up to {d} days ahead. Please call us again closer to the date."
+    return base + (" Your original appointment is unchanged." if rescheduling else "")
 
 
 def _chamber_span(result: dict):
@@ -329,6 +351,8 @@ def reschedule_reply(result: dict, lang: str = "bn") -> str:
     reason = result.get("reason")
     if reason == "not_found":
         return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো অ্যাপয়েন্টমেন্ট খুঁজে পেলাম না।"
+    if reason == "too_far_ahead":
+        return too_far_ahead_reply(result, "bn", rescheduling=True)
     if reason == "slot_taken":
         alts = result.get("alternative_slots") or []
         if alts:

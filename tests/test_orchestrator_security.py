@@ -171,7 +171,10 @@ async def test_the_whole_conversation_from_question_to_verified_answer(env):
         "Thank you"
     )  # DELIBERATE SPEC CHANGE (2026-09-25): an answer to their question has no thanks;
     assert "Thank you." in said[:-2]  # ...the bare thanks came after the security answers they gave
-    assert "Complete Blood Count" in answer and days_ago(10) in answer and "last done" in answer
+    # sourav, 2026-10-24: dates are SAID by nearness now ("the 14th", agent/date_phrase.py), never as a YYYY-MM-DD string
+    from agent import date_phrase, slot_proposal
+
+    assert "Complete Blood Count" in answer and date_phrase.say(days_ago(10), "en", slot_proposal.clinic_now().date()) in answer and "last done" in answer
     assert s.kindness.active is False  # 40 years old: not a senior
 
 

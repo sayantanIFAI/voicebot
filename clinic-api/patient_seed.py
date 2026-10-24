@@ -11,7 +11,7 @@ holds registry rows is left exactly as it is.
 The cast, chosen so each behaviour has a case:
     Asha, Rakesh and Tania Saha   three patients on ONE phone number (a shared family number)
     Asha Saha                     78 -- a senior citizen; tests and medicines on record
-    Debashis Mondal               has an upcoming appointment
+    Debashis Mondal               has an upcoming appointment, paid (simulated) with a serial number
     Sunita Devi                   64 -- a senior; Hindi-script aliases
     Ravi Kumar                    a patient with one test and one medicine, and stored preferences
 """
@@ -256,5 +256,9 @@ def _sample_appointment(db: Session, patient: Patient) -> int:
                         patient.phone,
                         patient.age,
                     )
+                    if done.get("success"):
+                        # sourav, 2026-10-24: this sample booking is also marked PAID (simulated, booking_service.mark_paid), so "I paid but my serial number never came on
+                        # WhatsApp" can be tried end to end: call as Debashis Mondal's number, 9830023456, and the serial comes from the database.
+                        bs.mark_paid(db, done["confirmation_id"])
                     return 1 if done.get("success") else 0
     return 0

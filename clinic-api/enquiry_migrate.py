@@ -28,6 +28,8 @@ LAB_TEST_ENQUIRY_COLUMNS: dict[str, str] = {
     "prescription_note_bn": "VARCHAR NOT NULL DEFAULT ''",
     "prescription_note_hi": "VARCHAR NOT NULL DEFAULT ''",
     "prescription_note_en": "VARCHAR NOT NULL DEFAULT ''",
+    # sourav, 2026-10-24: the weekdays a test is done on (models.LabTest.available_days); every day by default
+    "available_days": "VARCHAR NOT NULL DEFAULT '0,1,2,3,4,5,6'",
 }
 
 

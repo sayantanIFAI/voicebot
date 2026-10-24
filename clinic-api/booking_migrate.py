@@ -33,6 +33,7 @@ APPOINTMENT_BOOKING_COLUMNS: dict[str, str] = {
     "cancellation_policy_version": "INTEGER",
     "cancel_reason": "VARCHAR",
     "token_number": "INTEGER",
+    "paid_at": "TIMESTAMP",  # sourav, 2026-10-24: when the booking fee was paid (simulated) -- see models.Appointment.paid_at
 }
 
 PATIENT_COLUMNS: dict[str, str] = {

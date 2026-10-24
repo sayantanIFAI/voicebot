@@ -19,6 +19,7 @@ _CLINIC_MODULES = (
     "models",
     "seed",
     "booking_service",
+    "lay_departments",
     "booking_migrate",
     "enquiry_service",
     "enquiry_migrate",
@@ -31,6 +32,8 @@ _CLINIC_MODULES = (
     "patient_seed",
     "gazetteer",
     "idempotency",
+    "lab_days",  # sourav, 2026-10-24: new clinic-api modules, dropped like the rest so each app starts clean
+    "booking_log",
 )
 
 

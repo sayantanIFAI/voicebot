@@ -25,6 +25,8 @@ import datetime
 import os
 import uuid
 
+import lay_departments  # sourav, 2026-10-24: lay doctor phrases -> department, and the paediatric age limit (lay_departments.py)
+import booking_log  # sourav, 2026-10-24: a readable record of every confirmed booking (booking_log.py); never allowed to break a booking
 import notifications
 import payments
 from disclosure import with_notice as _with_disclosure_notice
@@ -345,6 +347,18 @@ def _verify_appointment_persisted(db: Session, appointment_id: int, expected: di
     return all(getattr(row, field) == value for field, value in expected.items())
 
 
+def next_serial(db: Session, doctor_id: int, date: str) -> int:
+    """sourav, 2026-10-24: the serial number the NEXT confirmed booking of this doctor on this date gets: one above the highest already issued. Why (owner): for now, as a simulation,
+    every booking generates its serial in the appointments table at booking time, and "if I book today what will my serial be?" is answered with exactly this number.
+    Cancelled bookings do not count (their number is free again only if they were the last; a gap is harmless)."""
+    top = (
+        db.query(func.max(Appointment.token_number))
+        .filter(Appointment.doctor_id == doctor_id, Appointment.date == date, Appointment.status == "confirmed")
+        .scalar()
+    )
+    return (top or 0) + 1
+
+
 def confirm_booking(
     db: Session,
     hold_token: str,
@@ -401,6 +415,7 @@ def confirm_booking(
         patient_id=patient.id,
         caller_phone=caller_phone,
         status="confirmed",
+        token_number=next_serial(db, doctor_id, date),  # sourav, 2026-10-24: simulated serial generated with the booking (paid_at, set by mark_paid, is what releases it to the caller)
     )
     db.add(appt)
     db.flush()
@@ -437,6 +452,7 @@ def confirm_booking(
         confirmation_id,
     )
 
+    booking_log.append(db, confirmation_id)  # sourav, 2026-10-24: one line in booking_log.csv (best effort, swallows its own errors)
     return {
         "success": True,
         "confirmation_id": confirmation_id,
@@ -744,6 +760,7 @@ def book_tests(
         confirmation_id,
     )
 
+    booking_log.append(db, confirmation_id)  # sourav, 2026-10-24: the lab booking's line in booking_log.csv
     return {
         "success": True,
         "confirmation_id": confirmation_id,
@@ -1019,6 +1036,11 @@ def _alias_department(q: str) -> str | None:
     """The department a short form in `q` stands for, or None. Longest key first, so 'general medicine' beats 'medicine'."""
     import re
 
+    # sourav, 2026-10-24: lay phrases first ("haarer doctor" = the bone doctor, "mathar doctor" = neurology ...), see lay_departments.py. Only a NEW phrase can match here,
+    # so every earlier alias keeps resolving exactly as before.
+    lay = lay_departments.resolve(q)
+    if lay:
+        return lay[0]
     for key in sorted(_DEPT_ALIASES, key=len, reverse=True):
         if key.isascii():
             if re.search(rf"(?<![a-z]){re.escape(key)}(?![a-z])", q):
@@ -1075,7 +1097,7 @@ def _department_doctors_today(db: Session, department_id: int, lang: str = "bn")
     return out
 
 
-def route_department(db: Session, query_text: str, lang: str) -> dict:
+def route_department(db: Session, query_text: str, lang: str, age: int | None = None) -> dict:
     """Symptom text -> department, plus (KCD-lay-terms) the real doctors in it, so the agent can name someone
     instead of only the department. `phrase_matches` tolerates a word or two inserted inside a keyword phrase --
     "বুকে ব্যথা" (chest pain) must still match "বুকে খুব ব্যথা" (chest REALLY hurts), an ordinary way to say it."""
@@ -1089,6 +1111,20 @@ def route_department(db: Session, query_text: str, lang: str) -> dict:
         if any(kw and phrase_matches(kw.lower(), q) for kw in kws.split("|")):
             matches.append(r.department_id)
     matches = list(dict.fromkeys(matches))
+    # sourav, 2026-10-24: (1) lay doctor phrases ("peter doctor", "mathar doctor", "bachhader haarer doctor" ...) -- a specific one overrides the symptom rows, an ordinary-
+    # physician one ("pain er doctor") is used only when nothing else matched; (2) a patient of 13 or more is never sent to the paediatrician. See lay_departments.py.
+    lay_names = lay_departments.resolve(q, age)
+    if lay_names:
+        by_name = {d.name: d.id for d in db.query(Department).all()}
+        lay_ids = [by_name[n] for n in lay_names if n in by_name]
+        strong = any(not weak for weak in lay_departments.lay_hits(q).values())
+        if lay_ids and (strong or not matches):
+            matches = list(dict.fromkeys(lay_ids))
+    if age is not None and matches:
+        by_id = {d.id: d.name for d in db.query(Department).all()}
+        names = lay_departments.apply_age_rule([by_id.get(m, "") for m in matches], age)
+        back = {n: i for i, n in by_id.items()}
+        matches = list(dict.fromkeys(back[n] for n in names if n in back)) or matches
     if not matches:
         return {"matched": False}
     if len(matches) > 1:
@@ -1296,3 +1332,92 @@ def find_draft(db: Session, caller_phone: str) -> dict | None:
 def clear_draft(db: Session, caller_phone: str) -> None:
     db.query(DraftBooking).filter_by(caller_phone=caller_phone).delete()
     db.commit()
+
+
+# ============================================================= serial (token) numbers -- paid, but never got it on WhatsApp
+# sourav, 2026-10-24: "I called, booked, paid, and the serial number never came on WhatsApp." The agent confirms the caller's mobile number, then asks THIS module what the
+# database holds for it and tells the caller from that -- the serial is never composed by the model (CLAUDE.md's one rule). Payment is SIMULATED: no gateway is wired
+# (clinic-api/payments.py is a placeholder), so `mark_paid` below is what a payment confirmation would call -- it stamps `paid_at` and issues the serial in the order
+# bookings are PAID (the owner's rule, models.Appointment.token_number). Only doctor appointments have a serial; a lab test is paid at the counter.
+
+
+def mark_paid(db: Session, confirmation_id: str) -> dict:
+    """sourav, 2026-10-24: record that a CONFIRMED doctor appointment's booking fee was paid and give it its serial. Why: the stand-in for a payment gateway's "paid" callback, so the
+    whole paid-but-no-WhatsApp path can run end to end before a real gateway exists (tests, the sample patients, a demo). Flow: find the confirmed appointment; if already paid
+    return its serial unchanged (idempotent -- paying twice never issues a second serial); else stamp paid_at and take the next number for that doctor and date, one above the
+    highest serial already issued to a confirmed booking of the same doctor and day."""
+    appt = db.query(Appointment).filter_by(confirmation_id=confirmation_id, status="confirmed").first()
+    if appt is None:
+        return {"success": False, "reason": "not_found"}
+    if appt.paid_at is not None and appt.token_number is not None:
+        return {"success": True, "already_paid": True, "confirmation_id": confirmation_id, "serial_number": appt.token_number}
+    appt.paid_at = _now()
+    if appt.token_number is None:
+        appt.token_number = next_serial(db, appt.doctor_id, appt.date)
+    db.commit()
+    return {"success": True, "already_paid": False, "confirmation_id": confirmation_id, "serial_number": appt.token_number}
+
+
+def serial_status(db: Session, phone: str) -> dict:
+    """sourav, 2026-10-24: what the database holds about the serial number(s) of the upcoming doctor appointments booked from / for this mobile number. Why: answers "I paid but
+    did not get my serial number" from the system of record. Flow: the same rows and the same disclosure rule as lookup_bookings (an upcoming confirmed appointment whose patient
+    this number is authorised for -- never a stranger's booking); each row says whether it was paid and, if so, its serial. Nearest three only: a caller does not need ten read out."""
+    today = _now().date().isoformat()
+    rows = (
+        db.query(Appointment)
+        .filter(Appointment.status == "confirmed", Appointment.date >= today)
+        .filter((Appointment.phone == phone) | (Appointment.caller_phone == phone))
+        .order_by(Appointment.date, Appointment.time_slot)
+        .all()
+    )
+    out = []
+    for a in rows:
+        patient = db.get(Patient, a.patient_id) if a.patient_id else None
+        if not patient or not authorize_disclosure(db, patient, phone):
+            continue
+        doctor = db.get(Doctor, a.doctor_id)
+        out.append(
+            {
+                "confirmation_id": a.confirmation_id,
+                "doctor_name": (doctor.full_name or doctor.name) if doctor else None,
+                "date": a.date,
+                "time_slot": a.time_slot,
+                "patient_name": a.patient_name,
+                "paid": a.paid_at is not None,
+                "serial_number": a.token_number if a.paid_at is not None else None,
+            }
+        )
+        if len(out) == 3:
+            break
+    return {"found": bool(out), "bookings": out}
+
+
+def resend_serial(db: Session, phone: str, confirmation_id: str) -> dict:
+    """sourav, 2026-10-24: put a paid booking's serial number on WhatsApp again. Why: the caller says it never arrived. Flow: the booking must be one this number is allowed to hear
+    about (serial_status) AND paid with a serial issued; the message goes to the number ON THE BOOKING (the one the first message went to) and the reply says which one it ends in,
+    so a caller can notice a wrongly-typed number -- the likeliest reason it never came. Same placeholder discipline as every message here: queue_sms records it as "queued" and
+    nothing claims it reached the phone until a real provider is wired in (notifications.py)."""
+    mine = {b["confirmation_id"]: b for b in serial_status(db, phone)["bookings"]}
+    row = mine.get(confirmation_id)
+    if row is None:
+        return {"success": False, "reason": "not_found"}
+    if not row["paid"] or row["serial_number"] is None:
+        return {"success": False, "reason": "not_paid"}
+    appt = db.query(Appointment).filter_by(confirmation_id=confirmation_id, status="confirmed").first()
+    if appt is None or appt.phone == NOT_PROVIDED_PHONE:
+        return {"success": False, "reason": "no_phone_on_file"}
+    message = (
+        f"Hi {appt.patient_name}, your serial number for {row['doctor_name'] or 'the doctor'} on {appt.date} is {row['serial_number']}. Booking ID: {confirmation_id}. "
+        f"-- হ্যালো {appt.patient_name}, {appt.date} তারিখে আপনার সিরিয়াল নম্বর {row['serial_number']}। বুকিং আইডি: {confirmation_id}।"
+    )
+    result = queue_sms(db, appt.phone, "serial_number_whatsapp", message, confirmation_id)
+    if result.get("queued") and not result.get("duplicate"):
+        delivery = notifications.send("whatsapp", appt.phone, message, confirmation_id)
+        sms_row = db.get(SmsOutbox, result["id"])
+        if sms_row is not None and delivery["status"] in ("sent", "failed"):
+            sms_row.status = delivery["status"]  # stays "queued" while the placeholder is in place
+            db.commit()
+    out = {"success": bool(result.get("queued")), "channel": "whatsapp", "confirmation_id": confirmation_id, "sent_to_last4": appt.phone[-4:]}
+    if not result.get("queued"):
+        out["reason"] = result.get("reason", "unknown")
+    return out

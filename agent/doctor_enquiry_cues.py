@@ -553,3 +553,108 @@ _COME_TO_CLINIC.extend(
         ),
     ]
 )
+
+# ======================================================================================================== round 7 (owner, 2026-10-24, credit: sourav)
+# Why: the owner listed three more lame / romanised wordings the callers use. (1) "kobe kobe bose?" = which weekdays does he sit (answered "সোম বুধ শুক্র");
+# (2) "naam ta booking kora jabe?" = can a name be booked -> "Yes, which doctor?" and the date questions follow after the caller names the doctor;
+# (6) "do we have to pay now?" -> not paying now is allowed, the caller may come and book at the clinic later, but slots are NOT guaranteed.
+# Everything is appended to the lists above (extend, never replaced), so every earlier phrasing still matches.
+_WEEKDAYS.extend(
+    [
+        re.compile(r"\bkobe\s*kobe\b", _I),
+        re.compile(r"\bkobe\s*kobe\s*(?:bose|bosen|boshen|boshe|asen|ashen|achen|ache|thaken|dekhen|dekhe)\b", _I),
+        re.compile(r"\b(?:on\s+)?(?:which|what)\s+(?:all\s+)?(?:days|weekdays)\b.{0,30}\b(?:sit|sits|sitting|come|comes|coming|available|here|chamber|doctor)\b", _I),
+            re.compile(r"\bkon\s*kon\s*(?:din|dine|bar|bare|barey|baar)\b", _I),
+        re.compile(r"\bkab\s*kab\b.{0,20}\b(?:baithte|baithti|baithta|baithenge|aate|aati|aata|aayenge|milte|milti|milenge|hote|hain|hai)\b", _I),
+        re.compile(r"\bkab\s*kab\s*(?:baithte|baithti|aate|aati|milte|milti|milenge)\b", _I),
+        re.compile(r"\bkaun\s*kaun\s*(?:se\s*)?(?:din|dino|vaar|war)\b", _I),
+        re.compile(r"কবে\s*কবে"),
+        re.compile(r"কোন\s*কোন\s*(?:দিন|বার)"),
+        re.compile(r"कब\s*कब\s*(?:बैठते|बैठती|बैठेंगे|आते|आती|मिलते|मिलती|मिलेंगे|होते|है|हैं)?"),
+        re.compile(r"कौन\s*कौन\s*(?:से\s*)?(?:दिन|वार)"),
+    ]
+)
+
+# ---- item 2: "naam ta booking kora jabe?" -- can a name be booked (answered "yes, which doctor?") ----
+_CAN_BOOK_NAME = [
+    re.compile(r"\bna+m(?:e)?\s*(?:ta|ti|tao)?\s*(?:book|booking|buking|buk)\b", _I),
+    re.compile(r"\b(?:book|booking|buking)\s*(?:e|te|ey)?\s*na+m\b", _I),
+    re.compile(r"\bna+m(?:e)?\s*(?:ta|ti)?\s*(?:dewa|deoya|dite|deya|dibo|debo|dilei|dile|dhukano|dhukiye|dhukabo|ekta|ek)\b", _I),
+    re.compile(r"\bna+m(?:e)?\s*(?:ta|ti)?\s*(?:ke)?\s*(?:register|enroll|enter|add|put|note|nothibhukto|nothivukto)\w*", _I),
+    re.compile(r"\b(?:can|could|may|is it possible to|is it possible)\b.{0,25}\b(?:book|register|put|write|add|enter|take|note)\b.{0,15}\b(?:a|my|the|his|her|our|one)?\s*name\b", _I),
+    re.compile(r"\b(?:can|could)\s+(?:a|my|the|his|her|our)?\s*name\s+be\s+(?:booked|registered|written|put|added|entered|taken|noted)\b", _I),
+    re.compile(r"\bname\s+(?:booking|registration)\b", _I),
+    re.compile(r"\bna+m\s*(?:book|booking|buk)\s*(?:ho|hoga|ho\s*jayega|ho\s*jaega|kar|karna|karwa|karwana|karna\s*hai)\w*", _I),
+    re.compile(r"নাম\s*(?:টা|টি)?\s*(?:বুক|বুকিং|বুকিঙ)"),
+    re.compile(r"(?:বুক|বুকিং)\s*(?:এ|এর|করতে)?\s*নাম"),
+    re.compile(r"নাম\s*(?:টা|টি)?\s*(?:দেওয়া|দেয়া|দিতে|দিলে|ঢোকানো|ঢোকাতে|রেজিস্টার|নথিভুক্ত)"),
+    re.compile(r"नाम\s*(?:बुक|बुकिंग)"),
+    re.compile(r"(?:बुक|बुकिंग)\s*(?:में|के लिए)?\s*नाम"),
+    re.compile(r"नाम\s*(?:दर्ज|रजिस्टर|जुड़वा|जुड़ना|जुड़वाना|डलवा|डालना|डाल)\S*"),
+]
+_WRITE_NAME.extend(_CAN_BOOK_NAME)
+
+
+def asks_can_book_name(text: str, lang: str = "en") -> bool:
+    """ "naam ta booking kora jabe?" / "can a name be booked?" / "नाम बुक हो जाएगा?" -- the caller asks whether a name can be put in; the answer starts "yes"."""
+    t = _nfc(text)
+    return bool(t) and _WRITE_NAME_GUARD.search(t) is None and any(p.search(t) for p in _CAN_BOOK_NAME)
+
+
+_YES_PREFIX = {"bn": "হ্যাঁ, ", "hi": "जी हाँ, ", "en": "Yes, "}
+
+
+def yes_prefix(lang: str) -> str:
+    return _YES_PREFIX.get(lang, _YES_PREFIX["en"])
+
+
+# ---- item 6: "do we have to pay now?" ----
+_NOW_RM = r"(?:now|right\s+now|right\s+away|immediately|at\s+once|first|upfront|up\s+front|in\s+advance|advance|ekhon|ekhoni|ekhuni|akhon|akhoni|ekhon\s*i|ekhon\s*e|agei|abhi|abhi\s*hi|abhii|turant|pehle|pahle)"
+_PAYW_RM = r"(?:pay|payment|paying|paisa|paise|poisha|taka|tk|fees?|fee|charge|charges|advance|bhugtan|rupees|rs)"
+_MUST_RM = r"(?:hobe|hobey|hoibo|lagbe|lagbey|dite\s*hobe|korte\s*hobe|dite\s*lagbe|korte\s*lagbe|dorkar|joruri|zaruri|jaruri|compulsory|mandatory|required|must|need|needed|have\s+to|has\s+to|got\s+to|padega|padegi|hoga|hogi|lagega|lagegi|karna|dena|dena\s*padega|karna\s*padega|karna\s*hoga|dena\s*hoga|chahiye)"
+_PAY_NOW = [
+    re.compile(r"\b(?:do|does|should|must|need|have|has|is|are)\b.{0,30}\b" + _PAYW_RM + r"\b.{0,25}\b" + _NOW_RM + r"\b", _I),
+    re.compile(r"\b" + _NOW_RM + r"\b.{0,15}\b" + _PAYW_RM + r"\b.{0,20}\b(?:required|needed|necessary|compulsory|mandatory|must|have\s+to|need\s+to|to\s+be\s+paid|to\s+pay)\b", _I),
+    re.compile(r"\bpay(?:ment)?\b.{0,12}\b(?:now|right\s+now)\b.{0,12}\b(?:or|ya)\b.{0,12}\b(?:later|after|pore|baad|baad\s+me)\b", _I),
+    re.compile(r"\b(?:is|are)\b.{0,20}\b(?:payment|paying|pay)\b.{0,15}\b(?:required|compulsory|mandatory|necessary|a must)\b.{0,12}\b(?:now|first|upfront|right\s+now)\b", _I),
+    re.compile(r"\b" + _NOW_RM + r"\b.{0,25}\b" + _PAYW_RM + r"\b.{0,25}\b" + _MUST_RM + r"\b", _I),
+    re.compile(r"\b" + _PAYW_RM + r"\b.{0,25}\b" + _NOW_RM + r"\b.{0,25}\b" + _MUST_RM + r"\b", _I),
+    re.compile(r"\b" + _PAYW_RM + r"\b.{0,25}\b" + _MUST_RM + r"\b.{0,15}\b" + _NOW_RM + r"\b", _I),
+    re.compile(r"\b" + _PAYW_RM + r"\b.{0,12}\b(?:ki|kya|ke)\b.{0,12}\b" + _NOW_RM + r"\b", _I),
+    re.compile(r"\b" + _NOW_RM + r"\b.{0,20}\b(?:pay|payment|paisa|taka)\b.{0,12}\b(?:ki|kya)\b", _I),
+    re.compile(r"\b(?:pay|payment|paisa|taka)\b.{0,25}\b(?:pore|baad\s*me|baad\s*mein|later|baad)\b.{0,15}\b(?:korle|karein|karu|dile|denge|kar\s*sakte|hobe\s*na|chalbe|chalega)\b", _I),
+    re.compile(r"(?:এখন(?:ই)?|এক্ষুনি|আগেই)\s*.{0,22}(?:পেমেন্ট|পে|টাকা|ফি|ফী|ভিজিট).{0,20}(?:করতে\s*হবে|দিতে\s*হবে|লাগবে|জরুরি|দরকার|করা\s*লাগবে|দিতে\s*লাগবে)"),
+    re.compile(r"(?:পেমেন্ট|পে|টাকা|ফি|ফী).{0,22}(?:এখন(?:ই)?|এক্ষুনি|আগেই).{0,18}(?:করতে\s*হবে|দিতে\s*হবে|লাগবে|জরুরি|দরকার)"),
+    re.compile(r"(?:পেমেন্ট|টাকা|ফি).{0,20}(?:করতে\s*হবে|দিতে\s*হবে|লাগবে).{0,12}(?:এখন(?:ই)?|এক্ষুনি|আগেই)"),
+    re.compile(r"अभी\s*.{0,22}(?:पेमेंट|पे|पैसे|पैसा|फीस|भुगतान).{0,20}(?:करना\s*(?:पड़ेगा|होगा)|देना\s*(?:पड़ेगा|होगा)|देने\s*होंगे|जरूरी|ज़रूरी|लगेगा|चाहिए)"),
+    re.compile(r"(?:पेमेंट|पैसे|पैसा|फीस|भुगतान).{0,22}(?:अभी|पहले|तुरंत).{0,18}(?:करना|देना|जरूरी|ज़रूरी|लगेगा|चाहिए|होगा|पड़ेगा)"),
+    re.compile(r"(?:पेमेंट|पैसे|फीस|भुगतान).{0,20}(?:करना\s*(?:पड़ेगा|होगा)|देना\s*(?:पड़ेगा|होगा)|देने\s*होंगे).{0,12}(?:अभी|पहले|तुरंत)"),
+]
+_PAY_NOW_GUARD = re.compile(
+    r"\b(?:not\s+(?:received|got)|didn'?t\s+(?:get|receive)|link\s+(?:not|nahi|ashe\s*ni|asheni)|pending|due|baki|baaki|bakaya|dues|owe|refund|return|wapas|ferot)\b|বাকি|বকেয়া|রিফান্ড|ফেরত|बाकी|बकाया|रिफंड|वापस",
+    _I,
+)
+_PATTERNS["pay_now"] = _PAY_NOW
+
+
+def asks_pay_now(text: str, lang: str = "en") -> bool:
+    """ "do we have to pay now?" / "ekhon e payment korte hobe?" / "अभी पेमेंट करना पड़ेगा?" -- is paying right away compulsory."""
+    t = _nfc(text)
+    return bool(t) and _PAY_NOW_GUARD.search(t) is None and _any("pay_now", text)
+
+
+_PAY_NOW_REPLY = {
+    "bn": "এখন পেমেন্ট না করলে আপনি পরে ক্লিনিকে এসে বুক করতে পারেন। তবে স্লট পাওয়ার কোনো নিশ্চয়তা নেই।",
+    "hi": "अगर आप अभी पेमेंट नहीं करते, तो आप बाद में क्लिनिक आकर बुक कर सकते हैं। लेकिन स्लॉट मिलने की कोई गारंटी नहीं है।",
+    "en": "If you do not pay now, you can come to the clinic and book later. But there is no guarantee of slots.",
+}
+
+
+def pay_now_reply(lang: str) -> str:
+    return _PAY_NOW_REPLY.get(lang, _PAY_NOW_REPLY["en"])
+_PAY_NOW.append(
+    re.compile(r"\b(?:pay|payment|taka|paisa)\b.{0,25}\b(?:pore|baad|later)\b.{0,20}\b(?:korle|dile|karein|karen|kare|diya|dein)\b.{0,15}\b(?:hobe|chalbe|chalega|hoga|cholbe|chalta)\b", _I)
+)
+_PAY_NOW.append(
+    re.compile(r"\b(?:pore|baad|later)\b.{0,12}\b(?:pay|payment|taka|paisa)\b.{0,20}\b(?:korle|dile|karein|karen|kare|diya|dein)\b.{0,15}\b(?:hobe|chalbe|chalega|hoga|cholbe|chalta)\b", _I)
+)

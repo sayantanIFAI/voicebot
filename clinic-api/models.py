@@ -124,6 +124,11 @@ class LabTest(Base):
     prescription_note_bn = Column(String, nullable=False, default="")
     prescription_note_hi = Column(String, nullable=False, default="")
     prescription_note_en = Column(String, nullable=False, default="")
+    # sourav, 2026-10-24: the weekdays this test is done on, as "0,1,2,..." (Python weekday numbers, Monday = 0 -- the SAME convention as
+    # DoctorSchedule.weekday). Default is every day, so a test with no restriction behaves exactly as before. "CT scan of the brain is done every
+    # day except Thursday" = "0,1,2,4,5,6". Read through clinic-api/lab_days.py, never parsed by hand. Added to an existing database by
+    # enquiry_migrate.add_enquiry_columns().
+    available_days = Column(String, nullable=False, default="0,1,2,3,4,5,6")
 
 
 class FAQ(Base):
@@ -197,6 +202,9 @@ class Appointment(Base):
     cancel_reason = Column(String, nullable=True)
     # The serial (token) number, given in the order bookings are PAID, not asked for (owner, 2026-10-18). Null until paid.
     token_number = Column(Integer, nullable=True)
+    # sourav, 2026-10-24: when the booking fee was paid. SIMULATED today (booking_service.mark_paid; no real gateway is wired -- clinic-api/payments.py is a
+    # placeholder). A serial (token_number) exists only once this is set. Added to an existing database by booking_migrate.
+    paid_at = Column(DateTime, nullable=True)
 
     doctor = relationship("Doctor")
 

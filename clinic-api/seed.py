@@ -28,6 +28,7 @@ from i18n_content import (
     TEST_ALIASES_HI,
 )
 from models import FAQ, Base, Department, Doctor, DoctorSchedule, LabTest
+import lab_days
 
 # ---------------------------------------------------------------------------
 # 9 departments, 4 doctors each = 36 doctors.
@@ -293,6 +294,15 @@ LAB_TESTS = [
     ("Calcium (Serum)", ["ক্যালসিয়াম", "সিরাম ক্যালসিয়াম"], 250, "Blood", 12),
 ]
 
+# sourav, 2026-10-24: the weekdays a test is done on, keyed by the exact LAB_TESTS name; Monday = 0 ... Sunday = 6. A test not listed is done EVERY day, which is
+# what the table did before this column existed. SAMPLE schedule in the same spirit as the rest of this file's dummy data (a clinic edits the column itself:
+# UPDATE lab_tests SET available_days = '0,1,2,4,5,6' WHERE name = '...' -- that one is "every day except Thursday"). Seeded into a new database by seed() and
+# into an existing one by backfill_test_days(), which only touches a row still on the all-days default.
+LAB_TEST_DAYS: dict[str, list[int]] = {
+    "TMT (Treadmill Test)": [0, 2, 4],  # Monday, Wednesday, Friday
+    "2D Echocardiography": [0, 1, 2, 3, 4, 5],  # Monday to Saturday
+}
+
 # Per-test preparation, keyed by the exact LAB_TESTS name. Only tests with
 # a genuine requirement are listed; every other test gets the generic
 # no-special-preparation default in _prep_for() below. Fictional but
@@ -467,6 +477,26 @@ def backfill_i18n(db=None) -> dict:
     return {"columns_added": added, "values_filled": filled}
 
 
+def backfill_test_days() -> int:
+    """sourav, 2026-10-24: gives an EXISTING database the sample days in LAB_TEST_DAYS. Why: add_enquiry_columns() adds the `available_days` column to a database that is already
+    seeded, with the all-days default, and seed() never runs again on it. Flow: for every test named in LAB_TEST_DAYS whose column is still exactly the all-days default, set the
+    sample days. A row someone already edited (any other value) is never touched, so this is safe to run on every boot. Returns the number of rows changed."""
+    db = SessionLocal()
+    updated = 0
+    try:
+        for name, days in LAB_TEST_DAYS.items():
+            t = db.query(LabTest).filter(LabTest.name == name).first()
+            if t is not None and (t.available_days or lab_days.DEFAULT_DAYS) == lab_days.DEFAULT_DAYS:
+                new = lab_days.format_days(days)
+                if new != t.available_days:
+                    t.available_days = new
+                    updated += 1
+        db.commit()
+        return updated
+    finally:
+        db.close()
+
+
 def backfill_test_alias_keywords() -> int:
     """KCD-dentistry, real-call bug 2026-10-12 (bare "USG" matched neither USG test's aliases and fell through
     to a phonetic near-miss, "Uric Acid"): appends any alias from LAB_TESTS (Bengali) or TEST_ALIASES_HI
@@ -593,6 +623,7 @@ def seed():
                     prep_instructions_bn=prep_bn,
                     prep_instructions_hi=prep_hi,
                     prep_instructions_en=prep_en,
+                    available_days=lab_days.format_days(LAB_TEST_DAYS.get(name, lab_days.ALL_DAYS)),
                 )
             )
 

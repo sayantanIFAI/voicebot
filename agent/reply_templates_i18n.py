@@ -392,6 +392,10 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
             if hi
             else "That date has already passed. Shall I book the same weekday next week instead?"
         )
+    if reason == "too_far_ahead":
+        from agent.reply_templates import too_far_ahead_reply
+
+        return too_far_ahead_reply(result, lang)
     if reason == "hold_expired":
         return (
             "माफ़ कीजिए, समय रोका नहीं जा सका, थोड़ी देर हो गई। फिर कोशिश करें?"
@@ -460,6 +464,10 @@ def reschedule_reply(result: dict, lang: str) -> str:
             f"New confirmation number: {result['confirmation_id']}."
         )
     reason = result.get("reason")
+    if reason == "too_far_ahead":
+        from agent.reply_templates import too_far_ahead_reply
+
+        return too_far_ahead_reply(result, lang, rescheduling=True)
     if reason == "not_found":
         return (
             "माफ़ कीजिए, इस कन्फ़र्मेशन नंबर पर कोई अपॉइंटमेंट नहीं मिली।"
