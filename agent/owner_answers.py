@@ -229,6 +229,28 @@ def distance_reply(key: str, lang: str, address: str | None = None) -> str:
     }.get(lang, "")
 
 
+# ------------------------------------------------------------------------------------------------------------------------------------ booking by phone
+
+_PHONE_WORDS = ("ফোনে", "ফোন এ", "ফোনেই", "ফোন দিয়ে", "মোবাইলে", "over the phone", "on phone", "by phone", "on the phone", "फोन पर", "फ़ोन पर", "फोन से", "phone e", "phone-e")
+_BOOKING_WORDS = ("বুকিং", "বুক", "অ্যাপয়েন্টমেন্ট", "অযাপ্ফোন্টমেন্ট", "নাম লেখা", "বুকিং", "booking", "book", "appointment", "बुकिंग", "बुक", "अपॉइंटमेंट")
+_BOOKING_NOTE = {
+    "bn": "হ্যাঁ, ফোনেই বুকিং হবে। বুকিংয়ের জন্য চল্লিশ টাকা অনলাইনে পেমেন্ট করতে হবে।",
+    "hi": "जी हाँ, बुकिंग फ़ोन पर ही हो जाएगी। बुकिंग के लिए चालीस रुपये ऑनलाइन भुगतान करने होंगे।",
+    "en": "Yes, you can book over the phone. The booking needs forty rupees paid online.",
+}
+
+
+def asks_phone_booking(text: str) -> bool:
+    """"একটা বুকিং দিয়ে দেন, বুকিং করতে পারবো ফোনে": asking whether the booking can be made over this phone call. Answered once, in the owner's words: yes, by phone, forty rupees online
+    (owner, 2026-10-24); the booking then goes on."""
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 24 and _has(t, _PHONE_WORDS) and _has(t, _BOOKING_WORDS)
+
+
+def phone_booking_note(lang: str) -> str:
+    return _BOOKING_NOTE.get(lang, _BOOKING_NOTE["en"])
+
+
 # ------------------------------------------------------------------------------------------------------------------------------------ where in the address
 
 _WHERE = ("কোথায়", "কোথা", "কোথাকার", "কোনখানে", "কোন জায়গায়", "কোন দিকে", "কোনদিকে", "কই", "kothay", "kothai", "where", "कहाँ", "कहां", "किधर", "किस तरफ")

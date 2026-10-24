@@ -1091,12 +1091,24 @@ def resolve_department_by_name(db: Session, text: str) -> Department | None:
     return hits[0] if len(hits) == 1 else None
 
 
+def _chamber_over_today(on_date: str | None, end_time: str | None) -> bool:
+    """True when `on_date` is TODAY and the chamber's end time has already passed: "today 10 to 12" is no longer a sitting at 3 pm (owner, 2026-10-24: the closed chamber was still listed)."""
+    if not on_date or not end_time:
+        return False
+    now = datetime.datetime.now()
+    if on_date != now.date().isoformat():
+        return False
+    return _minutes(end_time) <= now.hour * 60 + now.minute
+
+
 def _department_doctors_today(db: Session, department_id: int, lang: str = "bn") -> list[str]:
-    """The doctors of the department who sit on today's weekday (the clinic's day: the server runs on Asia/Kolkata time)."""
+    """The doctors of the department who sit on today's weekday (the clinic's day: the server runs on Asia/Kolkata time) and whose chamber has not closed yet."""
     wd = datetime.date.today().weekday()
+    today_iso = datetime.date.today().isoformat()
     out = []
     for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).all():
-        if db.query(DoctorSchedule).filter_by(doctor_id=d.id, weekday=wd).first():
+        sched = db.query(DoctorSchedule).filter_by(doctor_id=d.id, weekday=wd).first()
+        if sched and not _chamber_over_today(today_iso, sched.end_time):
             out.append(_doctor_spoken_name(d, lang))
     return out
 
@@ -1175,6 +1187,8 @@ def sitting_doctors(
             if any(lv.start_date <= on_date <= lv.end_date for lv in db.query(DoctorLeave).filter_by(doctor_id=d.id).all()):
                 continue
             start, end = sched.start_time, sched.end_time
+            if _chamber_over_today(on_date, end):
+                continue  # today, and the chamber is already closed
             if at_time and not (_minutes(start) <= _minutes(at_time) < _minutes(end)):
                 continue
         out.append(

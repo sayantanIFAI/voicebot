@@ -166,7 +166,7 @@ _SWITCH_PHRASES: dict[str, dict[str, str]] = {
 
 
 _PLACE_NAMES = re.compile(
-    r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ)\s*বাজার|english\s*ba[sz]+ar|englishbazar|इंग्लिश\s*बा(?:ज़?|ज़)ार|अंग्रेज\s*बा(?:ज़?|ज़)ार|ইংলিশবাজার",
+    r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ)\s*(?:বাজার|বাজর|রাজা|রাজার|বাজা)|english\s*(?:ba[sz]+ar|bajar|baza|raj+ah?|razar)|englishbazar|इंग्लिश\s*बा(?:ज़?|ज़)ार|अंग्रेज\s*बा(?:ज़?|ज़)ार|ইংলিশবাজার",
     re.I,
 )
 

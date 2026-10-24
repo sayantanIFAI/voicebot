@@ -315,6 +315,8 @@ def candidate_name(text: str) -> str | None:
     # Real call 2026-10-17: "হ্যাঁ সায়ন দাস নাইন সিক্স থ্রি ডবল ফাইভ ..." -- the name and the phone number in ONE breath. The number words are the phone's,
     # not the name's: with three or more of them in the sentence they are set aside and what is left is read as the name.
     phone_words = [w for w in words if w.lower() in _DIGIT_WORDS or w.lower() in _MULTIPLIER or any(ch.isdigit() for ch in w)]
+    if words and len(phone_words) == len(words):
+        return None  # "নাইন নাইন" is two digits of the number, never a name (real call 2026-10-24: it was read back as the patient's name)
     if len(phone_words) >= 3:
         words = [w for w in words if w not in phone_words]
     words = _strip_leads_and_tails([w.strip(".") for w in words if w.strip(".")])
@@ -821,6 +823,7 @@ _PROMPTS = {
     "phone_heard": {"en": "I heard the number {value}.", "hi": "मैंने नंबर {value} सुना।", "bn": "আমি নম্বরটা শুনেছি {value}।"},
     "age_heard": {"en": "The patient's age is {value}.", "hi": "मरीज़ की उम्र {value} साल है।", "bn": "রোগীর বয়স {value} বছর।"},
     "is_right": {"en": "Is that correct?", "hi": "क्या यह सही है?", "bn": "এটা কি ঠিক?"},
+    "ask_day": {"en": "Which day would you like the appointment for?", "hi": "किस दिन के लिए अपॉइंटमेंट चाहिए?", "bn": "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?"},
     "ask_age": {"en": "What is the patient's age?", "hi": "मरीज़ की उम्र क्या है?", "bn": "রোগীর বয়স কত?"},
     "ask_address": {"en": "Could you tell me the address?", "hi": "पता बताइए?", "bn": "ঠিকানাটা বলবেন?"},
     "ps_ask": {"en": "Which police station is that under?", "hi": "वह किस थाने के अंतर्गत है?", "bn": "থানার নামটা বলবেন?"},
@@ -1065,13 +1068,24 @@ def _lacks_police_station(address: str) -> bool:
     return not any(w in low for w in _STATION_WORDS)
 
 
+_ENGLISH_BAZAR = re.compile(
+    r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ|english|इंग्लिश|अंग्रेज)\s*(?:বাজার|বাজর|রাজা|রাজার|বাজা|ba[sz]+ar|bajar|baza|raj+ah?|razar|बा[ज़ज]ार|राजा)", re.I
+)
+_ENGLISH_BAZAR_SPOKEN = {"bn": "ইংলিশ বাজার", "hi": "इंग्लिश बाज़ार", "en": "English Bazar"}
+
+
+def fix_station(station: str, lang: str) -> str:
+    """"english rajah" / "ইংলিশ রাজা" is the English Bazar police station (Malda), which the recogniser keeps hearing as a request for English or as a name. Said in the call's own script."""
+    return _ENGLISH_BAZAR.sub(_ENGLISH_BAZAR_SPOKEN.get(lang, _ENGLISH_BAZAR_SPOKEN["en"]), station or "")
+
+
 def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, tag: str) -> bool:
     """One of the details asked after the name and the number (the age, then the address). Owner, 2026-10-18: each is asked alone; the AGE is read back with the next
     question in the same breath ("the patient is 45. What is the address?"), the answer to which also counts as its yes; the ADDRESS goes straight on to the closing question,
     after asking the police station when the caller did not give one. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
     pend_key, done_key = f"_{tag}_pending", f"_{tag}_done"
     if tag == "address" and st.slots.get("_ps_pending"):
-        station = " ".join((text or "").split()).strip(" ,.।")
+        station = fix_station(" ".join((text or "").split()).strip(" ,.।"), lang)
         asked = int(st.slots.get("_ps_asks") or 0)
         # Item 19: main.py checked the answer against the geography tables. A station they know (even spelled as the recogniser heard it) is stored under the table's own name;
         # a refusal that outlasts the re-asks falls back to the station of a place the ADDRESS names, when the tables give exactly one.
@@ -1274,6 +1288,8 @@ def bare_age(text: str) -> int | None:
     return n if n and 0 < n <= 120 else None
 
 
+_YES_FIRST = frozenset({"হ্যাঁ", "হ্যা", "হাঁ", "হা", "জি", "ঠিক", "আচ্ছা", "ওকে", "ok", "okay", "yes", "yeah", "haan", "han", "ji", "हाँ", "हां", "हा", "ठीक", "जी", "अच्छा", "ओके"})
+_BARE_NO_WORDS_FOR_YES = frozenset({"না", "নয়", "নেই", "no", "nahi", "नहीं", "नही", "নাহ"})
 _NO_ADDRESS = {"না", "নেই", "জানি না", "বলব না", "দেব না", "নয়", "skip", "no", "none", "नहीं", "पता नहीं", "बताऊंगा नहीं", "বলব না", "থাক"}
 
 
@@ -1359,6 +1375,28 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     if not _active(st):
         return plan
 
+    # 0. "Dr X sits on <day>, shall I book that day?" (the doctor's sitting was just told and offered): a yes IS the date; a no or another day is handled as usual below.
+    offered = st.slots.get("_offered_date")
+    if offered and not st.slots.get("date"):
+        answer = confirm_answer(text, lang)
+        if answer == "yes":
+            st.slots.pop("_offered_date", None)
+            plan.slots, plan.skip_model, plan.readback_answer = {**(plan.slots or {}), "date": offered}, True, True
+            return plan
+        if answer == "no":
+            st.slots.pop("_offered_date", None)
+            plan.speak = prompt("ask_day", lang)
+            return plan
+        st.slots.pop("_offered_date", None)  # something else was said (a day, a question): the offer lapses
+
+    # 0b. "Dr X sits on <day> at <time>, shall I book it?" is waiting and the answer BEGINS with a yes ("হ্যাঁ করুন ঐদিন সাতাশ তারিখ"): that is the yes. Left to the intent model such a
+    #     sentence came back as a question about a lab test's rate (real call 2026-10-24). A "no" is not caught here, nor a new day -- those go on as before.
+    if st.slots.get("_time_ok") == "pending" and not plan.speak:
+        first = (_words(text) or [""])[0]
+        if first in _YES_FIRST and confirm_answer(text, lang) != "no" and not any(w in _BARE_NO_WORDS_FOR_YES for w in _words(text)):
+            plan.skip_model, plan.readback_answer = True, True
+            return plan
+
     # 1. A name read back. The read-back already asked the NEXT question (owner, 2026-10-18), so the caller's reaction is a yes (which moves on), a no or a corrected
     #    name, or simply the ANSWER to the next question (digits for the number) -- which is a yes as well.
     if st.pending_name:
@@ -1378,6 +1416,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         if answer == "yes" or (answer is None and (digits_said >= 1 or bare_age(text)) and not named):
             name, st.pending_name = st.pending_name, None
             st.name_confirmed = name
+            st.slots["patient_name"] = name  # kept now: a digits-only answer that follows ("নাইন") ends the turn with a question, and plan.slots is not merged then (real call 2026-10-24)
             plan.slots, plan.skip_model, plan.readback_answer = {"patient_name": name}, True, True
             if digits_said == 0 or answer == "yes" and digits_said < 1:
                 return plan

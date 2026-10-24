@@ -1678,7 +1678,8 @@ def _note_stated_age(session: CallSession, slots: dict, lang: str) -> None:
             senior_detections.record("stated_age", "call", lang)
 
 
-_ECHOED_FIELDS = ("doctor_name", "date", "time_slot", "patient_name", "phone", "test_name", "new_date", "new_time_slot")
+# owner, 2026-10-24: the day and the time are NOT echoed ("ঠিক আছে, চব্বিশ তারিখ" -- an echo of a day the doctor then turned out not to sit on); the doctor's sitting is what is told next
+_ECHOED_FIELDS = ("doctor_name", "patient_name", "phone", "test_name", "new_date", "new_time_slot")
 
 
 async def _thank(session: CallSession, lang: str) -> None:
@@ -2296,6 +2297,8 @@ _turn_text: contextvars.ContextVar[str | None] = contextvars.ContextVar("turn_te
 # owner 2026-10-18: the test whose price was just given and which needs a prescription (the question is asked after the price), and the department just suggested
 _rx_asked: contextvars.ContextVar[str | None] = contextvars.ContextVar("rx_asked", default=None)
 _route_found: contextvars.ContextVar[dict | None] = contextvars.ContextVar("route_found", default=None)
+# a department question nobody answers today: the next sitting that was told and offered (set in _answer_enquiry_intent, kept as dept_pending by _finish_enquiry_turn)
+_next_sit_offer: contextvars.ContextVar[dict | None] = contextvars.ContextVar("next_sit_offer", default=None)
 
 
 def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
@@ -2557,6 +2560,12 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         result = await _route_dept(symptom, lang)
         if result.get("matched"):
             _route_found.set({"dept": result["department_name"], "names": result.get("doctors_today") or result.get("doctors") or []})
+            if not result.get("doctors_today") and (result.get("doctors") or []):
+                # Owner, 2026-10-24: nobody of the department sits today -- say who sits NEXT and when, and offer the appointment, instead of "tell me whom you mean"
+                offer = await _next_sitting_offer(result["department_name"], _dept_label(result["department_name"], lang), lang)
+                if offer is not None:
+                    _next_sit_offer.set(offer)
+                    return offer["say"]
         return department_route_reply(_dept_labelled(result, lang), symptom, lang)
     return None
 
@@ -3066,6 +3075,55 @@ def _resolve_doctor_for_booking(item: dict) -> str:
     return item.get("full_name") or item.get("name") or ""
 
 
+_WHEN_ASK = ("কবে", "কখন", "kobe", "kokhon", "when", "कब", "कितने दिन")
+_NOBODY_LEAD = {
+    "bn": "{w} ওই বিভাগের কেউ বসেন না।",
+    "hi": "{w} उस विभाग का कोई डॉक्टर नहीं बैठता।",
+    "en": "Nobody from that department sits {w}.",
+}
+
+
+def _asks_when(text: str) -> bool:
+    low = (text or "").lower()
+    return len(low.split()) <= 16 and any(w in low for w in _WHEN_ASK)
+
+
+async def _next_dept_sitting(text: str, lang: str, sex: str | None, after_iso: str) -> tuple[str, list] | None:
+    """The first day within the next week, after `after_iso`, on which anybody of the department the caller named sits: (iso date, the doctors sitting). The clinic's own table, asked day by
+    day -- nothing is guessed. None when nobody sits in that week or the clinic API is unavailable."""
+    start = datetime.date.fromisoformat(after_iso)
+    for i in range(1, 8):
+        iso = (start + datetime.timedelta(days=i)).isoformat()
+        try:
+            r = await _tools.department_doctors(text, lang, sex=sex, on_date=iso)
+        except ToolCallError:
+            return None
+        if r.get("matched") and r.get("sitting"):
+            return iso, r["sitting"]
+    return None
+
+
+async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
+    """"Nobody of <department> sits today. Dr X sits <day> at <time>. Shall I book that day?" (or "Dr X or Dr Y sit <day>; whom?"), from the clinic's own table, with the pending
+    question to match. None when nobody sits in the next week."""
+    today = slot_proposal.clinic_now().date().isoformat()
+    nxt = await _next_dept_sitting(dept, lang, None, today)
+    if not nxt:
+        return None
+    iso, sit = nxt
+    lead = {
+        "bn": f"আজ {label} বিভাগের কেউ বসছেন না।",
+        "hi": f"आज {label} विभाग का कोई डॉक्टर नहीं बैठ रहा।",
+        "en": f"Nobody from {label} sits today.",
+    }.get(lang, f"Nobody from {label} sits today.")
+    if len(sit) == 1:
+        item = sit[0]
+        say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
+        return {"say": say, "pending": {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start")}}
+    say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang)}"
+    return {"say": say, "pending": {"kind": "pick", "doctors": sit, "date": iso, "time": None}}
+
+
 async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict | bool:
     """Finding the doctor from how the caller asks (agent/doctor_search.py):
       * the answer to "neurologist or neurosurgeon?" / "which of these doctors?" asked a moment ago;
@@ -3077,6 +3135,11 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
         return False
     # 1. the answer to a question asked here
     pend = getattr(session, "dept_pending", None)
+    if pend and session.turn_count - pend["turn"] <= 3 and pend.get("say") and pend["kind"] in ("confirm_one", "pick") and _asks_when(text) and booking_capture.confirm_answer(text, lang) is None:
+        # "কবে আছে, নেক্স্ট কবে পাব, পরে কবে বসছে" after the next sitting was just told: that IS the answer to "when" -- said again, and the question stays open (owner, 2026-10-24)
+        pend["turn"] = session.turn_count
+        await _speak(session, pend["say"], lang)
+        return True
     if pend and session.turn_count - pend["turn"] <= 3:
         session.dept_pending = None
         if pend["kind"] == "confirm":
@@ -3158,18 +3221,35 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
         phrase_when = _when_phrase(on_date, at_time, lang)
         if len(sitting) == 1:
             item = sitting[0]
-            session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": on_date, "time": at_time, "turn": session.turn_count}
-            await _speak(session, slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang), lang)
+            say = slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang)
+            session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
+            await _speak(session, say, lang)
             return True
         if len(sitting) > 1:
-            session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count}
-            await _speak(session, doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang), lang)
+            say = doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang)
+            session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
+            await _speak(session, say, lang)
             return True
         others = []
         if at_time and on_date:
             with contextlib.suppress(ToolCallError):
                 again = await _tools.department_doctors(text, lang, sex=sex, on_date=on_date)
                 others = [s["name"] for s in again.get("sitting") or []]
+        if not others and on_date:
+            # Owner, 2026-10-24: when nobody sits on the asked day the agent says WHO sits next and WHEN, and offers the appointment -- it does not ask the caller to name another day.
+            nxt = await _next_dept_sitting(text, lang, sex, on_date)
+            if nxt:
+                iso, sit = nxt
+                lead = _NOBODY_LEAD.get(lang, _NOBODY_LEAD["en"]).format(w=phrase_when or label)
+                if len(sit) == 1:
+                    item = sit[0]
+                    say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
+                    session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start"), "turn": session.turn_count, "say": say}
+                else:
+                    say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang)}"
+                    session.dept_pending = {"kind": "pick", "doctors": sit, "date": iso, "time": None, "turn": session.turn_count, "say": say}
+                await _speak(session, say, lang)
+                return True
         await _speak(session, doctor_search.nobody_sits(phrase_when or label, others, lang), lang)
         return True
     if sex:
@@ -3927,6 +4007,10 @@ async def _finish_enquiry_turn(
     if _rf:
         session.last_route = {**_rf, "turn": session.turn_count}
         _route_found.set(None)
+    _nso = _next_sit_offer.get()
+    if _nso:
+        session.dept_pending = {**_nso["pending"], "turn": session.turn_count, "say": _nso["say"]}
+        _next_sit_offer.set(None)
     _de = _doctor_enquiry_found.get()
     if _de:
         session.last_doctor_enquiry = {**_de, "turn": session.turn_count}
@@ -4331,6 +4415,17 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # a clear sentence in Bengali or Hindi -- four words or more, nearly all in that script -- is answered in that language at once, whatever the call was locked to.
         _heard = (asr_result.text or "").strip()
         _digits_said, _digit_hits, _digit_total = booking_capture.read_digits(_heard)
+        _short_booking_answer = (
+            (_booking_open(session) or _readback_pending(session))
+            and len(_heard.split()) < 6
+            and not detect_language_switch_request(_heard, detected_lang)
+        )
+        if lang != prior_lang and _short_booking_answer:
+            # Owner, 2026-10-24 (three real calls): a name said in Devanagari ("हा असना रबी बी" = Hasna Bibi), a garbled yes ("अच्छे अच्छे है") and a police station
+            # ("english rajah" = English Bazar) each moved the whole call to Hindi or English in the middle of a booking. The short answers of a booking say nothing about the
+            # language; only an explicit request, or a long clear sentence, can move it.
+            lang = _keep_language(session, prior_lang)
+            detected_lang = lang
         if len(_digits_said) >= 3 and _digit_hits * 2 >= _digit_total:
             # Real call 2026-10-19: a Bengali caller said the phone number's digit words and the recogniser wrote them in Devanagari ("नाइन थ्री फोर ...");
             # the reply language jumped to Hindi for the rest of the call. Digit words say nothing about the language: it stays what it was.
@@ -4338,6 +4433,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             detected_lang = lang
         if (
             session.lang_locked
+            and not _short_booking_answer
             and detected_lang in ("bn", "hi")
             and lang != detected_lang
             and len(_heard.split()) >= 4
@@ -4771,6 +4867,9 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
+        if owner_answers.asks_phone_booking(text) and not getattr(session, "phone_booking_told", False):
+            session.phone_booking_told = True  # said once; the booking carries on in the same turn
+            await _speak(session, owner_answers.phone_booking_note(lang), lang)
         if await _answer_after_date(session, text, lang):
             return  # "any day after the 21st" while a doctor is being booked (owner, 2026-10-19)
         if await _answer_where_in_address(session, text, lang):
@@ -5366,8 +5465,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             # KCD-dentistry: the caller does not know a doctor's name but described a problem instead --
             # resolve it to a real department/doctor (or a General Medicine checkup) before asking for a
             # doctor's name the caller has already said they do not have.
+            _had_doctor = bool(st.slots.get("doctor_name"))
             if not st.slots.get("doctor_name") and st.slots.get("symptom_description"):
                 await _resolve_doctor_from_symptom(session, st, lang)
+            # owner, 2026-10-24: a doctor chosen FOR the caller from the symptom is followed by that doctor's next sitting and an offer to book it, not by "which day?"
+            _routed_now = not _had_doctor and bool(st.slots.get("doctor_name"))
 
             # Owner's instruction, 2026-10-12: naming a real doctor should say when that doctor actually sits
             # before asking which day the caller wants -- otherwise they can easily name a day the doctor is
@@ -5386,7 +5488,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             # the SAME availability lookup both ways: found -> the sitting-time hint; not found (or
             # genuinely ambiguous) -> doctor_availability_reply's own "not found"/"did you mean" messaging,
             # clearing the slot so the caller is asked again NOW, not after the rest of the booking is moot.
-            if "doctor_name" in changed and st.slots.get("doctor_name") and not st.slots.get("date"):
+            if ("doctor_name" in changed or _routed_now) and st.slots.get("doctor_name") and not st.slots.get("date"):
                 try:
                     avail = await _tools.get_doctor_availability(st.slots["doctor_name"], None)
                 except ToolCallError as e:
@@ -5397,6 +5499,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                         st.asked_fields.add("date")
                         if avail.get("date"):  # "that day" in the caller's next sentence points at THIS date (real call 2026-10-17)
                             session.last_doctor_enquiry = {"doctor_name": st.slots["doctor_name"], "date": avail["date"], "window": avail.get("chamber_hours"), "turn": session.turn_count}
+                            if avail.get("available"):
+                                st.slots["_offered_date"] = avail["date"]  # the hint ends "shall I book that day?": a yes sets this date (agent/booking_capture.before_model)
                         await _speak(session, booking_doctor_sitting_hint(avail, lang), lang)
                         return
                     not_found_reply = doctor_availability_reply(st.slots, avail, lang)
@@ -6754,6 +6858,11 @@ async def _handle_silence(session: CallSession, quiet: bool) -> bool:
         session.silence_since = None
         return False
     now = time.monotonic()
+    if session.agent_speaking and now < session.speak_deadline:
+        # Owner, 2026-10-24: "THERE WAS NO SILENCE OR PAUSE, STILL THE AI TOLD BELOW WITHIN MILLISECONDS" -- the clock ran while the question was still playing. It starts when the
+        # playback is over.
+        session.silence_since = None
+        return False
     if session.silence_since is None:
         session.silence_since = now
         return False

@@ -291,8 +291,8 @@ def booking_doctor_sitting_hint(result: dict, lang: str) -> str:
     name = _doctor_name({}, result, lang)
     date, hours = result.get("date"), result.get("chamber_hours", "")
     if hi:
-        return f"{name} {slot_proposal.when_phrase(date, 'hi')} बैठेंगे, {hours} के बीच। किस दिन के लिए अपॉइंटमेंट चाहिए?"
-    return f"{name} sits {slot_proposal.when_phrase(date, 'en')}, between {hours}. Which day would you like the appointment for?"
+        return f"{name} {slot_proposal.when_phrase(date, 'hi')} बैठेंगे, {hours} के बीच। उसी दिन अपॉइंटमेंट कर दूँ?"
+    return f"{name} sits {slot_proposal.when_phrase(date, 'en')}, between {hours}. Shall I book that day?"
 
 
 def test_prep_reply(slots: dict, result: dict, lang: str) -> str:
