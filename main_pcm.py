@@ -377,6 +377,9 @@ CONDITION_INPUT = os.environ.get("CONDITION_INPUT", "off")
 # the semantic cache / LLM, which is the only path that can ever reach this filler at all -- a fast-path HIT
 # returns before this code runs) was crossing 0.7 s often enough to feel like "every turn", not an occasional
 # slow one.
+# Owner, 2026-10-24: the spoken "আচ্ছা, বলছি।" holding phrase and the bare "ধন্যবাদ।" after an answer are removed ("remove"). Both come back with FILLER_ENABLED=1 / THANKS_ENABLED=1.
+FILLER_ENABLED = os.environ.get("FILLER_ENABLED", "0") == "1"
+THANKS_ENABLED = os.environ.get("THANKS_ENABLED", "0") == "1"
 FILLER_THRESHOLD_S = float(os.environ.get("FILLER_THRESHOLD_S", "1.0"))  # was 2.5 s of silence, then 0.9 s, then 0.7 s
 # ...but the semantic cache is given this long to answer before the model is waited on at all, so a hit is never
 # announced by a filler that the answer was about to make pointless.
@@ -1683,7 +1686,7 @@ _ECHOED_FIELDS = ("doctor_name", "patient_name", "phone", "test_name", "new_date
 
 async def _thank(session: CallSession, lang: str) -> None:
     """A bare "Thank you." -- once per turn, and only when this turn is the caller's answer to a question we asked."""
-    if not session.answering or getattr(session, "thanked_turn", None) == session.turn_count:
+    if not THANKS_ENABLED or not session.answering or getattr(session, "thanked_turn", None) == session.turn_count:
         return
     session.thanked_turn = session.turn_count
     await _speak(session, thanks_for(lang), lang)
@@ -1827,6 +1830,9 @@ async def _await_with_filler(session: CallSession, awaitable, lang: str, thresho
     (TTSClient's cache already holds it from startup prewarm), so it
     costs no synthesis time at exactly the moment the system is already
     running slow."""
+
+    if not FILLER_ENABLED:
+        return await awaitable
 
     async def _speak_filler():
         session.speaking_filler = True  # the holding phrase is not the answer: do not time it as one

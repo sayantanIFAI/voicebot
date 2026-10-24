@@ -55,14 +55,16 @@ async def test_no_filler_when_the_answer_comes_before_the_threshold(m, env):
 
 
 @pytest.mark.asyncio
-async def test_the_filler_is_spoken_once_when_the_answer_is_late(m, env):
+async def test_the_filler_is_spoken_once_when_the_answer_is_late(m, env, monkeypatch):
+    monkeypatch.setattr(m, "FILLER_ENABLED", True)  # owner 2026-10-24: off by default; these tests are about the behaviour when it is switched on
     env.session.turn_started_at = time.monotonic()
     out = await m._await_with_filler(env.session, _finishes_after(0.6), "en", threshold_s=0.3)
     assert out == "answer" and env.session.ws.spoken() == [phrase("please_wait", "en")]
 
 
 @pytest.mark.asyncio
-async def test_time_already_spent_on_recognition_counts_towards_the_700_ms(m, env):
+async def test_time_already_spent_on_recognition_counts_towards_the_700_ms(m, env, monkeypatch):
+    monkeypatch.setattr(m, "FILLER_ENABLED", True)  # owner 2026-10-24: off by default; these tests are about the behaviour when it is switched on
     """The turn started 0.45 s ago (recognition): only what is left of the 0.7 s is waited, so the filler comes at
     0.7 s from the caller's silence, not at 0.7 s after recognition finished (which would be 1.15 s)."""
     env.session.turn_started_at = time.monotonic() - 0.45
@@ -98,7 +100,8 @@ async def test_an_answer_to_the_callers_own_question_is_not_thanked(m, env):
 
 
 @pytest.mark.asyncio
-async def test_a_detail_the_caller_was_asked_for_is_thanked_once_and_only_then(m, env):
+async def test_a_detail_the_caller_was_asked_for_is_thanked_once_and_only_then(m, env, monkeypatch):
+    monkeypatch.setattr(m, "THANKS_ENABLED", True)  # owner 2026-10-24: off by default; these tests are about the behaviour when it is switched on
     said = await book(env, doctor_name="Sen")
     assert "Thank you" not in text_of(said)  # the first request answers "how can I help"
     said = await env.say("tomorrow at ten", "book_appointment", {"date": "2026-10-01", "time_slot": "10:00"})
