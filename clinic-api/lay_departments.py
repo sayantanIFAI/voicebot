@@ -51,7 +51,12 @@ _RULES: list[tuple[str, bool, str, str, str]] = [
      r"बच्चों|बच्चे|बच्चा|बच्चो|शिशु|छोटे\s*बच्चों|नवजात"),
     ("Orthopaedics", False,
      r"ha+r(?:er|r|ke|ki|ka|e|ey)?|ha+d(?:er|dir|der)?|hadd?i(?:r|er|ka|ke|ki)?|haddiyon\w*|bones?|joints?",
-     r"হাড়|হাড|হাঁড়|হাড্ডি|জয়েন্ট|গাঁট|গাট",
+     # owner, 2026-10-24: "হার" (missing the ড়) -- a recogniser's real miss of "হাড়" ("bone") -- was already covered
+     # for the ROMANISED stem above ("harer") but never added here for Bengali SCRIPT; "হারের ডাক্তার" fell through
+     # to a plain doctor-name lookup and fuzzy-matched the surname "হালদার" instead. Safe to add bare despite "হার"
+     # also meaning "necklace"/"defeat" in isolation: this stem only ever fires immediately beside a doctor word
+     # (the _GAP + DOC_BN match below), and nobody asks for "the necklace's doctor".
+     r"হাড়|হাড|হাঁড়|হাড্ডি|হার(?!্)|জয়েন্ট|গাঁট|গাট",
      r"हड्डी|हड्डियों|हड्डि|जोड़ों|जोड़|बोन"),
     ("Cardiology", False,
      r"bu+k(?:er|ar|r|ke|ki|e|ey)?|boo?k(?:er|ar)|heart(?:er|r)?|hart(?:er)?|hridoy\w*|hriday\w*|hridpindo\w*|dil(?:ka|ke|ki)?|chest|sine(?:ke|ka|ki)?",
@@ -77,6 +82,11 @@ _RULES: list[tuple[str, bool, str, str, str]] = [
      r"meye?(?:der|ader|r\s*der)|meyeder|mohila\w*|mahila\w*|womens?|women's|woman|ladies|aurat\w*|aurton|auraton|stree\w*|prosuti|pregnan\w*",
      r"মেয়েদের|মেয়েদের|মহিলাদের|মহিলা|নারী|স্ত্রী|প্রসূতি",
      r"औरतों|औरत|महिलाओं|महिला|लड़कियों|स्त्री|गर्भवती"),
+    # owner, 2026-10-24: "naak kaan golar daktar" (nose ear throat) -- ENT had no lay rule at all until now.
+    ("ENT", False,
+     r"naa?k(?:er|e)?|kaan?(?:er|e)?|gol[ae]y?(?:r|er)?|throats?|noses?|ears?|\bent\b",
+     r"নাক|কান|গলা|গলার",
+     r"नाक|कान|गला|गले|गले\s*का"),
     (GENERAL_MEDICINE, True,
      r"pain(?:er|r|e)?|plain|plane|byath[ae]?r?|byatha\w*|dard(?:ka|ke|ki)?|normal|emni|emnei|erokom|ordinary|common|simple|sadha?ron\w*|sadharan|samany\w*|general|jwor\w*|jor(?:er)?|fever",
      r"ব্যথার|ব্যাথার|প্লেন|প্লেইন|এমনি|এমনই|সাধারণ|সাধারন|নরমাল|সাধারণ|জ্বরের",

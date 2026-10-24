@@ -19,7 +19,10 @@ MAX_TRIES = 3  # asking for / confirming the number: after this many misses the 
 
 # ------------------------------------------------------------------------------------------------------------------------- the cue
 _SERIAL_WORDS = (
-    "serial", "sirial", "seriyal", "sireal", "token", "টোকেন", "সিরিয়াল", "সিরিয়েল", "सीरियल", "सिरियल", "टोकन", "टोकेन",
+    "serial", "sirial", "seriyal", "sireal", "token", "টোকেন", "সিরিয়াল", "সিরিয়েল",
+    # real call 2026-10-24: "সেরিয়াল নম্বার আসেনি" (সে, not সি) was not read as a serial-number report at all,
+    # and fell through to a fresh booking offer instead of a database lookup for the EXISTING one.
+    "সেরিয়াল", "সেরিয়েল", "सीरियल", "सिरियल", "सेरियल", "सेरियाल", "टोकन", "टोकेन",
 )  # fmt: skip
 # "did not come / did not get" in the three languages, Latin letters included (the recogniser writes them every way)
 _NOT_RECEIVED = re.compile(

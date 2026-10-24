@@ -309,6 +309,13 @@ SPECULATION_MATCH_TOLERANCE_S = 0.25
 # overrides this default (tools/make_pcm_variant.py).
 TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.3"))
 
+# owner, 2026-10-24: agent/vad_stream.TurnDetector's own silence_confirm_s (1.0s) was already raised once from
+# 0.8s after real testing showed THAT was cutting callers off mid-sentence; live calls since then still cut
+# callers off before they had finished a longer, slower sentence. Owner's explicit instruction: at least 3
+# seconds. Kept as its own env-tunable (same pattern as TURN_TAIL_GUARD_S above) rather than hardcoded, since
+# this is a reasoned, not measured, number -- easy to dial back if 3s makes the agent feel slow to respond.
+TURN_SILENCE_CONFIRM_S = float(os.environ.get("TURN_SILENCE_CONFIRM_S", "3.0"))
+
 # KCD-051/052: acoustic echo cancellation + barge-in on the PCM transport. OFF by
 # default: the canceller and detector are validated on SYNTHETIC echo only and
 # need the pod's real handset audio (tools/echo_eval.py) before anyone relies on
@@ -664,7 +671,9 @@ async def _startup():
     logger.info("active languages: %s", ",".join(_languages_active))
 
     logger.info("loading Silero VAD...")
-    _turn_detector = await asyncio.to_thread(TurnDetector, tail_guard_s=TURN_TAIL_GUARD_S)
+    _turn_detector = await asyncio.to_thread(
+        TurnDetector, silence_confirm_s=TURN_SILENCE_CONFIRM_S, tail_guard_s=TURN_TAIL_GUARD_S
+    )
     _tools = ClinicToolsClient(CLINIC_API_BASE)
     _tts = TTSClient()
     _tts_router = TTSRouter({lang: _tts.for_language(lang) for lang in SUPPORTED_LANGUAGES})
@@ -3417,13 +3426,18 @@ async def _answer_day_availability(session: CallSession, text: str, lang: str) -
     date_iso = weekday_cues.resolve_date(text, slot_proposal.clinic_now().date())
     if not date_iso:
         return False
-    name = _enquiry_doctor(session, text, lang)
     named_here = False
     if _fast_path is not None:
         with contextlib.suppress(Exception):
-            named_here = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=False) is not None  # noqa: SLF001
+            # sourav, 2026-10-24: strong=True here, not the usual strong=False -- this check decides whether to let a
+            # weekday question DERAIL an already-open booking, so it must not fire on fast_path.py's own documented
+            # fuzzy noise ("कल्याण" scored 0.8 against "आपका पता क्या है"). Real call: "सोमवार छब्बीस तारीख" (no doctor
+            # named) fuzzy-matched "सोमवार" to doctor Kalyan Haldar, which both passed this guard and then overwrote
+            # the booking's real doctor (Devashish Das) when `name` below was computed with the same weak call.
+            named_here = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True) is not None  # noqa: SLF001
     if session.booking is not None and session.booking.stage == "collecting" and not named_here:
         return False
+    name = _enquiry_doctor(session, text, lang)
     if not name:
         session.pending_day = (session.turn_count, date_iso)
         await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
@@ -4328,6 +4342,14 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             and lang != detected_lang
             and len(_heard.split()) >= 4
             and script_share(_heard, detected_lang) >= 0.85
+            # owner, 2026-10-24: script purity alone is nearly a tautology here -- the recognizer that "won" always
+            # writes ITS OWN script, whether or not it actually understood anything. Real call: a Bengali "robi
+            # bare bosen?" (does he sit Sunday) misheard by the Hindi engine as "रोबी बारे बॉसन उन्नी" at decoder
+            # agreement 0.40 (openly garbled) still flipped the whole call to Hindi on script alone. A "clear"
+            # sentence must also be a CONFIDENTLY heard one -- the same bar this file already uses elsewhere for
+            # "this engine's reading is trustworthy" (agent/lang_select.STABLE_CALL_ENGLISH_AGREEMENT = 0.7; 0.85
+            # here matches the script_share bar right above, not a new number pulled from nowhere).
+            and asr_result.decoder_agreement >= 0.85
         ):
             logger.info("[%s] a clear %s sentence: the reply language moves from %s to %s", session.call_id, detected_lang, lang, detected_lang)
             _lock_reply_language(session, detected_lang)
@@ -4498,7 +4520,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             _note(session, "ended_by_caller")
             await _end_call(session, lang, "silence_goodbye")
             return
-        if answer == "yes":
+        # Same "bare word vs. a real sentence" distinction as bare_no just above, mirrored for "yes": a short "yes" /
+        # "হ্যাঁ" alone just invites the caller to go on, but a longer sentence that also NAMES what they want
+        # ("হ্যাঁ হ্যাঁ জানতে চাই বলছি যে আমার একটা বুকের ডাক্তারের অ্যাপয়েন্টমেন্ট লাগবে...") is the real request
+        # itself -- real call 2026-10-24: it was answered with only "yes, go on", throwing away the request and
+        # making the caller repeat the whole thing. Falls through to the normal turn-handling below instead.
+        if answer == "yes" and len(text.split()) <= 5:
             await _speak(session, phrase("silence_go_on", lang), lang)
             return
         code_switch_buckets.record(mixture_bucket(text), "seen", lang)
@@ -4690,11 +4717,18 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             session.reasked_pending = 0
         if answer == "yes":
             data, confirmed_entity = pending.data, True
-        elif answer == "no":
+        elif answer == "no" and len(text.split()) <= 5:
+            # same "bare word vs. a real sentence" distinction already drawn for the "anything else?" close
+            # question a little below (SHORT_NO_WORDS=5, reasoned there from a real call) -- a short decline
+            # ("না", "না না", "नहीं") gets the re-ask; a longer sentence that merely contains a negation word but
+            # also NAMES what the caller actually meant ("না আমি ইউরিন রুটিন পরীক্ষার কথা বলছি এটার দাম কত বলবেন",
+            # correcting a wrong test-name suggestion) falls through to the fresh-turn path below instead of
+            # discarding the correction and re-asking the same wrong question -- real call 2026-10-24.
             await _speak(session, entity_text.reask(lang), lang)
             return
-        # Neither yes nor no: this turn is handled as a fresh one, but the question is REMEMBERED. If the turn turns out to be nothing (a garbled
-        # "eh eh you look"), the same question is asked again instead of "sorry, I did not understand" -- real call 2026-10-17.
+        # Neither yes nor no (or a "no" with real content of its own, just above): this turn is handled as a fresh one, but the question is
+        # REMEMBERED. If the turn turns out to be nothing (a garbled "eh eh you look"), the same question is asked again instead of "sorry, I
+        # did not understand" -- real call 2026-10-17.
         session.lapsed_pending = (pending, session.turn_count)
 
     if not confirmed_entity:

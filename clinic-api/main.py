@@ -806,10 +806,22 @@ def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSc
     return db.query(DoctorSchedule).filter_by(doctor_id=doctor_id, weekday=weekday).first()
 
 
+def _sched_still_open(sched: DoctorSchedule, d: datetime.date) -> bool:
+    """False only for TODAY, once the chamber's own end time has already passed -- same class of bug
+    booking_service.available_slots() was already fixed for ("today at 10am" stayed offerable at 3pm), never
+    applied to this endpoint. Real call 2026-10-24, evening: "Dr. X sits today, 10:00-12:00" was still said
+    well after 12:00, instead of going straight to the next real day."""
+    if d != datetime.datetime.now().date():
+        return True
+    h, m = sched.end_time.split(":")
+    return (int(h) * 60 + int(m)) > (datetime.datetime.now().hour * 60 + datetime.datetime.now().minute)
+
+
 def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date, horizon_days: int = 14) -> str | None:
     for offset in range(horizon_days):
         d = from_date + datetime.timedelta(days=offset)
-        if _schedule_for_weekday(db, doctor_id, d.weekday()):
+        sched = _schedule_for_weekday(db, doctor_id, d.weekday())
+        if sched and _sched_still_open(sched, d):
             return d.isoformat()
     return None
 
@@ -843,7 +855,7 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None), 
         except ValueError:
             return {"found": False, "query": name}
         sched = _schedule_for_weekday(db, doctor.id, target.weekday())
-        if sched:
+        if sched and _sched_still_open(sched, target):
             return {
                 "found": True,
                 "doctor_name": _doctor_ref(db, doctor),
@@ -982,6 +994,8 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
             "alternative_slots": bs.available_slots(db, doctor.id, req.date)[:3],
         }
 
+    # sourav, 2026-10-24: no booking_log.append() here -- bs.confirm_booking() already logs it (booking_service.py);
+    # a second call here was a real duplicate-row bug caught live (two identical lines per booking in booking_log.csv).
     return {
         "success": True,
         "confirmation_id": result["confirmation_id"],
@@ -1165,7 +1179,7 @@ class ConfirmRequest(BaseModel):
 @app.post("/api/v1/bookings/confirm")
 @idempotent("bookings.confirm")
 def confirm_booking_endpoint(req: ConfirmRequest, db: Session = Depends(get_db)):
-    return bs.confirm_booking(
+    result = bs.confirm_booking(
         db,
         req.hold_token,
         req.doctor_id,
@@ -1179,6 +1193,9 @@ def confirm_booking_endpoint(req: ConfirmRequest, db: Session = Depends(get_db))
         req.patient_address,
         req.patient_sex,
     )
+    # sourav, 2026-10-24: no booking_log.append() here -- bs.confirm_booking() already logs it (booking_service.py);
+    # a second call here was a real duplicate-row bug caught live (two identical lines per booking in booking_log.csv).
+    return result
 
 
 class RescheduleRequest(BaseModel):

@@ -28,8 +28,14 @@ _LOCATION_WORDS = (
     "come there", "how to come", "how do i come", "landmark", "map",
     # Bengali
     "কোথায়", "কোথায", "ঠিকানা", "লোকেশন", "অবস্থান", "কোন জায়গা", "কীভাবে আসব", "কিভাবে আসব", "কিভাবে যাব", "কীভাবে যাব", "রাস্তা", "পথ", "পৌঁছ", "ম্যাপ",
+    # Bengali: "address" (the English loanword), in the spellings a recogniser actually writes -- real call 2026-10-24:
+    # "আপনাদের ওখানকার অযাড্ড্রেস টা কি আছে" was not read as a location question at all ("address" in Latin script was in
+    # this list, but the caller said it in Bengali script, and not even in the standard spelling).
+    "অ্যাড্রেস", "অযাড্ড্রেস", "অ্যাডড্রেস", "আড্রেস", "এড্রেস", "আদ্রেস",
     # Hindi
-    "कहाँ", "कहां", "पता", "लोकेशन", "कैसे आ", "कैसे जा", "कैसे पहुँच", "कैसे पहुंच", "रास्ता", "पहुँच", "पहुंच", "मैप", "जगह",
+    "कहाँ", "कहां", "पता", "ठिकाना", "ठिकाने", "लोकेशन", "कैसे आ", "कैसे जा", "कैसे पहुँच", "कैसे पहुंच", "रास्ता", "पहुँच", "पहुंच", "मैप", "जगह",
+    # Hindi: "address" in Devanagari spellings
+    "एड्रेस", "अड्रेस", "ऐड्रेस",
 )
 
 # Words that say the caller wants ONE figure for SEVERAL things.

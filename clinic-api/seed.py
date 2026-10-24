@@ -355,7 +355,14 @@ FAQ_ENTRIES = [
     ),
     (
         "location",
-        ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব"] + LOCATION_BN_NATIVE + LOCATION_ROMAN + LOCATION_CROSS_SCRIPT + LOCATION_HI_NATIVE,  # sourav 2026-10-14: every accent, see i18n_content.LOCATION_ROMAN
+        ["কোথায়", "ঠিকানা", "লোকেশন", "কোন জায়গায়", "কীভাবে আসব", "অ্যাড্রেস", "অযাড্ড্রেস", "অ্যাডড্রেস", "আড্রেস", "এড্রেস", "আদ্রেস"]
+        # sourav 2026-10-14: every accent, see i18n_content.LOCATION_ROMAN
+        # sourav, 2026-10-24: "address" (the English loanword) as its OWN short Bengali-script phrase -- real call:
+        # "আপনাদের ওখানকার অযাড্ড্রেস টা কি আছে" scored 0.00 against every stored location phrase (the word only
+        # existed buried inside longer Hindi-mixed example sentences in LOCATION_CROSS_SCRIPT, too different in
+        # length/shape for the sliding-window matcher to find). A short bare phrase, like "ঠিকানা"/"কোথায়" above,
+        # is what the matcher actually needs.
+        + LOCATION_BN_NATIVE + LOCATION_ROMAN + LOCATION_CROSS_SCRIPT + LOCATION_HI_NATIVE,
         # OWNER'S INSTRUCTION, 2026-10-13: clinic address changed to this one, all three languages (see the
         # matching Hindi/English change in i18n_content.py's FAQ_I18N["location"]).
         "আমাদের ক্লিনিকের ঠিকানা ৪৪, সি আই টি রোড, লেডিজ পার্কের কাছে, বেনিয়াপুকুর, কলকাতা।",

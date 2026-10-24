@@ -50,7 +50,11 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-HOLD_TTL_SECONDS = 90
+HOLD_TTL_SECONDS = 900  # sourav, 2026-10-24: was 90, then 300 -- both still expired live on a slow multi-turn call (name/
+# age/address/slot confirmation over several turns; a tester pausing between turns easily spends minutes). Two separate
+# calls observed live expired their hold before confirm and left the booking unresolved (callback_requests
+# "unresolved:booking_not_finished"). 900s (15 min) is generous for a real conversation pace while still bounded, so a
+# dropped call does not hold a slot forever.
 DRAFT_BOOKING_TTL_MINUTES = 30
 SMS_RESEND_MIN_INTERVAL_S = 60
 # A repeat of the same message to the same number for the same booking within this many seconds is one message.

@@ -39,6 +39,10 @@ _ROMAN_DIGIT_WORD = {
 }  # fmt: skip
 _MULTIPLIER = {
     "double": 2, "ডবল": 2, "dabal": 2, "dabl": 2, "ডাবল": 2, "डबल": 2, "দুবার": 2, "triple": 3, "tripal": 3, "ট্রিপল": 3, "ट्रिपल": 3,
+    # real call 2026-10-24: "ত্রিপলে টু" (dental ত, not the retroflex ট above, plus the recogniser's own "-এ" suffix
+    # on the loanword) was not read as a multiplier at all -- _tokens() only splits on whitespace/comma/hyphen, so
+    # a suffixed token never matches a bare entry. Both consonant spellings, bare and with the suffix, for both words.
+    "ত্রিপল": 3, "ত্রিপলে": 3, "ট্রিপলে": 3, "ডাবলে": 2, "ডবলে": 2,
 }  # fmt: skip
 # sourav, 2026-10-16 (real Bengali call): "Seven Eight ... Double Six" was refused as "not a 10-digit number" because the recogniser wrote
 # English digit words in Bengali / Devanagari letters ("ডাবল সিক্স", "सेवन एट") and the table only knew the native words.
@@ -846,6 +850,14 @@ _PROMPTS = {
         "hi": "नंबर समझ नहीं आया। व्हाट्सऐप का दस अंकों का नंबर एक बार फिर बताइए।",
         "bn": "নম্বরটা বুঝতে পারিনি। হোয়াটসঅ্যাপের দশ সংখ্যার নম্বরটা আরেকবার বলুন।",
     },
+    # Owner, 2026-10-24: no WhatsApp number could be collected (the caller has none, or kept giving an unreadable
+    # number) -- said once, right before the booking continues anyway, so the caller knows the confirmation/serial
+    # number will not reach them on WhatsApp and what to do about it, instead of silently going quiet on the point.
+    "whatsapp_no_number": {
+        "en": "Okay, I will book it without a WhatsApp number. I will not be able to send the confirmation and serial number on WhatsApp for this -- you can collect it from the clinic counter, or call back later with a WhatsApp number.",
+        "hi": "ठीक है, मैं यह बिना व्हाट्सऐप नंबर के बुक कर रही हूँ। इस पर कन्फर्मेशन और सीरियल नंबर व्हाट्सऐप पर नहीं भेज पाऊँगी -- आप क्लिनिक काउंटर से ले सकते हैं, या बाद में व्हाट्सऐप नंबर के साथ फिर कॉल कीजिए।",
+        "bn": "ঠিক আছে, হোয়াটসঅ্যাপ নম্বর ছাড়াই বুক করছি। এতে কনফার্মেশন আর সিরিয়াল নম্বর হোয়াটসঅ্যাপে পাঠাতে পারব না -- আপনি ক্লিনিক কাউন্টার থেকে নিতে পারেন, বা পরে হোয়াটসঅ্যাপ নম্বর নিয়ে আবার কল করুন।",
+    },
     "name_again": {
         "en": "Sorry about that. Please tell me the patient's name again.",
         "hi": "माफ़ कीजिए। कृपया मरीज़ का नाम दोबारा बताइए।",
@@ -966,6 +978,27 @@ def _active(st) -> bool:
 def _bare_no(text: str) -> str:
     """`text` without a leading no-word ("no, Rahul Das" -> "Rahul Das")."""
     return re.sub(r"^\s*(no|nope|nahi|nahin|na|না|নয়|नहीं|नही)(?=[\s,।.!]|$)[\s,।.!]*", "", text or "", flags=re.I)
+
+
+# real call 2026-10-24: "আর মোহাম্মদ আব্দুল আমার নাম না, আমার নাম হচ্ছে মোহাম্মদ হামিদুল" (the read-back name is
+# NOT mine, my name IS Hamidul) -- the rejected old name stays in the sentence, so candidate_name(_bare_no(text))
+# sees an 11-word sentence (well past its 1-4 word limit) and gives up, asking the caller to repeat the whole name
+# from scratch even though the correct one is right there after "my name is". Tried only as a fallback, after the
+# existing _bare_no path has already failed -- never changes a case that already works.
+_NAME_IS_MARKER = re.compile(
+    r"(?:নাম\s*(?:টা|টি)?\s*(?:হচ্ছে|হল|হলো|আছে)|नाम\s*(?:है|हैं|होगा|होगी)|name\s+is)\s*[:\-]?\s*(.+)$",
+    re.I,
+)
+
+
+def _name_after_correction(text: str) -> str | None:
+    """The part after the LAST "my name is ..." marker in the sentence, read as a name -- or None. The last match
+    wins: an old, rejected name said earlier in the same breath has its own such marker too ("X na, naam hocche
+    Y"), and it is Y, not X, that the caller is actually giving."""
+    match = None
+    for m in _NAME_IS_MARKER.finditer(text or ""):
+        match = m
+    return candidate_name(match.group(1)) if match else None
 
 
 _PHONE_CUES = frozenset({"number", "phone", "mobile", "contact", "नंबर", "नम्बर", "फोन", "फ़ोन", "मोबाइल", "নম্বর", "নাম্বার", "ফোন", "মোবাইল", "nombor", "nambar", "namber", "no."})  # fmt: skip
@@ -1154,6 +1187,7 @@ def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
             st.slots["_wa_done"] = "1"  # "this one" -- or the second miss: the number the booking holds stays, the booking goes on
             st.slots.pop("_wa_number", None)
             plan.slots, plan.skip_model = {}, True
+            plan.speak = prompt("whatsapp_no_number", lang)
             return True
         st.slots["_wa_tries"] = tries + 1
         plan.speak = prompt("whatsapp_number_again", lang)
@@ -1188,6 +1222,19 @@ _AGE_WORDS = {
     "টোয়েন্টি": 20, "থার্টি": 30, "ফোর্টি": 40, "ফিফটি": 50, "সিক্সটি": 60, "সেভেন্টি": 70, "এইটি": 80,
     "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
     "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+    # Hindi 21-99 EXCLUDING exact tens (already above): these are each their own irregular word, not "tees panch" like
+    # English -- real call 2026-10-24: "मरीज़ की उम्र पैतालीस साल है" (45) was not read as an age and the number
+    # read-back looped forever. Both the standard spelling and the common no-nasal-mark ASR spelling are listed (a
+    # recogniser often drops ं/ँ), matching this dict's existing teens entries.
+    "इक्कीस": 21, "बाईस": 22, "तेईस": 23, "चौबीस": 24, "पच्चीस": 25, "छब्बीस": 26, "सत्ताईस": 27, "सत्ताइस": 27, "अट्ठाईस": 28, "अट्ठाइस": 28, "अठाईस": 28, "उनतीस": 29,
+    "इकतीस": 31, "बत्तीस": 32, "तैंतीस": 33, "तैतीस": 33, "चौंतीस": 34, "चौतीस": 34, "पैंतीस": 35, "पैतीस": 35, "छत्तीस": 36, "सैंतीस": 37, "सैतीस": 37, "अड़तीस": 38, "उनतालीस": 39, "उनचालीस": 39,
+    "इकतालीस": 41, "बयालीस": 42, "तैंतालीस": 43, "तैतालीस": 43, "चौवालीस": 44, "पैंतालीस": 45, "पैतालीस": 45, "छियालीस": 46, "सैंतालीस": 47, "सैतालीस": 47, "अड़तालीस": 48, "उनचास": 49,
+    "इक्यावन": 51, "बावन": 52, "तिरपन": 53, "तिरेपन": 53, "चौवन": 54, "पचपन": 55, "छप्पन": 56, "सत्तावन": 57, "अट्ठावन": 58, "अठावन": 58, "उनसठ": 59,
+    "इकसठ": 61, "बासठ": 62, "तिरसठ": 63, "चौंसठ": 64, "चौसठ": 64, "पैंसठ": 65, "पैसठ": 65, "छियासठ": 66, "सड़सठ": 67, "अड़सठ": 68, "उनहत्तर": 69,
+    "इकहत्तर": 71, "बहत्तर": 72, "तिहत्तर": 73, "चौहत्तर": 74, "पचहत्तर": 75, "छिहत्तर": 76, "सतहत्तर": 77, "अठहत्तर": 78, "उनासी": 79,
+    "इक्यासी": 81, "बयासी": 82, "तिरासी": 83, "चौरासी": 84, "पचासी": 85, "छियासी": 86, "सत्तासी": 87, "अट्ठासी": 88, "अठासी": 88, "नवासी": 89,
+    "इक्यानवे": 91, "इक्यानबे": 91, "बानवे": 92, "बानबे": 92, "तिरानवे": 93, "तिरानबे": 93, "चौरानवे": 94, "चौरानबे": 94, "पंचानवे": 95, "पचानवे": 95,
+    "छियानवे": 96, "छियानबे": 96, "सत्तानवे": 97, "सत्तानबे": 97, "अट्ठानवे": 98, "अठानबे": 98, "निन्यानवे": 99, "निन्यानबे": 99,
 }
 _AGE_UNITS = {
     "वन": 1, "टू": 2, "थ्री": 3, "फोर": 4, "फाइव": 5, "सिक्स": 6, "सेवन": 7, "एट": 8, "नाइन": 9, "ওয়ান": 1, "টু": 2, "থ্রি": 3, "ফোর": 4, "ফাইভ": 5, "সিক্স": 6, "সেভেন": 7, "এইট": 8, "নাইন": 9,
@@ -1320,6 +1367,8 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         named = candidate_name(_bare_no(text)) if answer in (None, "no") else None
         if answer == "no":
             st.pending_name = None
+            if not named:
+                named = _name_after_correction(text)
             if named:
                 st.pending_name = named
                 plan.speak = readback(st, lang, "name", named)
