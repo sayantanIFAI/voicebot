@@ -2136,6 +2136,28 @@ async def _answer_scan_followup(session: CallSession, text: str, lang: str) -> b
     return True
 
 
+_SITTING_WORDS = ("বসছেন", "বসবেন", "বসেন", "बैठ", "sits", "sitting")
+
+
+async def _answer_when_repeat(session: CallSession, text: str, lang: str) -> bool:
+    """"কবে আছে, নেক্স্ট কবে পাব, পরে কবে বসছে" right after the agent said when somebody sits: that IS the question it just answered -- said again (owner, 2026-10-24: it was "sorry,
+    I did not understand"). Not when the caller names a doctor (that is a fresh availability question) or when no sitting was just told."""
+    last = getattr(session, "last_spoken", "") or ""
+    if not last or not _asks_when(text) or len(text.split()) > 16 or not any(w in last for w in _SITTING_WORDS):
+        return False
+    if booking_capture.confirm_answer(text, lang) is not None:
+        return False
+    low = text.lower()
+    if any(w in low for w in ("রিপোর্ট", "report", "টেস্ট", "test", "रिपोर्ट", "টাকা", "পেমেন্ট", "payment", "সিরিয়াল", "serial", "token")):
+        return False  # "when do I get the report" is not "when does the doctor sit"
+    if _fast_path is not None:
+        with contextlib.suppress(Exception):
+            if _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True) is not None:  # noqa: SLF001
+                return False
+    await _speak(session, last, lang)
+    return True
+
+
 async def _answer_after_date(session: CallSession, text: str, lang: str) -> bool:
     """"একুশ তারিখের পরের কোনো দিন, কালকে হবে না": a booking is open with a doctor, and the caller rules a day out and asks for a later one. The doctor's next sitting AFTER
     that day is found and told (agent/slot_proposal.py), exactly as when the caller names a day -- never read as a question about lab tests."""
@@ -3103,6 +3125,16 @@ async def _next_dept_sitting(text: str, lang: str, sex: str | None, after_iso: s
     return None
 
 
+async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: str) -> str:
+    """department_route_reply, except that when nobody of the department sits today the next sitting is told and offered (see _next_sitting_offer) and kept as the open question."""
+    if routed.get("matched") and not routed.get("doctors_today") and routed.get("doctors"):
+        offer = await _next_sitting_offer(routed["department_name"], _dept_label(routed["department_name"], lang), lang)
+        if offer is not None:
+            session.dept_pending = {**offer["pending"], "turn": session.turn_count, "say": offer["say"]}
+            return offer["say"]
+    return department_route_reply(_dept_labelled(routed, lang), symptom, lang)
+
+
 async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
     """"Nobody of <department> sits today. Dr X sits <day> at <time>. Shall I book that day?" (or "Dr X or Dr Y sit <day>; whom?"), from the clinic's own table, with the pending
     question to match. None when nobody sits in the next week."""
@@ -3150,7 +3182,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                 except ToolCallError:
                     return False
                 if result.get("matched"):
-                    await _speak(session, _with_resume(session, department_route_reply(_dept_labelled(result, lang), "", lang), lang), lang)
+                    await _speak(session, _with_resume(session, (await _route_reply(session, result, "", lang)), lang), lang)
                     return True
             return False
         if pend["kind"] == "confirm_one":
@@ -3414,7 +3446,7 @@ async def _answer_good_doctor(session: CallSession, text: str, lang: str) -> Non
         routed = {}
     if routed.get("matched"):
         _route_found.set({"dept": routed["department_name"], "names": routed.get("doctors_today") or routed.get("doctors") or []})
-        spoken = department_route_reply(_dept_labelled(routed, lang), text, lang)
+        spoken = (await _route_reply(session, routed, text, lang))
     else:
         spoken = doctor_enquiry_cues.good_doctor_reply(await _general_medicine_today(lang), None, lang)
     await _speak(session, _with_resume(session, spoken, lang), lang)
@@ -3801,7 +3833,7 @@ async def _answer_next_if_absent(session: CallSession, text: str, lang: str) -> 
             routed = {}
         if routed.get("matched"):
             _route_found.set({"dept": routed["department_name"], "names": routed.get("doctors_today") or routed.get("doctors") or []})
-            spoken = department_route_reply(_dept_labelled(routed, lang), text, lang)
+            spoken = (await _route_reply(session, routed, text, lang))
         else:
             session.pending_enquiry = ("department_query", session.turn_count)
             spoken = missing_slot_prompt("department_query", "symptom_description", lang) + doctor_enquiry_cues.general_medicine_line(
@@ -3855,7 +3887,7 @@ async def _answer_department_doctors(session: CallSession, text: str, lang: str)
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count}
         await _speak(session, _with_resume(session, doctor_search.sitting_list_reply(sitting, _when_phrase(on_date, at_time, lang), label, lang), lang), lang)
         return True
-    await _speak(session, _with_resume(session, department_route_reply(_dept_labelled(result, lang), "", lang), lang), lang)
+    await _speak(session, _with_resume(session, (await _route_reply(session, result, "", lang)), lang), lang)
     return True
 
 
@@ -4579,6 +4611,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if (
             not session.awaiting_language_switch_offer
             and not _readback_pending(session)  # a name/number read-back is waiting for its yes/no: a garbled short answer is not a language change
+            and not _short_booking_answer  # nor the short answers of a booking in progress (real call 2026-10-24: "english rajah" for English Bazar, then a garbled yes)
             and not switch_target  # Real call 2026-10-17: an EXPLICIT "speak Bengali" said in Hindi was answered with "shall I speak Hindi?" (the offer fired on top of the request)
             and detected_lang != session.lang
             and detected_lang in _languages_active
@@ -4870,6 +4903,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if owner_answers.asks_phone_booking(text) and not getattr(session, "phone_booking_told", False):
             session.phone_booking_told = True  # said once; the booking carries on in the same turn
             await _speak(session, owner_answers.phone_booking_note(lang), lang)
+        if await _answer_when_repeat(session, text, lang):
+            return
         if await _answer_after_date(session, text, lang):
             return  # "any day after the 21st" while a doctor is being booked (owner, 2026-10-19)
         if await _answer_where_in_address(session, text, lang):
