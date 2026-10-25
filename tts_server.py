@@ -57,6 +57,7 @@ import threading
 # Pure prosody logic (splitting, pauses, trim, normalise) lives in
 # agent/prosody.py so it can be unit tested without a GPU; the repo root is
 # on PYTHONPATH (deploy/env.sh). Imported BEFORE the chdir below.
+from agent import whatsapp_tts
 from agent.prosody import (
     ProsodyParams, assemble, resolve_length_scale, resolve_params, split_for_prosody,
 )
@@ -66,6 +67,7 @@ from agent.prosody import (
 # whatever the process's CWD happens to be -- not the checkpoint's own
 # location. Pin CWD explicitly so this doesn't depend on how/where this
 # script gets launched from.
+_HERE = os.path.dirname(os.path.abspath(__file__))  # taken BEFORE the chdir below
 CHECKPOINTS_ROOT = os.environ.get("TTS_CHECKPOINTS_ROOT", "/workspace/tts_checkpoints")
 os.chdir(CHECKPOINTS_ROOT)
 
@@ -127,20 +129,74 @@ DEFAULT_PROSODY = ProsodyParams()
 _SYNTH_LOCKS: dict[str, threading.Lock] = {lang: threading.Lock() for lang in SUPPORTED_LANGUAGES}
 
 
+# Owner, 2026-10-25: "WhatsApp" inside a Bengali / Hindi sentence is the English voice's own recording of the word (agent/whatsapp_tts.py), not the Bengali / Hindi voice's attempt.
+# Switch off with TTS_WHATSAPP_CLIP=0.
+_WA_CLIP_PATH = os.environ.get("TTS_WHATSAPP_CLIP_PATH", os.path.join(_HERE, "assets", "whatsapp_en.wav"))
+
+
+def _load_wa_clip() -> tuple[np.ndarray, int] | None:
+    if os.environ.get("TTS_WHATSAPP_CLIP", "1") != "1" or not os.path.exists(_WA_CLIP_PATH):
+        return None
+    data, sr = sf.read(_WA_CLIP_PATH, dtype="float32")
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    return data, int(sr)
+
+
+_WA_CLIP = _load_wa_clip()
+
+
+def _wa_clip_at(sample_rate: int) -> np.ndarray:
+    data, sr = _WA_CLIP
+    if sr == sample_rate:
+        return data
+    n = int(round(len(data) * sample_rate / sr))
+    return np.interp(np.linspace(0, len(data) - 1, n), np.arange(len(data)), data).astype(np.float32)
+
+
+def _rms(a: np.ndarray) -> float:
+    a = np.asarray(a, dtype=np.float32)
+    return float(np.sqrt(np.mean(a * a))) if a.size else 0.0
+
+
 def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool,
             params: ProsodyParams) -> tuple[np.ndarray, int]:
     synth = SYNTHESIZERS[lang]
     sample_rate = SAMPLE_RATES[lang]
-    chunks = split_for_prosody(text, params.max_chunk_chars) if pauses else [(text, "sentence")]
-    rendered = []
+    parts = whatsapp_tts.split(text, lang) if _WA_CLIP is not None else [("text", text)]
+    rendered: list[tuple[np.ndarray, str]] = []
+    wa_slots: list[int] = []
     with _SYNTH_LOCKS[lang]:
         if hasattr(synth.tts_model, "length_scale"):
             synth.tts_model.length_scale = speed
-        for chunk_text, pause_kind in chunks:
-            # split_sentences=False: agent/prosody.py already decided the
-            # chunking, and letting Coqui re-split would reintroduce the
-            # ragged joins.
-            rendered.append((synth.tts(chunk_text, speaker_name=speaker, split_sentences=False), pause_kind))
+        for idx, (kind, value) in enumerate(parts):
+            if kind == "wa":
+                wa_slots.append(len(rendered))
+                rendered.append((_wa_clip_at(sample_rate), "none"))
+                if value:  # a Bengali ending glued to the word ("-এ", "-এর"), said after the recording
+                    rendered.append((synth.tts(value, speaker_name=speaker, split_sentences=False), "none"))
+                continue
+            if not any(ch.isalnum() for ch in value):
+                continue
+            chunks = split_for_prosody(value, params.max_chunk_chars) if pauses else [(value, "sentence")]
+            before_wa = idx + 1 < len(parts) and parts[idx + 1][0] == "wa"
+            for ci, (chunk_text, pause_kind) in enumerate(chunks):
+                # split_sentences=False: agent/prosody.py already decided the
+                # chunking, and letting Coqui re-split would reintroduce the
+                # ragged joins.
+                if before_wa and ci == len(chunks) - 1:
+                    pause_kind = "none"  # the sentence goes straight into the recording
+                rendered.append((synth.tts(chunk_text, speaker_name=speaker, split_sentences=False), pause_kind))
+        if wa_slots:
+            # the recording is matched to the loudness of the voice around it, so it does not jump out of the sentence
+            others = [r for i, (r, _k) in enumerate(rendered) if i not in wa_slots and len(r)]
+            if others:
+                target = float(np.median([_rms(r) for r in others]))
+                for i in wa_slots:
+                    clip, kind = rendered[i]
+                    r = _rms(clip)
+                    if r > 0 and target > 0:
+                        rendered[i] = (np.clip(clip * min(max(target / r, 0.25), 4.0), -1.0, 1.0), kind)
     return assemble(rendered, sample_rate, params, pauses), sample_rate
 
 
