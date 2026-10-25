@@ -3025,6 +3025,12 @@ async def _answer_owner_faq(session: CallSession, text: str, lang: str) -> bool:
                 with contextlib.suppress(Exception):
                     address = (await _tools.get_faq("location", lang)).get("answer")
                 spoken = owner_answers.distance_reply(key, lang, address)
+        if not spoken and owner_answers.asks_how_to_reach(text):
+            # "আপনাদের ওখানে যাবো কিভাবে": the clinic's address, from the clinic's own FAQ row (the same one "where are you" gets)
+            address = None
+            with contextlib.suppress(Exception):
+                address = (await _tools.get_faq("location", lang)).get("answer")
+            spoken = address or owner_answers._ADDRESS_FALLBACK.get(lang, owner_answers._ADDRESS_FALLBACK["en"])  # noqa: SLF001
         if not spoken and owner_answers.asks_token_arrival(text):
             start, doctor = _sitting_start_and_doctor(session, text, lang)
             spoken = owner_answers.token_arrival_reply(owner_answers.token_number(text), start, lang, doctor)

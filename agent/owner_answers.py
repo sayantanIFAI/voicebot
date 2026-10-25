@@ -229,6 +229,22 @@ def distance_reply(key: str, lang: str, address: str | None = None) -> str:
     }.get(lang, "")
 
 
+# ------------------------------------------------------------------------------------------------------------------------------------ how do I get there
+
+_HOW = ("কিভাবে", "কীভাবে", "কি করে", "কী করে", "কেমনে", "কেমন করে", "কি ভাবে", "কী ভাবে", "kibhabe", "kivabe", "kemne", "kemon kore", "ki kore", "how", "कैसे", "kaise", "किस तरह")
+_GO = (
+    "যাব", "যাবো", "আসব", "আসবো", "যেতে", "আসতে", "পৌঁছ", "পৌছ", "যাওয়া", "আসা", "যাই", "আসি", "go", "come", "reach", "get there", "get to", "arrive",
+    "जाऊं", "जाऊँ", "आऊं", "आऊँ", "जाना", "आना", "पहुँच", "पहुंच", "jabo", "asbo", "jete", "aste", "pouchbo",
+)
+
+
+def asks_how_to_reach(text: str) -> bool:
+    """"আপনাদের ওখানে যাবো কিভাবে" / "how do I come to you" / "कैसे आऊं": a HOW word and a GO word in a short sentence, with no station or place named (those get the
+    distance / Google Maps answer). The answer is the clinic's address (owner, 2026-10-25: "this must answer with the address")."""
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 16 and _has(t, _HOW) and _has(t, _GO)
+
+
 # ------------------------------------------------------------------------------------------------------------------------------------ booking by phone
 
 _PHONE_WORDS = ("ফোনে", "ফোন এ", "ফোনেই", "ফোন দিয়ে", "মোবাইলে", "over the phone", "on phone", "by phone", "on the phone", "फोन पर", "फ़ोन पर", "फोन से", "phone e", "phone-e")
