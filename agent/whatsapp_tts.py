@@ -22,7 +22,8 @@ _HI = re.compile("(?:व्हाट्स|व्हॉट्स|वाट्स
 _LATIN = re.compile(r"whats\s?app", re.IGNORECASE)
 
 # the ending, said as its own small word after the recording
-_SUFFIX_SPOKEN = {"ে": "এ", "ের": "এর", "কে": "কে", "র": "র", "ও": "ও"}
+# (the Bengali voice cannot speak a lone one-letter word: it fails on "এ", "র", "ও" -- a danda after the vowel, or the two-letter "এর", gives it enough to say)
+_SUFFIX_SPOKEN = {"ে": "এ।", "ের": "এর", "কে": "কে", "র": "এর", "ও": "ও।"}
 
 
 def split(text: str, lang: str) -> list[tuple[str, str]]:

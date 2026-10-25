@@ -154,6 +154,17 @@ def _wa_clip_at(sample_rate: int) -> np.ndarray:
     return np.interp(np.linspace(0, len(data) - 1, n), np.arange(len(data)), data).astype(np.float32)
 
 
+def _tts_piece(synth, text: str, speaker: str) -> np.ndarray:
+    """One piece through the voice. The model fails outright on a text of a single letter; a failure here must never fail the whole sentence, so it is retried once with a danda
+    and, if that fails too, the piece becomes a short silence (logged)."""
+    for attempt in (text, text.rstrip() + "।"):
+        try:
+            return synth.tts(attempt, speaker_name=speaker, split_sentences=False)
+        except Exception as e:  # noqa: BLE001 - one bad piece must not lose the sentence
+            print(f"[tts] piece {text!r} failed: {str(e)[:80]}", flush=True)
+    return np.zeros(int(0.08 * 22050), dtype=np.float32)
+
+
 def _rms(a: np.ndarray) -> float:
     a = np.asarray(a, dtype=np.float32)
     return float(np.sqrt(np.mean(a * a))) if a.size else 0.0
@@ -174,7 +185,7 @@ def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool,
                 wa_slots.append(len(rendered))
                 rendered.append((_wa_clip_at(sample_rate), "none"))
                 if value:  # a Bengali ending glued to the word ("-এ", "-এর"), said after the recording
-                    rendered.append((synth.tts(value, speaker_name=speaker, split_sentences=False), "none"))
+                    rendered.append((_tts_piece(synth, value, speaker), "none"))
                 continue
             if not any(ch.isalnum() for ch in value):
                 continue
@@ -186,7 +197,7 @@ def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool,
                 # ragged joins.
                 if before_wa and ci == len(chunks) - 1:
                     pause_kind = "none"  # the sentence goes straight into the recording
-                rendered.append((synth.tts(chunk_text, speaker_name=speaker, split_sentences=False), pause_kind))
+                rendered.append((_tts_piece(synth, chunk_text, speaker) if wa_slots or len(parts) > 1 else synth.tts(chunk_text, speaker_name=speaker, split_sentences=False), pause_kind))
         if wa_slots:
             # the recording is matched to the loudness of the voice around it, so it does not jump out of the sentence
             others = [r for i, (r, _k) in enumerate(rendered) if i not in wa_slots and len(r)]
