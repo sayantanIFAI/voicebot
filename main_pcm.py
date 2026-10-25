@@ -2161,6 +2161,8 @@ async def _answer_when_repeat(session: CallSession, text: str, lang: str) -> boo
     last = getattr(session, "last_spoken", "") or ""
     if not last or not _asks_when(text) or len(text.split()) > 16 or not any(w in last for w in _SITTING_WORDS):
         return False
+    if any(w in last for w in ("বসেন না", "বসছেন না", "বসবেন না", "नहीं बैठ", "Nobody", "does not sit")):
+        return False  # what was just said is that nobody sits: repeating it answers nothing
     if booking_capture.confirm_answer(text, lang) is not None:
         return False
     low = text.lower()
@@ -3151,6 +3153,25 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
     return department_route_reply(_dept_labelled(routed, lang), symptom, lang)
 
 
+async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex: str | None, on_date: str, when_phrase: str, label: str) -> bool:
+    """"Nobody from <department> sits <day>. Dr X sits <next day> at <time>. Shall I book that day?" -- or, for several, which of them; the open question is kept (dept_pending). False when
+    nobody sits in the following week (the caller then hears the plain 'nobody sits')."""
+    nxt = await _next_dept_sitting(text, lang, sex, on_date)
+    if not nxt:
+        return False
+    iso, sit = nxt
+    lead = _NOBODY_LEAD.get(lang, _NOBODY_LEAD["en"]).format(w=when_phrase or label)
+    if len(sit) == 1:
+        item = sit[0]
+        say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
+        session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start"), "turn": session.turn_count, "say": say}
+    else:
+        say = f"{lead} {doctor_search.sitting_pick_question([x['name'] for x in sit], _when_phrase(iso, None, lang), lang)}"
+        session.dept_pending = {"kind": "pick", "doctors": sit, "date": iso, "time": None, "turn": session.turn_count, "say": say}
+    await _speak(session, say, lang)
+    return True
+
+
 async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
     """"Nobody of <department> sits today. Dr X sits <day> at <time>. Shall I book that day?" (or "Dr X or Dr Y sit <day>; whom?"), from the clinic's own table, with the pending
     question to match. None when nobody sits in the next week."""
@@ -3899,6 +3920,10 @@ async def _answer_department_doctors(session: CallSession, text: str, lang: str)
     if on_date or at_time:
         sitting = result.get("sitting") or []
         label = _dept_label(result["department_name"], lang)
+        if not sitting and on_date:
+            # Owner, 2026-10-25: "is there a neurologist today?" with nobody sitting -- the FIRST sentence says who sits next, when, and asks to book. Never "tell me another day".
+            if await _say_nobody_then_next(session, text, lang, None, on_date, _when_phrase(on_date, at_time, lang) or label, label):
+                return True
         if sitting:
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count}
         await _speak(session, _with_resume(session, doctor_search.sitting_list_reply(sitting, _when_phrase(on_date, at_time, lang), label, lang), lang), lang)
