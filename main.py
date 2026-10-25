@@ -653,6 +653,10 @@ async def _startup():
     global _asr_router, _lid, _tts_router, _admission, _health, _health_task, _languages_active
     import httpx as _httpx
 
+    with contextlib.suppress(Exception):  # the CPU threads one process may use for tensor maths: the default is every core, which makes the processes on this machine fight
+        import torch as _torch
+
+        _torch.set_num_threads(int(os.environ.get("AGENT_TORCH_THREADS", "6")))
     active = list(ACTIVE_LANGUAGES)
     engines: dict = {}
     if INDIC_ASR_URL:
@@ -768,11 +772,12 @@ async def _shutdown():
 
 
 @app.get("/debug/profile")
-def debug_profile(top: int = 40):
+async def debug_profile(top: int = 40):
     """What the process's threads are doing (agent/sampler.py; only when PROFILE_SAMPLER=1). Returns the counts and resets them."""
     from agent import sampler
 
     sampler.start(force=True)  # asking for the profile is what switches the sampler on
+    sampler.start_lag()
     return sampler.report(top)
 
 

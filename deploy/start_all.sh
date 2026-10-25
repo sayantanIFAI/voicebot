@@ -106,6 +106,8 @@ cat > /workspace/bin/_run_indic_asr.sh <<'EOF'
 source /workspace/kolkata-care-voice-agent/deploy/env.sh
 cd /workspace/kolkata-care-voice-agent
 # several processes: each loads the Bengali and Hindi models and has its own interpreter lock, so 24 callers finishing together are not one queue (load test 2026-10-25)
+# the CPU threads each process may use are limited: 6 recogniser processes on 48 cores, each trying to use all 48, only fight each other
+export OMP_NUM_THREADS=${INDIC_ASR_THREADS:-4} MKL_NUM_THREADS=${INDIC_ASR_THREADS:-4}
 exec /workspace/venv/bin/python3 -m uvicorn indic_asr_server:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8004 --workers ${INDIC_ASR_WORKERS:-4}
 EOF
 chmod +x /workspace/bin/_run_*.sh

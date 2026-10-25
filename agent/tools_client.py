@@ -15,6 +15,7 @@ distinct "I couldn't check that right now" reply instead of a false
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 import httpx
@@ -164,10 +165,17 @@ class ClinicToolsClient:
     #   found=true:  {"found": true, "topic": "hours", "answer": "..."}
     #   found=false: {"found": false, "topic": "..."}
     async def get_faq(self, topic: str, lang: str = "bn") -> dict:
+        # The FAQ rows are fixed text that changes only when the clinic edits it: remembered for a minute (24 callers asking the address together made 24 identical lookups).
+        cache = self.__dict__.setdefault("_faq_cache", {})
+        hit = cache.get((topic, lang))
+        if hit is not None and time.monotonic() - hit[0] < 60.0:
+            return hit[1]
         try:
             r = await self._client.get("/api/v1/faq", params={"topic": topic, "lang": lang})
             r.raise_for_status()
-            return validated(FaqAnswer, r.json(), "get_faq")
+            result = validated(FaqAnswer, r.json(), "get_faq")
+            cache[(topic, lang)] = (time.monotonic(), result)
+            return result
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_faq({topic!r}): {e}") from e
 
