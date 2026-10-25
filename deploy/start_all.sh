@@ -101,9 +101,17 @@ source /workspace/kolkata-care-voice-agent/deploy/env.sh
 cd /workspace/kolkata-care-voice-agent
 exec /workspace/venv-en-nemo/bin/python3 -m uvicorn english_asr_server:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8003
 EOF
+cat > /workspace/bin/_run_indic_asr.sh <<'EOF'
+#!/bin/bash
+source /workspace/kolkata-care-voice-agent/deploy/env.sh
+cd /workspace/kolkata-care-voice-agent
+# several processes: each loads the Bengali and Hindi models and has its own interpreter lock, so 24 callers finishing together are not one queue (load test 2026-10-25)
+exec /workspace/venv/bin/python3 -m uvicorn indic_asr_server:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8004 --workers ${INDIC_ASR_WORKERS:-4}
+EOF
 chmod +x /workspace/bin/_run_*.sh
 
 start tts         8002 /workspace/logs/tts_server.log   /workspace/bin/_run_tts.sh
+start indic-asr   8004 /workspace/logs/indic_asr.log    /workspace/bin/_run_indic_asr.sh
 start clinic-api  8080 /workspace/logs/clinic_api.log   /workspace/bin/_run_clinic.sh
 # Admission control counts calls PER PROCESS, so two media entrypoints share no cap (an external
 # review flagged this). ONLY_PCM=1 starts just the PCM entrypoint, which is the one to run when

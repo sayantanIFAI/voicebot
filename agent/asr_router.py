@@ -75,14 +75,20 @@ class HTTPASREngine:
     instead.
     """
 
-    def __init__(self, base_url: str, timeout_s: float = 15.0):
+    def __init__(self, base_url: str, timeout_s: float = 15.0, lang: str | None = None):
         import httpx
 
         self.base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s)
+        self.lang = lang  # set for the Bengali / Hindi service (indic_asr_server.py), which serves both languages from one URL
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url, timeout=timeout_s, limits=httpx.Limits(max_connections=64, max_keepalive_connections=32)
+        )
 
     async def transcribe_utterance(self, wav_path: str):
-        r = await self._client.post("/transcribe", json={"wav_path": wav_path})
+        payload = {"wav_path": wav_path}
+        if self.lang:
+            payload["lang"] = self.lang
+        r = await self._client.post("/transcribe", json=payload)
         r.raise_for_status()
         data = r.json()
         # Local import to avoid a hard dependency on agent.asr (and

@@ -23,6 +23,7 @@ while true; do
     relaunch main_app   "uvicorn main:app --host 0.0.0.0 --port 8100"        /workspace/bin/_run_main.sh
     relaunch pcm_app    "uvicorn main_pcm:app"                               /workspace/bin/_run_pcm.sh
     relaunch english_asr "uvicorn english_asr_server"                        /workspace/bin/_run_english_asr.sh
+    relaunch indic_asr   "uvicorn indic_asr_server"                          /workspace/bin/_run_indic_asr.sh
     if ! { [ -s /tmp/voicebot-gw.pid ] && kill -0 "$(cat /tmp/voicebot-gw.pid)" 2>/dev/null; }; then
         echo "$(date -Is) watchdog: gateway down -- restarting" >> $L/watchdog.log
         bash /workspace/gateway/gateway.sh start >> $L/watchdog.log 2>&1

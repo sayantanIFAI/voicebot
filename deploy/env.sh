@@ -18,6 +18,9 @@ export OLLAMA_MODELS=/workspace/.ollama/models
 # -1 keeps models resident indefinitely. Without it Ollama unloads after
 # five idle minutes and the next caller pays a 47s cold start mid-call.
 export OLLAMA_KEEP_ALIVE=-1
+# Bengali / Hindi recognition runs as its own service with several worker processes (indic_asr_server.py, port 8004). Unset INDIC_ASR_URL to load the models inside the agent instead.
+export INDIC_ASR_URL=${INDIC_ASR_URL-http://localhost:8004}
+export INDIC_ASR_WORKERS=${INDIC_ASR_WORKERS:-4}
 # Several intent requests at once (24 simultaneous callers); the context per request is kept small so the shared cache stays the same size (load test 2026-10-25).
 export OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-8}
 export OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-6144}

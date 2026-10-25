@@ -428,6 +428,8 @@ ACTIVE_LANGUAGES = tuple(
     )
 )
 ENGLISH_ASR_URL = os.environ.get("ENGLISH_ASR_URL", "http://localhost:8003")
+# Bengali / Hindi recognition as its own service with several worker processes (indic_asr_server.py); empty = load the two models inside this process as before.
+INDIC_ASR_URL = os.environ.get("INDIC_ASR_URL", "")
 TTS_HEALTH_URL = os.environ.get("TTS_HEALTH_URL", "http://localhost:8002/health")
 OLLAMA_HEALTH_URL = os.environ.get("OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags")
 
@@ -669,12 +671,19 @@ async def _startup():
 
     active = list(ACTIVE_LANGUAGES)
     engines: dict = {}
-    logger.info("loading IndicConformer bn...")
-    _asr = await asyncio.to_thread(TurnASR)
-    engines["bn"] = _asr
-    if "hi" in active:
-        logger.info("loading IndicConformer hi...")
-        engines["hi"] = await asyncio.to_thread(TurnASR, None, "hi")
+    if INDIC_ASR_URL:
+        logger.info("Bengali / Hindi recognition: the indic ASR service at %s", INDIC_ASR_URL)
+        engines["bn"] = HTTPASREngine(INDIC_ASR_URL, timeout_s=40.0, lang="bn")
+        _asr = engines["bn"]
+        if "hi" in active:
+            engines["hi"] = HTTPASREngine(INDIC_ASR_URL, timeout_s=40.0, lang="hi")
+    else:
+        logger.info("loading IndicConformer bn...")
+        _asr = await asyncio.to_thread(TurnASR)
+        engines["bn"] = _asr
+        if "hi" in active:
+            logger.info("loading IndicConformer hi...")
+            engines["hi"] = await asyncio.to_thread(TurnASR, None, "hi")
     if "en" in active:
         engines["en"] = HTTPASREngine(ENGLISH_ASR_URL)
     for lang in SUPPORTED_LANGUAGES:
@@ -716,6 +725,8 @@ async def _startup():
     }
     if "en" in _languages_active:
         probes["english-asr"] = http_probe(probe_client, f"{ENGLISH_ASR_URL}/health")
+    if INDIC_ASR_URL:
+        probes["indic-asr"] = http_probe(probe_client, f"{INDIC_ASR_URL.rstrip('/')}/health")
     _health = HealthMonitor(_admission, probes)
     _health.probe_client = probe_client
     _health_task = asyncio.create_task(_health.run_forever())
