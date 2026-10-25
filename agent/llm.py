@@ -48,7 +48,8 @@ logger = logging.getLogger("llm")
 # language and today's date -- at the END, so the long instructions are the same text on every call and the server can
 # reuse its cached copy of them. Default "classic": "fast" is switched on only after tools/intent_ab.py shows on the pod
 # that it is no less accurate.
-INTENT_PROMPT_VARIANT = os.environ.get("INTENT_PROMPT_VARIANT", "classic")
+# 2026-10-25: "fast" is the default. tools/intent_ab.py on the pod: 56 calls each, intent 1.0 / slots 1.0 for both, median 1416 ms -> 311 ms. INTENT_PROMPT_VARIANT=classic restores the old prompt.
+INTENT_PROMPT_VARIANT = os.environ.get("INTENT_PROMPT_VARIANT", "fast")
 # The context window Ollama allocates. Unset (0) = the model's own default (32,768 on the pod, far more than a
 # ~2,000-token prompt plus a short answer needs); a smaller value such as 4096 makes a smaller KV cache.
 OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "0"))

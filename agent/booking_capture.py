@@ -1069,7 +1069,7 @@ def _lacks_police_station(address: str) -> bool:
 
 
 _ENGLISH_BAZAR = re.compile(
-    r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ|english|इंग्लिश|अंग्रेज)\s*(?:বাজার|বাজর|রাজা|রাজার|বাজা|ba[sz]+ar|bajar|baza|raj+ah?|razar|बा[ज़ज]ार|राजा)", re.I
+    r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ|english|इंग्लिश|अंग्रेज)\s*(?:বাজার|বাজর|রাজা|রাজার|বাজা|বাজেট|বাগার|ba[sz]+ar|bajar|baza|raj+ah?|razar|b[a-z]{2,8}|बा[ज़ज]ार|राजा)", re.I
 )
 _ENGLISH_BAZAR_SPOKEN = {"bn": "ইংলিশ বাজার", "hi": "इंग्लिश बाज़ार", "en": "English Bazar"}
 

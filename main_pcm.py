@@ -139,7 +139,7 @@ from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.disclosure import disclosure_for
 from agent.disclosure import version_label as disclosure_version_label
 from agent.emergency import detect_emergency
-from agent.endpointing import classify_completeness, never_shorter_than
+from agent.endpointing import classify_completeness, is_certain, never_shorter_than
 from agent.endpointing import decide as decide_turn_end
 from agent.enquiry_followup import entities_from_turn, recent_unique, resolve_followup_slot
 from agent import cart_tally  # sourav 2026-10-14: running list of priced tests + remove/total
@@ -316,6 +316,11 @@ SEMANTIC_ENDPOINTING = os.environ.get("SEMANTIC_ENDPOINTING", "1") == "1"
 # Owner, 2026-10-18: a caller may pause up to 3.5 seconds in the middle of what they are saying (a number said in groups, a name remembered): that long is waited for
 # when the sentence is not finished.
 ENDPOINT_INCOMPLETE_S = float(os.environ.get("ENDPOINT_INCOMPLETE_S", "3.5"))
+# Owner, 2026-10-25: "for a single call it must be super fast, 0.5 seconds always". The agent used to wait a full 3 s of quiet after EVERY turn before it began to answer. Now: a bare yes/no or a
+# whole phone number is answered after ENDPOINT_CERTAIN_S of quiet; a sentence that reads finished after ENDPOINT_COMPLETE_S; anything else after TURN_SILENCE_CONFIRM_S; an unfinished one still waits
+# ENDPOINT_INCOMPLETE_S, so a caller who pauses mid-number or mid-sentence is not cut off.
+ENDPOINT_CERTAIN_S = float(os.environ.get("ENDPOINT_CERTAIN_S", "0.45"))
+ENDPOINT_COMPLETE_S = float(os.environ.get("ENDPOINT_COMPLETE_S", "1.2"))
 SPECULATIVE_ASR_TIMEOUT_S = 1.5
 MAX_SPECULATIONS_PER_TURN = 3
 SPECULATION_MATCH_TOLERANCE_S = 0.25
@@ -330,7 +335,7 @@ TURN_TAIL_GUARD_S = float(os.environ.get("TURN_TAIL_GUARD_S", "0.1"))
 # callers off before they had finished a longer, slower sentence. Owner's explicit instruction: at least 3
 # seconds. Kept as its own env-tunable (same pattern as TURN_TAIL_GUARD_S above) rather than hardcoded, since
 # this is a reasoned, not measured, number -- easy to dial back if 3s makes the agent feel slow to respond.
-TURN_SILENCE_CONFIRM_S = float(os.environ.get("TURN_SILENCE_CONFIRM_S", "3.0"))
+TURN_SILENCE_CONFIRM_S = float(os.environ.get("TURN_SILENCE_CONFIRM_S", "2.0"))
 
 # KCD-051/052: acoustic echo cancellation + barge-in on the PCM transport. OFF by
 # default: the canceller and detector are validated on SYNTHETIC echo only and
@@ -2152,6 +2157,7 @@ async def _answer_scan_followup(session: CallSession, text: str, lang: str) -> b
     return True
 
 
+_BOOKING_CUE = re.compile(r"নাম লেখা|বুকিং|বুক |অ্যাপয়েন্টমেন্ট|অযাপ্ফোন্টমেন্ট|ডাক্তার দেখা|appointment|\bbook|बुक|अपॉइंटमेंट|नाम लिखव", re.I)
 _SITTING_WORDS = ("বসছেন", "বসবেন", "বসেন", "बैठ", "sits", "sitting")
 
 
@@ -4947,6 +4953,13 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
+        if _BOOKING_CUE.search(text) and fastpath_guards.location_word_present(text) and _tools is not None:
+            # Owner, 2026-10-25: two questions in one breath ("নাম লেখাবো ... আপনাদের অ্যাড্রেসটা কোথায়"): the address is answered FIRST, from the clinic's own FAQ row, and the booking
+            # goes on in the same turn -- the second question is never dropped.
+            _addr = None
+            with contextlib.suppress(Exception):
+                _addr = (await _tools.get_faq("location", lang)).get("answer")
+            await _speak(session, _addr or owner_answers._ADDRESS_FALLBACK.get(lang, owner_answers._ADDRESS_FALLBACK["en"]), lang)  # noqa: SLF001
         if owner_answers.asks_phone_booking(text) and not getattr(session, "phone_booking_told", False):
             session.phone_booking_told = True  # said once; the booking carries on in the same turn
             await _speak(session, owner_answers.phone_booking_note(lang), lang)
@@ -6256,7 +6269,7 @@ async def _speculative_completeness(session: CallSession, speech_end_abs: float)
         asr = await asyncio.wait_for(_asr_router.transcribe(session.lang, wav), SPECULATIVE_ASR_TIMEOUT_S)
         # an emergency phrase in what has been said so far ends the wait at once: the turn is treated as
         # finished so the notice is not delayed by a silence timer (agent/emergency.py)
-        verdict = "complete" if detect_emergency(asr.text) else classify_completeness(asr.text, session.lang)
+        verdict = "complete" if detect_emergency(asr.text) else ("certain" if is_certain(asr.text, session.lang) else classify_completeness(asr.text, session.lang))
     except Exception as e:  # noqa: BLE001 - speculation is advisory
         logger.info("[%s] speculative transcription unavailable: %s", session.call_id, e)
         return None
@@ -6280,6 +6293,8 @@ async def _decide_turn(session: CallSession, tail, sr: int):
         # the pauses INSIDE a caller's sentences, so a fast speaker is given as little as 0.6 s (pause_profile.SILENCE_MIN_S) -- and a
         # thinking pause ("tell me ... the CBC") is longer than that. The adaptive pause may now only LENGTHEN the baseline wait.
         cfg = never_shorter_than(cfg, _turn_detector.config, ENDPOINT_INCOMPLETE_S)
+        # ...and then the two quick cases (see ENDPOINT_CERTAIN_S): they only apply once a speculative transcript has said the words read as a finished answer
+        cfg = dataclasses.replace(cfg, complete_confirm_s=ENDPOINT_COMPLETE_S, certain_confirm_s=ENDPOINT_CERTAIN_S)
     if spans and not session.commit_checked and session.last_commit_end_abs is not None:
         # speech resumed after the last turn was cut: was that cut too early for THIS caller?
         resumed_after = max(0.0, float(spans[0]["start"]) - session.last_confirm_s)

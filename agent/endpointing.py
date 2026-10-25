@@ -57,8 +57,13 @@ class EndpointConfig:
     # this, so the completeness verdict exists by the time `complete_confirm_s`
     # could be satisfied.
     speculate_after_s: float = 0.30
+    # Owner, 2026-10-25 ("single call must be super fast, 0.5 s always"): when the words are CERTAINLY the whole answer -- a bare yes/no, or a whole ten-digit phone number -- the
+    # turn is committed after this much quiet (agent/endpointing.is_certain).
+    certain_confirm_s: float = 0.45
 
     def confirm_for(self, completeness: str | None) -> float:
+        if completeness == "certain":
+            return self.certain_confirm_s
         if completeness == "complete":
             return self.complete_confirm_s
         if completeness == "incomplete":
@@ -474,6 +479,19 @@ def classify_completeness(text: str, lang: str = "en") -> str:
     if last_bare in _COMPLETE_TAIL.get(lang, set()):
         return "complete"
     return "unknown"
+
+
+def is_certain(text: str, lang: str = "en") -> bool:
+    """True only when the words are certainly a finished answer: a bare yes / no (one to three words, nothing else), or a run of digits that is a whole ten-digit phone number.
+    Nothing a caller says after a pause could belong to these, so the agent need not wait the long patient pause."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    low = raw.lower().rstrip("।.?!॥ ")
+    if low in _YES_NO and len(low.split()) <= 3:
+        return True
+    n_digits, only_digits = _digit_count(raw.split(), lang)
+    return bool(only_digits and n_digits >= 10)
 
 
 # ------------------------------------------------------------- energy spans
