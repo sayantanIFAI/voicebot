@@ -149,7 +149,7 @@ from agent import fastpath_guards  # refuse a quick answer that cannot be right 
 from agent import slot_proposal  # the machine picks the appointment time and says it
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
-from agent import clinical_terms, doctor_search, echo_check, imaging_words, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import clinical_terms, doctor_search, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -2158,6 +2158,65 @@ async def _answer_scan_followup(session: CallSession, text: str, lang: str) -> b
 
 
 _BOOKING_CUE = re.compile(r"নাম লেখা|বুকিং|বুক |অ্যাপয়েন্টমেন্ট|অযাপ্ফোন্টমেন্ট|ডাক্তার দেখা|appointment|\bbook|बुक|अपॉइंटमेंट|नाम लिखव", re.I)
+_MULTI_KINDS = ("clinic_faq", "test_rate", "test_prep", "doctor_availability")
+_FOLLOW_BACK = {
+    "bn": "আপনার আরেকটা প্রশ্নও ছিল, সেটা ঠিক বুঝতে পারিনি। একটু আবার বলবেন?",
+    "hi": "आपका एक और सवाल भी था, वह मैं ठीक से समझ नहीं पाई। ज़रा फिर से बताइए?",
+    "en": "You had another question too, which I did not quite catch. Could you say it again?",
+}
+
+
+async def _answer_multi_questions(session: CallSession, text: str, lang: str) -> bool:
+    """Two or three questions in one breath ("নাম লেখাবো ... আপনাদের অ্যাড্রেস কোথায়", "CBC price and where are you"): the sentence is cut into its questions (agent/multi_question.py),
+    each is recognised by the same routine-question recogniser that answers a single question, and EVERY one is answered, in order. A part that is not a routine question is either the
+    booking (it goes on in this same turn, after the answers) or is asked about again -- never silently dropped (owner, 2026-10-25). True when the turn was fully handled here."""
+    if _fast_path is None or _tools is None:
+        return False
+    parts = multi_question.split_questions(text)
+    if len(parts) < 2:
+        return False
+    text_lang = language_of_script(text, lang)
+    answered: list[str] = []
+    rest: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        hit = None
+        with contextlib.suppress(Exception):
+            hit = await asyncio.to_thread(_fast_path.resolve, part, text_lang, None)
+        if hit is not None:
+            with contextlib.suppress(Exception):
+                if fastpath_guards.veto(hit.intent, hit.slots, part, lambda p=part: len(_fast_path.named_tests(p, text_lang))):
+                    hit = None
+        if hit is None or hit.intent not in _MULTI_KINDS:
+            rest.append(part)
+            continue
+        key = f"{hit.intent}:{sorted((hit.slots or {}).items())}"
+        if key in seen:
+            continue
+        seen.add(key)
+        _turn_text.set(part)
+        try:
+            reply = await _answer_enquiry_intent(hit.intent, dict(hit.slots or {}), lang)
+        except Exception as e:  # noqa: BLE001 - one failed lookup must not lose the other answers
+            logger.warning("[%s] multi-question part %r failed: %s", session.call_id, part, e)
+            reply = None
+        if reply:
+            answered.append(reply)
+        else:
+            rest.append(part)
+    booking_part = any(_BOOKING_CUE.search(p) for p in rest)
+    if not answered or (len(answered) < 2 and not rest):
+        return False  # nothing recognised, or just one question: the normal path
+    spoken = " ".join(answered)
+    if booking_part:
+        await _speak(session, spoken, lang)
+        return False  # the booking goes on in this same turn and asks its next question
+    if rest:
+        spoken = f"{spoken} {_FOLLOW_BACK.get(lang, _FOLLOW_BACK['en'])}"
+    await _speak(session, _with_resume(session, spoken, lang) if session.booking is not None else spoken, lang)
+    return True
+
+
 _SITTING_WORDS = ("বসছেন", "বসবেন", "বসেন", "बैठ", "sits", "sitting")
 
 
@@ -4953,13 +5012,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
         if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
             return
-        if _BOOKING_CUE.search(text) and fastpath_guards.location_word_present(text) and _tools is not None:
-            # Owner, 2026-10-25: two questions in one breath ("নাম লেখাবো ... আপনাদের অ্যাড্রেসটা কোথায়"): the address is answered FIRST, from the clinic's own FAQ row, and the booking
-            # goes on in the same turn -- the second question is never dropped.
-            _addr = None
-            with contextlib.suppress(Exception):
-                _addr = (await _tools.get_faq("location", lang)).get("answer")
-            await _speak(session, _addr or owner_answers._ADDRESS_FALLBACK.get(lang, owner_answers._ADDRESS_FALLBACK["en"]), lang)  # noqa: SLF001
+        if await _answer_multi_questions(session, text, lang):
+            return  # several questions in one breath: each answered (agent/multi_question.py)
         if owner_answers.asks_phone_booking(text) and not getattr(session, "phone_booking_told", False):
             session.phone_booking_told = True  # said once; the booking carries on in the same turn
             await _speak(session, owner_answers.phone_booking_note(lang), lang)
