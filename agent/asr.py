@@ -35,7 +35,9 @@ import difflib
 import glob
 import logging
 import os
+import queue
 import threading
+import time
 
 import numpy as np
 import torch
@@ -173,21 +175,65 @@ class TurnASR:
         rnnt_cfg = OmegaConf.structured(RNNTDecodingConfig(strategy="greedy"))
         self.model.change_decoding_strategy(rnnt_cfg, decoder_type="rnnt")
 
-    def _transcribe_clip(self, clip_path: str) -> tuple[str, str]:
+        # BATCHING (load profile 2026-10-25: 24 callers finishing together queued behind this one model for 12-28 s while the GPU sat 95% idle). Clips that arrive within a few
+        # milliseconds of each other are transcribed TOGETHER in one pass of each decoder; one worker thread is the only user of the model (so the decoder switch below cannot interleave).
+        self._queue: queue.Queue = queue.Queue()
+        self._max_batch = int(os.environ.get("ASR_MAX_BATCH", "16"))
+        self._batch_wait_s = float(os.environ.get("ASR_BATCH_WAIT_S", "0.015"))
+        threading.Thread(target=self._batch_worker, name=f"asr-batch-{language_id}", daemon=True).start()
+
+    def _texts_of(self, result, n: int) -> list[str]:
+        """The n transcripts of a batched `transcribe` result, whatever shape this NeMo version returns (a list, or a (best, all) pair; strings or hypotheses)."""
+        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], list):
+            result = result[0]
+        out = []
+        for i in range(n):
+            item = result[i] if i < len(result) else ""
+            while isinstance(item, (list, tuple)):
+                item = item[0] if item else ""
+            item = getattr(item, "text", item)
+            out.append((item or "").strip())
+        return out
+
+    def _transcribe_batch(self, paths: list[str]) -> list[tuple[str, str]]:
+        n = len(paths)
         self.model.cur_decoder = "ctc"
-        ctc_texts = self.model.transcribe(
-            [clip_path],
-            batch_size=1,
-            logprobs=False,
-            language_id=self.language_id,
-        )
-        ctc_text = _first_text(ctc_texts)
-
+        ctc = self.model.transcribe(paths, batch_size=n, logprobs=False, language_id=self.language_id)
         self.model.cur_decoder = "rnnt"
-        rnnt_texts = self.model.transcribe([clip_path], batch_size=1, language_id=self.language_id)
-        rnnt_text = _first_text(rnnt_texts)
+        rnnt = self.model.transcribe(paths, batch_size=n, language_id=self.language_id)
+        return list(zip(self._texts_of(ctc, n), self._texts_of(rnnt, n)))
 
-        return ctc_text, rnnt_text
+    def _batch_worker(self) -> None:
+        while True:
+            batch = [self._queue.get()]
+            deadline = time.monotonic() + self._batch_wait_s
+            while len(batch) < self._max_batch:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                try:
+                    batch.append(self._queue.get(timeout=left))
+                except queue.Empty:
+                    break
+            paths = [p for p, _f in batch]
+            try:
+                results = self._transcribe_batch(paths)
+                for (_p, fut), r in zip(batch, results):
+                    fut.set_result(r)
+            except Exception as e:  # noqa: BLE001 - one bad clip must not lose the others: retry them one by one
+                logger.warning("ASR [%s]: batch of %d failed (%s) -- retrying one by one", self.language_id, len(batch), str(e)[:80])
+                for p, fut in batch:
+                    try:
+                        fut.set_result(self._transcribe_batch([p])[0])
+                    except Exception as e2:  # noqa: BLE001
+                        fut.set_exception(e2)
+
+    def _transcribe_clip(self, clip_path: str) -> tuple[str, str]:
+        import concurrent.futures
+
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+        self._queue.put((clip_path, fut))
+        return fut.result(timeout=120)
 
     def transcribe_utterance_sync(self, wav_path: str) -> ASRResult:
         """Blocking. Callers MUST run this via asyncio.to_thread -- it
@@ -196,8 +242,7 @@ class TurnASR:
         # A clip over ~11 s is read in pieces cut at its pauses (agent/clip_chunks.py): beyond that length the RNNT decoder lost the start.
         pieces = chunk_wav(wav_path)
         try:
-            with self._lock:
-                texts = [self._transcribe_clip(p) for p in pieces]
+            texts = [self._transcribe_clip(p) for p in pieces]
         finally:
             for p in pieces:
                 if p != wav_path:

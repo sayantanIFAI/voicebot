@@ -669,7 +669,7 @@ async def _startup():
     if len(active) > 1:
         logger.info("loading language ID (SpeechBrain VoxLingua107, CPU)...")
         try:
-            lid = SpeechBrainVoxLingua107LID(device="cpu")
+            lid = SpeechBrainVoxLingua107LID(device=os.environ.get("LID_DEVICE", "cuda"))  # on the GPU: on the CPU it cost ~0.3 core and queued 24 calls for seconds (load profile 2026-10-25)
             await asyncio.to_thread(lid.load)
             _lid = lid
         except Exception as e:  # noqa: BLE001 - degrade LOUDLY to Bengali-only, never guess a language
@@ -754,6 +754,15 @@ async def _shutdown():
         await _tools.aclose()
     if _tts:
         await _tts.aclose()
+
+
+@app.get("/debug/profile")
+def debug_profile(top: int = 40):
+    """What the process's threads are doing (agent/sampler.py; only when PROFILE_SAMPLER=1). Returns the counts and resets them."""
+    from agent import sampler
+
+    sampler.start(force=True)  # asking for the profile is what switches the sampler on
+    return sampler.report(top)
 
 
 @app.get("/api/health")
@@ -1271,6 +1280,8 @@ class CallSession:
 
         with contextlib.suppress(OSError):
             shutil.rmtree(self.tmpdir, ignore_errors=True)
+        with contextlib.suppress(Exception):
+            _turn_detector.release(self.call_id)  # the call's streaming voice-activity state
 
 
 async def _synthesize_one_clause(session: CallSession, clause: str, lang: str, fallback_reason: str | None) -> bytes:
@@ -6333,7 +6344,7 @@ async def _decide_turn(session: CallSession, tail, sr: int):
     (agent/endpointing.decide, pure and tested off-pod). With SEMANTIC_ENDPOINTING
     a candidate turn end may trigger one speculative transcription, whose
     completeness verdict is reused for as long as the speech end has not moved."""
-    spans, duration_s = await asyncio.to_thread(_turn_detector.spans, tail, sr)
+    spans, duration_s = await asyncio.to_thread(_turn_detector.spans, tail, sr, session.call_id, session.processed_until_s)
     cfg = session.pause.config(_turn_detector.config) if ADAPTIVE_PAUSE != "off" else _turn_detector.config
     if SEMANTIC_ENDPOINTING:  # add patience for an unfinished sentence; never shorten the wait for a finished-looking one
         # Real calls 2026-10-16 and 2026-10-17: a caller was cut off mid-sentence again. The per-caller adaptive pause learns from

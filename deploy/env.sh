@@ -18,6 +18,9 @@ export OLLAMA_MODELS=/workspace/.ollama/models
 # -1 keeps models resident indefinitely. Without it Ollama unloads after
 # five idle minutes and the next caller pays a 47s cold start mid-call.
 export OLLAMA_KEEP_ALIVE=-1
+# Several intent requests at once (24 simultaneous callers); the context per request is kept small so the shared cache stays the same size (load test 2026-10-25).
+export OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-8}
+export OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-6144}
 
 export PYTHONPATH=/workspace/kolkata-care-voice-agent:
 

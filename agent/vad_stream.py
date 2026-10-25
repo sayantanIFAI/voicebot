@@ -25,9 +25,12 @@ given as "now", and never looks at audio before that.
 
 from __future__ import annotations
 
+import copy
 import itertools
 import os
+import sys
 import threading
+import time
 
 import torch
 
@@ -98,9 +101,56 @@ class TurnDetector:
             self._models.append(m)
         self._locks = [threading.Lock() for _ in self._models]
         self._next = itertools.count()
+        # STREAMING (load test 2026-10-25, profile of 24 simultaneous calls: ~2.7 CPU cores spent in this detector). Every poll used to run Silero over the call's WHOLE unprocessed tail
+        # again, 5 times a second. The detector is a recurrent model that reads 32 ms windows one after another, so a call keeps its OWN copy of the model and its list of per-window
+        # speech probabilities; a poll then runs only the windows that arrived since the last one, and turns the probabilities into spans with Silero's own
+        # `get_speech_timestamps_from_probs` (the same segmentation, so the spans are the same). The state starts afresh whenever the tail starts somewhere new (after a turn is consumed).
+        self._from_probs = getattr(sys.modules.get(self._get_speech_timestamps.__module__), "get_speech_timestamps_from_probs", None)
+        self._template = None
+        self._streams: dict = {}
+        self._streams_lock = threading.Lock()
+        if self._from_probs is not None:
+            self._template, _u = torch.hub.load(
+                repo_or_dir=_LOCAL_SILERO_REPO if os.path.isdir(_LOCAL_SILERO_REPO) else "snakers4/silero-vad",
+                source="local" if os.path.isdir(_LOCAL_SILERO_REPO) else "github",
+                model="silero_vad", force_reload=False, onnx=False, trust_repo=True,
+            )
 
-    def spans(self, wav_tensor: torch.Tensor, sr: int) -> tuple[list[dict], float]:
-        """Speech spans (seconds, relative to the tensor) and its duration."""
+    def release(self, key) -> None:
+        """A call is over: forget its streaming state."""
+        with self._streams_lock:
+            self._streams.pop(key, None)
+
+    def _stream_spans(self, key, wav_tensor: torch.Tensor, start_abs: float) -> list[dict]:
+        window = 512
+        n_full = wav_tensor.shape[-1] // window
+        with self._streams_lock:
+            st = self._streams.get(key)
+            if st is None or abs(st["start"] - start_abs) > 1e-3 or st["windows"] > n_full:
+                model = copy.deepcopy(self._template)
+                model.reset_states()
+                st = {"start": start_abs, "windows": 0, "probs": [], "model": model, "lock": threading.Lock(), "used": time.monotonic()}
+                self._streams[key] = st
+                if len(self._streams) > 64:  # forgotten calls
+                    for k in [k for k, v in self._streams.items() if time.monotonic() - v["used"] > 300]:
+                        self._streams.pop(k, None)
+        with st["lock"], torch.no_grad():
+            flat = wav_tensor.reshape(-1)
+            for w in range(st["windows"], n_full):
+                st["probs"].append(st["model"](flat[w * window:(w + 1) * window], 16000).item())
+            st["windows"] = n_full
+            st["used"] = time.monotonic()
+            probs = list(st["probs"])
+        return self._from_probs(probs, sampling_rate=16000, return_seconds=True, audio_length_samples=n_full * window)
+
+    def spans(self, wav_tensor: torch.Tensor, sr: int, key=None, start_abs: float | None = None) -> tuple[list[dict], float]:
+        """Speech spans (seconds, relative to the tensor) and its duration. With `key` (the call) and `start_abs` (where the tensor starts on the call's timeline) only the audio
+        that has arrived since the last poll is run through the model."""
+        if key is not None and start_abs is not None and sr == 16000 and self._template is not None:
+            duration_s = wav_tensor.shape[-1] / sr
+            if duration_s < 0.2:
+                return [], duration_s
+            return self._stream_spans(key, wav_tensor, float(start_abs)), duration_s
         if sr != 16000:
             wav_tensor = torch.nn.functional.interpolate(
                 wav_tensor.view(1, 1, -1),

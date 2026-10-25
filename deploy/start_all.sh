@@ -63,7 +63,8 @@ cat > /workspace/bin/_run_tts.sh <<'EOF'
 #!/bin/bash
 source /workspace/kolkata-care-voice-agent/deploy/env.sh
 cd /workspace/kolkata-care-voice-agent
-exec /workspace/tts_venv/bin/python3 -m uvicorn tts_server:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8002
+# several worker processes: one synthesizer per language is single-file (a lock), so 24 callers needing a reply at once queue behind it (load test 2026-10-25)
+exec /workspace/tts_venv/bin/python3 -m uvicorn tts_server:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8002 --workers ${TTS_WORKERS:-3}
 EOF
 cat > /workspace/bin/_run_clinic.sh <<'EOF'
 #!/bin/bash
