@@ -653,6 +653,13 @@ async def _startup():
     global _asr_router, _lid, _tts_router, _admission, _health, _health_task, _languages_active
     import httpx as _httpx
 
+    # httpcore asks "is trio / sniffio installed?" on EVERY request; when a module is missing Python rescans sys.path (stat calls on the network volume) each time -- ~0.3 of the loop's time under
+    # load (profile 2026-10-25). A None entry in sys.modules makes the question answer "no" at once.
+    for _mod in ("trio", "sniffio"):
+        try:
+            __import__(_mod)
+        except ImportError:
+            sys.modules[_mod] = None
     with contextlib.suppress(Exception):  # the CPU threads one process may use for tensor maths: the default is every core, which makes the processes on this machine fight
         import torch as _torch
 
