@@ -25,7 +25,9 @@ given as "now", and never looks at audio before that.
 
 from __future__ import annotations
 
+import itertools
 import os
+import threading
 
 import torch
 
@@ -83,6 +85,19 @@ class TurnDetector:
                 trust_repo=True,
             )
         self._get_speech_timestamps = utils[0]
+        # Real load test 2026-10-25: 24 calls at once CRASHED the whole agent (segmentation fault). Silero's model is STATEFUL (it resets and carries its recurrent state while it runs), and every
+        # call's poll runs `spans` on its own thread against this one shared model. A small POOL of independent copies, each behind its own lock, makes that safe: a poll takes a free copy
+        # (or waits for one), never shares one with another thread. VAD_POOL sets the number of copies (the model is ~2 MB).
+        self._models = [self.model]
+        for _ in range(max(0, int(os.environ.get("VAD_POOL", "6")) - 1)):
+            m, _u = torch.hub.load(
+                repo_or_dir=_LOCAL_SILERO_REPO if os.path.isdir(_LOCAL_SILERO_REPO) else "snakers4/silero-vad",
+                source="local" if os.path.isdir(_LOCAL_SILERO_REPO) else "github",
+                model="silero_vad", force_reload=False, onnx=False, trust_repo=True,
+            )
+            self._models.append(m)
+        self._locks = [threading.Lock() for _ in self._models]
+        self._next = itertools.count()
 
     def spans(self, wav_tensor: torch.Tensor, sr: int) -> tuple[list[dict], float]:
         """Speech spans (seconds, relative to the tensor) and its duration."""
@@ -97,7 +112,16 @@ class TurnDetector:
         duration_s = wav_tensor.shape[-1] / sr
         if duration_s < 0.2:
             return [], duration_s
-        return self._get_speech_timestamps(wav_tensor, self.model, sampling_rate=sr, return_seconds=True), duration_s
+        start = next(self._next) % len(self._models)
+        for k in range(len(self._models)):  # a free copy if there is one...
+            j = (start + k) % len(self._models)
+            if self._locks[j].acquire(blocking=False):
+                try:
+                    return self._get_speech_timestamps(wav_tensor, self._models[j], sampling_rate=sr, return_seconds=True), duration_s
+                finally:
+                    self._locks[j].release()
+        with self._locks[start]:  # ...else wait for one
+            return self._get_speech_timestamps(wav_tensor, self._models[start], sampling_rate=sr, return_seconds=True), duration_s
 
     def poll(
         self, wav_tensor: torch.Tensor, sr: int, completeness: str | None = None, semantic: bool = False

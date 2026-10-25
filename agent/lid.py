@@ -35,6 +35,7 @@ read a phone number in English.
 from __future__ import annotations
 
 import dataclasses
+import threading
 from typing import Any, Protocol
 
 SUPPORTED_LANGUAGES = ("bn", "hi", "en")
@@ -93,6 +94,8 @@ class SpeechBrainVoxLingua107LID:
     def __init__(self, device: str = "cpu"):
         self.device = device
         self._label_idx: dict[str, int] | None = None
+        # one model, many calls on many threads (load test 2026-10-25 crashed the agent with 24 calls at once): inference is serialised
+        self._infer_lock = threading.Lock()
         self._model = None  # lazy: keeps import-time cost at zero for
         # every caller (tests, the router, CI) that never needs the model.
 
@@ -143,6 +146,10 @@ class SpeechBrainVoxLingua107LID:
         return idx
 
     def identify(self, audio_16k_mono) -> LIDResult:  # pragma: no cover - needs the model
+        with self._infer_lock:
+            return self._identify(audio_16k_mono)
+
+    def _identify(self, audio_16k_mono) -> LIDResult:  # pragma: no cover - needs the model
         """`audio_16k_mono`: a float tensor, [T] or [1, T], 16 kHz mono.
 
         Scoring is restricted to bn/hi/en and renormalized. The model has 107
