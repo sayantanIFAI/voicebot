@@ -1277,7 +1277,8 @@ class CallSession:
         # The buffer the turn detector reads holds the ECHO-CANCELLED signal,
         # so the agent's own voice is not what it hears (agent/full_duplex.py).
         x = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
-        result = self.duplex.process(x)
+        # the echo-cancelling maths (FFTs) runs on a worker thread, not on the event loop that serves every call (load profile 2026-10-25)
+        result = await asyncio.to_thread(self.duplex.process, x)
         if result.cleaned.size:
             self.audio.append((np.clip(result.cleaned, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())
         if result.barge_in is not None:
