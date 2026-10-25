@@ -5680,7 +5680,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 return
             if is_ready_to_confirm(st) and booking_capture.whatsapp_due(st):
                 # owner, 2026-10-23: the payment link and the serial number go to WhatsApp -- asked once whether this number has it, before the closing read-back
-                await _speak(session, booking_capture.ask_whatsapp(st, lang), lang)
+                # Owner, 2026-10-25: the address / police station just given is acknowledged AT ONCE, then the WhatsApp question (without the number said again)
+                _heard_now = "" if st.slots.get("_address_heard") else booking_capture.address_heard(st.slots, lang)
+                if _heard_now:
+                    st.slots["_address_heard"] = "1"
+                await _speak(session, f"{_heard_now}{booking_capture.ask_whatsapp(st, lang)}", lang)
                 return
             if is_ready_to_confirm(st):
                 mark_confirming(st)

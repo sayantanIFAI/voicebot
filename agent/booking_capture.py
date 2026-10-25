@@ -834,14 +834,14 @@ _PROMPTS = {
     },
     # Owner, 2026-10-23 (item 15): the number is always asked about -- the payment link and the serial number go to WhatsApp.
     "ask_whatsapp": {
-        "en": "Does the number {digits} have WhatsApp?",
-        "hi": "क्या {digits} इस नंबर पर व्हाट्सऐप है?",
-        "bn": "{digits} এই নম্বরে কি হোয়াটসঅ্যাপ আছে?",
+        "en": "Does this number have WhatsApp?",
+        "hi": "क्या इस नंबर पर व्हाट्सऐप है?",
+        "bn": "এই নম্বরে কি হোয়াটসঅ্যাপ আছে?",
     },
     "whatsapp_again": {
-        "en": "Sorry, I did not catch that. Does the number {digits} have WhatsApp, yes or no?",
-        "hi": "माफ़ कीजिए, समझ नहीं आया। क्या {digits} पर व्हाट्सऐप है, हाँ या नहीं?",
-        "bn": "দুঃখিত, বুঝতে পারিনি। {digits} এই নম্বরে কি হোয়াটসঅ্যাপ আছে, হ্যাঁ নাকি না?",
+        "en": "Sorry, I did not catch that. Does this number have WhatsApp, yes or no?",
+        "hi": "माफ़ कीजिए, समझ नहीं आया। क्या इस नंबर पर व्हाट्सऐप है, हाँ या नहीं?",
+        "bn": "দুঃখিত, বুঝতে পারিনি। এই নম্বরে কি হোয়াটসঅ্যাপ আছে, হ্যাঁ নাকি না?",
     },
     "whatsapp_number": {
         "en": "Okay. Please tell me the number that has WhatsApp, all ten digits.",
@@ -1160,6 +1160,14 @@ def whatsapp_due(st) -> bool:
     if st.action != "book_appointment" or st.phone_declined or st.slots.get("_wa_asked"):
         return False
     return bool(st.slots.get("contact_phone") or st.slots.get("phone"))
+
+
+def address_heard(slots: dict, lang: str) -> str:
+    """"ঠিকানা X, থানা Y শুনেছি।" -- the address (with its police station) as heard, said at once when it is taken; the closing read-back then does not say it again."""
+    addr = slots.get("patient_address")
+    if not addr:
+        return ""
+    return {"bn": f"ঠিকানা {addr} শুনেছি। ", "hi": f"पता {addr} सुना। "}.get(lang, f"I have the address as {addr}. ")
 
 
 def ask_whatsapp(st, lang: str) -> str:

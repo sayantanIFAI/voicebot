@@ -420,7 +420,7 @@ def booking_confirmation_readback(slots: dict, action: str, lang: str) -> str:
     hi = lang == "hi"
     if action == "book_appointment":
         heard = ""
-        if slots.get("patient_address"):
+        if slots.get("patient_address") and not slots.get("_address_heard"):
             heard = f"पता {slots['patient_address']} सुना। " if hi else f"I have the address as {slots['patient_address']}. "
         return heard + slot_proposal.arrival_question(slots.get("date"), _shown(slots), "hi" if hi else "en")
     if action == "book_test":
