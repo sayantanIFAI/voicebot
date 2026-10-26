@@ -108,7 +108,7 @@ export PRONUNCIATION_ALLOW_DRAFT=${PRONUNCIATION_ALLOW_DRAFT:-1}
 
 # ---- admission control (agent/admission.py) -------------------------------
 # Cap is per process; the WebM and PCM services each count their own calls.
-export ADMISSION_MAX_CALLS=${ADMISSION_MAX_CALLS:-28}
+export ADMISSION_MAX_CALLS=${ADMISSION_MAX_CALLS:-36}
 # `touch` this file = human-only mode for every NEW call, no deploy needed.
 export ADMISSION_BYPASS_FILE=/workspace/.ai_bypass
 # Turn-latency load shedding is OFF until calibrated against a real load
