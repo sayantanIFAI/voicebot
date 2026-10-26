@@ -483,6 +483,13 @@ def verbalize(text: str, lang: str = "bn") -> str:
 
 _RE_PRICE = re.compile(r"\d[\d,]*\s*(টাকা|rupees|रुपये|₹)")
 
+# Owner, 2026-10-26: agent/booking_capture.py's own phone-readback prompts pre-space their digits before the
+# template is filled in ("9 8 7 6 5 , 4 3 2 1 0" -- agent/digit_speech.py, reusing agent/figures.py's own grouping
+# rule), so by the time a reply clause reaches this check the digits are no longer the compact run _RE_PHONE
+# matches. This recognises that already-grouped form too -- detection only, for the slow-speech decision below;
+# text TRANSFORMATION (the _RE_PHONE.sub(...) calls elsewhere in this file) is untouched, still compact-run only.
+_RE_PHONE_GROUPED = re.compile(r"\b\d(?:[ ,]+\d){9,}\b")
+
 
 def contains_critical_figure(text: str) -> bool:
     """KCD-456: does this reply carry a price, phone number or reference
@@ -492,7 +499,9 @@ def contains_critical_figure(text: str) -> bool:
     speech_norm.py already recognises decide this too, rather than a
     second, independent definition of "a figure" drifting from the one
     that actually gets spelled out."""
-    return bool(_RE_PHONE.search(text) or _RE_CONF_ID.search(text) or _RE_PRICE.search(text))
+    return bool(
+        _RE_PHONE.search(text) or _RE_PHONE_GROUPED.search(text) or _RE_CONF_ID.search(text) or _RE_PRICE.search(text)
+    )
 
 
 def unspeakable_spans(text: str, lang: str = "bn") -> list[str]:

@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 
 from agent import spoken_codes
+from agent.digit_speech import spoken_digit_groups
 
 MAX_TRIES = 3  # asking for / confirming the number: after this many misses the caller is pointed to the counter instead of being asked forever
 
@@ -95,7 +96,7 @@ def _lang(lang: str) -> str:
 
 
 def _digits_spoken(number: str) -> str:
-    return " ".join(number)
+    return spoken_digit_groups(number)
 
 
 ASK_NUMBER = {

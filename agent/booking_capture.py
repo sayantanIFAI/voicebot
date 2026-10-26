@@ -27,6 +27,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from agent import nato_letters, number_words, phonetic_match, spoken_codes, slot_grounding, whatsapp_cues
+from agent.digit_speech import spoken_digit_groups
 
 # ----------------------------------------------------------------------------------------------------------------- digits
 
@@ -1174,7 +1175,7 @@ def address_heard(slots: dict, lang: str) -> str:
 
 def ask_whatsapp(st, lang: str) -> str:
     st.slots["_wa_asked"] = "1"
-    return prompt("ask_whatsapp", lang, digits=" ".join(str(st.slots.get("contact_phone") or st.slots.get("phone"))))
+    return prompt("ask_whatsapp", lang, digits=spoken_digit_groups(st.slots.get("contact_phone") or st.slots.get("phone")))
 
 
 def _use_whatsapp_number(st, number: str, plan: "TurnPlan") -> bool:
@@ -1201,7 +1202,7 @@ def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
         step = absorb(st.phone_buffer, text, True)
         if step.status == "partial":
             st.phone_buffer = step.buffer
-            plan.speak = prompt("phone_partial_two" if len(step.buffer) == 2 else "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial", lang, n=len(step.buffer), digits=" ".join(step.buffer))
+            plan.speak = prompt("phone_partial_two" if len(step.buffer) == 2 else "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial", lang, n=len(step.buffer), digits=spoken_digit_groups(step.buffer))
             return True
         if step.status in ("invalid", "compound", "cleared"):
             st.phone_buffer = ""
@@ -1227,7 +1228,7 @@ def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
         plan.slots, plan.skip_model = {}, True
         return True
     st.slots["_wa_tries"] = tries + 1
-    plan.speak = prompt("whatsapp_again", lang, digits=" ".join(str(st.slots.get("phone") or "")))
+    plan.speak = prompt("whatsapp_again", lang, digits=spoken_digit_groups(st.slots.get("phone")))
     return True
 
 
@@ -1469,7 +1470,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
                 plan.speak = prompt("phone_cleared", lang)
                 return plan
         else:  # neither a yes, a no nor an age: the same read-back once more
-            plan.speak = readback(st, lang, "phone", " ".join(pending_phone))
+            plan.speak = readback(st, lang, "phone", spoken_digit_groups(pending_phone))
             return plan
 
     # 1c-wa. The answer to "does this number have WhatsApp?" (owner, 2026-10-23).
@@ -1490,12 +1491,16 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
             plan.skip_model = True
             return plan
 
-    # 3. The phone number.
+    # 3. The phone number -- never starts before the patient's NAME is captured (owner, 2026-10-26: "flow must be
+    # name then phone"; real calls showed a caller's volunteered phone number jumping the queue ahead of the name).
+    # A number already in progress from an earlier turn (st.phone_buffer) is still finished once started -- only a
+    # FRESH number is held back, so the sentence is left for the name-capture rules below instead.
     missing = missing_required(st)
+    name_not_yet_given = "patient_name" in missing and not st.phone_buffer
     asked = "phone" in missing and (missing[0] == "phone" or "phone" in st.asked_fields)
     if "phone" in missing and not asked and any(t in _PHONE_CUES for t in _words(text)):
         asked = True  # "the number is ..." -- the caller is plainly giving the phone number, asked or not
-    step = absorb(st.phone_buffer, text, asked)
+    step = PhoneStep("none", buffer=st.phone_buffer) if name_not_yet_given else absorb(st.phone_buffer, text, asked)
     if step.status == "complete":
         st.phone_buffer = ""
         plan.phone = step.number
@@ -1512,7 +1517,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
             "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial_two" if len(step.buffer) == 2 else "phone_partial",
             lang,
             n=len(step.buffer),
-            digits=" ".join(step.buffer),
+            digits=spoken_digit_groups(step.buffer),
         )
         if step.pure:
             plan.speak = spoken

@@ -28,7 +28,7 @@ from agent.apology import count_apologies
 
 # lang -> variants, rotated
 _ACK = {
-    "bn": ["ঠিক আছে।", "বুঝেছি।", "আচ্ছা।"],
+    "bn": ["ঠিক আছে।", "বুঝেছি।", "আচ্ছা।", "হুম।"],
     "hi": ["ठीक है।", "समझ गई।", "जी।"],
     "en": ["Sure.", "Understood.", "Alright."],
 }

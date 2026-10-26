@@ -233,7 +233,7 @@ _ANY_NO = ("no", "nope", "nahi", "nahin", "नहीं", "नही", "না",
 # Real call 2026-10-17: "এটাই ঠিক" (that is right) answered a name read-back and was NOT a yes, so the same question was asked again and again, and the
 # words were then taken for a new name. Every ordinary way of saying "that is correct" -- a bare ঠিক / ठीक / सही / correct / sahi, or a hum -- is a yes.
 _ANY_YES = (
-    "yes", "yeah", "yep", "ok", "okay", "haan", "han", "hya", "ha", "हाँ", "हां", "हा", "ओके", "হ্যাঁ", "হ্যা", "হাঁ", "হা", "ওকে", "ji", "जी हाँ", "জি", "जी",
+    "yes", "yeah", "yep", "ok", "okay", "absolutely", "haan", "haain", "han", "hya", "ha", "हाँ", "हां", "हा", "ओके", "হ্যাঁ", "হ্যা", "হাঁ", "হা", "ওকে", "ji", "जी हाँ", "জি", "जी",
     "ঠিক", "ঠিকই", "সঠিক", "ठीक", "सही", "correct", "right", "sahi", "sahee", "theek", "thik", "exactly",
 )
 _NOT_NO = {"hi": ("na", "nai", "ना"), "en": ("na", "nai", "না", "নয়"), "bn": ()}  # words that are ordinary filler / other meaning in that call

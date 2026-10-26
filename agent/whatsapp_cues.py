@@ -60,7 +60,7 @@ _OTHER = frozenset(
 )  # fmt: skip
 _YES = frozenset(
     {
-        "yes", "yeah", "yep", "yup", "ya", "yah", "ok", "okay", "sure", "correct", "right", "thik", "theek", "hmm", "hm", "hmmm", "ha", "haa", "haan", "han", "hanji", "hain", "hai", "hae", "hya",
+        "yes", "yeah", "yep", "yup", "ya", "yah", "ok", "okay", "sure", "absolutely", "correct", "right", "thik", "theek", "hmm", "hm", "hmmm", "ha", "haa", "haan", "haain", "han", "hanji", "hain", "hai", "hae", "hya",
         "hyan", "ji", "jee", "ache", "achhe", "ase", "acche", "achche", "aache", "achi", "ahe",
         "আছে", "আছি", "হ্যাঁ", "হ্যা", "হাঁ", "হা", "জি", "ঠিক", "ওকে", "হুম", "হ্যাঁঁ",
         "हाँ", "हां", "हा", "हाँजी", "जी", "है", "हैं", "ठीक", "हम्म", "ओके", "हूँ", "हूं", "हे",

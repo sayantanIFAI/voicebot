@@ -125,23 +125,29 @@ def mulaw_encode(pcm: np.ndarray) -> bytes:
 
 
 class Upsampler8to16:
-    """sourav, 2026-10-21: why: the agent's buffer and ASR expect 16 kHz but a phone line is 8 kHz. Flow: each input
-    sample yields two outputs -- the midpoint with the PREVIOUS sample, then the sample itself -- so the result is a
-    straight-line interpolation that stays continuous across 20 ms frame boundaries (the last sample of one frame is
-    remembered for the next). Adds no information (the line is band-limited to 4 kHz anyway); it only fixes the rate."""
+    """sourav, 2026-10-21; owner, 2026-10-26: why: the agent's buffer and ASR expect 16 kHz but a phone line is 8 kHz.
+    Flow: zero-stuff each 8 kHz sample with a following zero, then run the same Blackman-windowed-sinc low-pass this
+    file already uses outbound (resample_to_8k, below) to remove the spectral image the zero-stuffing creates --
+    the standard way to interpolate, and consistent with how this file treats the other direction. The filter's
+    state (its last ntaps-1 input-rate samples) is carried across 20 ms frame boundaries exactly as the previous
+    single-sample carry was, so there is still no discontinuity at a frame edge. Cutoff matches resample_to_8k's own
+    3600 Hz (the line is band-limited under 4 kHz anyway; taps are scaled by the upsample factor, 2, since
+    zero-stuffing halves the signal's DC energy that an ordinary unity-gain filter would otherwise lose)."""
+
+    _NTAPS = 31  # group delay (NTAPS-1)/2 = 15 samples @ 16 kHz =~ 0.9 ms: a one-time constant, not per-frame, cost
 
     def __init__(self) -> None:
-        self._prev = 0.0
+        self._taps = _lowpass_taps(3600.0, 16000, self._NTAPS) * 2.0
+        self._carry = np.zeros(self._NTAPS - 1, dtype=np.float32)
 
     def process(self, samples: np.ndarray) -> np.ndarray:
         if samples.size == 0:
             return np.empty(0, dtype=np.int16)
-        x = samples.astype(np.float32)
-        before = np.concatenate((np.array([self._prev], dtype=np.float32), x[:-1]))
-        out = np.empty(2 * x.size, dtype=np.float32)
-        out[0::2] = (before + x) * 0.5
-        out[1::2] = x
-        self._prev = float(x[-1])
+        zero_stuffed = np.zeros(2 * samples.size, dtype=np.float32)
+        zero_stuffed[0::2] = samples.astype(np.float32)
+        padded = np.concatenate((self._carry, zero_stuffed))
+        out = np.convolve(padded, self._taps, mode="valid")
+        self._carry = padded[-(self._NTAPS - 1):]
         return np.clip(np.rint(out), -32768, 32767).astype(np.int16)
 
 
@@ -154,10 +160,34 @@ def _lowpass_taps(cutoff_hz: float, rate: int, ntaps: int = 127) -> np.ndarray:
     return (h / h.sum()).astype(np.float32)
 
 
+def _sinc_interp(x: np.ndarray, positions: np.ndarray, half_width: int = 8) -> np.ndarray:
+    """owner, 2026-10-26: band-limited (windowed-sinc) interpolation of `x` at fractional sample `positions`,
+    Blackman-windowed over +/- half_width input samples either side of each position -- the standard way to
+    resample at an arbitrary (non-integer) ratio, replacing plain straight-line interpolation's smearing of the
+    high end of the band with the same kind of window _lowpass_taps already uses, just evaluated continuously
+    instead of at fixed taps. Pure numpy, no new dependency; vectorised over every output position at once (one
+    reply's worth of samples at a time, not per 20 ms frame, so this has no real-time budget to keep)."""
+    n = x.size
+    idx0 = np.floor(positions).astype(np.int64)
+    frac = (positions - idx0).astype(np.float64)
+    offsets = np.arange(-half_width + 1, half_width + 1, dtype=np.float64)
+    d = frac[:, None] - offsets[None, :]  # (n_out, 2*half_width): each tap's distance from the fractional position
+    t = (d + half_width) / (2.0 * half_width)
+    window = np.where((t >= 0.0) & (t <= 1.0), 0.42 - 0.5 * np.cos(2 * np.pi * t) + 0.08 * np.cos(4 * np.pi * t), 0.0)
+    weights = np.sinc(d) * window
+    weights /= np.where(weights.sum(axis=1, keepdims=True) != 0, weights.sum(axis=1, keepdims=True), 1.0)  # unity gain
+    tap_idx = idx0[:, None] + offsets[None, :].astype(np.int64)
+    valid = (tap_idx >= 0) & (tap_idx < n)
+    samples = x[np.clip(tap_idx, 0, n - 1)] * valid
+    return (samples * weights).sum(axis=1).astype(np.float32)
+
+
 def resample_to_8k(samples: np.ndarray, src_rate: int) -> np.ndarray:
-    """sourav, 2026-10-21: TTS replies are 22.05/24/16 kHz; the phone wants 8 kHz. Flow: low-pass at 3.6 kHz at the
-    source rate (anti-aliasing), then linear-interpolate onto the 8 kHz grid. Pure numpy so the bridge adds no new
-    dependency to the pod. Returns float32 samples."""
+    """sourav, 2026-10-21; owner, 2026-10-26: TTS replies are 22.05/24/16 kHz; the phone wants 8 kHz. Flow: low-pass
+    at 3.6 kHz at the source rate (anti-aliasing), then a windowed-sinc interpolation onto the 8 kHz grid -- matching
+    the same filtering standard this file's inbound path (Upsampler8to16) already uses, instead of the straight-line
+    interpolation that used to do this grid mapping. Pure numpy so the bridge adds no new dependency to the pod.
+    Returns float32 samples."""
     x = np.asarray(samples, dtype=np.float32)
     if src_rate == TWILIO_RATE or x.size == 0:
         return x
@@ -165,7 +195,7 @@ def resample_to_8k(samples: np.ndarray, src_rate: int) -> np.ndarray:
         x = np.convolve(x, _lowpass_taps(3600.0, src_rate), mode="same")
     n_out = int(x.size * TWILIO_RATE / float(src_rate))
     positions = np.arange(n_out) * (src_rate / float(TWILIO_RATE))
-    return np.interp(positions, np.arange(x.size), x).astype(np.float32)
+    return _sinc_interp(x, positions)
 
 
 def wav_to_mulaw_8k(wav_bytes: bytes) -> bytes:

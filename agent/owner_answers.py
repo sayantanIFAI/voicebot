@@ -17,6 +17,8 @@ import os
 import re
 import unicodedata
 
+from agent.digit_speech import spoken_digit_groups
+
 CLINIC_BRANCH = os.environ.get("CLINIC_BRANCH", "Kolkata")
 MINUTES_PER_PATIENT = (2, 5)  # owner, 2026-10-18: "per patient keep 2 to 5 minutes"
 TRAVEL_TIME = "30 minutes to 1 hour"
@@ -305,7 +307,7 @@ def where_reply(lang: str) -> str:
 
 
 def location_sent(digits: str, lang: str) -> str:
-    return _LOCATION_SENT.get(lang, _LOCATION_SENT["en"]).format(digits=" ".join(digits))
+    return _LOCATION_SENT.get(lang, _LOCATION_SENT["en"]).format(digits=spoken_digit_groups(digits))
 
 
 def location_again(lang: str) -> str:

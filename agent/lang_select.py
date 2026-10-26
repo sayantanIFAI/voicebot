@@ -173,6 +173,16 @@ ENGLISH_MIN_WORD_SHARE = 0.5
 STABLE_CALL_LID = 0.8  # language ID this sure of the call's language ...
 STABLE_CALL_ENGLISH_SHARE = 0.75  # ... and English must be at least this plainly English (and its decoders agree this well) to take the turn
 STABLE_CALL_ENGLISH_AGREEMENT = 0.7
+
+# Owner, 2026-10-26: a one- or two-word answer is the hardest case for language ID -- the least acoustic evidence
+# to go on -- so it should not be enough, on its own, to move an established bn/hi call's TRANSCRIPT to English on
+# language ID barely clearing the ENGLISH_MIN_LID floor (0.05). This is reasoned, not measured against a real failing
+# call (the Twilio calls read so far all happened to land the right way already); it only screens out that very low
+# floor for short answers specifically, so a clearer plurality for English (SHORT_ENGLISH_MIN_LID) still goes
+# through -- a short, bona fide English answer is not silently redirected. The explicit "reply in English" switch
+# request above is unaffected: it is checked, and can win, before this guard ever runs.
+SHORT_UTTERANCE_WORDS = 2
+SHORT_ENGLISH_MIN_LID = 0.35
 _ENGLISH_WORDS = frozenset(
     """
 a an the and or but if so of to in on at for from with by about as is are was were be been am do does did have has had
@@ -316,6 +326,13 @@ def pick_candidate(
                     and lid_scores.get(prior, 0.0) >= STABLE_CALL_LID
                     and lid_scores.get("en", 0.0) < ENGLISH_MIN_LID
                     and (english_word_share(r.text) < STABLE_CALL_ENGLISH_SHARE or r.decoder_agreement < STABLE_CALL_ENGLISH_AGREEMENT)
+                ):
+                    continue
+                if (
+                    prior in ("bn", "hi")
+                    and lid_scores
+                    and len(r.text.split()) <= SHORT_UTTERANCE_WORDS
+                    and lid_scores.get("en", 0.0) < SHORT_ENGLISH_MIN_LID
                 ):
                     continue
                 return lang, r
