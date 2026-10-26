@@ -4,6 +4,10 @@
 **Written:** 2026-09-08, from a session that deployed, tested and audited this system end to end.
 **Repo state at handover:** `main` @ `569f0c4`, working tree clean, in sync with `origin`.
 
+> **Update, 2026-10-26.** The system now runs as separate processes so that 24-36 calls can be served together: see `docs/adr/0002-concurrent-calls-architecture.md`
+> (what and why, load-test results, the two problems still open) and `docs/DEPLOY_FROM_SCRATCH.md` (how to build it on an empty machine). The old "pod referenced below is gone" text is history.
+> Open: end-of-speech delay and not-heard calls under 30 simultaneous calls (ADR 0002 section 5).
+
 > **Update, 2026-09-15 — read this first, everything below is otherwise still accurate.**
 > The workload target was pinned down (6,000–7,000 calls/day, ~10h window,
 > 20–30 concurrent) and the production shape changed from the two-GPU plan

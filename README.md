@@ -1,5 +1,11 @@
 # Kolkata Care Diagnostics -- Voice Agent (Web Prototype)
 
+> **Current state (2026-10-26) -- read this first.** The text below is the original prototype write-up and is **historic**: the live system is a multi-process stack
+> (PCM agent on :8101, separate Bengali/Hindi recogniser service, three TTS workers, Ollama, clinic API, nginx gateway).
+> * Architecture and why: [`docs/adr/0002-concurrent-calls-architecture.md`](docs/adr/0002-concurrent-calls-architecture.md) (builds on [ADR 0001](docs/adr/0001-pilot-single-l4-architecture.md)).
+> * Build it on an empty machine: [`docs/DEPLOY_FROM_SCRATCH.md`](docs/DEPLOY_FROM_SCRATCH.md) (exact package versions are in `deploy/locks/`).
+> * The "Deployment" section further down describes the old WebM-only setup; do not follow it.
+
 Bengali phone-style voice agent: test rates, doctor availability, and
 appointment booking, spoken over a browser WebSocket. Callers never touch
 telephony or a VPN -- this is a bench prototype reachable from a RunPod

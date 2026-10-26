@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from agent import eye_words
 from agent import slot_proposal
 from agent.report_time_wording import report_time_phrase, report_time_safety_note
 from agent.sample_wording import sample_sentence
@@ -721,6 +722,8 @@ def department_route_reply(result: dict, symptom: str, lang: str) -> str:
             if hi
             else f"This could be either {' or '.join(parts)}. Which would you like?"
         )
+    if eye_words.mentions_eye(symptom):
+        return eye_words.NO_EYE_DEPARTMENT["hi" if hi else "en"]
     return (
         "माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर पूछ सकते हैं।"
         if hi

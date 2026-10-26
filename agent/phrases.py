@@ -166,6 +166,15 @@ GREETING_IDENTITY = {
 }
 
 
+# Owner, 2026-10-26: if calls are recorded (the pilot phase), the caller must be told. OFF by default: switch it on with CALL_RECORDING_NOTICE=1 in the agent's environment, or by adding a
+# `recording_notice` message in the operator's message table (agent/messages.py). It is said once, in the greeting, after the identity sentence.
+RECORDING_NOTICE = {
+    "bn": "এই কলটি পরিষেবার মান উন্নত করার জন্য রেকর্ড করা হচ্ছে।",
+    "hi": "सेवा को बेहतर बनाने के लिए यह कॉल रिकॉर्ड की जा रही है।",
+    "en": "This call is being recorded to improve our service.",
+}
+
+
 def greeting_text(lang: str) -> str:
     """welcome. who you are speaking with. question -- the welcome and the question are the two sentences of the
     `greeting` phrase; the identity sentence (and, only if the operator has set one, the 112 pointer) go between."""
@@ -176,6 +185,10 @@ def greeting_text(lang: str) -> str:
     middle = [_messages.text("greeting_identity", lang, GREETING_IDENTITY.get(lang) or GREETING_IDENTITY["bn"])]
     if _messages.has("emergency_hint", lang):
         middle.append(_messages.text("emergency_hint", lang, EMERGENCY_HINT.get(lang) or EMERGENCY_HINT["bn"]))
+    import os
+
+    if os.environ.get("CALL_RECORDING_NOTICE", "0") == "1" or _messages.has("recording_notice", lang):
+        middle.append(_messages.text("recording_notice", lang, RECORDING_NOTICE.get(lang) or RECORDING_NOTICE["bn"]))
     if len(parts) < 2:
         # sourav: the built-in greeting is now ONE sentence (the question), so the identity goes FIRST:
         # "Sonoscan Vaani. How can I help you?" -- never "How can I help you? Sonoscan Vaani."
@@ -233,6 +246,12 @@ PHRASES["en"]["rx_no"] = (
 PHRASES["bn"]["handoff_better"] = "আপনাকে আরও ভালোভাবে সাহায্য করার জন্য আমি এখন আপনাকে আমাদের স্টাফের সাথে যুক্ত করছি, দয়া করে লাইনে থাকুন।"
 PHRASES["hi"]["handoff_better"] = "आपकी और बेहतर मदद के लिए मैं अब आपको हमारे स्टाफ़ से जोड़ रही हूँ, कृपया लाइन पर बने रहिए।"
 PHRASES["en"]["handoff_better"] = "To help you better, I am now connecting you to our staff, please stay on the line."
+
+# Owner, 2026-10-26: "do you do blood tests?" is answered with a question, not with the whole list of twenty-odd names (too long, the caller loses patience): which blood test?
+# A caller who does not know is sent to the prescription-photo route (send_prescription_whatsapp, below).
+PHRASES["bn"]["ask_which_blood_test"] = "হ্যাঁ, আমাদের এখানে রক্তের পরীক্ষা হয়। কোন রক্তের পরীক্ষাটা করাতে চান?"
+PHRASES["hi"]["ask_which_blood_test"] = "जी, हमारे यहाँ ब्लड टेस्ट होते हैं। आपको कौन सा ब्लड टेस्ट करवाना है?"
+PHRASES["en"]["ask_which_blood_test"] = "Yes, we do blood tests. Which blood test would you like?"
 
 PHRASES["bn"]["send_prescription_whatsapp"] = (
     "প্রেসক্রিপশনের একটা ছবি এই হোয়াটসঅ্যাপ নম্বরে পাঠিয়ে দিন, ৯৬৩৫৫৮৮৩০৬। আমাদের একজন সহকর্মী দেখে আপনাকে কল করবেন।"

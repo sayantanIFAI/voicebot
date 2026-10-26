@@ -19,7 +19,11 @@ from i18n_content import (
     DEFAULT_PREP_HI,
     FAQ_I18N,
     FAQ_KEYWORDS_I18N,
+    HOURS_BN_EXTRA,
+    HOURS_HI_EXTRA,
     LOCATION_BN_NATIVE,
+    PAYMENT_BN_EXTRA,
+    PAYMENT_HI_EXTRA,
     LOCATION_CROSS_SCRIPT,
     LOCATION_HI_NATIVE,
     LOCATION_ROMAN,
@@ -350,7 +354,9 @@ FAQ_ENTRIES = [
             "টেস্ট করাতে কখন আসব",
             "কখন আসতে হবে",
             "কটার মধ্যে আসতে হবে",
-        ],
+        ]
+        + HOURS_BN_EXTRA
+        + HOURS_HI_EXTRA,
         "আমাদের ক্লিনিক প্রতিদিন সকাল আটটা থেকে রাত আটটা পর্যন্ত খোলা থাকে, রবিবার সকাল আটটা থেকে দুপুর দুটো পর্যন্ত।",
     ),
     (
@@ -377,7 +383,7 @@ FAQ_ENTRIES = [
         # said as "ক্যাশ" -- the statement ("online e dite parbo na, kash e dibo") then matched NO keyword here
         # at all and went to the LLM, which misread it as a symptom ("department_query") instead of a payment
         # question. Added as its own bare form, same reasoning as the "ক্যাশ" vs "ক্যাশলেস" fix just below.
-        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ", "ক্যাশ", "কাশ", "গুগল পে", "পেটিএম", "ফোনপে", "জি পে", "জিপে", "অনলাইন পেমেন্ট", "অনলাইনে পেমেন্ট", "অনলাইনে দেব", "পেমেন্ট অনলাইনে"],
+        ["পেমেন্ট", "টাকা কীভাবে দেব", "কার্ড চলে", "ইউপিআই", "নগদ", "ক্যাশ", "কাশ", "গুগল পে", "পেটিএম", "ফোনপে", "জি পে", "জিপে", "অনলাইন পেমেন্ট", "অনলাইনে পেমেন্ট", "অনলাইনে দেব", "পেমেন্ট অনলাইনে"] + PAYMENT_BN_EXTRA + PAYMENT_HI_EXTRA,
         "নগদ, সব ধরনের কার্ড এবং ইউপিআই -- সব মাধ্যমেই পেমেন্ট নেওয়া হয়।",
     ),
     (

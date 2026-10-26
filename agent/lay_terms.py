@@ -63,6 +63,25 @@ _PHRASES: dict[str, str] = {
     "blood test": BLOOD,
     "blood check": BLOOD,
     "blood work": BLOOD,
+    # Owner, 2026-10-26: "वो ब्लड टेस्ट होता है क्या आप लोग के यहाँ पे" matched three different tests and asked "CBC or sugar or PP?"; "ব্লাড টেস্ট" is how most Bengali callers say it
+    "ब्लड टेस्ट": BLOOD,
+    "ब्लड का टेस्ट": BLOOD,
+    "ब्लड की जांच": BLOOD,
+    "ब्लड की जाँच": BLOOD,
+    "ब्लड जांच": BLOOD,
+    "ब्लड चेक": BLOOD,
+    "खून का टेस्ट": BLOOD,
+    "खून की जाँच": BLOOD,
+    "खून जांच": BLOOD,
+    "रक्त की जाँच": BLOOD,
+    "रक्त का टेस्ट": BLOOD,
+    "ব্লাড টেস্ট": BLOOD,
+    "ব্লাড পরীক্ষা": BLOOD,
+    "ব্লাডের টেস্ট": BLOOD,
+    "রক্ত চেক": BLOOD,
+    "blud test": BLOOD,
+    "khoon ka test": BLOOD,
+    "rokto check": BLOOD,
     # NOTE: there is deliberately NO unconditional "urine" entry here (unlike BLOOD, which has many different
     # blood tests so a bare mention is genuinely ambiguous). The catalogue has essentially one urine test
     # ("Urine Routine Examination"), so intercepting "urine test" here would hijack a caller directly asking
@@ -101,6 +120,29 @@ _PHRASES: dict[str, str] = {
     "sar ki jaanch": HEAD,
     "head scan": HEAD,
     "head picture": HEAD,
+    # Owner, 2026-10-26 (real Hindi call): "माथा का करवाना था टेस्ट", "पेट का चेक उप करवाना था पेट का टेस्ट" -- the body part and "test / check-up" in everyday Hindi and Bengali
+    "माथा का टेस्ट": HEAD,
+    "माथे का टेस्ट": HEAD,
+    "माथा का स्कैन": HEAD,
+    "माथा का करवाना": HEAD,
+    "माथे का करवाना": HEAD,
+    "माथा का चेक": HEAD,
+    "माथे की जांच": HEAD,
+    "सिर का टेस्ट": HEAD,
+    "सिर का स्कैन": HEAD,
+    "सिर का करवाना": HEAD,
+    "सिर का चेकअप": HEAD,
+    "दिमाग का टेस्ट": HEAD,
+    "मাথার টেস্ট": HEAD,
+    "মাথার চেকআপ": HEAD,
+    "पेट का टेस्ट": ABDOMEN,
+    "पेट का चेक": ABDOMEN,
+    "पेट का करवाना": ABDOMEN,
+    "पेट का स्कैन": ABDOMEN,
+    "पेट का अल्ट्रासाउंड": ABDOMEN,
+    "पेट का सोनोग्राफी": ABDOMEN,
+    "পেটের টেস্ট": ABDOMEN,
+    "পেটের চেকআপ": ABDOMEN,
 }
 
 # OWNER'S INSTRUCTION, 2026-10-12: generic imaging words ("scan", "x-ray", "ultrasound") are deliberately NOT in
@@ -231,3 +273,30 @@ def expresses_not_knowing_test_name(text: str) -> bool:
     comment above _DOES_NOT_KNOW_PHRASES for the scope this is meant to be used in."""
     norm = normalise(text)
     return bool(norm) and any(normalise(p) in norm for p in _DOES_NOT_KNOW_PHRASES)
+
+
+# Owner, 2026-10-26: the caller was just asked "which blood test?" and cannot say ("नहीं मालूम, प्रिस्क्रिप्शन में लिखा है", "ডাক্তার বলেছে, নামটা জানি না"). Broader than the phrases above because it
+# is used ONLY as the answer to that one question, never on an ordinary turn.
+_UNSURE_WHICH_TEST: tuple[str, ...] = (
+    "জানি না", "জানা নেই", "মনে নেই", "মনে পড়ছে না", "বলতে পারছি না", "প্রেসক্রিপশনে", "প্রেসক্রিপশন এ", "ডাক্তার বলেছে", "ডাক্তার বলেছেন", "ডাক্তার দিয়েছে", "কাগজে লেখা",
+    "नहीं मालूम", "मालूम नहीं", "नही मालूम", "पता नहीं", "नहीं पता", "नही पता", "याद नहीं", "प्रिस्क्रिप्शन", "प्रेक्शन", "पर्चे में", "पर्चा", "डॉक्टर बोला", "डॉक्टर ने बोला", "डॉक्टर ने कहा",
+    "don't know", "dont know", "do not know", "not sure", "no idea", "prescription", "doctor said", "doctor told", "doctor wrote",
+    "jani na", "pata nahi", "malum nahi",
+)
+_WANTS_THE_LIST: tuple[str, ...] = (
+    "কী কী", "কি কি", "কোন কোন", "কোনগুলো", "সবগুলো", "সব গুলো", "তালিকা", "লিস্ট",
+    "क्या क्या", "कौन कौन", "कौन-कौन", "कौन से कौन से", "सब", "सूची", "लिस्ट",
+    "what all", "which ones", "which all", "list", "all of them", "what are they",
+)
+
+
+def says_unsure_which_test(text: str) -> bool:
+    """True when `text` says the caller does not know which test (or points to the prescription / the doctor). Only meaningful right after "which blood test?"."""
+    norm = normalise(text)
+    return bool(norm) and any(normalise(p) in norm for p in _UNSURE_WHICH_TEST)
+
+
+def wants_the_list(text: str) -> bool:
+    """True when `text` asks to hear which tests there are ("কী কী আছে", "क्या क्या होता है"). Only meaningful right after "which blood test?"."""
+    norm = normalise(text)
+    return bool(norm) and any(normalise(p) in norm for p in _WANTS_THE_LIST)

@@ -106,6 +106,10 @@ export VOICE_AGENT_LID_DIR=/workspace/lid_model
 # agent/pronunciation.review_sheet()) before a real launch.
 export PRONUNCIATION_ALLOW_DRAFT=${PRONUNCIATION_ALLOW_DRAFT:-1}
 
+# ---- call recording notice (agent/phrases.py) -------------------------------
+# 1 = the greeting also says "this call is being recorded to improve our service". Switch it ON whenever calls are recorded (pilot phase). Default OFF: nothing is recorded by this stack itself.
+export CALL_RECORDING_NOTICE=${CALL_RECORDING_NOTICE:-0}
+
 # ---- admission control (agent/admission.py) -------------------------------
 # Cap is per process; the WebM and PCM services each count their own calls.
 export ADMISSION_MAX_CALLS=${ADMISSION_MAX_CALLS:-36}

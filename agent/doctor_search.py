@@ -36,6 +36,8 @@ _FEMALE = (
     "female gynae", "lady gynae", "female gyne", "lady gyne", "female physician", "female surgeon", "lady surgeon", "female dentist", "lady dentist", "madam doctor", "doctor madam", "female dr", "lady dr",
     "মহিলা ডাক্তার", "মহিলা গাইনো", "মহিলা গাইনি", "লেডি ডাক্তার", "লেডিস ডাক্তার", "মেয়ে ডাক্তার", "মেয়েদের ডাক্তার", "ম্যাডাম ডাক্তার", "মহিলা চিকিৎসক", "মহিলা সার্জন", "লেডি গাইনো", "লেডি গাইনি", "মহিলা",
     "महिला डॉक्टर", "लेडी डॉक्टर", "लेडीज डॉक्टर", "लड़की डॉक्टर", "मैडम डॉक्टर", "महिला चिकित्सक", "महिला गायनी", "लेडी गायनी", "लेडी",
+    # owner, 2026-10-26: "लड़की लोग का डॉक्टर बैठता है क्या" ("does the doctor for girls sit?"). Each is a cue only beside a doctor word (wanted_sex).
+    "लड़की लोग", "लड़कियों", "लड़कियां", "औरतों", "महिलाओं", "मेयेदेर", "মেয়েরা", "মেয়েছেলে",
 )
 _MALE = (
     "male doctor", "gentleman doctor", "man doctor", "gents doctor", "male gynecologist", "male gynaecologist", "male gynae", "male surgeon", "male dentist", "male dr", "sir doctor",
@@ -216,3 +218,68 @@ def nobody_sits(when_phrase: str, others: list[str], lang: str) -> str:
         "hi": f"{when_phrase} उस विभाग का कोई डॉक्टर नहीं बैठता। किसी और दिन के लिए बताएँ?",
         "en": f"Nobody from that department sits {when_phrase}. Would another day do?",
     }[lang]
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ the bare word "doctor"
+
+# owner, 2026-10-26: "डॉक्टर दिखाना था" ("I wanted to see a doctor") was searched as a doctor NAMED "डॉक्टर" and answered "no doctor of that name -- did you mean Chakraborty?".
+# The word "doctor" in any script, with the little words around it, is not a name: the caller is asked which doctor (or what the problem is).
+_DOCTOR_TOKENS = {"doctor", "doctors", "dr", "doc", "daktar", "doktor", "dactar", "ডাঃ", "ডক্টর", "डॉ", "डा"}
+_DOCTOR_STEMS = ("ডাক্তার", "ডাক্টার", "ডক্টর", "डॉक्टर", "डाक्टर", "डॉक्टर्", "doctor")
+_FILLER_TOKENS = {
+    "ei", "oi", "ek", "ekta", "ekjon", "kon", "kono", "ki", "ke", "the", "a", "an", "my", "some", "any", "which",
+    "এই", "ওই", "এক", "একটা", "একজন", "কোন", "কোনো", "কি", "কে", "টা", "আছে", "আছেন", "আমার", "একটি",
+    "एक", "कोई", "कौन", "कोन", "किस", "ये", "यह", "वो", "वह", "है", "हैं", "मेरे", "मेरा", "का", "की", "के",
+}
+
+
+def is_generic_doctor_phrase(name: str) -> bool:
+    """True when `name` holds only the word "doctor" (any script, any ending) and little filler words: it names nobody."""
+    tokens = _norm(name).split()
+    if not tokens:
+        return False
+    saw_doctor = False
+    for t in tokens:
+        if t in _DOCTOR_TOKENS or t.startswith(_DOCTOR_STEMS):
+            saw_doctor = True
+        elif t not in _FILLER_TOKENS:
+            return False
+    return saw_doctor
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ choosing one of the doctors just named
+
+# owner, 2026-10-26: "তাহলে ওই সঞ্জয় গুহার অ্যাপয়েন্টমেন্ট টা দেন কালকে" -- the doctors "রঞ্জন পাল আর সঞ্জয় গুহ" had just been offered, and the caller chose one the way people do: with the
+# Bengali "of" ending on the surname ("গুহার"). The word did not equal the name, so the choice was lost and the agent asked "which doctor?" all over again.
+_NAME_TITLES = {"dr", "ডাঃ", "ডাক্তার", "ডক্টর", "डॉ", "डॉक्टर", "doctor", "mr", "mrs", "sri", "shri"}
+_NAME_TAILS = ("", "র", "ার", "ের", "এর", "কে", "েকে", "কেও", "দের", "রা", "ও", "টা", "টি")
+
+
+def _name_tokens(s: str) -> list[str]:
+    return [t for t in _norm(s.replace(".", " ")).split() if t not in _NAME_TITLES]
+
+
+def _token_is(word: str, name_token: str) -> bool:
+    return word == name_token or (word.startswith(name_token) and word[len(name_token):] in _NAME_TAILS)
+
+
+def choose_by_name(text: str, doctors: list[list[str]]) -> int | None:
+    """The index of the ONE doctor the caller's words name, or None. `doctors[i]` are the spellings of doctor i (short name, whole name, any script). A name word counts when the caller
+    said it with or without a case ending ("গুহ" / "গুহার"). Two doctors named equally well -- or none -- is None: never a guess. A two-letter word ("কর") alone is not a match, it is
+    too common a word ("বুক করে দিন")."""
+    words = _norm(text).split()
+    scores: list[int] = []
+    for spellings in doctors:
+        best = 0
+        for spelling in spellings:
+            parts = _name_tokens(spelling or "")
+            hit = [p for p in parts if len(p) >= 2 and any(_token_is(w, p) for w in words)]
+            n = len(hit)
+            if n == 1 and len(hit[0]) < 3 and len(parts) > 1:
+                n = 0
+            best = max(best, n)
+        scores.append(best)
+    top = max(scores, default=0)
+    if top == 0 or scores.count(top) != 1:
+        return None
+    return scores.index(top)

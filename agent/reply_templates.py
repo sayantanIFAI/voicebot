@@ -15,6 +15,7 @@ direct_reply_bn -- there is no fact to get wrong in "নমস্কার" or "
 
 from __future__ import annotations
 
+from agent import eye_words
 from agent import reply_templates_i18n as _i18n
 from agent import slot_proposal
 from agent.sample_wording import sample_sentence
@@ -504,6 +505,8 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
             docs = by_dept.get(name) or []
             parts.append(f"{name} ({', '.join(docs)})" if docs else name)
         return f"এটা {' অথবা '.join(parts)} -- দুটোর যেকোনো একটা বিভাগ হতে পারে। কোনটা বলবেন?"
+    if eye_words.mentions_eye(symptom):
+        return eye_words.NO_EYE_DEPARTMENT["bn"]
     return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
 
 

@@ -19,7 +19,7 @@ import unicodedata
 # region -> (words that name the body part in bn / hi / en,   words in a catalogue TEST NAME that mean the same region)
 REGIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "chest": (("বুকের", "বুকে", "বুক", "छाती", "सीने", "सीना", "chest", "buker", "buke", "chhati", "seene"), ("chest", "thorax", "lung", "thoracic")),
-    "head": (("মাথার", "মাথা", "মস্তিষ্ক", "ব্রেন", "सिर", "दिमाग", "मस्तिष्क", "head", "brain", "mathar", "matha", "dimag"), ("head", "brain", "skull", "cranial")),
+    "head": (("মাথার", "মাথা", "মস্তিষ্ক", "ব্রেন", "माथा", "माथे", "सिर", "दिमाग", "मस्तिष्क", "head", "brain", "mathar", "matha", "dimag"), ("head", "brain", "skull", "cranial")),
     "abdomen": (("পেটের", "পেট", "पेट", "पेट", "stomach", "abdomen", "belly", "peter", "pet ki"), ("abdomen", "abdominal", "whole abdomen", "kub")),
     "hand": (("হাতের", "হাত", "হাতে", "বাহুর", "কব্জি", "कलाई", "हाथ", "बाजू", "hand", "arm", "wrist", "haater", "hater", "haath"), ("hand", "arm", "wrist", "forearm", "elbow", "shoulder")),
     "leg": (("পায়ের", "পা", "পায়ে", "উরু", "পা'র", "टांग", "पैर", "पाँव", "leg", "foot", "ankle", "payer", "paer", "pair ki"), ("leg", "foot", "ankle", "femur", "tibia")),

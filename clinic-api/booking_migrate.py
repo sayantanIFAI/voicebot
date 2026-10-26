@@ -333,6 +333,14 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
          "kane byatha", "kane shunte", "shunte pachhi na", "shunte pai na"],
     ),
     (
+        # owner, 2026-10-26: eyes. This seed clinic has no eye department, so the row does nothing here (backfill/seed skip a department that is not in the database); a clinic
+        # that adds one gets the callers' eye words routed to it with no code change. Without a department the agent says so plainly (agent/eye_words.py).
+        "Ophthalmology",
+        ["চোখ", "চোখে", "চোখের", "চক্ষু", "চশমা", "ঝাপসা দেখি", "কম দেখি"],
+        ["आँख", "आंख", "आँखों", "आंखों", "चश्मा", "नज़र कमज़ोर", "धुंधला दिखता"],
+        ["eye pain", "eye problem", "eyes burning", "eye burning", "red eye", "blurry vision", "watery eyes", "eyesight", "spectacles", "chokh", "chokhe byatha", "aankh", "ankh"],
+    ),
+    (
         "Dermatology",
         ["চামড়ায় সমস্যা", "ত্বকের সমস্যা", "চুলকানি", "র‍্যাশ"],
         ["त्वचा की समस्या", "खुजली", "चकत्ते"],
@@ -370,6 +378,29 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
         ["tooth pain", "toothache", "teeth pain", "gum pain", "my tooth", "my teeth", "for my tooth", "daante byatha", "dante byatha", "dater byatha", "dat e byatha"],
     ),
 ]
+
+
+# Owner, 2026-10-26 (real calls): "কানে অনেক ব্যথা করছে" / "কানে অনেক ব্যাথা করছে" (ear pain, with a word inserted and the other spelling of ব্যথা) found no department. The
+# recogniser spells ব্যথা both ways, and callers say "ear hurts" a dozen ways; the additions below are spelling variants and plain restatements of the rows above, nothing new in meaning.
+_ROUTE_KEYWORD_ADDITIONS: dict[str, tuple[list[str], list[str], list[str]]] = {
+    "ENT": (
+        ["কানে ব্যাথা", "কান ব্যথা", "কান ব্যাথা", "কানে যন্ত্রণা", "কান কটকট", "কান দিয়ে পুঁজ", "কান দিয়ে জল", "গলা ব্যাথা", "গলায় ব্যথা", "গলায় ব্যাথা", "গলা খুসখুস",
+         "গলা ফোলা", "গলায় ঘা", "নাক দিয়ে রক্ত", "নাক দিয়ে জল", "নাক চুলকানি", "ঘ্রাণ পাই না", "গলায় কিছু আটকে"],
+        ["कान दर्द", "कान का दर्द", "कान मे दर्द", "कान में तकलीफ", "कान बंद", "कान से पानी", "कान से मवाद", "गला दर्द", "गले में खराश", "गला खराब", "गले में सूजन", "नाक से खून",
+         "नाक बह रही", "नाक में दर्द", "गले में खिचखिच"],
+        ["ear hurts", "ear hurt", "ear is paining", "ear problem", "ear infection", "nose problem", "throat problem", "throat infection", "nose bleed", "nose bleeding", "nose is blocked",
+         "kane betha", "kane byatha korche", "kan e byatha", "gola byatha", "gola betha", "gola bethha"],
+    ),
+}
+for _row_i, (_dept, _bn, _hi, _en) in enumerate(DEPARTMENT_ROUTE_KEYWORDS):
+    if _dept in _ROUTE_KEYWORD_ADDITIONS:
+        _abn, _ahi, _aen = _ROUTE_KEYWORD_ADDITIONS[_dept]
+        DEPARTMENT_ROUTE_KEYWORDS[_row_i] = (
+            _dept,
+            list(dict.fromkeys(_bn + _abn)),
+            list(dict.fromkeys(_hi + _ahi)),
+            list(dict.fromkeys(_en + _aen)),
+        )
 
 
 # Department names added to seed.DEPARTMENTS after the catalogue's original 8-department launch. Deliberately

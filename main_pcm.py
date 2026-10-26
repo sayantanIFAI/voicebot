@@ -150,7 +150,7 @@ from agent import fastpath_guards  # refuse a quick answer that cannot be right 
 from agent import slot_proposal  # the machine picks the appointment time and says it
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
-from agent import clinical_terms, doctor_search, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -799,16 +799,6 @@ async def _shutdown():
         await _tts.aclose()
 
 
-@app.get("/debug/profile")
-async def debug_profile(top: int = 40):
-    """What the process's threads are doing (agent/sampler.py; only when PROFILE_SAMPLER=1). Returns the counts and resets them."""
-    from agent import sampler
-
-    sampler.start(force=True)  # asking for the profile is what switches the sampler on
-    sampler.start_lag()
-    return sampler.report(top)
-
-
 @app.get("/api/health")
 async def health():
     # KCD-467: "instances receive traffic only once every model answers
@@ -1213,6 +1203,7 @@ class CallSession:
         # was just asked "is it blood, urine, or imaging?" -- the NEXT turn is read as the answer to that
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
         self.awaiting_test_category = False
+        self.awaiting_blood_test: int | None = None  # the turn "which blood test?" was asked (owner, 2026-10-26); the next sentence is its answer
         self.last_enquiry_turn = 0  # turn_count when the last test/doctor answer was given (agent/enquiry_followup.py)
         self.no_at_confirm = False  # the caller said "no, ..." at the confirmation step and it was not a bare no
         # KCD-499: stored preferences, offered after the answer and applied only if the caller says yes.
@@ -2098,7 +2089,7 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
         hint = _doctor_booking_hint(text, text_lang)
         if hint is not None:
             return hint
-    return _with_whole_doctor_name(data, text, text_lang)
+    return _without_generic_doctor_name(_with_whole_doctor_name(data, text, text_lang))
 
 
 _WHEN_SITS = ("কবে", "কখন", "কোন দিন", "কোন কোন", "বসেন", "বসে", "কটায়", "कब", "कौन से दिन", "बैठते", "बैठती", "when", "which day", "what time", "schedule")
@@ -2204,6 +2195,12 @@ _FOLLOW_BACK = {
     "hi": "आपका एक और सवाल भी था, वह मैं ठीक से समझ नहीं पाई। ज़रा फिर से बताइए?",
     "en": "You had another question too, which I did not quite catch. Could you say it again?",
 }
+# owner, 2026-10-26: when the part that was not understood is about a doctor ("ডাক্তার দেখাতে ডেকেছে ... কটার সময় আসব"), the useful question is WHICH doctor, not "say it again".
+_FOLLOW_BACK_DOCTOR = {
+    "bn": "কোন ডাক্তারের কথা বলছেন? একটু নামটা বলবেন?",
+    "hi": "आप किस डॉक्टर की बात कर रहे हैं? ज़रा नाम बताइए?",
+    "en": "Which doctor do you mean? Could you tell me the name?",
+}
 
 
 async def _answer_multi_questions(session: CallSession, text: str, lang: str) -> bool:
@@ -2244,10 +2241,22 @@ async def _answer_multi_questions(session: CallSession, text: str, lang: str) ->
             answered.append(reply)
         else:
             rest.append(part)
-    booking_part = any(_BOOKING_CUE.search(p) for p in rest)
     if not answered or (len(answered) < 2 and not rest):
         return False  # nothing recognised, or just one question: the normal path
     spoken = " ".join(answered)
+    # a doctor is talked about but not named ("আমাকে বারোটার সময় ডাক্তার দেখাতে ডেকেছে"): ask which doctor
+    doctor_unnamed = False
+    for p in rest:
+        if doctor_search._has(doctor_search._norm(p), doctor_search._DOCTOR_WORD):  # noqa: SLF001
+            named = None
+            with contextlib.suppress(Exception):
+                named = _fast_path._named_doctor(fast_path_normalize(p), language_of_script(p, lang))  # noqa: SLF001
+            if named is None:
+                doctor_unnamed = True
+    if doctor_unnamed and session.booking is None:
+        await _speak(session, f"{spoken} {_FOLLOW_BACK_DOCTOR.get(lang, _FOLLOW_BACK_DOCTOR['en'])}", lang)
+        return True
+    booking_part = any(_BOOKING_CUE.search(p) for p in rest)
     if booking_part:
         await _speak(session, spoken, lang)
         return False  # the booking goes on in this same turn and asks its next question
@@ -2390,6 +2399,40 @@ def _with_whole_doctor_name(data, text: str, lang: str):
         return {**data, "intent": "book_appointment", "slots": {**data["slots"], "doctor_name": whole}}  # "…নেব আমি বিশ্বজিৎ সেন" is a booking, with the whole name said
     if data.get("intent") in ("doctor_availability", "book_appointment"):
         data = {**data, "slots": {**data["slots"], "doctor_name": whole}}
+    return data
+
+
+_NOT_A_NAME_ANSWER_INTENTS = ("test_rate", "test_prep", "clinic_faq", "department_query", "smalltalk", "unclear")
+
+
+def _name_answer_repair(session: CallSession, text: str, data):
+    """Owner, 2026-10-26: asked "your name please?", a caller said "रोहिमान शेख" and the model read it as a lab test ("no test of that name -- did you mean the urine test?"). When a booking is
+    waiting for the patient's name and the sentence is, by the plain rules (agent/booking_capture.candidate_name: one to four words, letters only, no question, no booking words), a
+    name, it is the name -- whatever intent the model guessed. Only the intents that can never be an answer to this question are overridden. Never raises."""
+    st = session.booking
+    if st is None or not isinstance(data, dict) or not isinstance(data.get("slots"), dict):
+        return data
+    if data.get("intent") not in _NOT_A_NAME_ANSWER_INTENTS or data["slots"].get("patient_name"):
+        return data
+    try:
+        if "patient_name" not in st.asked_fields or st.slots.get("patient_name") or st.pending_name or st.name_confirmed:
+            return data
+        name = booking_capture.candidate_name(text)
+    except Exception:  # noqa: BLE001 - a repair must never take a turn down
+        return data
+    if not name:
+        return data
+    return {**data, "intent": "book_appointment", "slots": {**data["slots"], "patient_name": name}}
+
+
+def _without_generic_doctor_name(data):
+    """Owner, 2026-10-26: "डॉक्टर् दिखाना था" ("I wanted to see a doctor") reached the clinic as a doctor NAMED "डॉक्टर्". The word "doctor" alone, in any script, names nobody:
+    the slot is emptied and the turn asks which doctor (or what the problem is) as it does for any missing name. Never raises."""
+    if not isinstance(data, dict) or not isinstance(data.get("slots"), dict):
+        return data
+    name = data["slots"].get("doctor_name")
+    if name and isinstance(name, str) and doctor_search.is_generic_doctor_phrase(name):
+        return {**data, "slots": {**data["slots"], "doctor_name": None}}
     return data
 
 
@@ -2679,6 +2722,14 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             if dept.get("matched"):
                 _route_found.set({"dept": dept["department_name"], "names": dept.get("doctors_today") or dept.get("doctors") or []})
                 return department_route_reply(_dept_labelled(dept, lang), "", lang)
+            # owner, 2026-10-26: "ইন্ট ডাক্তার" (the recogniser's "ENT doctor") is a lay doctor phrase, not a name: the clinic's lay-phrase routing finds its department
+            try:
+                lay = await _route_dept(str(slots["doctor_name"]), lang)
+            except ToolCallError:
+                lay = {}
+            if lay.get("matched"):
+                _route_found.set({"dept": lay["department_name"], "names": lay.get("doctors_today") or lay.get("doctors") or []})
+                return department_route_reply(_dept_labelled(lay, lang), "", lang)
         if result.get("found"):
             # sourav, 2026-10-14: if the doctor does NOT sit on the asked day the agent offered the next sitting day, so "book him that day"
             # means THAT day, not the day he is off.
@@ -2735,7 +2786,7 @@ async def _queue_prescription_callback(session: CallSession, reason: str, text: 
         logger.warning("[%s] could not queue prescription callback (%s): %s", session.call_id, reason, e)
 
 
-async def _handle_lay_term(session: CallSession, category: str, text: str, lang: str) -> None:
+async def _handle_lay_term(session: CallSession, category: str, text: str, lang: str, ask_first: bool = True) -> None:
     """A rural lay term for a test CATEGORY (agent/lay_terms.py) -- "রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি" -- answered
     from the REAL catalogue, never a hardcoded test name. Deterministic, no model call. See agent/lay_terms.py's
     module docstring for why HEAD never names a specific test: the catalogue has none today, and naming one that
@@ -2743,6 +2794,11 @@ async def _handle_lay_term(session: CallSession, category: str, text: str, lang:
     reason = f"lay_term_{category}"
     # Owner, 2026-10-17: "peter chhobi" / "mathar chhobi" are ASKED back from the catalogue ("do you mean the abdomen ultrasound?") rather than answered with a price
     if category in (ABDOMEN, HEAD) and await _answer_body_imaging(session, text, lang):
+        return
+    if category == BLOOD and ask_first:
+        # owner, 2026-10-26: reading out every blood test is too long and loses the caller; ask which one, and send a caller who does not know to the prescription photo
+        session.awaiting_blood_test = session.turn_count
+        await _speak(session, phrase("ask_which_blood_test", lang), lang)
         return
     if category == BLOOD:
         cat = await _cached_catalogue()
@@ -2776,7 +2832,7 @@ async def _handle_test_category_answer(session: CallSession, category: str, text
     real catalogue, never invent a name" discipline, generalised (agent.reply_templates.category_test_list_reply)
     rather than duplicating blood_test_list_reply for each one."""
     if category in (BLOOD, ABDOMEN, HEAD):
-        await _handle_lay_term(session, category, text, lang)
+        await _handle_lay_term(session, category, text, lang, ask_first=False)  # they already said they do not know the name: the list, not another question
         return
     cat = await _cached_catalogue()
     sample_type = "Urine" if category == URINE else "Imaging"
@@ -3304,6 +3360,9 @@ async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
     return {"say": say, "pending": {"kind": "pick", "doctors": sit, "date": iso, "time": None}}
 
 
+_PICK_MEMORY_TURNS = 6  # owner, 2026-10-26: how long the doctors just offered stay remembered for the caller's choice
+
+
 async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict | bool:
     """Finding the doctor from how the caller asks (agent/doctor_search.py):
       * the answer to "neurologist or neurosurgeon?" / "which of these doctors?" asked a moment ago;
@@ -3320,7 +3379,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
         pend["turn"] = session.turn_count
         await _speak(session, pend["say"], lang)
         return True
-    if pend and session.turn_count - pend["turn"] <= 3:
+    if pend and session.turn_count - pend["turn"] <= (_PICK_MEMORY_TURNS if pend["kind"] == "pick" else 3):
         session.dept_pending = None
         if pend["kind"] == "confirm":
             chosen = doctor_search.pick_from(text, pend["options"])
@@ -3343,17 +3402,17 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                 return {"intent": "book_appointment", "slots": {"doctor_name": _resolve_doctor_for_booking(item), "date": pend["date"], "time_slot": pend.get("time")}}
             return False
         if pend["kind"] == "pick":
-            low = text.lower()
-            hits = [
-                item
-                for item in pend["doctors"]
-                if any(len(tok) >= 3 and tok.lower() in low for tok in (item.get("name", "") + " " + item.get("full_name", "")).replace(".", " ").split() if tok.lower() not in ("dr", "ডাঃ", "ডাক্তার"))
-            ]
-            if len(hits) != 1:  # "the first one" / "the second one", else the question is dropped (asked once)
+            # owner, 2026-10-26: the choice is read with the Bengali "of" ending on the surname ("সঞ্জয় গুহার"), and an unrelated sentence in between ("কোন ডাক্তার ভালো?") does not
+            # make the agent forget the doctors it just offered: the question stays open for several turns (it used to be dropped by the first sentence that did not choose).
+            picked = doctor_search.choose_by_name(text, [[d.get("name", ""), d.get("full_name", "")] for d in pend["doctors"]])
+            hits = [pend["doctors"][picked]] if picked is not None else []
+            if len(hits) != 1:  # "the first one" / "the second one"
                 hits = []
                 for idx, words in doctor_search._ORDINALS:  # noqa: SLF001
                     if idx < len(pend["doctors"]) and doctor_search._has(doctor_search._norm(text), words) and len(text.split()) <= 4:  # noqa: SLF001
                         hits = [pend["doctors"][idx]]
+            if len(hits) != 1:
+                session.dept_pending = pend  # still open: the list is remembered for the next sentences
             if len(hits) == 1:
                 session.last_doctor_enquiry = {  # the list just said when each of them sits: the booking does not say it again
                     "doctor_name": _resolve_doctor_for_booking(hits[0]), "date": pend.get("date"),
@@ -3364,6 +3423,14 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                     "slots": {"doctor_name": _resolve_doctor_for_booking(hits[0]), "date": pend.get("date"), "time_slot": pend.get("time")},
                 }
             return False
+    # 1b. the doctors a department answer just named, one of them chosen ("তাহলে সঞ্জয় গুহার অ্যাপয়েন্টমেন্ট দিন")
+    route = getattr(session, "last_route", None)
+    if route and session.booking is None and route.get("names") and session.turn_count - route["turn"] <= _PICK_MEMORY_TURNS:
+        chosen = doctor_search.choose_by_name(text, [[n] for n in route["names"]])
+        if chosen is not None and (booking_carryover.asks_to_book(text) or len(text.split()) <= 6 or _asks_when(text)):
+            slots = {"doctor_name": route["names"][chosen], "date": booking_capture.read_when(text, False, want_day=True).date}
+            session.last_route = None
+            return {"intent": "doctor_availability" if _asks_when(text) and not booking_carryover.asks_to_book(text) else "book_appointment", "slots": slots}
     # 2. neuro / euro: ask which
     try:
         cat = await _cached_catalogue()
@@ -5028,7 +5095,25 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # KCD-lay-terms: a rural lay term for a test category ("রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি"), matched
         # deterministically before any model call -- but never while a booking is already actively in progress
         # (session.booking is not None), so a lay-term-shaped word inside an unrelated answer never hijacks it.
+        # owner, 2026-10-26: the answer to "which blood test?": not knowing sends the caller to the prescription photo; asking for the list reads it; a test named goes on as a normal turn
+        if session.awaiting_blood_test is not None:
+            asked_turn, session.awaiting_blood_test = session.awaiting_blood_test, None
+            if session.turn_count - asked_turn <= 2 and session.booking is None:
+                named_now = []
+                with contextlib.suppress(Exception):
+                    named_now = _fast_path.named_tests(text, language_of_script(text, lang)) if _fast_path is not None else []
+                if not named_now and lay_terms.wants_the_list(text):
+                    await _handle_lay_term(session, BLOOD, text, lang, ask_first=False)
+                    return
+                if not named_now and lay_terms.says_unsure_which_test(text):
+                    await _speak(session, phrase("send_prescription_whatsapp", lang), lang)
+                    await _queue_prescription_callback(session, "lay_term_blood", text, lang)
+                    return
         lay_term = None if session.booking is not None else match_lay_term(text)
+        if lay_term == BLOOD and _fast_path is not None:
+            with contextlib.suppress(Exception):
+                if _fast_path.named_tests(text, language_of_script(text, lang)):
+                    lay_term = None  # "CBC blood test ka rate" names a test: that is a price question, not "which blood test?"
         if lay_term is not None:
             await _handle_lay_term(session, lay_term, text, lang)
             return
@@ -5113,6 +5198,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
                 return
 
+    data = _name_answer_repair(session, text, data)
     if not confirmed_entity:
         data = await _ground_model_slots(session, text, lang, data)
         # Real call 2026-10-14: "সিবিসি টেস্টের দাম কত ফাস্টিং করতে হবে" got only the price; the fasting half was dropped.

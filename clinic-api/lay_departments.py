@@ -32,7 +32,7 @@ _I = re.I
 _DOC_EN = r"(?:doctors?|docters?|doktors?|daktars?|dagtars?|dactars?|daktar\w*|dakter|doc|dr|specialists?|physicians?|physians?|fijishian|fisician)"
 _DOC_BN = r"(?:ডাক্তার\S*|ডাক্তর\S*|ডক্টর\S*|ডাক্টার\S*|স্পেশালিস্ট|বিশেষজ্ঞ|ফিজিশিয়ান|ফিজিসিয়ান)"
 _DOC_HI = r"(?:डॉक्टर\S*|डाक्टर\S*|डॉ\.?|डाॅक्टर\S*|वैद्य|स्पेशलिस्ट|विशेषज्ञ|फिजिशियन|फिज़िशियन)"
-_GAP = r"(?:\s+[^\s]{1,9}){0,2}"  # "haarer ekta doctor", "meyeder problem er doctor"
+_GAP = r"(?:\s+[^\s]{1,9}){0,4}"  # "haarer ekta doctor", "meyeder problem er doctor"; owner, 2026-10-26: up to four small words ("लड़की लोगों के लिए वो डॉक्टर")
 
 
 def _en(stem: str) -> re.Pattern[str]:
@@ -79,14 +79,16 @@ _RULES: list[tuple[str, bool, str, str, str]] = [
      r"অপারেশন|কাটাছেঁড়া|কাটা\s*ছেঁড়া|কাটা-ছেঁড়া|কাটাছেড়া|কাটা\s*ছেড়া|সার্জারি|সার্জন|সার্জেন",
      r"ऑपरेशन|आपरेशन|ओपरेशन|कटने\s*फटने|कटा\s*फटा|काट\s*छांट|चीर\s*फाड़|सर्जरी|सर्जन"),
     ("Gynaecology & Obstetrics", False,
-     r"meye?(?:der|ader|r\s*der)|meyeder|mohila\w*|mahila\w*|womens?|women's|woman|ladies|aurat\w*|aurton|auraton|stree\w*|prosuti|pregnan\w*",
-     r"মেয়েদের|মেয়েদের|মহিলাদের|মহিলা|নারী|স্ত্রী|প্রসূতি",
-     r"औरतों|औरत|महिलाओं|महिला|लड़कियों|स्त्री|गर्भवती"),
+     r"meye?(?:der|ader|r\s*der)|meyeder|mohila\w*|mahila\w*|womens?|women's|woman|ladies|lady|ladki\s*log\w*|ladkiyon\w*|ladkiyo\w*|aurat\w*|aurton|auraton|stree\w*|prosuti|pregnan\w*",
+     # owner, 2026-10-26: "लड़की लोग का डॉक्टर" (the doctor for girls) is "meyeder doctor" said in Hindi. A bare "মেয়ের / लड़की" (my daughter) is NOT a cue: that is the patient, not the doctor's kind.
+     r"মেয়েদের|মহিলাদের|মহিলা|নারী|স্ত্রী|প্রসূতি|মেয়েরা|মেয়েছেলে|মেয়ে\s*লোক|লেডিজ|লেডি",
+     r"औरतों|औरत|महिलाओं|महिला|लड़कियों|लड़कियां|लड़कियाँ|लडकियों|लड़की\s*लोग|लडकी\s*लोग|लेडीज़?|लेडी|लेडिज|स्त्री|गर्भवती"),
     # owner, 2026-10-24: "naak kaan golar daktar" (nose ear throat) -- ENT had no lay rule at all until now.
     ("ENT", False,
-     r"naa?k(?:er|e)?|kaan?(?:er|e)?|gol[ae]y?(?:r|er)?|throats?|noses?|ears?|\bent\b",
-     r"নাক|কান|গলা|গলার",
-     r"नाक|कान|गला|गले|गले\s*का"),
+     r"naa?k(?:er|e)?|kaan?(?:er|e)?|gol[ae]y?(?:r|er)?|throats?|noses?|ears?|\bent\b|\bint\b",
+     # owner, 2026-10-26: "ইন্ট ডাক্তার আছে" -- the recogniser's spelling of "ENT doctor"
+     r"নাক|কান|গলা|গলার|ইন্ট|ইনটি|ইএনটি|ই\s*এন\s*টি",
+     r"नाक|कान|गला|गले|गले\s*का|इंट|इन्ट|इनटी|ईएनटी|ई\s*एन\s*टी"),
     (GENERAL_MEDICINE, True,
      r"pain(?:er|r|e)?|plain|plane|byath[ae]?r?|byatha\w*|dard(?:ka|ke|ki)?|normal|emni|emnei|erokom|ordinary|common|simple|sadha?ron\w*|sadharan|samany\w*|general|jwor\w*|jor(?:er)?|fever",
      r"ব্যথার|ব্যাথার|প্লেন|প্লেইন|এমনি|এমনই|সাধারণ|সাধারন|নরমাল|সাধারণ|জ্বরের",

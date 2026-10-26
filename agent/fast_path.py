@@ -100,6 +100,7 @@ COMMIT_FLOOR = 0.72
 # agent/lid.py's module docstring for what "measured vs reasoned" means
 # in this codebase.
 FAQ_COMMIT_FLOOR = 0.72
+FAQ_COMPLEX_FLOOR = 0.9  # owner, 2026-10-26: the stricter floor for an FAQ answered although the sentence holds a complexity word
 # Two DIFFERENT tests that fit what was said nearly equally well ("blood sugar" fits both the fasting and the PP test)
 # is not something to pick between: a price or a preparation rule for the wrong one is a confident wrong answer. When
 # the best match is not exact and the runner-up is within this of it, the fast path abstains, and the model's turn
@@ -179,7 +180,7 @@ _SOFT_DATE = re.compile(
 _THIS_TIME_OF_DAY = re.compile(r"(?:^|\s)(?:this (?:morning|afternoon|evening)|tonight|aaj raat|aaj shaam|aaj subah)(?=\s|$)")
 _COMMON_WORD_ALIASES = frozenset({"कर", "कर्", "কর", "করে", "kor", "kar"})  # a doctor's surname that is also an everyday word (do / tax)
 _BEFORE_BOOKING = re.compile(r"(?:^|\s)(?:before|pehle|age|aage)(?:\s|$)|আগে|पहले")  # sourav 2026-10-16: "is he free BEFORE I book" asks, it does not book
-_SAYS_DOCTOR = re.compile(r"(?:^|\s)(?:doctor|doctors|dr|doc|daktar|doktor|dactar|ডাক্তার|ডক্টর|ডাঃ|ডাক্তারবাবু|डॉक्टर|डाक्टर|डॉ|डॉक्टर्स)(?:\s|$)")
+_SAYS_DOCTOR = re.compile(r"(?:^|\s)(?:doctor|doctors|dr|doc|daktar|doktor|dactar|ডাক্তার|ডক্টর|ডাঃ|ডাক্তারবাবু|डॉक्टर|डॉक्टर्|डाक्टर|डाक्टर्|डॉ|डॉक्टर्स)(?:\s|$)")
 _KAL = re.compile(r"(?:^|\s)(?:कल|kal)(?:\s|$)")
 _PARSO = re.compile(r"(?:^|\s)(?:परसों|परसो|parso|parson)(?:\s|$)")  # day after tomorrow OR two days ago; same tense rule
 _AVAIL_NOW = re.compile(r"(?:^|\s)(?:available|उपलब्ध|upalabdh|achhen|achen|আছেন)(?:\s|$)")  # sourav 2026-10-16: "kal ... available hain kya" asks about tomorrow
@@ -686,6 +687,27 @@ class FastPath:
         known = set(table.function_words)
         return all(t in known or is_reference_only(t) for t in self._without_cues(text, table).split())
 
+    def _faq_despite_complexity(self, text: str, lang: str, table: cues.CueTable, ignore_avail: bool = False) -> FastPathResult | None:
+        """The clinic FAQ topic a sentence names although it holds a complexity word (or, with `ignore_avail`, a "when" word that made it look like a
+        doctor-timing question), or None. Never when the sentence has a test, a doctor, a price / preparation cue or a booking word in it: those are
+        not clinic questions and keep going to the model as before."""
+        cues_to_clear = (table.rate, table.prep, table.book, table.book_verbs) if ignore_avail else (table.rate, table.avail, table.prep, table.book, table.book_verbs)
+        if any(table.any(text, cue) for cue in cues_to_clear):
+            return None
+        if _SAYS_DOCTOR.search(f" {text} "):
+            return None
+        if self._named_doctor(text, lang) is not None:
+            return None
+        test, _form, test_score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
+        if test and test_score >= COMMIT_FLOOR:
+            return None
+        topic, form, score = self.catalogue.match(text, "faq", lang, FAQ_COMPLEX_FLOOR)
+        if not topic or score < FAQ_COMPLEX_FLOOR:
+            return None
+        self._serve("clinic_faq", lang)
+        logger.info("fast path: clinic_faq %r (%.2f) [%s] despite a complexity cue", topic, score, lang)
+        return FastPathResult("clinic_faq", _empty_slots(faq_topic=topic), score, matched_form=form)
+
     def resolve(self, transcript: str, lang: str = "bn", topic_test: str | None = None) -> FastPathResult | None:
         """Returns None whenever it is not confident. None is the normal,
         expected outcome for anything non-routine -- the caller falls back
@@ -719,6 +741,12 @@ class FastPath:
                 return None
 
         if _complexity(text, table):
+            # owner, 2026-10-26: "गूगल पे फोन पे सब हो जायेगा" ("Google Pay, PhonePe, all of it will work?") has the word "सब" (all), a complexity cue, so the whole
+            # sentence went to the model, which answered "जी, बताइए". A sentence with NO test, doctor, price, timing or booking in it that still matches one clinic
+            # FAQ topic nearly word for word is a plain clinic question; it is answered, at a stricter floor than the ordinary FAQ one.
+            hit = self._faq_despite_complexity(text, lang, table)
+            if hit is not None:
+                return hit
             self._abstain("complexity_cue", lang=lang)
             return None
 
@@ -834,6 +862,11 @@ class FastPath:
                     matched_form=form,
                 )
             if not table.faq_after_failed_avail:
+                # owner, 2026-10-26: "কখন আসবো কটা থেকে খুলে" ("when shall I come, from what time does it open") holds the "when" word of a doctor-timing question
+                # but names no doctor and says no doctor word: when it also fits one clinic FAQ topic nearly word for word, that is the answer.
+                hit = self._faq_despite_complexity(text, lang, table, ignore_avail=True)
+                if hit is not None:
+                    return hit
                 self._abstain("below_commit_floor", "doctor_availability", lang)
                 return None
             # sourav, 2026-10-16: but a sentence that says "doctor" without naming one ("when is the doctor available in two days") is

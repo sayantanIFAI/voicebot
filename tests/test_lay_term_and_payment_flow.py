@@ -137,12 +137,28 @@ def text_of(said):
 
 
 @pytest.mark.asyncio
-async def test_a_blood_lay_term_lists_the_real_blood_tests_and_asks_which_one(m, env):
+async def test_a_blood_lay_term_asks_which_blood_test_instead_of_reading_the_whole_list(m, env):
+    # SPEC CHANGE 2026-10-26 (owner): twenty-odd names read out loses the caller; ask which one
     said = await env.say("rokto porikkha korte hobe")
     out = text_of(said)
+    assert "Which blood test" in out
+    assert "CBC" not in out and "ESR" not in out
+    assert not env.session.ws.frames("handoff_human")
+
+
+@pytest.mark.asyncio
+async def test_a_caller_who_does_not_know_which_blood_test_is_sent_to_the_prescription_photo(m, env):
+    await env.say("rokto porikkha korte hobe")
+    said = await env.say("I do not know, the doctor wrote it in the prescription")
+    assert "9635588306" in text_of(said) or "9 6 3 5 5 8 8 3 0 6" in text_of(said)
+
+
+@pytest.mark.asyncio
+async def test_a_caller_who_asks_what_blood_tests_there_are_hears_the_real_list(m, env):
+    await env.say("rokto porikkha korte hobe")
+    out = text_of(await env.say("what all are there"))
     assert "CBC" in out and "ESR" in out
     assert "Chest X-Ray" not in out and "USG" not in out  # not blood tests -- never listed
-    assert not env.session.ws.frames("handoff_human")
 
 
 @pytest.mark.asyncio
@@ -181,7 +197,7 @@ async def test_a_head_lay_term_never_invents_a_test_the_catalogue_does_not_have(
     assert "rupees" not in out and "hours" not in out  # no fabricated price or report-time figure
 
 
-@pytest.mark.parametrize("text", ["rokto porikkha korte hobe", "mathar chhobi korate chai"])  # the abdomen is now asked back first (SPEC CHANGE 2026-10-17)
+@pytest.mark.parametrize("text", ["mathar chhobi korate chai"])  # the abdomen is now asked back first (SPEC CHANGE 2026-10-17); a blood test is asked "which one?" first (2026-10-26)
 @pytest.mark.asyncio
 async def test_every_lay_term_reply_tells_the_caller_to_send_the_prescription_over_whatsapp(m, env, text):
     said = await env.say(text)
@@ -191,7 +207,7 @@ async def test_every_lay_term_reply_tells_the_caller_to_send_the_prescription_ov
 
 @pytest.mark.asyncio
 async def test_a_callback_is_queued_with_a_factual_summary_only_when_a_phone_is_already_known(m, env):
-    await env.say("rokto porikkha korte hobe")
+    await env.say("mathar chhobi korate chai")
     assert env.tools.callbacks == []  # no phone known yet: nothing to call back on, nothing queued
 
     env.session.identity.phone = "9812345678"
@@ -283,3 +299,38 @@ async def test_a_failed_payment_link_still_ends_the_call_the_booking_already_suc
     assert env.session.ws.closed is True
     assert "KCD-1001" not in "".join(said) or True  # the confirmation reply is still spoken regardless
     assert text_of(said)  # something was said -- the confirmation, not a crash
+
+
+# ============================================================================================== owner, 2026-10-26: repairs of the model's reading
+
+
+def _booking_asking_for_the_name(m):
+    from agent.booking_flow import BookingState
+
+    st = BookingState(action="book_appointment")
+    st.asked_fields.add("patient_name")
+    return type("S", (), {"booking": st})()
+
+
+def test_a_name_the_model_took_for_a_test_is_the_name_when_the_name_was_asked(m):
+    # real call: "आपনার নামটা বলবেন প্লিজ?" -- "रोहिमान शेख" -- the model said test_rate and the agent offered the urine test
+    data = {"intent": "test_rate", "slots": {"test_name": "रोहिमान शेख", "patient_name": None}}
+    out = m._name_answer_repair(_booking_asking_for_the_name(m), "रोहिमान शेख", data)
+    assert out["intent"] == "book_appointment" and out["slots"]["patient_name"] == "रोहिमान शेख"
+
+
+def test_a_question_is_not_taken_for_a_name_even_when_the_name_was_asked(m):
+    data = {"intent": "test_rate", "slots": {"test_name": "CBC", "patient_name": None}}
+    assert m._name_answer_repair(_booking_asking_for_the_name(m), "CBC এর দাম কত?", data) is data
+
+
+def test_no_booking_open_means_no_name_repair(m):
+    data = {"intent": "test_rate", "slots": {"test_name": "x", "patient_name": None}}
+    assert m._name_answer_repair(type("S", (), {"booking": None})(), "রহিমান শেখ", data) is data
+
+
+def test_the_bare_word_doctor_is_emptied_from_the_doctor_slot(m):
+    out = m._without_generic_doctor_name({"intent": "doctor_availability", "slots": {"doctor_name": "डॉक्टर्"}})
+    assert out["slots"]["doctor_name"] is None
+    keep = {"intent": "doctor_availability", "slots": {"doctor_name": "अमित कर"}}
+    assert m._without_generic_doctor_name(keep) is keep

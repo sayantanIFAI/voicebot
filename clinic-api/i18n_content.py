@@ -24,7 +24,7 @@ TEST_ALIASES_HI: dict[str, list[str]] = {
     "Kidney Function Test (KFT)": ["किडनी फंक्शन टेस्ट", "केएफटी", "किडनी टेस्ट"],
     "Thyroid Profile (T3 T4 TSH)": ["थायराइड प्रोफाइल", "थायराइड टेस्ट", "थायराइड", "थाइरॉइड", "थायरॉइड", "थाइराइड टेस्ट"],
     "TSH": ["टीएसएच"],
-    "Urine Routine Examination": ["यूरिन टेस्ट", "पेशाब की जांच", "यूरिन रूटीन"],
+    "Urine Routine Examination": ["यूरिन टेस्ट", "पेशाब की जांच", "यूरिन रूटीन", "मूत्र का टेस्ट", "मूत्र टेस्ट", "मूत्र की जांच", "मूत्र जांच", "पेशाब का टेस्ट", "पेशाब टेस्ट", "पेशाब की जाँच", "यूरिन की जांच", "यूरिन का टेस्ट", "मूत्र परीक्षण"],
     "Widal Test": ["विडाल टेस्ट", "टाइफाइड टेस्ट"],
     "Dengue NS1 Antigen": ["डेंगू एनएस वन", "डेंगू टेस्ट"],
     "Dengue IgG/IgM": ["डेंगू आईजीजी", "डेंगू आईजीएम"],
@@ -547,3 +547,39 @@ FAQ_KEYWORDS_I18N["location"] = (
     list(dict.fromkeys(_h + LOCATION_CROSS_SCRIPT + LOCATION_BN_NATIVE)),
     list(dict.fromkeys(_e + LOCATION_CROSS_SCRIPT + LOCATION_BN_NATIVE + LOCATION_HI_NATIVE)),
 )
+
+
+# Owner, 2026-10-26 (real calls, Bengali and Hindi): the opening-hours and payment questions were said in ways no stored phrase covered -- "কটা থেকে খুলবে",
+# "कितने बजे से खुलता है", "गूगल पाय फोन पाय सब हो जाएगा" -- and got "sorry, say again" / "जी, बताइए". Callers mix the languages, and the recogniser writes
+# what it hears in whichever script it likes, so every phrase below goes into ALL THREE language lists (the same reasoning as LOCATION_CROSS_SCRIPT).
+HOURS_BN_EXTRA: list[str] = [
+    "কটা থেকে খুলবে", "কটা থেকে খোলে", "কটায় খোলে", "কটায় খুলবে", "কখন খুলবে", "কখন খুলে", "কটা পর্যন্ত খোলা", "কটা পর্যন্ত খোলা থাকে",
+    "কটা থেকে কটা খুলবে", "কটা থেকে কটা পর্যন্ত", "কতক্ষণ খোলা", "ক্লিনিক কটা থেকে খোলে", "খোলার সময়", "বন্ধ হয় কটায়", "কটায় বন্ধ হয়",
+    "কটার সময় আসবো", "কটার সময় আসব", "কখন আসবো কটা থেকে", "কখন থেকে খোলা", "কখন পর্যন্ত খোলা", "ক্লিনিক কখন খোলা", "কটা থেকে ক্লিনিক খোলে",
+]
+HOURS_HI_EXTRA: list[str] = [
+    "कितने बजे से खुलता है", "कितने बजे खुलता है", "कितने बजे से खुलते हैं", "कब से खुलता है", "कब खुलता है", "कब खुलेगा", "कितने बजे तक खुला",
+    "कितने बजे तक खुला रहता है", "कितने बजे तक", "कब बंद होता है", "कितने बजे बंद होता है", "खुलने का टाइम", "क्लिनिक का टाइम", "क्लिनिक कितने बजे",
+    "कितने बजे से कितने बजे तक", "टाइमिंग क्या है", "क्लिनिक कब तक खुला", "कितने बजे आना है", "कितने बजे आऊं", "कितने बजे आऊँ",
+]
+PAYMENT_BN_EXTRA: list[str] = [
+    "গুগল পে", "গুগল পেয়", "গুগল পে-তে", "ফোন পে", "ফোন পেয়", "ফোনপেয়", "পেটিএম", "পেটিম", "অনলাইনে দিলে", "অনলাইনে পেমেন্ট", "অনলাইনে দেব",
+    "অনলাইন চলবে", "অনলাইনে হবে", "অনলাইনে দিতে পারব", "ক্যাশ ছাড়া", "কার্ডে পেমেন্ট", "কার্ডে হবে", "ইউ পি আই", "টাকা অনলাইনে", "অনলাইনে টাকা",
+]
+PAYMENT_HI_EXTRA: list[str] = [
+    "गूगल पे", "गूगल पाय", "गूगल पेय", "फोन पे", "फोन पाय", "फोन पेय", "फोनपाय", "पेटीएम", "पेटिएम", "यूपीआई", "यू पी आई", "ऑनलाइन चलेगा", "ऑनलाइन देंगे",
+    "ऑनलाइन दे सकते", "ऑनलाइन हो जाएगा", "कैश नहीं है", "कार्ड से पेमेंट", "कार्ड चलेगा", "पैसे ऑनलाइन", "ऑनलाइन पैसा", "पेमेंट करेंगे", "पाय्मेंट करेंगे",
+    "पैसा ले लीजिएगा", "पैसे देंगे तो चलेगा", "गूगल पे से पैसा", "फोन पे से पैसा", "गूगल पाय से", "फोन पाय से",
+]
+PAYMENT_EN_EXTRA: list[str] = [
+    "google pay", "gpay", "phonepe", "phone pay", "paytm", "pay online", "online payment", "will pay online", "upi payment", "can i pay online",
+]
+for _topic, _bn, _hi, _en in (
+    ("hours", HOURS_BN_EXTRA, HOURS_HI_EXTRA, []),
+    ("payment_methods", PAYMENT_BN_EXTRA, PAYMENT_HI_EXTRA, PAYMENT_EN_EXTRA),
+):
+    _h, _e = FAQ_KEYWORDS_I18N[_topic]
+    FAQ_KEYWORDS_I18N[_topic] = (
+        list(dict.fromkeys(_h + _hi + _bn + _en)),
+        list(dict.fromkeys(_e + _hi + _bn + _en)),
+    )

@@ -26,7 +26,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from agent import nato_letters, phonetic_match, spoken_codes, slot_grounding, whatsapp_cues
+from agent import nato_letters, number_words, phonetic_match, spoken_codes, slot_grounding, whatsapp_cues
 
 # ----------------------------------------------------------------------------------------------------------------- digits
 
@@ -137,6 +137,8 @@ def read_digits(text: str) -> tuple[str, int, int]:
             digit = _PLURAL_DIGIT[tok]
         elif _digit_of(tok) is not None:
             digit = _digit_of(tok)  # a digit word the recogniser lengthened ("ফাইভল")
+        elif number_words.digits_of(tok) is not None:
+            digit = number_words.digits_of(tok)  # "আটানব্বই" = 98, "चौहत्तर" = 74: a number said as a word stands for its two digits (owner, 2026-10-26)
         else:
             times = 1
             continue
