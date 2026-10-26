@@ -349,6 +349,20 @@ class EchoPipeline:
     def process(self, mic: np.ndarray) -> np.ndarray:
         return self.process_ex(mic)[0]
 
+    def passthrough(self, mic: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """The microphone passed on UNCHANGED, with the timeline bookkeeping of process_ex but none of the filter maths. For the stretches when the agent is silent and nothing can echo:
+        the filter was spending ~7 threads' worth of CPU across 24 calls cancelling an echo that was not there (load profile 2026-10-26)."""
+        mic = np.asarray(mic, np.float32)
+        self._mic = np.concatenate([self._mic, mic])
+        buf = np.concatenate([self._pending, mic])
+        n = (buf.size // self.block) * self.block
+        self._pos += n
+        self._blocks += n // self.block
+        self._since_delay += n
+        self._pending = buf[n:]
+        self._trim()
+        return buf[:n].copy(), np.zeros(n, np.float32)
+
     def process_ex(self, mic: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """(cleaned, echo_estimate) for the completed blocks. The estimate is
         what the filter subtracted; agent/barge_in.py compares the cleaned

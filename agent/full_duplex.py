@@ -103,10 +103,12 @@ class FullDuplexProcessor:
 
     # -- caller side --------------------------------------------------
     def process(self, mic: np.ndarray) -> DuplexResult:
-        cleaned, echo = self.echo.process_ex(mic)
-        self._mic_pos += len(mic)
         speaking = self.agent_speaking()
-        event = self.detector.process(cleaned, echo) if cleaned.size else None
+        # Agent silent (and past the echo tail): there is no echo to cancel and a barge-in cannot be acted on -- the caller's audio goes straight through.
+        cleaned, echo = self.echo.process_ex(mic) if speaking else self.echo.passthrough(mic)
+        self._mic_pos += len(mic)
+        speaking = speaking or self.agent_speaking()
+        event = self.detector.process(cleaned, echo) if (cleaned.size and speaking) else None
         acted = None
         suppressed = False
         if event is not None:
