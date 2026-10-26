@@ -141,7 +141,7 @@ async def test_paid_booking_serial_comes_from_the_database_after_the_number_is_c
     out = await _complain(env)
     assert "mobile number" in " ".join(out) and not env.tools.looked_up
     out = await env.say("nine eight three zero zero two three four five six")
-    assert "9 8 3 0 0 2 3 4 5 6" in " ".join(out) and not env.tools.looked_up, "the number is read back first"
+    assert "9 8 3 0 0 , 2 3 4 5 6" in " ".join(out) and not env.tools.looked_up, "the number is read back first"
     out = await env.say("yes")
     text = " ".join(out)
     assert env.tools.looked_up == [DEBASHIS]
@@ -171,7 +171,7 @@ async def test_no_booking_asks_for_another_number(env, m):
     out = await env.say("yes")
     assert "could not find" in " ".join(out) and env.session.serial_flow is not None
     out = await env.say("9831111111")
-    assert "9 8 3 1 1 1 1 1 1 1" in " ".join(out)
+    assert "9 8 3 1 1 , 1 1 1 1 1" in " ".join(out)
 
 
 @pytest.mark.asyncio
