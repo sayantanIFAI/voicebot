@@ -202,6 +202,7 @@ from agent.lid import (
     SUPPORTED_LANGUAGES,
     ASRLanguageRouter,
     LIDResult,
+    RemoteLID,
     SpeechBrainVoxLingua107LID,
 )
 from agent.llm import ExtractionError, extract_intent
@@ -436,7 +437,7 @@ OLLAMA_HEALTH_URL = os.environ.get("OLLAMA_HEALTH_URL", "http://localhost:11434/
 
 # Admission control (agent/admission.py). Cap is per PROCESS: with the WebM
 # and PCM services both running, each has its own counter.
-ADMISSION_MAX_CALLS = int(os.environ.get("ADMISSION_MAX_CALLS", "28"))
+ADMISSION_MAX_CALLS = int(os.environ.get("ADMISSION_MAX_CALLS", "36"))
 ADMISSION_SHED_P95_S = float(os.environ["ADMISSION_SHED_P95_S"]) if os.environ.get("ADMISSION_SHED_P95_S") else None
 ADMISSION_BYPASS_FILE = os.environ.get("ADMISSION_BYPASS_FILE", "/workspace/.ai_bypass")
 ADMISSION_ADMIN_TOKEN = os.environ.get("ADMISSION_ADMIN_TOKEN", "")
@@ -706,7 +707,10 @@ async def _startup():
     if len(active) > 1:
         logger.info("loading language ID (SpeechBrain VoxLingua107, CPU)...")
         try:
-            lid = SpeechBrainVoxLingua107LID(device=os.environ.get("LID_DEVICE", "cuda"))  # on the GPU: on the CPU it cost ~0.3 core and queued 24 calls for seconds (load profile 2026-10-25)
+            if INDIC_ASR_URL:  # identified by the service's several worker processes, side by side (agent/lid.RemoteLID)
+                lid = RemoteLID(INDIC_ASR_URL)
+            else:
+                lid = SpeechBrainVoxLingua107LID(device=os.environ.get("LID_DEVICE", "cuda"))
             await asyncio.to_thread(lid.load)
             _lid = lid
         except Exception as e:  # noqa: BLE001 - degrade LOUDLY to Bengali-only, never guess a language
@@ -7256,6 +7260,7 @@ async def ws_audio(ws: WebSocket):
     except Exception:
         logger.exception("[%s] session crashed", session.call_id)
     finally:
+        _admission.release(admission)  # the slot is free the moment the caller hangs up, not after the call record is written (that took seconds, and the next burst was refused for "capacity")
         poll_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await poll_task

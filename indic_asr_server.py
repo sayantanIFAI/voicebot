@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 _engines: dict = {}
+_lid = None
 
 
 class TranscribeRequest(BaseModel):
@@ -33,11 +34,32 @@ def _load() -> None:
 
     for lang in [x.strip() for x in os.environ.get("INDIC_ASR_LANGS", "bn,hi").split(",") if x.strip()]:
         _engines[lang] = TurnASR(None, lang)
+    global _lid
+    if os.environ.get("INDIC_ASR_LID", "1") == "1":  # each worker also holds a language-ID model (see agent/lid.RemoteLID)
+        from agent.lid import SpeechBrainVoxLingua107LID
+
+        lid = SpeechBrainVoxLingua107LID(device=os.environ.get("LID_DEVICE", "cuda"))
+        lid.load()
+        _lid = lid
 
 
 @app.get("/health")
 def health():
     return {"status": "ok", "languages": sorted(_engines), "pid": os.getpid()}
+
+
+class LidRequest(BaseModel):
+    wav_path: str
+
+
+@app.post("/lid")
+async def identify(req: LidRequest):
+    if _lid is None:
+        return JSONResponse({"error": "language ID not loaded"}, status_code=503)
+    import asyncio
+
+    r = await asyncio.to_thread(_lid.identify_path, req.wav_path)
+    return {"language": r.language, "confidence": r.confidence, "scores": r.scores}
 
 
 @app.post("/transcribe")

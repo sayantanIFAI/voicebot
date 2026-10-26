@@ -310,3 +310,25 @@ class ASRLanguageRouter:
             if ranked:
                 return [lang for lang, _ in ranked[:2]]
         return list(SUPPORTED_LANGUAGES[:2])
+
+
+
+class RemoteLID:
+    """Language identification served by the indic ASR service's worker processes (indic_asr_server.py, POST /lid). One model in one process answered one clip at a time, so 24 callers finishing
+    together waited up to 8 s in that queue (load test 2026-10-26); the service has several worker processes, each with its own copy on the GPU, so the clips are identified side by side."""
+
+    def __init__(self, base_url: str, timeout_s: float = 20.0):
+        import httpx
+
+        self.base_url = base_url.rstrip("/")
+        self._client = httpx.Client(base_url=self.base_url, timeout=timeout_s, limits=httpx.Limits(max_connections=64, max_keepalive_connections=32))
+
+    def load(self) -> None:
+        r = self._client.get("/health")
+        r.raise_for_status()
+
+    def identify_path(self, wav_path: str) -> LIDResult:
+        r = self._client.post("/lid", json={"wav_path": wav_path})
+        r.raise_for_status()
+        d = r.json()
+        return LIDResult(language=d["language"], confidence=float(d["confidence"]), scores={k: float(v) for k, v in (d.get("scores") or {}).items()})
