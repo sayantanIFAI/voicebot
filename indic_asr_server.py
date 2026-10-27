@@ -21,6 +21,7 @@ from pydantic import BaseModel
 app = FastAPI()
 _engines: dict = {}
 _lid = None
+_emotion = None
 
 
 class TranscribeRequest(BaseModel):
@@ -41,6 +42,18 @@ def _load() -> None:
         lid = SpeechBrainVoxLingua107LID(device=os.environ.get("LID_DEVICE", "cuda"))
         lid.load()
         _lid = lid
+    global _emotion
+    if os.environ.get("EMOTION_DETECT", "on") != "off":  # how the caller sounds (agent/caller_emotion.py); the service runs without it if the model cannot load
+        try:
+            from agent.caller_emotion import Classifier
+
+            clf = Classifier(device=os.environ.get("EMOTION_DEVICE", "cuda"), savedir=os.environ.get("VOICE_AGENT_EMOTION_DIR", "/workspace/emotion_model"))
+            clf.load()
+            _emotion = clf
+        except Exception as e:  # noqa: BLE001 - recognition must come up even without it
+            import logging
+
+            logging.getLogger("indic_asr").error("emotion model not loaded (%s); /emotion will answer 503", e)
 
 
 @app.get("/health")
@@ -60,6 +73,16 @@ async def identify(req: LidRequest):
 
     r = await asyncio.to_thread(_lid.identify_path, req.wav_path)
     return {"language": r.language, "confidence": r.confidence, "scores": r.scores}
+
+
+@app.post("/emotion")
+async def emotion(req: LidRequest):
+    if _emotion is None:
+        return JSONResponse({"error": "emotion model not loaded"}, status_code=503)
+    import asyncio
+
+    r = await asyncio.to_thread(_emotion.classify_path, req.wav_path)
+    return {"label": r.label, "score": r.score, "scores": r.scores}
 
 
 @app.post("/transcribe")

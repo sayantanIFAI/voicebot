@@ -200,6 +200,7 @@ from agent.lay_terms import (
     match_category_answer,
     match_lay_term,
 )
+from agent.caller_emotion import EmotionEvidence
 from agent.lid import (
     SUPPORTED_LANGUAGES,
     ASRLanguageRouter,
@@ -429,6 +430,11 @@ CHANNEL_QUALITY_BUDGET_S = 0.08
 # 3-6 s clip on the hardware this pipeline already assumes.
 AUDIO_ANALYSIS_BUDGET_S = 0.5
 
+# agent/caller_emotion.py: how the caller sounds, judged by the recogniser service while ASR runs. The budget runs from the moment the clip is cut, so it covers the whole recognition time
+# too; a verdict that is not back by then is dropped (no change to the call state), never waited for. REASONED, not measured.
+EMOTION_DETECT = os.environ.get("EMOTION_DETECT", "on")
+EMOTION_BUDGET_S = float(os.environ.get("EMOTION_BUDGET_S", "2.5"))
+
 CLINIC_API_BASE = os.environ.get("CLINIC_API_BASE", "http://localhost:8080")
 
 # Languages the live path routes between. "bn" alone reproduces the original
@@ -477,6 +483,7 @@ _fast_path: FastPath | None = None
 _answer_warm_task = None
 _asr_router: ASRRouter | None = None
 _lid: SpeechBrainVoxLingua107LID | None = None
+_emotion = None  # agent/caller_emotion.RemoteEmotion, or None when switched off / no recogniser service
 _tts_router: TTSRouter | None = None
 _admission: AdmissionController | None = None
 _health: HealthMonitor | None = None
@@ -734,6 +741,13 @@ async def _startup():
             active = ["bn"]
     _languages_active = tuple(active)
     logger.info("active languages: %s", ",".join(_languages_active))
+
+    global _emotion
+    if EMOTION_DETECT != "off" and INDIC_ASR_URL:
+        from agent.caller_emotion import RemoteEmotion
+
+        _emotion = RemoteEmotion(INDIC_ASR_URL)
+    logger.info("caller emotion: %s", "on (judged beside recognition)" if _emotion else "off")
 
     logger.info("loading Silero VAD...")
     _turn_detector = await asyncio.to_thread(
@@ -1118,6 +1132,7 @@ class CallSession:
         self.unclear_streak = 0  # consecutive turns the agent could not answer
         self.senior_evidence = SeniorEvidence()
         self.acknowledged_state: str | None = None
+        self.emotion = EmotionEvidence()
         self.senior_lookup_done = False
 
         # KCD-513/514: acknowledgements are suppressed on repeat turns; KCD-155's distress
@@ -1765,6 +1780,29 @@ def _update_caller_state(session: CallSession, text: str, lang: str, analysis: d
         apply_caller_state(session.call_state, senior=True)
         senior_detections.record(ev.reason or "unknown", "call", lang)
         logger.info("[%s] senior mode on (%s)", session.call_id, ev.reason)
+
+
+async def _emotion_verdict(task):
+    """The classifier's answer, or None -- it must never fail or slow a turn."""
+    try:
+        return await task
+    except Exception as e:  # noqa: BLE001 - the service being down or the clip unreadable is "no verdict this turn"
+        logger.info("caller emotion unavailable this turn: %s", e)
+        return None
+
+
+def _note_caller_emotion(session: CallSession, verdict, lang: str) -> None:
+    """Owner, 2026-10-27: a caller who SOUNDS upset gets the calm, short, one-question delivery and the approved acknowledgement (agent/caller_emotion.py has the reasoning and the limits). Only ever
+    moves between neutral and distressed: an emergency (words, agent/emergency.py) or a confused caller is never overwritten, and nothing here says or decides anything medical."""
+    change = session.emotion.add(verdict)
+    state = session.call_state.caller_state
+    if change == "on" and state == "neutral":
+        apply_caller_state(session.call_state, "distressed")
+        logger.info("[%s] caller sounds upset (%s %.2f): calm delivery on", session.call_id, verdict.label, verdict.score)
+    elif change == "off" and state == "distressed":
+        apply_caller_state(session.call_state, "neutral")
+        session.acknowledged_state = None  # a later upset is acknowledged afresh
+        logger.info("[%s] caller sounds calm again: normal delivery", session.call_id)
 
 
 def _note_stated_age(session: CallSession, slots: dict, lang: str) -> None:
@@ -4795,6 +4833,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.marks = [("start", session.turn_started_at)]
         channel_quality = session.call_state.channel_quality
         analysis: dict | None = None
+        emotion_task = None
         audio_issues: list[str] = []
         asr_wav = utterance_wav
         temp_wavs: list[str] = []
@@ -4813,6 +4852,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     asr_wav = conditioned
             _mark(session, "prep")
             _keep_recent_utterance(session, utterance_wav)
+            # the caller's mood is judged by the recogniser service WHILE the words are being recognised, on the clip as spoken (not the cleaned copy); collected below under its own budget
+            emotion_task = (
+                asyncio.ensure_future(run_within_budget("emotion", EMOTION_BUDGET_S, _emotion.classify_path, utterance_wav, previous_value=None)) if _emotion is not None else None
+            )
             lang, asr_result, lang_decisive = await _route_and_transcribe(session, asr_wav)
             logger.info("[%s] heard (%s, %s, agreement %.2f): %r", session.call_id, lang, getattr(asr_result, "decoder_used", "?"),
                         float(getattr(asr_result, "decoder_agreement", 0.0) or 0.0), getattr(asr_result, "text", ""))
@@ -4838,6 +4881,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 previous_value=None,
             )
             audio_issues = analysis["audio"].issues if analysis else []
+            if emotion_task is not None:
+                _note_caller_emotion(session, await _emotion_verdict(emotion_task), lang or session.lang)
             for issue in audio_issues:
                 audio_issue_buckets.record(issue, "seen", lang or session.lang)
             # Appendix F channel buckets, on the same vocabulary as the offline evaluation:
@@ -4858,6 +4903,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _speak(session, phrase("llm_failure", session.lang), session.lang, fallback_reason="llm_failure")
             return
         finally:
+            if emotion_task is not None and not emotion_task.done():
+                emotion_task.cancel()
             with contextlib.suppress(OSError):
                 os.remove(utterance_wav)
             for extra in temp_wavs:

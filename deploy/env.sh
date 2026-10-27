@@ -92,6 +92,9 @@ export PATH=/workspace/bin:/workspace/venv/bin:${PATH:-}
 export VOICE_AGENT_LANGUAGES=${VOICE_AGENT_LANGUAGES:-bn,hi,en}
 # Where the SpeechBrain VoxLingua107 LID model lives (persistent, ~86 MB).
 export VOICE_AGENT_LID_DIR=/workspace/lid_model
+# How the caller sounds (agent/caller_emotion.py): SpeechBrain wav2vec2 emotion model (~380 MB), loaded by the indic recogniser service. EMOTION_DETECT=off switches it off.
+export VOICE_AGENT_EMOTION_DIR=${VOICE_AGENT_EMOTION_DIR:-/workspace/emotion_model}
+export EMOTION_DETECT=${EMOTION_DETECT:-on}
 
 # ---- pronunciation lexicon (agent/pronunciation.py) -----------------------
 # A live call (2026-09-28): the blood-test-list reply was blocked outright --
