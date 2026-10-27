@@ -147,7 +147,7 @@ from agent import translit_frames  # "do you do chest X-ray" written in Bengali/
 from agent import spelled_letters  # a spelled test code ("C B C") the Bengali recogniser wrote as a made-up word
 from agent.catalogue_forms import lab_test_code
 from agent import multi_test_confirm  # garbled test names in a total: read back once, price after a yes
-from agent.slot_grounding import ground_slots, is_plausible_test_name  # a test/doctor name the model made up is dropped before any lookup
+from agent.slot_grounding import ground_slots, has_test_context, is_plausible_test_name  # a test/doctor name the model made up is dropped before any lookup
 from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a sentence actually names
 from agent import booking_capture  # sourav 2026-10-16: deterministic phone / name / ordinal-slot capture + safe confirm recovery for the doctor booking
 from agent.digit_speech import spoken_digit_groups  # owner, 2026-10-26: a phone/confirmation number spoken with a pause between groups of five, not one flat run
@@ -2764,6 +2764,17 @@ async def _answer_test_availability(slots: dict, lang: str) -> tuple[str, dict]:
     return test_availability.availability_reply(spoken, lang), {"test_name": found[0]}
 
 
+def _not_a_test_sentence(result: dict, lang: str) -> str | None:
+    """Owner, 2026-10-27: "কিছু না খেটে দিনকাল" (nonsense) was answered "there is no test called 'কিছু না খেটে দিনকাল'" -- the model had put the WHOLE sentence in test_name. When the catalogue finds nothing, offers
+    nothing close, and the caller's sentence has no test, price or report word in it at all, the caller did not ask about a test: say the line was not caught instead of inventing a test question."""
+    text = _turn_text.get()
+    if not text or result.get("found") or result.get("ambiguous"):
+        return None
+    if result.get("did_you_mean_bn") or result.get("did_you_mean") or has_test_context(text):
+        return None
+    return phrase("reask_generic", lang)
+
+
 async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | None:
     """Tool call + reply-template for one of the stateless enquiry
     intents (agent.enquiry_followup.ENQUIRY_INTENTS). Returns None when
@@ -2817,6 +2828,8 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if not slots.get("test_name"):
             return None
         result = await _tools.get_test_rate(slots["test_name"])
+        if _not_a_test_sentence(result, lang) is not None:
+            return _not_a_test_sentence(result, lang)
         _note_suggestion(intent, "test_name", slots, result)
         if result.get("found"):
             _priced_names.set((_priced_names.get() or []) + [slots["test_name"]])
@@ -2862,6 +2875,8 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if not slots.get("test_name"):
             return None
         result = await _tools.get_test_prep(slots["test_name"], lang)
+        if _not_a_test_sentence(result, lang) is not None:
+            return _not_a_test_sentence(result, lang)
         _note_suggestion(intent, "test_name", slots, result)
         return test_prep_reply(slots, result, lang)
     if intent == "clinic_faq":
@@ -5861,6 +5876,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
 
         elif intent == "test_prep":
             slots, _ = _followup(session, intent, slots, text, lang)
+            _turn_text.set(text)
             reply = await _answer_enquiry_intent(intent, slots, lang)
             if reply is None:
                 if test_availability.asks_if_test_is_available(text, lang):
