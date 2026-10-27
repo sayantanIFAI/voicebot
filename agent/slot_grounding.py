@@ -9,14 +9,25 @@ This is the code half of CLAUDE.md's one rule: the model may decide what the cal
 play on its own. A slot is supposed to be a LITERAL span of what was said (agent/llm.py: "do not translate or normalize
 it"). This module checks the cheapest version of that claim and nothing more.
 
-THE RULE, and why it is this loose: a name from the model is dropped only when the caller's sentence gives it NO
-support at all, i.e. when ALL of these hold:
+THE RULE for a TEST name, and why it is this loose: dropped only when the caller's sentence gives it NO support at
+all, i.e. when ALL of these hold:
   * the sentence contains no word about tests or prices at all ("test", "rate", "total", "scan", ...), and
-  * the sentence names no test (or doctor) the catalogue knows, by any of its spoken forms, and
+  * the sentence names no test the catalogue knows, by any of its spoken forms, and
   * the model's name does not literally appear in the sentence (or nearly: a one-letter ASR difference).
 A garbled name inside a real question ("ক্বক র সাথে উরিক এসিদ টেস্ট ... টোটাল কত") has test words in it, so the model's
 reading of it is kept exactly as before: this module only ever removes names from sentences that have no test content
 whatsoever, which is where the model is guessing rather than reading.
+
+THE RULE for a DOCTOR name is narrower, on real evidence (2026-10-27) that the test rule's "a context word is
+enough" leg is not: "ডাক্তার সেন" (two real doctors share the surname) and "ডক্টর ঋষা" (a recogniser's miss of a real
+doctor's name) both came back with a DIFFERENT, unrelated doctor's real schedule confidently reported as this one's
+-- the word "doctor" is in nearly every doctor sentence there is, so that leg alone validated any name the model
+felt like filling in. A doctor name is kept only when the sentence literally names it (or nearly), OR the catalogue
+itself recognised it unambiguously (`names_a_doctor` with no `doctor_candidates`), OR -- when the catalogue's
+mention WAS ambiguous -- the model's claim shares a real name-token with one of the specific candidates the
+catalogue offered (`doctor_candidates`; see _matches_any_candidate). A plain cross-script reading of the one doctor
+actually named ("ডক্টর সেন" -> "Dr. Sen") still survives every one of these; a different doctor the catalogue never
+offered as a candidate does not, however plausible-sounding, catalogue-real and politely phrased the answer is.
 """
 
 from __future__ import annotations
@@ -101,6 +112,33 @@ def has_age_context(text: str) -> bool:
     return _has_any(_norm(text), _AGE_CONTEXT)
 
 
+# real calls, 2026-10-27: "ডাক্তার সেন" (two real doctors share the surname "Sen" / "সেন") was answered with a THIRD,
+# unrelated doctor's real schedule -- not a transliteration of "Sen", a different surname entirely ("Chanda" on one
+# attempt, "Ray" on another). "ডক্টর ঋষা" (the recogniser's miss of "ত্রিষা"/"Trisha") got a FOURTH unrelated
+# doctor's schedule the same way. `has_doctor_context` alone ("the sentence says the word doctor") was enough to
+# wave the model's claim through in both cases -- true of nearly every doctor sentence there is, so it was no
+# check at all. The fix below is catalogue-driven, not a list of names: when the catalogue itself names the real
+# doctors a shared surname could mean (`doctor_candidates`), the model's claim must be one of them (by surname/
+# given-name overlap, so a plain cross-script reading like "ডক্টর সেন" -> "Dr. Sen" still survives) or literally
+# in the sentence -- never a different name the catalogue never offered as a candidate.
+_DOCTOR_TITLE_TOKENS = frozenset({"dr", "doctor", "doc", "dr.", "ডাক্তার", "ডক্টর", "ডাঃ", "डॉक्टर", "डॉ", "डाक्टर"})
+
+
+def _name_tokens(s: str) -> set[str]:
+    return {t for t in _norm(s or "").split() if t not in _DOCTOR_TITLE_TOKENS and len(t) > 1}
+
+
+def _matches_any_candidate(value: str, candidates: tuple[str, ...]) -> bool:
+    """Does `value` (what the model claims) share a real name-token -- surname or given name, any script -- with
+    at least one of the candidates the catalogue itself offered for the surname/alias the caller actually said?
+    A plain cross-script reading of the SAME doctor (token "sen" in both) matches; an unrelated name the model
+    invented (no shared token with any candidate) does not."""
+    v_tokens = _name_tokens(value)
+    if not v_tokens:
+        return False
+    return any(v_tokens & _name_tokens(c) for c in candidates if c)
+
+
 def _literally_in(value: str, norm_text: str) -> bool:
     """The model's name appears in the sentence, or is within one or two letters of a stretch of it."""
     v = _norm(value)
@@ -124,14 +162,26 @@ def _clean_names(values, norm_text: str):
     return kept, [v for v in values if isinstance(v, str) and v not in kept]
 
 
-def ground_slots(text: str, slots: dict | None, *, names_a_test: bool = False, names_a_doctor: bool = False, trust_age: bool = False):
+def ground_slots(
+    text: str,
+    slots: dict | None,
+    *,
+    names_a_test: bool = False,
+    names_a_doctor: bool = False,
+    doctor_candidates: tuple[str, ...] = (),
+    trust_age: bool = False,
+):
     """(slots, dropped). `names_a_test` / `names_a_doctor`: the catalogue found a test / doctor in `text` by one of its
-    spoken forms (the caller of this function asks agent.transcript_rules.AliasTable). `trust_age`: the age in `slots`
-    was set deterministically (agent/booking_capture.py's own read-back/confirm flow), not guessed by the model, so
-    the age-context check below -- there to catch the MODEL misreading an unrelated number as an age -- does not
-    apply to it; a caller confirming a read-back with a bare "yes" (no "বয়স"/"বছর" in that one word either) must
-    not have the age it just confirmed thrown away by the same check that protects against the model's mistake.
-    Never raises; never edits the dict it is given."""
+    spoken forms (the caller of this function asks agent.transcript_rules.AliasTable). `doctor_candidates`: when that
+    doctor mention was AMBIGUOUS (a surname/alias two or more real doctors share, e.g. two Sens), the real doctors the
+    catalogue itself says it could be -- the model's claimed doctor_name must be one of them (see _matches_any_candidate)
+    or literally in the sentence; a name the catalogue never offered as a candidate is dropped regardless of any other
+    signal, so the turn asks "which one?" instead of confidently reporting a doctor nobody asked about (CLAUDE.md
+    "Doctor Nobody"). `trust_age`: the age in `slots` was set deterministically (agent/booking_capture.py's own
+    read-back/confirm flow), not guessed by the model, so the age-context check below -- there to catch the MODEL
+    misreading an unrelated number as an age -- does not apply to it; a caller confirming a read-back with a bare
+    "yes" (no "বয়স"/"বছর" in that one word either) must not have the age it just confirmed thrown away by the same
+    check that protects against the model's mistake. Never raises; never edits the dict it is given."""
     if not isinstance(slots, dict) or not slots:
         return slots, []
     norm_text = _norm(text)
@@ -162,9 +212,13 @@ def ground_slots(text: str, slots: dict | None, *, names_a_test: bool = False, n
                 if gone:
                     dropped.extend(gone)
                     out[key] = kept or None
-    if not (names_a_doctor or has_doctor_context(text)):
-        value = out.get("doctor_name")
-        if isinstance(value, str) and not _literally_in(value, norm_text):
+    value = out.get("doctor_name")
+    if isinstance(value, str):
+        if doctor_candidates:
+            drop = not _matches_any_candidate(value, doctor_candidates) and not _literally_in(value, norm_text)
+        else:
+            drop = not names_a_doctor and not _literally_in(value, norm_text)
+        if drop:
             dropped.append(value)
             out["doctor_name"] = None
 

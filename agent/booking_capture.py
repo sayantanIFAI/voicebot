@@ -51,6 +51,11 @@ _EXTRA_DIGIT_WORD = {
     "জিরো": "0", "জিরও": "0", "ওয়ান": "1", "টু": "2", "থ্রি": "3", "ফোর": "4", "ফাইভ": "5", "সিক্স": "6", "সেভেন": "7", "এইট": "8",
     "নাইট": "8", "সেবেন": "7", "সেবন": "7", "সেভন": "7", "সিক্ষ": "6", "ফাইব": "5", "থ্রী": "3", "ওয়ন": "1", "ওন": "1", "নাইন": "9", "वन": "1", "टू": "2", "थ्री": "3", "फोर": "4", "फाइव": "5", "सिक्स": "6", "सेवन": "7", "एट": "8", "नाइन": "9",
     "ছ": "6", "শুন্য": "0", "शुन्य": "0", "नो": "9", "छे": "6", "छै": "6", "paach": "5", "saath": "7", "nine": "9", "aat": "8",
+    # real call, 2026-10-27: "सेवन आइट ज़ीरो ऐट सेवन नाइन सेवन नाइन सिक्स वन" (10 digits) came back missing exactly its
+    # two "eight"s -- the recogniser wrote the English word "eight" as "आइट" and, two words later in the SAME
+    # sentence, as "ऐट", neither of which was "एट" (already in this table). Same miss class as "छ" for "six" --
+    # both added so neither spelling drops the digit again, whichever one the recogniser picks next time.
+    "आइट": "8", "ऐट": "8",
 }  # fmt: skip
 _DIGIT_WORDS = {**spoken_codes._DIGIT_WORD, **_ROMAN_DIGIT_WORD, **_EXTRA_DIGIT_WORD}
 # Numbers said as numbers ("four hundred", "eighty nine", "twenty") are NOT digits: the caller is told to say the number digit by digit.
@@ -1323,7 +1328,12 @@ _AGE_WORDS = {
     # recogniser often drops ं/ँ), matching this dict's existing teens entries.
     "इक्कीस": 21, "बाईस": 22, "तेईस": 23, "चौबीस": 24, "पच्चीस": 25, "छब्बीस": 26, "सत्ताईस": 27, "सत्ताइस": 27, "अट्ठाईस": 28, "अट्ठाइस": 28, "अठाईस": 28, "उनतीस": 29,
     "इकतीस": 31, "बत्तीस": 32, "तैंतीस": 33, "तैतीस": 33, "चौंतीस": 34, "चौतीस": 34, "पैंतीस": 35, "पैतीस": 35, "छत्तीस": 36, "सैंतीस": 37, "सैतीस": 37, "अड़तीस": 38, "उनतालीस": 39, "उनचालीस": 39,
-    "इकतालीस": 41, "बयालीस": 42, "तैंतालीस": 43, "तैतालीस": 43, "चौवालीस": 44, "पैंतालीस": 45, "पैतालीस": 45, "छियालीस": 46, "सैंतालीस": 47, "सैतालीस": 47, "अड़तालीस": 48, "उनचास": 49,
+    "इकतालीस": 41, "बयालीस": 42, "तैंतालीस": 43, "तैतालीस": 43, "चौवालीस": 44,
+    # real call, 2026-10-27: "मरीज़ की उम्र क्या है?" answered with a bare "चवालीस" -- the colloquial contraction of
+    # "चौंतालीस"/"चौवालीस" (drops the ौ vowel sign entirely) common in everyday Hindi speech -- was not an age at
+    # all here, so the exact same question was asked again, and the caller gave up and said a different number.
+    "चवालीस": 44,
+    "पैंतालीस": 45, "पैतालीस": 45, "छियालीस": 46, "सैंतालीस": 47, "सैतालीस": 47, "अड़तालीस": 48, "उनचास": 49,
     "इक्यावन": 51, "बावन": 52, "तिरपन": 53, "तिरेपन": 53, "चौवन": 54, "पचपन": 55, "छप्पन": 56, "सत्तावन": 57, "अट्ठावन": 58, "अठावन": 58, "उनसठ": 59,
     "इकसठ": 61, "बासठ": 62, "तिरसठ": 63, "चौंसठ": 64, "चौसठ": 64, "पैंसठ": 65, "पैसठ": 65, "छियासठ": 66, "सड़सठ": 67, "अड़सठ": 68, "उनहत्तर": 69,
     "इकहत्तर": 71, "बहत्तर": 72, "तिहत्तर": 73, "चौहत्तर": 74, "पचहत्तर": 75, "छिहत्तर": 76, "सतहत्तर": 77, "अठहत्तर": 78, "उनासी": 79,

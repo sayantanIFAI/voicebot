@@ -2586,18 +2586,26 @@ def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
 _alias_table_cache: tuple[int, AliasTable] | None = None
 
 
-async def _catalogue_mentions(text: str, lang: str) -> tuple[bool, bool]:
-    """(names a test, names a doctor): does the catalogue know a test / doctor in this sentence by any spoken form?
-    When it cannot tell (no catalogue, any error) it says True for both, so nothing is ever dropped on a guess."""
+async def _catalogue_mentions(text: str, lang: str) -> tuple[bool, bool, tuple[str, ...]]:
+    """(names a test, names a doctor, doctor candidates): does the catalogue know a test / doctor in this sentence
+    by any spoken form, and -- when a doctor mention was AMBIGUOUS (a surname/alias two or more real doctors share,
+    e.g. two Sens) -- the real doctors it could be, from the catalogue itself. Real calls, 2026-10-27: "ডাক্তার সেন"
+    and "ডক্টর ঋষা" were each answered with a confident, different doctor's real schedule; `doctor_candidates` is
+    what lets agent/slot_grounding.ground_slots refuse a model's doctor_name claim that is not even one of the
+    catalogue's own candidates for what was actually said (see that module's docstring for the full rule). When it
+    cannot tell (no catalogue, any error) it says True for both booleans and no candidates, so nothing is ever
+    dropped on a guess."""
     global _alias_table_cache
     try:
         cat = await _cached_catalogue()
         if _alias_table_cache is None or _alias_table_cache[0] != id(cat):
             _alias_table_cache = (id(cat), AliasTable(cat))
-        kinds = {e.kind for e in _alias_table_cache[1].entities(text, lang)}
-        return "test" in kinds, "doctor" in kinds
+        entities = _alias_table_cache[1].entities(text, lang)
+        kinds = {e.kind for e in entities}
+        candidates = tuple(dict.fromkeys(c for e in entities if e.kind == "doctor" and e.value is None for c in e.candidates))
+        return "test" in kinds, "doctor" in kinds, candidates
     except Exception:  # noqa: BLE001 - grounding is a safety net, never a reason to fail a turn
-        return True, True
+        return True, True, ()
 
 
 async def _chamber_window(session: CallSession, text: str):
@@ -2638,13 +2646,15 @@ async def _ground_model_slots(session: CallSession, text: str, lang: str, data: 
     dropped here (agent/slot_grounding.py has the exact rule). `trust_age`: this turn's slots came from booking_
     capture.py's own deterministic read-back/confirm flow, not a model guess -- see ground_slots' own docstring.
     Returns `data` with cleaned slots; never mutates the dict it is given (it may be the semantic cache's own copy)."""
-    names_test, names_doctor = await _catalogue_mentions(text, lang)
+    names_test, names_doctor, doctor_candidates = await _catalogue_mentions(text, lang)
     cleaned = dict(data)
     total_dropped = 0
     for key in ("slots", "secondary_slots"):
         value = data.get(key)
         if isinstance(value, dict) and value:
-            new, dropped = ground_slots(text, value, names_a_test=names_test, names_a_doctor=names_doctor, trust_age=trust_age)
+            new, dropped = ground_slots(
+                text, value, names_a_test=names_test, names_a_doctor=names_doctor, doctor_candidates=doctor_candidates, trust_age=trust_age
+            )
             if dropped:
                 cleaned[key] = new
                 total_dropped += len(dropped)

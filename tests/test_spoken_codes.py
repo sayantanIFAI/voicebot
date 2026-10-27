@@ -32,6 +32,12 @@ def test_a_ten_digit_mobile_number_is_read_from_digits_or_words_in_any_of_the_th
     assert parse_phone(text) == expected
 
 
+def test_a_hindi_six_with_the_aspirate_dropped_by_the_recogniser_still_counts():
+    # real call, 2026-10-27: the recogniser heard "छह" (six) as bare "छ" -- missing from the digit table, it was
+    # silently skipped, so a true 10-digit number came back as only 9 and the read-back could never complete.
+    assert parse_phone("नौ आठ सात छ पांच चार तीन दो एक शून्य") == "9876543210"
+
+
 @pytest.mark.parametrize(
     "text",
     [

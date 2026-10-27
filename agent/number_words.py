@@ -39,6 +39,11 @@ _HI_EXTRA = {
     "अठाईस": 28, "अठावन": 58, "अठानवे": 98, "अठानबे": 98, "अट्ठानबे": 98, "अट्ठावे": 98, "अठावे": 98, "अट्ठाणवे": 98,
     "बानबे": 92, "बावे": 92, "बानवै": 92, "तिरानबे": 93, "चौरानबे": 94, "पंचानबे": 95, "पचानवे": 95, "छियानबे": 96, "सत्तानबे": 97, "निन्यानबे": 99, "इक्यानबे": 91, "इक्यानवें": 91,
     "पैतीस": 35, "पैंतिस": 35, "पैतालीस": 45, "पैसठ": 65, "सैतीस": 37, "सैतालीस": 47, "तैतीस": 33, "तैतालीस": 43, "चौतीस": 34, "चौतालीस": 44, "चौसठ": 64, "इकसठ": 61, "इकत्तीस": 31,
+    # real call, 2026-10-27: the caller said 44 as "चवालीस" (the colloquial contraction of "चौंतालीस" -- drops the
+    # nasal mark AND the "ौ"/"त" become "व", the way the word is actually said in everyday speech in large parts
+    # of the Hindi belt). It was not recognised at all (not even "didn't catch that" -- the exact same age question
+    # was simply asked again), so the caller gave up and said a different number in Bengali that DID get through.
+    "चवालीस": 44,
     "पन्द्रह": 15, "सत्रा": 17, "अठारा": 18,
     "बीस": 20, "तीस": 30, "चालिस": 40, "पचास": 50, "साठ": 60, "सत्तर": 70, "अस्सी": 80, "नब्बे": 90,
 }

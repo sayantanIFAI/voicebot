@@ -84,12 +84,23 @@ def test_a_doctor_the_model_made_up_is_dropped_too():
         # a garbled name inside a real price question: the model's reading must survive
         ("আচ্ছা আর ক্বক র সাথে যদি আমি উরিক এসিদ টেস্ট করি একসাথে টোটাল কত পরবে", {"test_names": ["CBC", "Uric Acid"]}),
         ("সিবিসি", {"test_name": "সিবিসি"}),
-        ("ডক্টর সেন", {"doctor_name": "Dr. Sen"}),
     ],
 )
 def test_real_questions_keep_what_the_model_read(text, slots):
     kept, dropped = ground_slots(text, slots)
     assert kept == slots and dropped == []
+
+
+def test_a_doctor_the_catalogue_actually_found_is_kept_even_read_in_a_different_script():
+    # 2026-10-27: doctor_name grounding no longer takes "the sentence says the word doctor" as support on its own
+    # (that was true of nearly every doctor sentence there is -- see agent/slot_grounding.py's docstring and the
+    # test right below this one). The signal that survives is the catalogue's OWN recognition of "সেন" in this
+    # text (names_a_doctor=True, as main.py's real caller would report) -- a plain cross-script reading of the
+    # SAME doctor is still kept, it just needs the real signal, not a coincidence of the word "doctor" appearing.
+    kept, dropped = ground_slots("ডক্টর সেন", {"doctor_name": "Dr. Sen"}, names_a_doctor=True)
+    assert kept == {"doctor_name": "Dr. Sen"} and dropped == []
+
+
 
 
 def test_a_name_the_catalogue_finds_in_the_sentence_is_never_dropped():

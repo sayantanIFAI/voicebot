@@ -29,7 +29,11 @@ _DIGIT_WORD = {
     "seven": "7", "eight": "8", "nine": "9",
     "শূন্য": "0", "এক": "1", "দুই": "2", "তিন": "3", "চার": "4", "পাঁচ": "5", "ছয়": "6", "সাত": "7", "আট": "8", "নয়": "9",
     "शून्य": "0", "ज़ीरो": "0", "जीरो": "0", "एक": "1", "दो": "2", "तीन": "3", "चार": "4", "पाँच": "5", "पांच": "5",
-    "छह": "6", "छः": "6", "सात": "7", "आठ": "8", "नौ": "9",
+    # real call, 2026-10-27: a caller's "छह" (six) heard by the recogniser as bare "छ" (the aspirate dropped) --
+    # exactly the same miss class as the Bengali/Hindi phonetic variants added for other words -- was not in this
+    # table at all, so the digit was silently skipped: "9 8 7 6 5 4 3 2 1 0" came back as only 9 digits and the
+    # phone-number read-back looped forever asking for "the rest" that could never complete.
+    "छह": "6", "छः": "6", "छ": "6", "सात": "7", "आठ": "8", "नौ": "9",
 }  # fmt: skip
 
 # The letters used in a confirmation id ("K", "C", "D", and the hex digits A-F), spelled singly, in three scripts --
