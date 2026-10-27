@@ -54,12 +54,9 @@ _RESPELL: dict[str, str] = {
     # through tools/respell_probe.py (no pod access right now): dropping the হ, the softer-opening alternative,
     # is the one change to try first. Owner confirms by ear; swap for a different candidate if this one is not it.
     "হোয়াটসঅ্যাপ": "ওয়াটসঅ্যাপ",
-    # Owner, 2026-10-27: "অ্যাপয়েন্টমেন্ট" (appointment) also reported mispronounced. Quick fix, NOT run through
-    # tools/respell_probe.py (no pod access right now): simplifying the opening "অ্যা" (æ) vowel cluster to the
-    # plainer "আ" is the one change to try first -- that cluster is the usual trouble spot for this voice (see
-    # the "sh rule" comment below for the same class of issue in native words). Owner confirms by ear; swap for a
-    # different candidate ("অ্যাপোয়েন্টমেন্ট", adding a vowel instead of simplifying one) if this is not it.
-    "অ্যাপয়েন্টমেন্ট": "আপয়েন্টমেন্ট",
+    # Owner, 2026-10-27: "অ্যাপয়েন্টমেন্ট" (appointment) was reported mispronounced. CHOSEN BY A NATIVE LISTENER from six numbered audio candidates on the pod's Bengali voice
+    # (the original, আপয়েন্টমেন্ট, অ্যাপোয়েন্টমেন্ট, এপয়েন্টমেন্ট, অ্যাপইন্টমেন্ট, অ্যাপয়ন্টমেন্ট): candidate 6. Its inflected forms (…টা, …র, …ের, …কে) follow the base word.
+    "অ্যাপয়েন্টমেন্ট": "অ্যাপয়ন্টমেন্ট",
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -124,7 +121,7 @@ _FAMILY_ENDINGS = frozenset(
 )
 
 
-_FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল", "নদিয়া")
+_FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল", "নদিয়া", "অ্যাপয়েন্টমেন্ট")
 
 
 def _family(w: str) -> str | None:
