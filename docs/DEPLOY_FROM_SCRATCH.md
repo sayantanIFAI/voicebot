@@ -154,6 +154,8 @@ All are environment variables read from `deploy/env.sh` (defaults shown) or set 
 | `OLLAMA_KEEP_ALIVE` | -1 | keep models loaded (otherwise the first caller after 5 idle minutes waits ~47 s) |
 | `AEC_BARGE_IN` | 1 (set in `_run_pcm.sh`) | the caller can talk over the agent |
 | `VOICE_AGENT_LANGUAGES` | `bn,hi,en` | `bn` alone is the rollback to Bengali-only |
+| `NOISE_SUPPRESS_AFTER_ASKS` | 3 | noise suppression is switched on for ONE call only after the caller was asked this many times (because of noise) to find a quiet place / repeat; `0` turns the rule off. `CONDITION_INPUT=level` or `full` (default `off`) applies it to every call and is not recommended without a measurement |
+| `AEC_BARGE_IN` | 1 | the caller can talk over the agent. On a phone (Twilio) call the echo-canceller convergence rule is dropped and 0.30 s of voiced evidence is required instead (`agent/full_duplex.py`); browser calls keep the original rule |
 | `CALL_RECORDING_NOTICE` | 0 | `1` makes the greeting say that the call is being recorded. Set it whenever calls are recorded (the pilot) |
 | `PRONUNCIATION_ALLOW_DRAFT` | 1 | lets the not-yet-reviewed pronunciation lexicon be spoken; switch off after the native-listener review, before a real launch |
 | `SILENCE_PROMPT_S`, `SILENCE_CLOSE_S`, `SILENCE_HELLOS` | 5, 5, 3 | when the agent says "hello?" to a silent caller and when it hangs up |

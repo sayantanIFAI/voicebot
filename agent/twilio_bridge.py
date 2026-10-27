@@ -394,6 +394,8 @@ class TwilioStreamAdapter:
     returns, via a queue, so receive() can also deliver synthetic events (a clip we could not convert still releases
     the playback gate). Outbound: sends are serialised with a lock because several tasks speak on one call."""
 
+    phone_line = True  # a telephone leg, not a browser: the agent trusts barge-in without the echo-canceller convergence rule (agent/full_duplex.py)
+
     def __init__(self, ws, auth_token: str, *, check_token: bool = True, start_timeout_s: float = START_TIMEOUT_S) -> None:
         self._ws = ws
         self._auth_token = auth_token

@@ -166,7 +166,7 @@ def main() -> None:
         "        self.audio = PcmCallBuffer()\n        self.declared_rate: int | None = None\n"
         "        if AEC_BARGE_IN:\n"
         "            # KCD-051/052: echo cancellation + acoustic barge-in. Raw PCM only.\n"
-        "            self.duplex = FullDuplexProcessor(sr=SAMPLE_RATE)",
+        "            self.duplex = FullDuplexProcessor.for_phone_line(SAMPLE_RATE) if getattr(ws, 'phone_line', False) else FullDuplexProcessor(sr=SAMPLE_RATE)",
         "buffer",
     )
 

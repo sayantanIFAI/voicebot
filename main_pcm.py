@@ -374,6 +374,10 @@ HISTORY_TEST_MATCH_MIN = 0.85
 # the real recognisers is exactly what tools/conditioning_eval.py measures on a pod.
 # The RETRY path (a poor first result on a noisy or faint line) always uses it.
 CONDITION_INPUT = os.environ.get("CONDITION_INPUT", "off")
+# Owner, 2026-10-27: noise suppression is NOT applied to every call (it is validated on synthetic noise only and can hurt a recogniser that coped). It is switched on for ONE call, from the
+# next turn, only after that caller has been asked this many times to move somewhere quiet / say it again because the line was noisy (agent/reask_policy.py "reask_noisy").
+# Even then it only acts on a clip that is measurably noisy ("auto" mode of agent/conditioning.py). 0 turns the rule off.
+NOISE_SUPPRESS_AFTER_ASKS = int(os.environ.get("NOISE_SUPPRESS_AFTER_ASKS", "3"))
 
 # KCD-461: "a natural filler is spoken when a stage exceeds its
 # threshold... silence never exceeds a stated maximum." REASONED, not
@@ -1028,7 +1032,7 @@ class CallSession:
         self.declared_rate: int | None = None
         if AEC_BARGE_IN:
             # KCD-051/052: echo cancellation + acoustic barge-in. Raw PCM only.
-            self.duplex = FullDuplexProcessor(sr=SAMPLE_RATE)
+            self.duplex = FullDuplexProcessor.for_phone_line(SAMPLE_RATE) if getattr(ws, 'phone_line', False) else FullDuplexProcessor(sr=SAMPLE_RATE)
 
         # Starts True: the greeting goes out before the caller has said
         # anything, so the gate must already be closed when the first poll
@@ -1221,6 +1225,8 @@ class CallSession:
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
         self.awaiting_test_category = False
         self.awaiting_clinician_offer = False  # "a doctor will explain it, shall I connect one?" was asked (agent/clinical_safety.py); the next yes / no answers it
+        self.noisy_asks = 0  # how many times this caller was asked, because of noise on the line, to find a quiet place / repeat
+        self.noise_suppress = False  # set after NOISE_SUPPRESS_AFTER_ASKS such asks: this call's audio is then noise-filtered (when noisy) before recognition
         self.offtopic_streak = 0  # consecutive turns about nothing to do with Sonoscan (agent/off_topic.py); the third closes the call
         self.offtopic_last_turn = -10  # the turn number of the last such turn, to tell "in a row" from "once, long ago"
         self.unrelated_streak = 0  # consecutive turns that were a wrong number (agent/unrelated_caller.py); the second closes the call
@@ -1685,6 +1691,11 @@ async def _reask_or_handoff(
     call (Appendix C)."""
     reask_outcomes.record(decision.reason or "unclear", decision.action, lang)
     _note(session, "reasks")
+    if decision.action == "reask" and decision.reason == "noisy" and NOISE_SUPPRESS_AFTER_ASKS > 0:
+        session.noisy_asks += 1
+        if session.noisy_asks >= NOISE_SUPPRESS_AFTER_ASKS and not session.noise_suppress:
+            session.noise_suppress = True
+            logger.info("[%s] asked %d times about noise: noise suppression is on for the rest of this call", session.call_id, session.noisy_asks)
     if decision.mark_confused:
         apply_caller_state(session.call_state, caller_state="confused")
     # `languages` is passed when the caller's language could not be identified:
@@ -4754,8 +4765,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 if attended:
                     temp_wavs.append(attended)
                     asr_wav = attended
-            if CONDITION_INPUT != "off":
-                conditioned = await asyncio.to_thread(_condition_wav_to_path, asr_wav, CONDITION_INPUT)
+            if CONDITION_INPUT != "off" or session.noise_suppress:
+                conditioned = await asyncio.to_thread(_condition_wav_to_path, asr_wav, CONDITION_INPUT if CONDITION_INPUT != "off" else "full")
                 if conditioned:
                     temp_wavs.append(conditioned)
                     asr_wav = conditioned

@@ -38,6 +38,11 @@ from agent.echo_cancel import EchoPipeline
 # twelve is missed. 5 dB keeps a margin above the zero-false-event point. Real
 # handsets are untested -- tools/echo_eval.py measures this on recorded audio.
 MIN_TRUSTED_ERLE_DB = 5.0
+# A telephone leg has no speaker-to-microphone path of its own: the canceller has no echo to remove, so its ERLE stays at 0 dB for the whole call and the 5 dB rule above would discard EVERY
+# interruption (caller report 2026-10-27: "even if I talk it does not listen"). On a phone line the rule is therefore dropped and the detector's own tests (level, not echo-shaped, voiced) are
+# kept, with more evidence required (PHONE_MIN_SPEECH_S, against 0.11 s). The same idea was tried for BROWSER calls on 2026-10-15 and reverted: a browser leaks faint, non-linear echo that the
+# estimator cannot see, and the agent interrupted itself. So this applies to phone-line calls only (for_phone_line), never to the browser.
+PHONE_MIN_SPEECH_S = 0.30
 # The agent is treated as still audible this long after the last reference
 # sample (playback buffer, room reverberation).
 TAIL_S = 0.4
@@ -64,10 +69,12 @@ class FullDuplexProcessor:
         sr: int = 16000,
         min_trusted_erle_db: float = MIN_TRUSTED_ERLE_DB,
         barge_config: BargeInConfig | None = None,
+        assume_echo_free: bool = False,
         **echo_kwargs,
     ):
         self.sr = sr
         self.min_trusted_erle_db = min_trusted_erle_db
+        self.assume_echo_free = assume_echo_free  # a phone line: no acoustic echo path, so the ERLE rule is not applied
         self.echo = EchoPipeline(sr=sr, **echo_kwargs)
         self.detector = BargeInDetector(sr=sr, config=barge_config)
         self._mic_pos = 0  # samples of microphone consumed so far
@@ -76,6 +83,11 @@ class FullDuplexProcessor:
         self._inhibit_until = 0  # mic sample before which barge-in is not acted on
         self.barge_ins = 0
         self.suppressed = 0
+
+    @classmethod
+    def for_phone_line(cls, sr: int = 16000) -> "FullDuplexProcessor":
+        """The processor for a telephone call (Twilio): barge-in is acted on without the ERLE rule, but only on PHONE_MIN_SPEECH_S of net voiced evidence."""
+        return cls(sr=sr, barge_config=BargeInConfig(min_speech_s=PHONE_MIN_SPEECH_S), assume_echo_free=True)
 
     # -- agent side ---------------------------------------------------
     def place_reference(self, pcm: np.ndarray, voice: str | None = None) -> int:
@@ -114,7 +126,7 @@ class FullDuplexProcessor:
         if event is not None:
             trusted = (
                 speaking
-                and self.echo.canceller.erle_db >= self.min_trusted_erle_db
+                and (self.assume_echo_free or self.echo.canceller.erle_db >= self.min_trusted_erle_db)
                 and self._mic_pos >= self._inhibit_until
             )
             if trusted:
