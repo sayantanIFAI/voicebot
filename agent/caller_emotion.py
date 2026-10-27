@@ -15,8 +15,8 @@ trained on IEMOCAP, whose release form says the data is not shared for commercia
 `EMOTION_DETECT=off` switches the whole feature off, and `Classifier.MODEL_SOURCE` is the one line to change for a model with a verified commercial licence.
 
 LIMITS, REASONED NOT MEASURED: it was trained on acted English speech. It has not been checked on Bengali or Hindi phone audio, and it has no "fear" class (fear tends to read as sad or angry).
-So it is deliberately conservative: a loud verdict on one clip is enough only when very sure, otherwise two stressed clips out of the last three are needed, and it switches off again after three
-calm ones. A native-speaker listening pass is the way to tune the numbers below.
+So it is deliberately conservative: two stressed clips out of the last three are needed (one clip never decides, however sure the model sounds -- it is often near 100% sure), and it switches off again
+after three calm ones. A native-speaker listening pass is the way to tune the numbers below.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 STRESSED_LABELS = frozenset({"ang", "sad"})
 MIN_CLIP_S = 1.2  # a one-word "yes" says nothing about mood
 MIN_SCORE = 0.75  # probability the top class needs before the clip counts as stressed
-SURE_SCORE = 0.92  # one clip this sure is enough on its own
 WINDOW = 3  # stressed clips are counted over the last this-many scored clips
 NEEDED = 2
 CALM_TO_CLEAR = 3  # this many calm clips in a row end the state
@@ -60,7 +59,7 @@ class EmotionEvidence:
         self._recent.append(stressed)
         self._calm_run = 0 if stressed else self._calm_run + 1
         if not self.active:
-            if (stressed and result.score >= SURE_SCORE) or sum(self._recent) >= NEEDED:
+            if sum(self._recent) >= NEEDED:
                 self.active = True
                 return "on"
         elif self._calm_run >= CALM_TO_CLEAR:
@@ -123,9 +122,11 @@ class Classifier:
 
 
 def result_from_output(values: list[float], labels: dict[int, str]) -> EmotionResult:
-    """The model's output row -> probabilities. The classifier ends in a log-softmax (all values <= 0); anything else is read as raw scores and softmaxed, so either way these sum to 1."""
+    """The model's output row -> probabilities. Log-probabilities (all <= 0) are exponentiated, a row that already sums to 1 is kept, anything else is read as raw scores and softmaxed."""
     if all(v <= 0.0 for v in values):
         probs = [math.exp(v) for v in values]
+    elif all(0.0 <= v <= 1.0 for v in values) and abs(sum(values) - 1.0) < 1e-3:
+        probs = list(values)
     else:
         top = max(values)
         probs = [math.exp(v - top) for v in values]

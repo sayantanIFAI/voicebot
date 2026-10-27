@@ -19,9 +19,9 @@ def test_two_stressed_clips_in_three_switch_on_then_three_calm_switch_off():
     assert [e.add(EmotionResult("neu", 0.9)) for _ in range(3)] == [None, None, "off"]
 
 
-def test_one_very_sure_clip_is_enough():
-    _, out = feed([("ang", 0.95)])
-    assert out == ["on"]
+def test_one_clip_never_decides_however_sure():
+    _, out = feed([("ang", 1.0)])
+    assert out == [None]
 
 
 def test_short_clips_and_missing_verdicts_are_ignored():
@@ -39,3 +39,5 @@ def test_log_softmax_and_raw_scores_both_become_probabilities():
     assert r.label == "neu" and abs(sum(r.scores.values()) - 1) < 1e-9
     r = result_from_output([0.2, 2.0, 0.1, 0.0], LABELS)
     assert r.label == "ang" and abs(sum(r.scores.values()) - 1) < 1e-9
+    r = result_from_output([0.0, 0.0, 1.0, 0.0], LABELS)  # already probabilities: not softmaxed a second time
+    assert r.label == "hap" and r.score == 1.0
