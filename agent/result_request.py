@@ -33,9 +33,9 @@ _PRICE = (
 _BOOK = ("বুক", "করাতে চাই", "করাতে হবে", "করাতে", "book", "appointment", "অ্যাপয়েন্টমেন্ট", "बुक", "अपॉइंटमेंट", "करवाना", "कराना")
 
 REPLY = {
-    "bn": "ফোনে টেস্টের রেজাল্ট বলতে পারি না। দয়া করে কাউন্টার থেকে রিপোর্ট সংগ্রহ করে নিন।",
-    "hi": "फ़ोन पर टेस्ट का रिज़ल्ट नहीं बता सकती। कृपया रिपोर्ट काउंटर से ले लीजिए।",
-    "en": "I cannot tell test results over the phone. Please collect your report from the counter.",
+    "bn": "ফোনে টেস্টের রেজাল্ট বলা যাবে না। দয়া করে কাউন্টার থেকে রিপোর্ট সংগ্রহ করে নিন।",
+    "hi": "फ़ोन पर टेस्ट का रिज़ल्ट नहीं बताया जा सकता। कृपया रिपोर्ट काउंटर से ले लीजिए।",
+    "en": "Test results cannot be given over the phone. Please collect your report from the counter.",
 }
 
 

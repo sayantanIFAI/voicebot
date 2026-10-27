@@ -541,7 +541,7 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
         return eye_words.NO_EYE_DEPARTMENT["bn"]
     if not off_topic.has_health_word(symptom):
         # Owner, 2026-10-27: "শরীর ভালো নেই, কোন ডাক্তার দেখাবো" names no problem: ask what it is instead of sending the caller to the counter
-        return "ঠিক আছে, কী সমস্যা হচ্ছে বলুন, তাহলে কোন বিভাগে দেখাবেন বলতে পারব।"
+        return "কী সমস্যা হচ্ছে বলুন, তাহলে কোন বিভাগে দেখাবেন বলতে পারব।"
     return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
 
 

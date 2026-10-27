@@ -41,6 +41,8 @@ _CHIT_CHAT_NATIVE = (
     "घूमने चलोगी", "घूमने चलोगे", "घूमने चलें", "घूमने चलते", "घूमने जाओगी", "घूमने जाओगे", "मूवी देखने", "फिल्म देखने", "डेट पर", "प्यार करता", "प्यार करती", "आई लव यू", "शादी करोगी",
     "शादी करोगे", "दोस्त बनोगी", "दोस्ती करोगी", "गाना सुनाओ", "गाना गाओ", "चुटकुला", "जोक सुनाओ", "कहानी सुनाओ", "कविता सुनाओ", "मौसम कैसा", "क्रिकेट", "फुटबॉल", "चुनाव", "वोट", "राजनीति",
     "बिजली गिर", "आसमान टूट", "सिर पर बिजली",
+    # politics and public figures, Hindi / English / Latin Bengali (a real call: "मोदी की भावे लगा है मोदी मोदी")
+    "मोदी", "ममता", "राहुल गांधी", "केजरीवाल", "भाजपा", "कांग्रेस", "सरकार बदल", "modi", "mamata", "rahul gandhi", "bjp", "congress party", "trinamool",
 )
 _CHIT_CHAT_LATIN = re.compile(
     r"\b(?:go(?:ing)? out with me|come out with me|go for a (?:walk|drive) with me|date me|marry me|love you|i love|be my (?:friend|girlfriend|boyfriend)|tell me a joke|sing (?:me )?a song|"
@@ -77,9 +79,11 @@ def has_health_word(text: str) -> bool:
 
 # "Is this a girls' school or a police station?" / "I called the police station": the caller dialled the wrong place. Said straight away, then the call is closed (no second chance asked).
 _WRONG_PLACE_NATIVE = re.compile(
-    r"(?:এটা|ইটা|এইটা|এটাই|ওটা)\s*কি\s+(?:[^\s]+\s+){0,2}?(?:স্কুল|ইস্কুল|গির্ল্স|বয়েজ|পুলিশ|থানা|স্তেতিওন|স্টেশন|দোকান|হোটেল|ব্যাংক|ব্যাঙ্ক|অফিস|বাজার|মন্দির|মসজিদ)"
+    r"(?:এটা|ইটা|এইটা|এটাই|ওটা)\s*কি\s+(?:[^\s]+\s+){0,3}?(?:স্কুল|ইস্কুল|গির্ল্স|বয়েজ|পুলিশ|থানা|স্তেতিওন|স্টেশন|স্ট্যান্ড|স্টপ|দোকান|হোটেল|ব্যাংক|ব্যাঙ্ক|অফিস|বাজার|মন্দির|মসজিদ|কলেজ)"
+    r"|(?:এটা|ইটা|এইটা|এটাই|ওটা)\s*কি\s+(?:[^\s]+\s+){1,4}?(?:এর|র|-এর)?\s*(?:নম্বর|নম্বার|নাম্বার|নাম্বর)\s*(?:নাকি|না|কি)"
     r"|(?:পুলিশ\s*(?:স্টেশন|স্তেতিওন|স্টেশনে)|থানা|থানায়)\s*(?:এ|এই)?\s*ফোন\s*(?:করেছি|করেছিলাম|লাগিয়েছি|লেগেছে)"
-    r"|(?:यह|ये|क्या\s+यह)\s*(?:क्या\s+)?(?:कोई\s+)?(?:[^\s]+\s+)?(?:स्कूल|पुलिस\s*स्टेशन|थाना|बैंक|दुकान|होटल|ऑफिस|बाज़ार|बाजार)\s*(?:है|हैं)"
+    r"|(?:यह|ये|क्या\s+यह)\s*(?:क्या\s+)?(?:कोई\s+)?(?:[^\s]+\s+)?(?:स्कूल|पुलिस\s*स्टेशन|थाना|बैंक|दुकान|होटल|ऑफिस|बाज़ार|बाजार|बस\s*स्टैंड|कॉलेज)\s*(?:है|हैं)"
+    r"|(?:यह|ये)\s+(?:क्या\s+)?(?:[^\s]+\s+){1,3}?(?:का|की)\s*नंबर\s*(?:है|हैं)?\s*(?:क्या|कि)"
     r"|(?:पुलिस\s*स्टेशन|थाने)\s*(?:में|पर)?\s*फ[ोो]न\s*(?:किया|लगाया|लग)"
 )
 _WRONG_PLACE_LATIN = re.compile(
@@ -89,11 +93,16 @@ _WRONG_PLACE_LATIN = re.compile(
 )
 
 
+_OUR_NAME = ("সোনো", "সনো", "বাণী", "सोनो", "वाणी", "sonoscan", "sono scan", "sonoscan vaani", "vaani", "bani")
+
+
 def wrong_place(text: str) -> bool:
     """True when the caller is plainly asking whether this is some OTHER place (a school, a police station, a bank ...) or says they called one. A hospital cue elsewhere in the sentence
     (agent/unrelated_caller.has_hospital_cue, checked by the caller of this function) always wins; the words 'hospital', 'clinic', 'diagnostic' are not in the list on purpose."""
     t = _norm(text)
-    return bool(t) and (_WRONG_PLACE_NATIVE.search(t) is not None or _WRONG_PLACE_LATIN.search(t) is not None)
+    if not t or any(b in t for b in _OUR_NAME):
+        return False  # "is this Sonoscan's number?" is a question about US
+    return _WRONG_PLACE_NATIVE.search(t) is not None or _WRONG_PLACE_LATIN.search(t) is not None
 
 
 def chit_chat(text: str) -> bool:

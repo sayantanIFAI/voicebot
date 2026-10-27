@@ -2501,6 +2501,15 @@ def _name_answer_repair(session: CallSession, text: str, data):
     return {**data, "intent": "book_appointment", "slots": slots}
 
 
+def _readable_in(value: str, lang: str) -> bool:
+    """Can the call's voice say `value`? The Bengali voice reads Bengali script, the Hindi voice Devanagari (Latin letters are dropped by both: agent/pronunciation.py); English reads Latin."""
+    if lang == "bn":
+        return re.search(r"[ঀ-৿]", value or "") is not None
+    if lang == "hi":
+        return re.search(r"[ऀ-ॿ]", value or "") is not None
+    return re.search(r"[A-Za-z]", value or "") is not None
+
+
 def _sentence_asks_for_a_doctor(text: str) -> bool:
     """The caller's sentence itself talks about a doctor ("বাচ্চাদের ডাক্তার কে আছে", "डॉक्टर मंडल", "ড মণ্ডল"): a plain patient name has no such word."""
     return doctor_search._has(doctor_search._norm(text), doctor_search._DOCTOR_WORD)  # noqa: SLF001
@@ -5764,6 +5773,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # below) -- extended here to LOW confidence too, but ONLY when the model actually named something;
         # nothing is invented, and the lookup still only runs after an explicit yes.
         entity = entity_text.entity_to_confirm(intent, slots)
+        if entity is not None and not _readable_in(entity[1], lang):
+            entity = None  # owner, 2026-10-27: a garbled name in another script ("औरम सेन" in a Bengali call) cannot be said back by the voice: ask for the name instead
         if entity is not None:
             slot, value = entity
             session.pending_entity = entity_text.PendingEntity(intent, slot, value, data)
@@ -5996,6 +6007,17 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             # KCD-dentistry: the caller does not know a doctor's name but described a problem instead --
             # resolve it to a real department/doctor (or a General Medicine checkup) before asking for a
             # doctor's name the caller has already said they do not have.
+            # Owner, 2026-10-27: "তোমার বাবার খুব দাঁতে ব্যথা তো কাকে দেখাবো নাম লেখাবো" -- a symptom and a booking request with no doctor named. The answer is the doctors of that department (and who sits
+            # next), at the FIRST question; asking "which doctor?" first makes the caller say the symptom again. Once per booking, and only when the clinic's routing recognises the symptom.
+            if not st.slots.get("doctor_name") and not st.slots.get("symptom_description") and not st.slots.get("_symptom_routed") and off_topic.has_health_word(text):
+                st.slots["_symptom_routed"] = "1"
+                try:
+                    routed_now = await _route_dept(text, lang, session)
+                except ToolCallError:
+                    routed_now = {}
+                if routed_now.get("matched"):
+                    await _speak(session, await _route_reply(session, routed_now, text, lang), lang)
+                    return
             _had_doctor = bool(st.slots.get("doctor_name"))
             if not st.slots.get("doctor_name") and st.slots.get("symptom_description"):
                 await _resolve_doctor_from_symptom(session, st, lang)
@@ -7352,13 +7374,13 @@ def _abuse_reply_language(text: str, lang: str, prior_lang: str) -> str:
     return prior_lang if prior_lang in _languages_active else lang
 
 
-def _nothing_is_open(session: CallSession) -> bool:
+def _nothing_is_open(session: CallSession, ignore_answering: bool = False) -> bool:
     """True when no question is waiting for an answer and no flow is under way, so a bare "okay" / "thik ache" is a goodbye and not a yes to something (owner,
     2026-10-23, item 6). The last thing said ended in a question, a booking being collected or confirmed, an offer, a pending "which doctor/test?" -- any of them
     makes the same words an answer, and the call goes on."""
     b = session.booking
     return not (
-        session.answering
+        (session.answering and not ignore_answering)  # ignore_answering: the greeting's own "how can I help?" (and the agent's plain redirects) end in a question but open no flow
         or (b is not None and b.stage in ("collecting", "confirming", "awaiting_charge_confirm"))
         or session.suspended is not None
         or session.pending_entity is not None
@@ -7437,7 +7459,9 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
     # Owner, 2026-10-27: questions about the doctors JUST offered ("who is better among them, who sits in the morning") keep the offered doctors as the subject
     if await _answer_about_offered_doctors(session, text, lang):
         return True
-    free = session.booking is None and _nothing_is_open(session)
+    # Owner, 2026-10-27 (live test): the FIRST sentence after the greeting is the commonest place for "which doctors do you have?", a wrong number or small talk, and it was never reached: the greeting
+    # ends in a question, so the turn counted as "the answer to a question" and every guard below stood down. Only a real open flow (a booking, a pending choice ...) holds them back now.
+    free = session.booking is None and _nothing_is_open(session, ignore_answering=True)
     # a wrong place dialled ("is this a girls' school or a police station?"): said directly and the call is closed -- no second chance asked
     if free and off_topic.wrong_place(text) and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in):
         session.outcome = "unrelated_caller"
@@ -7537,7 +7561,7 @@ async def _offtopic_by_verdict(session: CallSession, text: str, lang: str, data:
     """Second layer: the intent model called the sentence small talk or unclear AND nothing in it points at the clinic (no hospital cue, no catalogue name, no symptom or body part, no
     slot the model filled) AND it is a real sentence (four words or more) heard with good agreement between the decoders. Only then is it off-topic. True when answered here.
     Everything doubtful -- a short or garbled sentence, a health word, an open booking or question -- keeps the old path (the model's reply, or "say that again")."""
-    if session.booking is not None or not _nothing_is_open(session):
+    if session.booking is not None or not _nothing_is_open(session, ignore_answering=True):
         return False
     if len(text.split()) < 4 or getattr(asr_result, "decoder_agreement", 0.0) < 0.85 or off_topic.has_health_word(text):
         return False

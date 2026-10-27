@@ -731,9 +731,9 @@ def department_route_reply(result: dict, symptom: str, lang: str) -> str:
     if not off_topic.has_health_word(symptom):
         # Owner, 2026-10-27: no problem named -> ask what it is
         return (
-            "ठीक है, क्या तकलीफ़ है बताइए, तब मैं बता सकूँगी किस विभाग में दिखाना है।"
+            "क्या तकलीफ़ है बताइए, तब मैं बता सकूँगी किस विभाग में दिखाना है।"
             if hi
-            else "Sure, please tell me what the problem is, and I can tell you which department to see."
+            else "Please tell me what the problem is, and I can tell you which department to see."
         )
     return (
         "माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर पूछ सकते हैं।"

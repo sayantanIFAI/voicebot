@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import os
 import wave
 
 import numpy as np
@@ -43,6 +44,13 @@ MIN_TRUSTED_ERLE_DB = 5.0
 # kept, with more evidence required (PHONE_MIN_SPEECH_S, against 0.11 s). The same idea was tried for BROWSER calls on 2026-10-15 and reverted: a browser leaks faint, non-linear echo that the
 # estimator cannot see, and the agent interrupted itself. So this applies to phone-line calls only (for_phone_line), never to the browser.
 PHONE_MIN_SPEECH_S = 0.30
+# Live test, 2026-10-27, headphones mode: the agent interrupted ITSELF 0.6 s after starting a reply (5 s of silence followed in the log). With no echo found, the detector scores the agent's own
+# faint voice in the microphone as a caller ("strong" evidence, because it is voiced and well above the noise floor). The caller speaks into the microphone; the agent's voice only leaks
+# into it. So in the no-echo modes a frame must also be LOUD in absolute terms: the leak, tens of dB below the caller, stays under these floors. REASONED, NOT MEASURED: tune on the pod
+# with the environment variables if a quiet speaker is ignored (lower it) or the agent still interrupts itself (raise it).
+HEADPHONES_FLOOR_DBFS = float(os.environ.get("HEADPHONES_BARGE_FLOOR_DBFS", "-34"))
+HEADPHONES_MIN_SPEECH_S = float(os.environ.get("HEADPHONES_BARGE_MIN_SPEECH_S", "0.45"))
+PHONE_FLOOR_DBFS = float(os.environ.get("PHONE_BARGE_FLOOR_DBFS", "-40"))
 # The agent is treated as still audible this long after the last reference
 # sample (playback buffer, room reverberation).
 TAIL_S = 0.4
@@ -87,13 +95,13 @@ class FullDuplexProcessor:
     @classmethod
     def for_phone_line(cls, sr: int = 16000) -> "FullDuplexProcessor":
         """The processor for a telephone call (Twilio): barge-in is acted on without the ERLE rule, but only on PHONE_MIN_SPEECH_S of net voiced evidence."""
-        return cls(sr=sr, barge_config=BargeInConfig(min_speech_s=PHONE_MIN_SPEECH_S), assume_echo_free=True)
+        return cls(sr=sr, barge_config=BargeInConfig(min_speech_s=PHONE_MIN_SPEECH_S, absolute_floor_dbfs=PHONE_FLOOR_DBFS), assume_echo_free=True)
 
-    def enable_echo_free(self, min_speech_s: float = PHONE_MIN_SPEECH_S) -> None:
+    def enable_echo_free(self, min_speech_s: float = HEADPHONES_MIN_SPEECH_S, floor_dbfs: float = HEADPHONES_FLOOR_DBFS) -> None:
         """The caller says the line has no echo (headphones in the browser test page, owner 2026-10-27): the same rule as a phone line, switched on for this call only. Never inferred by the
         agent -- the 2026-10-15 attempt to infer it from the microphone made the agent interrupt itself."""
         self.assume_echo_free = True
-        self.detector = BargeInDetector(sr=self.sr, config=BargeInConfig(min_speech_s=min_speech_s))
+        self.detector = BargeInDetector(sr=self.sr, config=BargeInConfig(min_speech_s=min_speech_s, absolute_floor_dbfs=floor_dbfs))
 
     # -- agent side ---------------------------------------------------
     def place_reference(self, pcm: np.ndarray, voice: str | None = None) -> int:
