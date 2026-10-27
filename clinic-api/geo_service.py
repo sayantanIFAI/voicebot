@@ -122,13 +122,15 @@ def _build(db: Session) -> tuple[gz.Gazetteer, dict]:
     station = {s.id: s for s in db.query(GeoPoliceStation).all()}
     for d in district.values():
         key = f"district:{d.code}"
-        info[key] = {"kind": "district", "name": d.name, "district": d.name, "police_station": None}
+        info[key] = {"kind": "district", "name": d.name, "name_bn": _first(d.aliases_bn), "name_hi": _first(d.aliases_hi), "district": d.name, "police_station": None}
         entries += [(key, f) for f in _forms(d.name, d.aliases_en, d.aliases_bn, d.aliases_hi)]
     for s in station.values():
         key = f"police_station:{s.code}"
         info[key] = {
             "kind": "police_station",
             "name": s.name,
+            "name_bn": _first(s.aliases_bn),
+            "name_hi": _first(s.aliases_hi),
             "district": district[s.district_id].name,
             "police_station": short_name(s.name),
             "police_station_bn": _first(s.aliases_bn),
@@ -145,6 +147,8 @@ def _build(db: Session) -> tuple[gz.Gazetteer, dict]:
         info[key] = {
             "kind": "place",
             "name": p.name,
+            "name_bn": _first(p.aliases_bn),
+            "name_hi": _first(p.aliases_hi),
             "district": district[p.district_id].name,
             "police_station": short_name(ps.name) if ps else None,
             "police_station_bn": _first(ps.aliases_bn) if ps else None,

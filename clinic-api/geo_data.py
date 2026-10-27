@@ -27,6 +27,24 @@ DISTRICTS = [
     ("DIST_05", "Howrah", "Presidency", "Haora", "হাওড়া", "हावड़ा|हावरा"),
     ("DIST_06", "Hooghly", "Burdwan", "Hugli|Hoogly|Hooghli", "হুগলি|হুগলী", "हुगली"),
     ("DIST_07", "Murshidabad", "Malda", "Murshidabaad", "মুর্শিদাবাদ", "मुर्शिदाबाद"),
+    # Owner, 2026-10-27: the other 16 districts of West Bengal, so a district said in an address ("বালদা" for "মালদা") is recognised or asked back. District rows only: no police station
+    # or place is invented for them (see the note above). Divisions are the state's administrative divisions.
+    ("DIST_08", "North 24 Parganas", "Presidency", "Uttar 24 Parganas|North Twenty Four Parganas|24 Parganas North", "উত্তর চব্বিশ পরগনা|উত্তর ২৪ পরগনা", "उत्तर 24 परगना|उत्तर चौबीस परगना"),
+    ("DIST_09", "South 24 Parganas", "Presidency", "Dakshin 24 Parganas|South Twenty Four Parganas|24 Parganas South", "দক্ষিণ চব্বিশ পরগনা|দক্ষিণ ২৪ পরগনা", "दक्षिण 24 परगना|दक्षिण चौबीस परगना"),
+    ("DIST_10", "Nadia", "Presidency", "Nadiya|Nabadwip Nadia", "নদিয়া|নদীয়া", "नदिया|नादिया"),
+    ("DIST_11", "Birbhum", "Burdwan", "Birbhoom", "বীরভূম", "बीरभूम"),
+    ("DIST_12", "Purba Bardhaman", "Burdwan", "East Bardhaman|East Burdwan|Purba Burdwan|Bardhaman", "পূর্ব বর্ধমান|বর্ধমান", "पूर्व बर्धमान|बर्धमान"),
+    ("DIST_13", "Paschim Bardhaman", "Burdwan", "West Bardhaman|West Burdwan|Paschim Burdwan|Asansol Durgapur", "পশ্চিম বর্ধমান", "पश्चिम बर्धमान"),
+    ("DIST_14", "Bankura", "Medinipur", "Bankoora", "বাঁকুড়া|বাকুড়া", "बांकुड़ा|बांकुरा"),
+    ("DIST_15", "Purulia", "Medinipur", "Puruliya", "পুরুলিয়া", "पुरुलिया"),
+    ("DIST_16", "Purba Medinipur", "Medinipur", "East Medinipur|East Midnapore|Purba Midnapore", "পূর্ব মেদিনীপুর", "पूर्व मेदिनीपुर"),
+    ("DIST_17", "Paschim Medinipur", "Medinipur", "West Medinipur|West Midnapore|Paschim Midnapore|Midnapore", "পশ্চিম মেদিনীপুর|মেদিনীপুর", "पश्चिम मेदिनीपुर|मेदिनीपुर"),
+    ("DIST_18", "Jhargram", "Medinipur", "Jhaargram", "ঝাড়গ্রাম", "झारग्राम"),
+    ("DIST_19", "Jalpaiguri", "Jalpaiguri", "Jalpaigudi", "জলপাইগুড়ি", "जलपाईगुड़ी"),
+    ("DIST_20", "Alipurduar", "Jalpaiguri", "Alipurduar Dooars", "আলিপুরদুয়ার", "अलीपुरद्वार"),
+    ("DIST_21", "Cooch Behar", "Jalpaiguri", "Coochbehar|Koch Bihar|Kuch Bihar", "কোচবিহার", "कूचबिहार|कोचबिहार"),
+    ("DIST_22", "Darjeeling", "Jalpaiguri", "Darjiling|Siliguri Darjeeling", "দার্জিলিং", "दार्जिलिंग"),
+    ("DIST_23", "Kalimpong", "Jalpaiguri", "Kalimpung", "কালিম্পং", "कालिम्पोंग|कलिम्पोंग"),
 ]
 
 # code, district code, name (as written in the PDF), aliases_en, aliases_bn, aliases_hi

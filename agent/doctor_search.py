@@ -199,6 +199,13 @@ def sitting_list_reply(sitting: list[dict], when_phrase: str, dept_label: str, l
     names = [one(s) for s in sitting]
     if not names:
         return nobody_sits(when_phrase, [], lang)
+    if len(names) == 1:
+        # Owner, 2026-10-27: with ONE doctor there is nobody to choose between -- "whom?" is the wrong question; ask whether to book.
+        return {
+            "bn": f"{when_phrase} {dept_label} বিভাগে বসছেন {names[0]}। অ্যাপয়েন্টমেন্ট করতে চান?",
+            "hi": f"{when_phrase} {dept_label} विभाग में बैठ रहे हैं {names[0]}। अपॉइंटमेंट करना चाहेंगे?",
+            "en": f"{when_phrase} in {dept_label}: {names[0]}. Would you like an appointment?",
+        }[lang]
     return {
         "bn": f"{when_phrase} {dept_label} বিভাগে বসছেন {_join(names, lang)}। কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
         "hi": f"{when_phrase} {dept_label} विभाग में बैठ रहे हैं {_join(names, lang)}। किसके पास अपॉइंटमेंट चाहिए?",

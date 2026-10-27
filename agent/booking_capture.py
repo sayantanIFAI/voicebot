@@ -812,6 +812,11 @@ _PROMPTS = {
         "hi": "ठीक है। मरीज़ की उम्र दोबारा बताइए।",
         "bn": "ঠিক আছে। রোগীর বয়সটা আবার বলবেন?",
     },
+    "place_confirm": {
+        "en": "Did you say {place}?",
+        "hi": "क्या आपने {place} कहा?",
+        "bn": "আপনি কি {place} বললেন?",
+    },
     "address_confirm": {
         "en": "The address is {value}. Is that right?",
         "hi": "पता {value} है, ठीक है?",
@@ -1094,7 +1099,24 @@ _ENGLISH_BAZAR_SPOKEN = {"bn": "ইংলিশ বাজার", "hi": "इं�
 
 def fix_station(station: str, lang: str) -> str:
     """"english rajah" / "ইংলিশ রাজা" is the English Bazar police station (Malda), which the recogniser keeps hearing as a request for English or as a name. Said in the call's own script."""
-    return _ENGLISH_BAZAR.sub(_ENGLISH_BAZAR_SPOKEN.get(lang, _ENGLISH_BAZAR_SPOKEN["en"]), station or "")
+    spoken = _ENGLISH_BAZAR_SPOKEN.get(lang, _ENGLISH_BAZAR_SPOKEN["en"])
+    if says_english_bazar(station):
+        return spoken  # the whole short answer: "english was a" is the station, not a request for English
+    return _ENGLISH_BAZAR.sub(spoken, station or "")
+
+
+def _may_need_paediatric_redirect(age_value) -> bool:
+    try:
+        return 13 <= int(age_value) <= 17
+    except (TypeError, ValueError):
+        return False
+
+
+def says_english_bazar(text: str) -> bool:
+    """A short answer that begins with "English" in any of the three scripts ("english was a", "ইংলিশ বাজা", "इंग्लिश बाज़ार"): asked for the police station, this is English Bazar, whatever
+    the recogniser made of the second word."""
+    t = " ".join((text or "").split())
+    return 0 < len(t.split()) <= 3 and re.match(r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ|english|इंग्लिश|अंग्रेज)", t, re.I) is not None
 
 
 def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, tag: str) -> bool:
@@ -1102,6 +1124,25 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
     question in the same breath ("the patient is 45. What is the address?"), the answer to which also counts as its yes; the ADDRESS goes straight on to the closing question,
     after asking the police station when the caller did not give one. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
     pend_key, done_key = f"_{tag}_pending", f"_{tag}_done"
+    if tag == "address":
+        # Owner, 2026-10-27: "বালদা" for "মালদা". main.py looked the short answer up in the West Bengal place tables (hint `_addr_suggest`): when it is only a sound-alike of a known place, the
+        # caller is asked "did you say <place>?" and the yes / no decides. A written-form (exact) match asks nothing.
+        confirm = st.slots.get("_addr_confirm")
+        suggestion = st.slots.pop("_addr_suggest", None)
+        if confirm:
+            orig, _, suggested = confirm.partition("\x1f")
+            st.slots.pop("_addr_confirm", None)
+            answer = confirm_answer(text, lang)
+            if answer == "yes":
+                text = suggested
+            elif answer == "no":
+                text = orig
+        elif suggestion and field in st.asked_fields and not st.slots.get(field) and not st.slots.get(done_key) and not st.slots.get("_ps_pending"):
+            orig = " ".join((text or "").split()).strip(" ,.।")
+            if orig and orig != suggestion:
+                st.slots["_addr_confirm"] = f"{orig}\x1f{suggestion}"
+                plan.speak = prompt("place_confirm", lang, place=suggestion)
+                return True
     if tag == "address" and st.slots.get("_ps_pending"):
         station = fix_station(" ".join((text or "").split()).strip(" ,.।"), lang)
         asked = int(st.slots.get("_ps_asks") or 0)
@@ -1150,6 +1191,11 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
             # instead stops at the age: the address just given is asked for again next turn, but only once the
             # caller is on the right doctor, not walked further into the wrong one's booking first.
             plan.slots, plan.skip_model = {field: pend}, True
+            if not _may_need_paediatric_redirect(pend):
+                # Owner, 2026-10-27 (real call): "বালদা" was the address, said as the answer to the age read-back; stopping here threw it away and asked for the address again. Only a
+                # patient of 13 to 17 can be on the paediatrician by mistake; for everyone else the address is taken in this same turn, as it always was.
+                plan.slots, plan.skip_model = {}, False
+                return False
             return True
         if value:
             st.slots[pend_key] = value
@@ -1316,8 +1362,15 @@ def bare_age(text: str) -> int | None:
     spoken = _age_from_words(t)
     if spoken and 0 < spoken <= 120:
         return spoken
+    # Owner, 2026-10-27 (real call): "আটত্রিশ" (38) was read as 30 because the tens word "ত্রিশ" sits INSIDE it and the loop below matched a piece of a word. A whole two-digit
+    # number word is looked up first, as a whole word, in the full 10-99 table (agent/number_words.py).
+    tokens = [w for w in re.split(r"[\s,.!?।]+", t) if w]
+    for tok in tokens:
+        digits = number_words.digits_of(tok)
+        if digits is not None and 0 < int(digits) <= 120:
+            return int(digits)
     for word, n in {**_BN_TENS}.items():
-        if word in t:
+        if any(tok == word or (tok.startswith(word) and tok[len(word):] in ("ের", "এর", "ও", "টা", "ই")) for tok in tokens):
             return n
     n = owner_answers.token_number(t)
     return n if n and 0 < n <= 120 else None

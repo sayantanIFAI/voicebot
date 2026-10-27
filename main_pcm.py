@@ -3816,6 +3816,44 @@ def _names_a_test(text: str, lang: str) -> bool:
     return False
 
 
+_GENERIC_ADDRESS_WORDS = frozenset(
+    "আমার আমাদের বাড়ি বাড়ী বাসা ঘর ঠিকানা এখানে ওখানে কাছে পাশে মোড় রোড রাস্তা পাড়া গ্রাম শহর এলাকা বাজার "
+    "मेरा मेरे घर मकान पता यहाँ यहां वहाँ पास रोड गली मोहल्ला गाँव शहर इलाका "
+    "my home house address near road lane village town area here there".split()
+)
+
+
+async def _check_address_answer(session: CallSession, text: str) -> None:
+    """Owner, 2026-10-27: a short answer to "what is the address?" ("বালদা") is looked up in the West Bengal place tables (clinic-api geo tables: all 23 districts, police stations,
+    places). When it is NOT a written-form match but sounds like a known place ("মালদা"), the hint `_addr_suggest` makes agent/booking_capture._detail_turn ask "did you say মালদা?" instead
+    of storing a mishearing. No hint when it matches exactly, matches nothing, or the lookup fails: the answer is then taken as said, as before."""
+    st = session.booking
+    if st is None or _tools is None or st.slots.get("_addr_confirm") or st.slots.get("_ps_pending"):
+        return
+    if "patient_address" not in st.asked_fields or st.slots.get("patient_address") or st.slots.get("_address_done"):
+        return
+    st.slots.pop("_addr_suggest", None)
+    if not text or len(text.split()) > 3:
+        return
+    if all(w.strip(" ,.।").lower() in _GENERIC_ADDRESS_WORDS for w in text.split()):
+        return  # "আমার বাড়ি" (my house) is not a place to look up
+    try:
+        found = await _tools.geo_match(text)
+    except ToolCallError as e:
+        logger.warning("[%s] address lookup failed (%s)", session.call_id, e)
+        return
+    if not found.get("matched") or found.get("exact"):
+        return
+    # only a district or a police station is suggested for a sound-alike: a house-level place name sounds like half the words in the language, and a wrong "did you say ...?" is noise
+    top = next((c for c in found.get("candidates") or [] if c.get("kind") in ("district", "police_station") and c.get("score", 0) >= 0.55), None)
+    if top is None:
+        return
+    spoken = top.get(f"name_{session.lang}") or ""
+    if not re.search(r"[ঀ-৿ऀ-ॿ]", spoken):
+        return  # a Bengali / Hindi voice cannot say Latin letters: no suggestion rather than a blocked reply
+    st.slots["_addr_suggest"] = spoken
+
+
 async def _check_police_station_answer(session: CallSession, text: str) -> None:
     """Item 19: while the police station is being asked for, the answer (and the address it belongs to) is looked up in the clinic's geography tables. Leaves two
     hints for agent/booking_capture._detail_turn: `_ps_match` -- the table's name for the station the caller said, when it is a sure match -- and `_ps_place` -- the
@@ -4228,7 +4266,10 @@ async def _answer_department_doctors(session: CallSession, text: str, lang: str)
             # Owner, 2026-10-25: "is there a neurologist today?" with nobody sitting -- the FIRST sentence says who sits next, when, and asks to book. Never "tell me another day".
             if await _say_nobody_then_next(session, text, lang, None, on_date, _when_phrase(on_date, at_time, lang) or label, label):
                 return True
-        if sitting:
+        if len(sitting) == 1:
+            # one doctor: a yes books HIM (the same pending question as "Dr X sits tomorrow at 11, shall I book it?")
+            session.dept_pending = {"kind": "confirm_one", "doctor": sitting[0], "date": on_date, "time": at_time or sitting[0].get("start"), "turn": session.turn_count}
+        elif sitting:
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count}
         await _speak(session, _with_resume(session, doctor_search.sitting_list_reply(sitting, _when_phrase(on_date, at_time, lang), label, lang), lang), lang)
         return True
@@ -4945,6 +4986,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # language. The actual "okay, switching" acknowledgement is spoken further down (KCD-438, unchanged
         # position), once it is clear nothing else already consumed this turn.
         switch_target = detect_language_switch_request(text, detected_lang)
+        if switch_target and session.booking is not None and session.booking.slots.get("_ps_pending") and booking_capture.says_english_bazar(text):
+            switch_target = None  # Owner, 2026-10-27: asked "which police station?", "english was a" is English Bazar, not a request to switch to English
         if switch_target:
             _lock_reply_language(session, switch_target)
             session.lang_router.note_response_language(switch_target)
@@ -5311,6 +5354,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             dept_found = dept_found if isinstance(dept_found, dict) else None
         chamber_window = await _chamber_window(session, text)
         await _check_police_station_answer(session, text)
+        await _check_address_answer(session, text)
         capture_plan = booking_capture.before_model(session.booking, text, lang, window=chamber_window)
         if capture_plan.speak:
             await _speak(session, capture_plan.speak, lang)
