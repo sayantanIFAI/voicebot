@@ -2768,7 +2768,7 @@ def _not_a_test_sentence(result: dict, lang: str) -> str | None:
     """Owner, 2026-10-27: "কিছু না খেটে দিনকাল" (nonsense) was answered "there is no test called 'কিছু না খেটে দিনকাল'" -- the model had put the WHOLE sentence in test_name. When the catalogue finds nothing, offers
     nothing close, and the caller's sentence has no test, price or report word in it at all, the caller did not ask about a test: say the line was not caught instead of inventing a test question."""
     text = _turn_text.get()
-    if not text or result.get("found") or result.get("ambiguous"):
+    if not text or len(text.split()) < 3 or result.get("found") or result.get("ambiguous"):  # a bare one- or two-word answer to "which test?" is left to the "no such test" reply
         return None
     if result.get("did_you_mean_bn") or result.get("did_you_mean") or has_test_context(text):
         return None
