@@ -6965,6 +6965,13 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
     pending_text, session.pending_language_switch_text = session.pending_language_switch_text, None
     pending_asr, session.pending_language_switch_asr_result = session.pending_language_switch_asr_result, None
     answer = _answer_to_switch_offer(text, target, lang)
+    # Owner, 2026-10-27 (real call): Bengali speech was written in Devanagari twice, so "shall I speak Hindi?" was asked; the caller then said a clear Bengali sentence ("সর্দি কাশি জ্বরের
+    # কোন ডাক্তার আছে আজকে"), which is neither yes nor no, and the code below read any reply that is not a clean yes / no as consent -- the call moved to Hindi, the OLD garbled sentence was
+    # answered and the new one dropped. A clear sentence (three words or more, nearly all in the script of the language the call is already in) is the caller continuing in that
+    # language: that is a "no", and the sentence is a fresh turn answered as it stands. A filler sound ("ah ah") has no such sentence, so the rule below it still applies to it.
+    fresh_sentence = False
+    if answer is None and target != lang and len(text.split()) >= 3 and script_share(text, lang) >= 0.85:
+        answer, fresh_sentence = "no", True
     # An explicit request in this reply ("বাংলায় বলুন", "speak English") names the language to use, whatever was offered, whatever the yes/no reads as.
     explicit = next((r for l in (lang, "bn", "hi", "en") for r in [detect_language_switch_request(text, l)] if r), None)
     if explicit:
@@ -7007,6 +7014,8 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
     # twice, so the offer was asked). Replaying it as an ordinary question sent it to the model, which answered
     # "what's wrong with you? I can talk to you" right after the switch was confirmed. A switch request is already
     # acted on (above), so it is not replayed -- the call just continues in the new language with its context.
+    if fresh_sentence and answer == "no":
+        return False  # this turn's own sentence is answered next, as a fresh turn, in the language the call stays in
     if pending_text and answer != "no" and any(detect_language_switch_request(pending_text, l) for l in ("bn", "hi", "en")):
         return True
     if pending_text and pending_asr is not None:
