@@ -135,6 +135,7 @@ from agent.clause_split import split_into_clauses
 from agent.code_switch import mixture_bucket
 from agent.conditioning import condition as condition_audio
 from agent.confidence_gate import VERIFIED, confidence_state, is_low_confidence
+from agent import asr_refine
 from agent.detector_budget import run_within_budget
 from agent.distress import DistressEvidence, asks_for_person
 from agent.detector_budget import snapshot as detector_budget_snapshot
@@ -429,6 +430,9 @@ CHANNEL_QUALITY_BUDGET_S = 0.08
 # cannot delay the turn. REASONED, not measured on the pod: generous for a
 # 3-6 s clip on the hardware this pipeline already assumes.
 AUDIO_ANALYSIS_BUDGET_S = 0.5
+
+# agent/asr_refine.py: off | shadow | on. In "shadow" the layer only LOGS what it would do with the second decoder's text; "on" is not built yet and behaves as "shadow" (docs/adr/0004).
+ASR_REFINE = asr_refine.parse_mode(os.environ.get("ASR_REFINE", "off"))
 
 CLINIC_API_BASE = os.environ.get("CLINIC_API_BASE", "http://localhost:8080")
 
@@ -2641,6 +2645,26 @@ def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
 
 
 _alias_table_cache: tuple[int, AliasTable] | None = None
+_refiner_cache: tuple[int, asr_refine.AsrRefiner] | None = None
+
+
+async def _asr_refine_shadow(session: CallSession, asr_result, lang: str) -> None:
+    """Shadow only: log what agent/asr_refine.py would do with the other decoder's text. Changes nothing the caller hears, and can never fail or hold up a turn. The log line carries the
+    decision and the catalogue entry (clinic data), never the caller's words."""
+    global _refiner_cache
+    alternatives = getattr(asr_result, "alternatives", None) or []
+    if not alternatives:
+        return
+    try:
+        cat = await _cached_catalogue()
+        if _refiner_cache is None or _refiner_cache[0] != id(cat):
+            _refiner_cache = (id(cat), asr_refine.AsrRefiner(cat))
+        d = _refiner_cache[1].decide(asr_result.text, alternatives, lang)
+        if d.action != "none":
+            logger.info("[%s] ASR_REFINE shadow turn=%d lang=%s decoder=%s agreement=%.2f -> %s %s %s", session.call_id, session.turn_count, lang,
+                        getattr(asr_result, "decoder_used", "?"), float(getattr(asr_result, "decoder_agreement", 0.0) or 0.0), d.action, d.kind, d.entry)
+    except Exception as e:  # noqa: BLE001 - a shadow measurement is never a reason to fail a turn
+        logger.debug("ASR_REFINE shadow skipped: %s", e)
 
 
 async def _catalogue_mentions(text: str, lang: str) -> tuple[bool, bool, tuple[str, ...]]:
@@ -4992,6 +5016,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         channel_quality_buckets.record(channel_quality, "seen", lang)
         logger.debug("[%s] call_state %s", session.call_id, session.call_state.to_log_dict())
 
+        if ASR_REFINE != "off":
+            await _asr_refine_shadow(session, asr_result, detected_lang or lang)
         text = asr_result.text.strip()
         if detected_lang == "en":
             text = fix_asr_confusables(text)

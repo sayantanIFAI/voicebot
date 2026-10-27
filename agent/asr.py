@@ -154,6 +154,8 @@ class ASRResult:
     text: str
     decoder_used: str
     decoder_agreement: float = 1.0
+    # the OTHER decoder's text when it differs from `text` (agent/asr_refine.py reads it; nothing else does). Empty when only one text was heard.
+    alternatives: list[str] = dataclasses.field(default_factory=list)
 
 
 class TurnASR:
@@ -261,10 +263,13 @@ class TurnASR:
         logger.info("ASR decoders [%s]: rnnt %d words %r | ctc %d words %r", self.language_id, r_n, rnnt_text[:160], c_n, ctc_text[:160])
         if ctc_text and c_n >= RNNT_DROP_MIN_CTC_WORDS and r_n <= RNNT_DROP_RATIO * c_n:
             logger.warning("ASR [%s]: RNNT kept %d of CTC's %d words -- using CTC", self.language_id, r_n, c_n)
-            return ASRResult(text=ctc_text, decoder_used="ctc_rnnt_dropped", decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2))
+            return ASRResult(text=ctc_text, decoder_used="ctc_rnnt_dropped", decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2), alternatives=[rnnt_text] if rnnt_text else [])
         if rnnt_text:
             return ASRResult(
-                text=rnnt_text, decoder_used="rnnt", decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2)
+                text=rnnt_text,
+                decoder_used="rnnt",
+                decoder_agreement=round(_word_agreement(ctc_text, rnnt_text), 2),
+                alternatives=[ctc_text] if ctc_text and ctc_text != rnnt_text else [],
             )
         if ctc_text:
             return ASRResult(text=ctc_text, decoder_used="ctc_fallback", decoder_agreement=0.0)

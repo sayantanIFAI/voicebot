@@ -92,6 +92,8 @@ export PATH=/workspace/bin:/workspace/venv/bin:${PATH:-}
 export VOICE_AGENT_LANGUAGES=${VOICE_AGENT_LANGUAGES:-bn,hi,en}
 # Where the SpeechBrain VoxLingua107 LID model lives (persistent, ~86 MB).
 export VOICE_AGENT_LID_DIR=/workspace/lid_model
+# ASR refinement (agent/asr_refine.py, docs/adr/0004): off | shadow. "shadow" only writes "ASR_REFINE shadow" lines to the agent log; callers hear no difference.
+export ASR_REFINE=${ASR_REFINE:-shadow}
 
 # ---- pronunciation lexicon (agent/pronunciation.py) -----------------------
 # A live call (2026-09-28): the blood-test-list reply was blocked outright --

@@ -124,7 +124,8 @@ def _transcribe_sync(wav_path: str) -> ASRResult:
         return ASRResult(text=rnnt, decoder_used="fastconformer", decoder_agreement=1.0)
     if rnnt:
         return ASRResult(text=rnnt, decoder_used="rnnt",
-                         decoder_agreement=round(_word_agreement(ctc, rnnt), 2))
+                         decoder_agreement=round(_word_agreement(ctc, rnnt), 2),
+                         alternatives=[ctc] if ctc and ctc != rnnt else [])
     if ctc:
         return ASRResult(text=ctc, decoder_used="ctc_fallback", decoder_agreement=0.0)
     return ASRResult(text="", decoder_used="none", decoder_agreement=1.0)
