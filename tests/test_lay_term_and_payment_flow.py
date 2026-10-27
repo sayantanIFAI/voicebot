@@ -334,3 +334,69 @@ def test_the_bare_word_doctor_is_emptied_from_the_doctor_slot(m):
     assert out["slots"]["doctor_name"] is None
     keep = {"intent": "doctor_availability", "slots": {"doctor_name": "अमित कर"}}
     assert m._without_generic_doctor_name(keep) is keep
+
+
+# ============================================================================================== 2026-10-27: clinical-interpretation guard and wrong-number guard
+
+
+@pytest.mark.asyncio
+async def test_a_question_about_what_a_result_means_offers_a_clinician_and_never_a_judgement(m, env):
+    said = text_of(await env.say("is my report dangerous"))
+    assert "clinician" in said and said.rstrip().endswith("?")
+    assert "don't worry" not in said.lower() and "nothing serious" not in said.lower()
+    assert not env.session.ws.frames("handoff_human")  # offered, not yet connected
+
+
+@pytest.mark.asyncio
+async def test_a_yes_to_the_clinician_offer_connects_a_person(m, env):
+    await env.say("am I dying")
+    await env.say("yes")
+    assert env.session.ws.frames("handoff_human")
+
+
+@pytest.mark.asyncio
+async def test_a_no_to_the_clinician_offer_goes_on_without_a_handoff(m, env):
+    await env.say("am I dying")
+    await env.say("no")
+    assert not env.session.ws.frames("handoff_human")
+    assert env.session.awaiting_clinician_offer is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["TSH test 8 tar por hobe", "vitamin D 25 OH price", "আমার সুগার টেস্ট করাতে ১২ টার সময় আসব", "hba1c 6 mash por test"])
+async def test_an_ordinary_clinic_sentence_with_a_number_is_not_taken_for_a_clinical_question(m, env, text):
+    assert await m._clinical_and_unrelated_guards(env.session, text, "en") is False  # the guard leaves the turn to the ordinary path
+    assert env.session.awaiting_clinician_offer is False
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_number_gets_one_kind_reply_and_the_second_consecutive_one_closes_the_call(m, env):
+    first = text_of(await env.say("sorry wrong number"))
+    assert "No problem" in first and "goodbye" not in first.lower()
+    assert env.session.outcome == "unrelated_caller"
+    second = text_of(await env.say("wrong number"))
+    assert "goodbye" in second.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_real_request_after_a_wrong_number_resets_it(m, env):
+    await env.say("sorry wrong number")
+    await env.say("mathar chhobi korate chai")  # a real request: served, and the streak is over
+    assert env.session.unrelated_streak == 0 and env.session.outcome != "unrelated_caller"
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_number_phrase_is_ignored_while_a_booking_is_open(m, env):
+    from agent.booking_flow import BookingState
+
+    env.session.booking = BookingState(action="book_appointment")
+    said = text_of(await env.say("wrong number"))
+    assert "No problem" not in said
+    assert env.session.unrelated_streak == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["thik ache", "whatsapp ache", "হ্যাঁ আছে", "স্টাফের সঙ্গে কথা বলব"])
+async def test_the_bengali_everyday_phrases_are_never_closed_as_a_name_being_asked_for(m, env, text):
+    assert await m._clinical_and_unrelated_guards(env.session, text, "bn") is False
+    assert env.session.unrelated_streak == 0

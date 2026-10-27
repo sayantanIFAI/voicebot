@@ -60,7 +60,7 @@ async def _run_loop(m, monkeypatch, reasons, *, hellos=3, turn_count=0, max_s=5.
     monkeypatch.setattr(m, "MIN_WAKE_S", 0.005)
 
     class FakeTTS:
-        async def synthesize(self, lang, text, speed=1.0):
+        async def synthesize(self, lang, text, speed=1.0, prosody=None):
             from test_orchestrator_persona import FakeTTS as T
 
             return await T().synthesize(lang, text, speed)

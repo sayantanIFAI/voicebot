@@ -337,6 +337,20 @@ PHRASES["bn"]["hello_check"] = "হ্যালো? আপনি কি আম�
 PHRASES["hi"]["hello_check"] = "हेलो? क्या आप मेरी आवाज़ सुन पा रहे हैं?"
 PHRASES["en"]["hello_check"] = "Hello? Can you hear me?"
 
+# ---- clinical interpretation and unrelated callers (ported from the sibling repository's agent/clinical_safety.py and agent/unrelated_caller.py, 2026-10-27) ----------------
+# A caller asking what a result MEANS ("is my report dangerous?") is never answered with a judgement: a fixed sentence says a doctor will explain it and OFFERS to connect the
+# clinician (one question, so the next yes/no is the answer). Hindi and Bengali wording is reasoned, not measured: a native speaker should review it.
+PHRASES["bn"]["clinical_interpretation"] = "এটা একজন ডাক্তারের ব্যাখ্যা করার বিষয়। আমি আপনাকে আমাদের চিকিৎসকের সাথে যুক্ত করে দিতে পারি। করে দেব?"
+PHRASES["hi"]["clinical_interpretation"] = "यह बात डॉक्टर ही ठीक से समझा सकते हैं। मैं आपको हमारे चिकित्सक से जोड़ सकती हूँ। जोड़ दूँ?"
+PHRASES["en"]["clinical_interpretation"] = "That is for a doctor to explain, and you should hear it from one. I can connect you with our clinician. Shall I?"
+# A wrong-number or clearly unrelated caller: a kind sentence that leaves the door open the first time, a polite close the second consecutive time. Nothing personal is ever asked.
+PHRASES["bn"]["unrelated_first"] = "ঠিক আছে, কোনো সমস্যা নেই। হাসপাতালের কোনো সাহায্য লাগলে আমি এখানে আছি।"
+PHRASES["hi"]["unrelated_first"] = "ठीक है, कोई बात नहीं। अस्पताल से जुड़ी कोई मदद चाहिए हो तो मैं यहाँ हूँ।"
+PHRASES["en"]["unrelated_first"] = "No problem. If you need any help with the hospital, I am here."
+PHRASES["bn"]["unrelated_final"] = "ঠিক আছে, কোনো সমস্যা নেই। ধন্যবাদ, ভালো থাকবেন।"
+PHRASES["hi"]["unrelated_final"] = "ठीक है, कोई बात नहीं। धन्यवाद, अपना ख़याल रखिए।"
+PHRASES["en"]["unrelated_final"] = "No problem. Thank you, goodbye."
+
 # Spoken when a call is turned away before the caller has said a word, so
 # there is no language to choose: all three, shortest first is not worth the
 # complexity -- they are pre-synthesized and cached, so this costs no GPU

@@ -59,7 +59,7 @@ class FakeWS:
 
 
 class FakeTTS:
-    async def synthesize(self, lang, text, speed=1.0):
+    async def synthesize(self, lang, text, speed=1.0, prosody=None):
         b = io.BytesIO()
         with wave.open(b, "wb") as w:
             w.setnchannels(1)

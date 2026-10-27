@@ -70,13 +70,14 @@ SURNAME_BN = {
     "Bagchi": ["বাগচী"],
     "Biswas": ["বিশ্বাস"],
     "Majumder": ["মজুমদার"],
-    "Mondal": ["মন্ডল"],
+    # owner, 2026-10-27 (real call): the recogniser writes the ন্ড conjunct as ণ্ড too ("মণ্ডল"), and Hindi speech comes back in many spellings
+    "Mondal": ["মন্ডল", "মণ্ডল", "মোন্ডল", "মন্ডোল"],
     "Ganguly": ["গাঙ্গুলী", "গঙ্গোপাধ্যায়"],
     "Sinha": ["সিনহা"],
     "Ray": ["রায়"],
     "Sarkar": ["সরকার"],
     "Chakraborty": ["চক্রবর্তী"],
-    "Kundu": ["কুন্ডু"],
+    "Kundu": ["কুন্ডু", "কুণ্ডু"],
     "Mallick": ["মল্লিক"],
     "Pramanik": ["প্রামাণিক"],
     "Bhowmik": ["ভৌমিক"],
@@ -534,6 +535,31 @@ def backfill_test_alias_keywords() -> int:
                     updated += 1
         db.commit()
         return updated
+    finally:
+        db.close()
+
+
+def backfill_doctor_aliases() -> int:
+    """Owner, 2026-10-27: a caller said "ডাক্তার মণ্ডল" / "मोंडोल" and the clinic knew only "মন্ডল" / "मंडल", so the doctor was "not found" and a General Medicine check-up was
+    suggested. Appends any spelling in SURNAME_BN / SURNAME_HI that a LIVE doctor row does not already have -- additive, never removes or reorders a clinician's own edit,
+    safe on every boot (same discipline as backfill_faq_keywords). Returns the number of rows changed."""
+    from i18n_content import SURNAME_HI
+
+    db = SessionLocal()
+    changed = 0
+    try:
+        for d in db.query(Doctor).all():
+            surname = (d.name or "").split()[-1] if d.name else ""
+            row_changed = False
+            for attr, table in (("aliases_bn", SURNAME_BN), ("aliases_hi", SURNAME_HI)):
+                have = [a for a in (getattr(d, attr) or "").split("|") if a]
+                missing = [a for a in table.get(surname, []) if a not in have]
+                if missing:
+                    setattr(d, attr, "|".join(have + missing))
+                    row_changed = True
+            changed += row_changed
+        db.commit()
+        return changed
     finally:
         db.close()
 

@@ -136,12 +136,13 @@ def _ensure_seeded():
             seed()
         else:
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
-            from seed import backfill_faq_keywords, backfill_i18n, backfill_test_alias_keywords, backfill_test_days
+            from seed import backfill_doctor_aliases, backfill_faq_keywords, backfill_i18n, backfill_test_alias_keywords, backfill_test_days
 
             logging.getLogger("clinic-api").info("i18n backfill: %s", backfill_i18n(db))
             logging.getLogger("clinic-api").info("test alias keywords backfilled: %s", backfill_test_alias_keywords())
             logging.getLogger("clinic-api").info("test days backfilled: %s", backfill_test_days())  # sourav, 2026-10-24
             logging.getLogger("clinic-api").info("FAQ keywords backfilled: %s", backfill_faq_keywords())
+            logging.getLogger("clinic-api").info("doctor aliases backfilled: %s", backfill_doctor_aliases())  # owner, 2026-10-27
 
         # Only now do departments/doctors/tests definitely have rows --
         # either seed() just created them, or they already existed.

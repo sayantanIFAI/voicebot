@@ -134,6 +134,7 @@ from agent import fastpath_guards  # refuse a quick answer that cannot be right 
 from agent import slot_proposal  # the machine picks the appointment time and says it
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
+from agent import clinical_safety, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
 from agent import clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
@@ -1228,6 +1229,8 @@ class CallSession:
         # was just asked "is it blood, urine, or imaging?" -- the NEXT turn is read as the answer to that
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
         self.awaiting_test_category = False
+        self.awaiting_clinician_offer = False  # "a doctor will explain it, shall I connect one?" was asked (agent/clinical_safety.py); the next yes / no answers it
+        self.unrelated_streak = 0  # consecutive turns that were a wrong number (agent/unrelated_caller.py); the second closes the call
         self.awaiting_blood_test: int | None = None  # the turn "which blood test?" was asked (owner, 2026-10-26); the next sentence is its answer
         self.last_enquiry_turn = 0  # turn_count when the last test/doctor answer was given (agent/enquiry_followup.py)
         self.no_at_confirm = False  # the caller said "no, ..." at the confirmation step and it was not a bare no
@@ -2405,7 +2408,7 @@ def _with_whole_doctor_name(data, text: str, lang: str, session: "CallSession | 
     if _fast_path is None or not isinstance(data, dict) or not isinstance(data.get("slots"), dict):
         return data
     b = session.booking if session is not None else None
-    if b is not None and b.action == "book_appointment" and b.slots.get("doctor_name") and not b.slots.get("patient_name"):
+    if b is not None and b.action == "book_appointment" and b.slots.get("doctor_name") and not b.slots.get("patient_name") and not _sentence_asks_for_a_doctor(text):
         # Real call 2026-10-26: the doctor was already confirmed (Dr Joydeep Sanyal) and the caller then gave the PATIENT's
         # name, "সায়ন্তন চৌধুরী" -- whose surname matched a different real doctor's surname ("...Chowdhury") at the 0.9
         # fuzzy-match bar below and silently swapped the booking's doctor. Once a doctor is confirmed, naming the patient
@@ -2464,7 +2467,12 @@ def _name_answer_repair(session: CallSession, text: str, data):
     return {**data, "intent": "book_appointment", "slots": {**data["slots"], "patient_name": name}}
 
 
-def _lock_doctor_name_during_name_capture(session: CallSession, data):
+def _sentence_asks_for_a_doctor(text: str) -> bool:
+    """The caller's sentence itself talks about a doctor ("বাচ্চাদের ডাক্তার কে আছে", "डॉक्टर मंडल", "ড মণ্ডল"): a plain patient name has no such word."""
+    return doctor_search._has(doctor_search._norm(text), doctor_search._DOCTOR_WORD)  # noqa: SLF001
+
+
+def _lock_doctor_name_during_name_capture(session: CallSession, data, text: str = ""):
     """Owner, 2026-10-26: real calls -- "সায়ন্তন চৌধুরী" and "সায়ন দাস", both patients, each matching a real doctor's
     surname -- silently swapped the booking's already-confirmed doctor while the patient's NAME was being taken.
     _with_whole_doctor_name already blocks the fast-path catalogue match from doing this, but the model's own slot
@@ -2478,6 +2486,10 @@ def _lock_doctor_name_during_name_capture(session: CallSession, data):
         return data
     confirmed = st.slots.get("doctor_name") if st.action == "book_appointment" else None
     if not confirmed or st.slots.get("patient_name"):
+        return data
+    if _sentence_asks_for_a_doctor(text):
+        # Owner, 2026-10-27 (real call): "বাচ্চাদের ডাক্তার কে আছে" in the middle of a booking kept answering with the doctor already chosen (a General Medicine doctor) because this lock
+        # froze him. The lock exists for a PATIENT'S NAME that happens to match a doctor's surname; a sentence that says "doctor" is the caller changing the doctor on purpose.
         return data
     if data["slots"].get("doctor_name") in (None, "", confirmed):
         return data
@@ -4981,6 +4993,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _speak(session, phrase("silence_go_on", lang), lang)
             return
         code_switch_buckets.record(mixture_bucket(text), "seen", lang)
+        if await _clinical_and_unrelated_guards(session, text, lang):
+            return
 
         # The requests that must never reach the intent model, checked in ONE fixed order (agent/early_routing.py -- shared with main_pcm.py so the two
         # entry points cannot drift apart): a person (KCD-353), the doctor himself, a complaint, money still to pay, a health package, a report, another
@@ -5305,7 +5319,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 return
 
     data = _name_answer_repair(session, text, data)
-    data = _lock_doctor_name_during_name_capture(session, data)
+    data = _lock_doctor_name_during_name_capture(session, data, text)
     if not confirmed_entity:
         data = await _ground_model_slots(session, text, lang, data, trust_age=capture_plan.skip_model)
         # Real call 2026-10-14: "সিবিসি টেস্টের দাম কত ফাস্টিং করতে হবে" got only the price; the fasting half was dropped.
@@ -7256,6 +7270,66 @@ async def _end_call(session: CallSession, lang: str, key: str) -> None:
     await asyncio.sleep(min(duration, 8.0) + 0.3)
     with contextlib.suppress(Exception):
         await session.ws.close()
+
+
+def _catalogue_entity_in(norm_text: str, lang: str) -> bool:
+    """The clinic's side of the hospital veto for agent/unrelated_caller.py: does the sentence name a test, an FAQ topic, a full doctor name or a doctor's
+    surname/alias from the live catalogue? True means "this is a hospital caller". Any failure answers True (an error must never turn a patient away)."""
+    if _fast_path is None:
+        return False
+    try:
+        from agent.fast_path import COMMIT_FLOOR as _cf, FAQ_COMMIT_FLOOR as _ff
+
+        catalogue = _fast_path.catalogue
+        for lg in dict.fromkeys((lang, "en")):
+            for kind, floor in (("test", _cf), ("faq", _ff), ("doctorfull", 0.9)):
+                key, _form, score = catalogue.match(norm_text, kind, lg, floor)
+                if key and score >= floor:
+                    return True
+        return _fast_path._named_doctor(fast_path_normalize(norm_text), language_of_script(norm_text, lang)) is not None  # noqa: SLF001
+    except Exception:  # noqa: BLE001
+        return True
+
+
+async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: str) -> bool:
+    """Two rule guards that run before the fast path, the cache and the model. True when the turn was answered here.
+
+    1. A caller asking what a result MEANS ("is my report dangerous?", "am I dying?") is never answered with a judgement and never left to the model: a fixed sentence says a doctor
+       will explain it and offers the clinician (agent/clinical_safety.py, ported from the sibling repository 2026-10-27; its lab-value rule is narrowed here so a time, a price or
+       a test's own digits are not read as a result). The yes / no that follows is read first on the next turn: yes connects a person, no goes on.
+    2. A clear WRONG NUMBER ("sorry, wrong number") when nothing else is open: a kind sentence the first time, a polite close the second consecutive time (agent/unrelated_caller.py).
+       Only the wrong-number family is acted on. Its 'a name being asked for' family is NOT used: in Bengali it also matches ordinary answers ("thik ache", "whatsapp ache")."""
+    if session.awaiting_clinician_offer:
+        session.awaiting_clinician_offer = False
+        offer = classify_yes_no(text, lang)
+        if offer in ("yes", "no"):
+            if offer == "yes":
+                await _handoff_to_human(session, "clinical_interpretation", (lang,))
+            else:
+                await _speak(session, phrase("silence_go_on", lang), lang)
+            return True
+    if clinical_safety.is_clinical_interpretation(text):
+        logger.info("[%s] a request to interpret a result: a clinician is offered", session.call_id)
+        session.awaiting_clinician_offer = True
+        await _speak(session, phrase("clinical_interpretation", lang), lang)
+        return True
+    kind = None
+    if session.booking is None and _nothing_is_open(session):
+        kind = unrelated_caller.classify(text, lang, _catalogue_entity_in)
+    if kind != unrelated_caller.WRONG_NUMBER:
+        session.unrelated_streak = 0
+        if session.outcome == "unrelated_caller":
+            session.outcome = "completed"  # the caller went on to ask for something real
+        return False
+    session.unrelated_streak += 1
+    session.outcome = "unrelated_caller"
+    if session.unrelated_streak >= unrelated_caller.CLOSE_AT:
+        logger.info("[%s] wrong number, second consecutive turn: closing politely", session.call_id)
+        await _end_call(session, lang, "unrelated_final")
+    else:
+        logger.info("[%s] wrong number: one more chance", session.call_id)
+        await _speak(session, phrase("unrelated_first", lang), lang)
+    return True
 
 
 def _booking_open(session: CallSession) -> bool:

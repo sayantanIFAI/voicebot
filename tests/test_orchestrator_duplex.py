@@ -72,7 +72,7 @@ class FakeTTS:
         self.wav_for = wav_for or (lambda text: _wav(0.1 * np.sin(2 * np.pi * 200 * np.arange(SR // 2) / SR)))
         self.on_call = on_call
 
-    async def synthesize(self, lang, text, speed=1.0):
+    async def synthesize(self, lang, text, speed=1.0, prosody=None):
         self.calls += 1
         if self.on_call:
             self.on_call(self.calls)
