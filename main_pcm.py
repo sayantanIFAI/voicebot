@@ -2020,7 +2020,10 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
     logger.info(
         "[%s] intent extracted in %.2fs (%d attempt(s))", session.call_id, diag["total_time_s"], diag["attempts"]
     )
-    await asyncio.to_thread(_intent_cache.put, key, data)
+    # Owner, 2026-10-27 (real call, pod log): saving the answer to the semantic cache needs a bge-m3 embedding, and on one turn that embedding took 5.8 s (the Ollama log shows it), which
+    # the caller waited for although the save only helps LATER turns. It now runs in the background: a failure or a slow embedding costs nothing on this turn.
+    saved = asyncio.ensure_future(asyncio.to_thread(_intent_cache.put, key, data))
+    saved.add_done_callback(lambda f: f.cancelled() or f.exception())
     return data
 
 
