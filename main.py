@@ -223,6 +223,7 @@ from agent.reply_templates import (
     clinic_faq_reply,
     conflict_reply,
     department_route_reply,
+    doctor_weekday_yes_reply,
     doctor_availability_reply,
     insufficient_information_reply,
     lookup_reply,
@@ -3883,7 +3884,10 @@ async def _speak_day_availability(session: CallSession, name: str, date_iso: str
         await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
         return
     session.last_doctor_enquiry = {"doctor_name": name, "date": date_iso, "turn": session.turn_count}
-    await _speak(session, _with_resume(session, doctor_availability_reply({"doctor_name": name, "date": date_iso}, info, lang), lang), lang)
+    slots = {"doctor_name": name, "date": date_iso}
+    # a yes to "does he sit on <weekday>?" is just that (weekday, date, doctor); his hours and, when he does not sit, his next sitting come from the ordinary reply
+    reply = doctor_weekday_yes_reply(slots, info, lang, date_iso) or doctor_availability_reply(slots, info, lang)
+    await _speak(session, _with_resume(session, reply, lang), lang)
 
 
 async def _answer_day_availability(session: CallSession, text: str, lang: str) -> bool:

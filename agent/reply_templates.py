@@ -43,6 +43,35 @@ def _spoken_doctor_name(slots: dict, result: dict) -> str:
     return slots.get("doctor_name") or result.get("doctor_name") or "ডাক্তার"
 
 
+_WEEKDAY_NAMES = {
+    "bn": ("সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার", "রবিবার"),
+    "hi": ("सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार"),
+    "en": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+}
+
+
+def doctor_weekday_yes_reply(slots: dict, result: dict, lang: str, date_iso: str) -> str | None:
+    """Owner, 2026-10-27: "শুক্রবার বসবে না কেউ" / "does he sit on Friday?" -- when the doctor DOES sit that day, the answer is just that: yes, the weekday, the date, the doctor
+    ("হ্যাঁ, এই শুক্রবার, ত্রিশ তারিখে ডাঃ জয়দীপ সান্যাল বসবেন।"), without the hours the caller did not ask for. None when he does not sit that day (the ordinary reply, with his next
+    sitting, then applies)."""
+    import datetime
+
+    if not result.get("found") or not result.get("available"):
+        return None
+    try:
+        weekday = _WEEKDAY_NAMES.get(lang, _WEEKDAY_NAMES["en"])[datetime.date.fromisoformat(date_iso).weekday()]
+    except ValueError:
+        return None
+    other_day = slot_proposal.day_kind(date_iso) == "other"
+    when = slot_proposal.when_phrase(date_iso, lang if lang in ("bn", "hi") else "en")
+    if lang == "bn":
+        return f"হ্যাঁ, {'এই ' if other_day else ''}{weekday}, {when} {_spoken_doctor_name(slots, result)} বসবেন।"
+    name = _i18n._doctor_name(slots, result, lang)  # noqa: SLF001 - the same spoken name the ordinary reply uses
+    if lang == "hi":
+        return f"जी हाँ, {'इस ' if other_day else ''}{weekday}, {when} {name} बैठेंगे।"
+    return f"Yes, {'this ' if other_day else ''}{weekday}, {when} {name} sits."
+
+
 def missing_slot_prompt(intent: str, missing: str, lang: str = "bn") -> str:
     if lang != "bn":
         return _i18n.missing_slot_prompt(intent, missing, lang)
