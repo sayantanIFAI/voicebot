@@ -201,11 +201,29 @@ def reopen_for_correction(state: BookingState, field_name: str, value: str) -> N
 # --------------------------------------------------- deterministic yes/no
 
 _YES_WORDS = {
-    "bn": ("হ্যাঁ", "হ্যা", "ঠিক আছে", "ওকে", "কনফার্ম", "হবে", "বুক করুন"),
+    # Owner, 2026-10-27 (real call): "আচ্ছা করুন" (okay, do it) and "করুন অ্যাপয়েন্টমেন্ট" (do the appointment),
+    # both answering "shall I book that day?", matched nothing here -- "আচ্ছা" (okay/alright, an extremely
+    # ordinary Bengali acknowledgement, same family as "ঠিক আছে"/"ওকে" already below) was entirely missing, and
+    # bare "করুন" is never added on its own (it is just the imperative "do", used in countless unrelated
+    # requests like "ফোন করুন" -- adding it alone would make THOSE a false "yes"). Covered instead as the exact
+    # phrases real callers say: the bare acknowledgement, and "do/go ahead" paired with either the acknowledgement
+    # or the thing being confirmed (mirroring "বুক করুন" already here, just the caller's own word order too).
+    "bn": (
+        "হ্যাঁ", "হ্যা", "ঠিক আছে", "ওকে", "কনফার্ম", "হবে", "বুক করুন", "আচ্ছা",
+        "আচ্ছা করুন", "আচ্ছা করে দিন", "হ্যাঁ করুন", "হ্যাঁ করে দিন", "ঠিক আছে করুন",
+        "করুন অ্যাপয়েন্টমেন্ট", "অ্যাপয়েন্টমেন্ট করুন", "করে দিন অ্যাপয়েন্টমেন্ট",
+    ),
     # "हा" (no chandrabindu/anusvara at all) added alongside "हाँ"/"हां": a real call asked to switch to
     # Hindi ("क्या मैं हिंदी में बात करूँ?") and the caller's "हा" went unrecognised, same gap Bengali's own
     # "হ্যাঁ"/"হ্যা" pair already covers for the nasalised/non-nasalised spelling of its own yes-word.
-    "hi": ("हाँ", "हां", "हा", "ठीक है", "ओके", "कन्फर्म", "बुक कर दीजिए"),
+    # Owner, 2026-10-27: "अच्छा" (okay/alright) and "कर दो"/"कर दीजिए" paired with an acknowledgement or the
+    # booking noun, same reasoning and same scope as the Bengali additions just above -- bare "कर दो"/"कर दीजिए"
+    # is never added alone for the same false-positive reason bare "করুন" is not.
+    "hi": (
+        "हाँ", "हां", "हा", "ठीक है", "ओके", "कन्फर्म", "बुक कर दीजिए", "अच्छा",
+        "अच्छा कर दो", "अच्छा कर दीजिए", "हाँ कर दो", "हाँ कर दीजिए", "ठीक है कर दीजिए",
+        "अपॉइंटमेंट कर दो", "अपॉइंटमेंट कर दीजिए", "अपॉइंटमेंट बुक कर दो",
+    ),
     "en": ("yes", "yeah", "yep", "confirm", "ok", "okay", "correct", "right", "sure"),
 }
 # "cancel"/"ক্যানসেল"/"বাতিল"/"कैंसल"/"रद्द" are deliberately NOT here.
@@ -235,6 +253,9 @@ _ANY_NO = ("no", "nope", "nahi", "nahin", "नहीं", "नही", "না",
 _ANY_YES = (
     "yes", "yeah", "yep", "ok", "okay", "absolutely", "haan", "haain", "han", "hya", "ha", "हाँ", "हां", "हा", "ओके", "হ্যাঁ", "হ্যা", "হাঁ", "হা", "ওকে", "ji", "जी हाँ", "জি", "जी",
     "ঠিক", "ঠিকই", "সঠিক", "ठीक", "सही", "correct", "right", "sahi", "sahee", "theek", "thik", "exactly",
+    # Owner, 2026-10-27: romanised "okay/alright", the same word bn/hi already carry as আচ্ছা/अच्छा above --
+    # a bare acknowledgement across scripts, same family as the bare ঠিক/ठीक/ok right above it.
+    "accha", "acha", "achha", "achcha",
 )
 _NOT_NO = {"hi": ("na", "nai", "ना"), "en": ("na", "nai", "না", "নয়"), "bn": ()}  # words that are ordinary filler / other meaning in that call
 

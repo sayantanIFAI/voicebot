@@ -171,7 +171,7 @@ def _rms(a: np.ndarray) -> float:
 
 
 def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool,
-            params: ProsodyParams) -> tuple[np.ndarray, int]:
+            params: ProsodyParams, pitch_scale: float | None = None, energy_scale: float | None = None) -> tuple[np.ndarray, int]:
     synth = SYNTHESIZERS[lang]
     sample_rate = SAMPLE_RATES[lang]
     parts = whatsapp_tts.split(text, lang) if _WA_CLIP is not None else [("text", text)]
@@ -180,6 +180,15 @@ def _render(lang: str, text: str, speaker: str, speed: float, pauses: bool,
     with _SYNTH_LOCKS[lang]:
         if hasattr(synth.tts_model, "length_scale"):
             synth.tts_model.length_scale = speed
+        # See SynthesizeRequest.pitch_scale/energy_scale: unverified against the real checkpoint,
+        # guarded the same way length_scale is, so a wrong attribute name is simply never set.
+        # Always written (1.0 = neutral when not requested), never left as whatever the PREVIOUS
+        # request on this shared model object set it to -- the same reason `speed` above is always
+        # assigned rather than only when given.
+        if hasattr(synth.tts_model, "pitch_scale"):
+            synth.tts_model.pitch_scale = pitch_scale if pitch_scale is not None else 1.0
+        if hasattr(synth.tts_model, "energy_scale"):
+            synth.tts_model.energy_scale = energy_scale if energy_scale is not None else 1.0
         for idx, (kind, value) in enumerate(parts):
             if kind == "wa":
                 wa_slots.append(len(rendered))
@@ -228,6 +237,21 @@ class SynthesizeRequest(BaseModel):
     target_peak: float | None = None
     max_chunk_chars: int | None = None
     lead_in_s: float | None = None
+    compress_threshold: float | None = None
+    compress_ceiling: float | None = None
+    room_tone_level: float | None = None
+    # Owner, 2026-10-27: "lifted for questions, softer for apologies" -- per-clause pitch/energy
+    # hints from main.py (agent.prosody has no notion of pitch/energy; these two are model-
+    # conditioning, same kind of parameter as speed/length_scale above, not a pause/trim/peak
+    # setting, so they are applied the SAME way length_scale already is: a direct, hasattr-
+    # guarded attribute on the shared tts_model). UNVERIFIED: whether this Coqui FastPitch
+    # checkpoint actually exposes a settable "pitch_scale"/"energy_scale" the way it exposes
+    # "length_scale" has not been confirmed against the real model (no pod access to check) --
+    # the guard means a wrong guess is silently inert, never a crash, but also means it may do
+    # nothing audible until confirmed by ear and, if needed, corrected to this model's real
+    # attribute name.
+    pitch_scale: float | None = None
+    energy_scale: float | None = None
 
 
 class UnsupportedLanguage(Exception):
@@ -285,6 +309,8 @@ def synthesize(req: SynthesizeRequest):
         length_scale,
         req.pauses,
         params,
+        req.pitch_scale,
+        req.energy_scale,
     )
     buf = io.BytesIO()
     sf.write(buf, wav, sample_rate, format="WAV", subtype="PCM_16")

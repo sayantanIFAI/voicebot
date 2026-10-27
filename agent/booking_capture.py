@@ -1014,15 +1014,30 @@ _PHONE_CUES = frozenset({"number", "phone", "mobile", "contact", "नंबर",
 _DIGITS_ANY = str.maketrans("০১২৩৪৫৬৭৮৯०१२३४५६७८९", "01234567890123456789")
 _AGE_BEFORE = re.compile(r"(?:বয়স|বয়েস|age|aged|उम्र|उमर|आयु)\s*(?:হলো|হল|হয়েছে|है|is|of)?\s*(\d{1,3})(?!\d)", re.I)
 _AGE_AFTER = re.compile(r"(?<!\d)(\d{1,3})\s*(?:বছর|বছরের|years?\s*old|years?|yrs?|साल|वर्ष)", re.I)
+# Owner, 2026-10-27 (real call): "রোগীর বয়স পঁয়ত্রিশ বছর" (patient's age is thirty-five years), the age said as a
+# WORD, was read back as "30" -- the model's own extraction mis-split "পঁয়ত্রিশ" (35) into a plain "ত্রিশ" (30).
+# agent/number_words.py already has the exact, correct, tested two-digit-word table (built for phone numbers said
+# in pairs); using it here for the SAME word next to "বয়স"/"বছর" means a word-form age is read deterministically,
+# the same discipline split_age already gives a digit-form one, instead of being left to the model to get wrong.
+_AGE_WORD_BEFORE = re.compile(r"(?:বয়স|বয়েস|age|aged|उम्र|उमर|आयु)\s*(?:হলো|হল|হয়েছে|है|is|of)?\s*([^\s,।]+)", re.I)
+_AGE_WORD_AFTER = re.compile(r"([^\s,।]+)\s*(?:বছর|বছরের|years?\s*old|years?|yrs?|साल|वर्ष)", re.I)
 
 
 def split_age(text: str) -> tuple[int | None, str]:
-    """(age, the sentence without the age phrase). Numbers written as words ("পঁয়তাল্লিশ বছর") are left to the model's patient_age slot."""
+    """(age, the sentence without the age phrase). A number written as a word ("পঁয়ত্রিশ বছর") is resolved from
+    agent/number_words.py's own table when it is one of the two-digit words that table knows; anything else is
+    left to the model's patient_age slot."""
     t = (text or "").translate(_DIGITS_ANY)
     for pat in (_AGE_BEFORE, _AGE_AFTER):
         m = pat.search(t)
         if m and 0 < int(m.group(1)) <= 120:
             return int(m.group(1)), (t[: m.start()] + " " + t[m.end():]).strip()
+    for pat in (_AGE_WORD_BEFORE, _AGE_WORD_AFTER):
+        m = pat.search(t)
+        if m:
+            digits = number_words.digits_of(m.group(1))
+            if digits is not None:
+                return int(digits), (t[: m.start()] + " " + t[m.end():]).strip()
     return None, text
 
 
@@ -1125,8 +1140,17 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
             return True
         if answer is None and not value and tag == "age" and "patient_address" in st.asked_fields and not st.slots.get("patient_address") and bare_address(text):
             st.slots.pop(pend_key, None)
-            st.slots["patient_age"] = pend  # the read-back asked the address next, and the address was the answer: the age is accepted, the address is taken next
-            return False
+            st.slots["patient_age"] = pend  # the read-back asked the address next, and the address was the answer: the age is accepted
+            # Owner, 2026-10-27 (real call): this used to `return False`, letting the SAME sentence (the address,
+            # here also doubling as the implicit yes for the age) fall straight through to the address
+            # _detail_turn call right after this one in before_model's "age or address" chain -- so a teenager
+            # booked with a paediatrician had their address (and the police-station question after it) asked
+            # and answered BEFORE main.py's paediatric-age redirect (_redirect_teen_from_paediatrics) ever got a
+            # turn to run, instead of right after the age was confirmed, as the owner wants. Returning True here
+            # instead stops at the age: the address just given is asked for again next turn, but only once the
+            # caller is on the right doctor, not walked further into the wrong one's booking first.
+            plan.slots, plan.skip_model = {field: pend}, True
+            return True
         if value:
             st.slots[pend_key] = value
             plan.speak = readback(st, lang, "age", value)

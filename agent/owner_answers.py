@@ -524,12 +524,44 @@ def token_push_reply(lang: str) -> str:
 
 # ------------------------------------------------------------------------------------------------------------------------------------ visit fee
 
-_VISIT = ("ভিজিট", "বিজিট", "বিজিত", "ভিজিত", "ভিসিট", "ভিজিটিং ফি", "visit", "visiting fee", "consultation fee", "consultation", "fees", "fee ", "ফি ", "ফিস", "কনসালটেশন", "विज़िट", "विजिट", "फीस", "फ़ीस", "कंसल्टेशन")
+# Owner, 2026-10-27: real calls ask this far more often as "কত টাকা লাগবে দেখাতে" (how much to SEE him) than as
+# "ভিজিট/ফি" (the formal word for a visit fee) -- "দেখাতে/দেখানো" (bn), "দিখানে/দিখানা" (hi), "to see/to show" (en)
+# are now an alternate way into the same question, not only the formal fee words.
+_VISIT = (
+    "ভিজিট", "বিজিট", "বিজিত", "ভিজিত", "ভিসিট", "ভিজিটিং ফি", "visit", "visiting fee", "consultation fee",
+    "consultation", "fees", "fee ", "ফি ", "ফিস", "ফীস", "কনসালটেশন", "विज़िट", "विजिट", "फीस", "फ़ीस", "कंसल्टेशन",
+)
+_SEE_DOCTOR = (
+    "দেখাতে", "দেখানো", "দেখাতে গেলে", "দেখানোর", "দেখাব", "দেখাবো", "দেখানোতে",
+    "dekhate", "dekhabo", "dekhano", "dekhanor",
+    "दिखाने", "दिखाना", "दिखाऊं", "दिखाऊंगा", "दिखाने में", "दिखाने को",
+    "dikhane", "dikhana", "dikhaane", "dikhaanaa",
+    "to see", "to show", "seeing the doctor", "see him", "see her", "see dr",
+)
+_FEE_CONTEXT = _VISIT + _SEE_DOCTOR
+_PRICE_WORD = (
+    "কত", "কতো", "কত টাকা", "কততাকা", "কেমন",
+    "koto", "kototaka", "kemon",
+    "how much", "what is", "what's", "cost", "price", "charge", "charges", "rate",
+    "कितना", "कितने", "कितनी", "क्या है", "कितना लगेगा", "कितने का",
+    "kitna", "kitne", "kitni", "lagega", "lagbe",
+)
+# Owner, 2026-10-27 (real call): bare "কি"/"কী" ("what") used to be in the list above -- but they are two of the
+# most common words in the language, in constant use with no connection to price at all ("ওটা কি যেন বলে" =
+# "whatchamacallit"). "ডাক্তার দেখাবো ... ওটা কি যেন বলে মাথার ডাক্তার আছে" (I want to see a doctor... what's it
+# called... is there a head doctor) had no price word in it whatsoever, but _SEE_DOCTOR's "দেখাবো" plus this bare
+# "কি" from an unrelated filler phrase were enough together to pass asks_visit_fee, so a plain availability
+# question got answered as a fee question instead. "কত"/"কতো" and the other, far more specific phrases already
+# above cover the real "how much" question; a bare "what" is too generic a signal to use on its own.
 
 
 def asks_visit_fee(text: str) -> bool:
-    """A question about what a doctor's visit costs. The figure is read from the doctors table by the caller of this function."""
+    """A question about what a doctor's visit costs -- the formal "visit/fee" wording, or the far more common "কত
+    টাকা লাগবে দেখাতে" (how much to SEE him) phrasing. The figure is read from the doctors table by the caller of
+    this function."""
     t = _norm(text) + " "
-    if not t.strip() or "visit" in t and not _has(t, ("fee", "fees", "charge", "charges", "cost", "price", "how much", "কত", "কতো", "क्या", "कितना", "कितने")):
+    if not t.strip():
         return False
-    return _has(t, _VISIT) and _has(t, ("কত", "কতো", "কত টাকা", "how much", "what is", "what's", "cost", "charge", "charges", "price", "rate", "রেট", "कितना", "कितने", "कितनी", "क्या है", "কী", "কি", "কেমন"))
+    if "visit" in t and not _has(t, ("fee", "fees", "charge", "charges", "cost", "price", "how much", "কত", "কতো", "क्या", "कितना", "कितने")):
+        return False
+    return _has(t, _FEE_CONTEXT) and _has(t, _PRICE_WORD)

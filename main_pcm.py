@@ -98,7 +98,7 @@ from agent import patient_context as patient_policy
 from agent import security_check as sec_text
 from agent.acknowledgement import select_acknowledgement, slot_echo
 from agent.admission import AdmissionController, HealthMonitor, http_probe
-from agent.apology import enforce_single_apology
+from agent.apology import count_apologies, enforce_single_apology
 from agent.asr import TurnASR
 from agent.asr_router import ASRRouter, HTTPASREngine, UnroutableLanguageError
 from agent.attention import attend
@@ -247,6 +247,7 @@ from agent.reply_templates import (
     multiple_bookings_reply,
     reschedule_reply,
     resend_reply,
+    shown_time,
     spelling_prompt,
     spelling_readback,
     test_prep_reply,
@@ -392,6 +393,14 @@ FILLER_THRESHOLD_S = float(os.environ.get("FILLER_THRESHOLD_S", "1.0"))  # was 2
 # ...but the semantic cache is given this long to answer before the model is waited on at all, so a hit is never
 # announced by a filler that the answer was about to make pointless.
 FILLER_MIN_WAIT_S = float(os.environ.get("FILLER_MIN_WAIT_S", "0.25"))
+
+# Owner, 2026-10-27: "a natural pause before answering" -- a short, once-per-turn beat before the
+# FIRST clip of a turn's reply (_speak, below), the way a person briefly takes in what was said
+# before responding. Deliberately tiny next to every other wait in this file (FILLER_THRESHOLD_S
+# alone is 1.0 s) so it is felt as a beat, not a delay; never applied to a filler utterance, which
+# exists specifically to cover a SLOW turn and must not be slowed down further itself.
+NATURAL_PAUSE_ENABLED = os.environ.get("NATURAL_PAUSE_ENABLED", "1") == "1"
+NATURAL_PAUSE_S = float(os.environ.get("NATURAL_PAUSE_S", "0.15"))
 
 # OWNER'S INSTRUCTION, 2026-09-25: when the caller says nothing for this long after the agent finished speaking, ask
 # once whether there is anything else (the call ends if not); if there is still nothing after SILENCE_CLOSE_S, end it.
@@ -1109,6 +1118,11 @@ class CallSession:
         # acknowledgement, if spoken this turn, already opened it.
         self.acks = AckTracker(mode=ACK_MODE)
         self.turn_acknowledged = False
+        # Owner, 2026-10-27: "a natural pause before answering" -- a short, once-per-turn beat
+        # before the FIRST clip of a turn's reply, the same place/timing this file already tracks
+        # turn_acknowledged at. Never for every _speak() call in a turn (a turn often speaks more
+        # than once -- an ack, a note, the answer), only the first.
+        self.turn_spoken = False
         # The agent's last utterance asked something (it contained a question mark), and whether THIS turn is the
         # caller's answer to it: only an answer to our question is thanked ("Thank you."), never a question of theirs.
         self.awaiting_answer = False
@@ -1304,12 +1318,25 @@ class CallSession:
             _turn_detector.release(self.call_id)  # the call's streaming voice-activity state
 
 
+# Owner, 2026-10-27: "lifted for questions, softer for apologies" -- light per-clause pitch/
+# energy hints sent to tts_server.py's own (unverified -- see that file's SynthesizeRequest.
+# pitch_scale/energy_scale note) hasattr-guarded attributes. Gentle multipliers either way, and
+# env-overridable without a redeploy, same convention as every other tuned constant in this file.
+QUESTION_PITCH_SCALE = float(os.environ.get("QUESTION_PITCH_SCALE", "1.08"))
+APOLOGY_ENERGY_SCALE = float(os.environ.get("APOLOGY_ENERGY_SCALE", "0.9"))
+
+
 async def _synthesize_one_clause(session: CallSession, clause: str, lang: str, fallback_reason: str | None) -> bytes:
     # KCD-149/157: the caller's policy rate, and slower still for a price,
     # phone number or reference (the two multiply).
     speed = effective_rate(session.policy, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None, lang=lang)
+    prosody = {
+        "pitch_scale": QUESTION_PITCH_SCALE if ("?" in clause or "？" in clause) else None,
+        "energy_scale": APOLOGY_ENERGY_SCALE if count_apologies(clause, lang) > 0 else None,
+    }
+    prosody = {k: v for k, v in prosody.items() if v is not None}
     try:
-        return await _tts_router.synthesize(lang, clause, speed=speed)
+        return await _tts_router.synthesize(lang, clause, speed=speed, prosody=prosody or None)
     except UnspeakableTextError as e:
         # KCD-455: a production occurrence is an alert, not routine
         # noise -- distinct log level and reason from an ordinary TTS
@@ -1352,6 +1379,12 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
         # playing it over them is exactly what barge-in exists to stop.
         logger.info("[%s] reply discarded after interrupt", session.call_id)
         return 0.0
+    if not session.speaking_filler and not session.turn_spoken:
+        # The first real utterance of this turn (never a filler, which exists to cover a slow
+        # turn and must reach the caller as fast as possible, not after an extra wait of its own).
+        session.turn_spoken = True
+        if NATURAL_PAUSE_ENABLED and NATURAL_PAUSE_S > 0:
+            await asyncio.sleep(NATURAL_PAUSE_S)
     if "?" in text or "\uff1f" in text:
         session.awaiting_answer = True
     policy = session.policy
@@ -2581,18 +2614,19 @@ async def _chamber_window(session: CallSession, text: str):
     return cache[key]
 
 
-async def _ground_model_slots(session: CallSession, text: str, lang: str, data: dict) -> dict:
+async def _ground_model_slots(session: CallSession, text: str, lang: str, data: dict, trust_age: bool = False) -> dict:
     """Real call 2026-10-14: "reply in english" came back from the intent model as test_names=["CBC", "ECG"], and the
     agent priced both and added a total nobody asked for. A test or doctor name the sentence gives no support for is
-    dropped here (agent/slot_grounding.py has the exact rule). Returns `data` with cleaned slots; never mutates the
-    dict it is given (it may be the semantic cache's own copy)."""
+    dropped here (agent/slot_grounding.py has the exact rule). `trust_age`: this turn's slots came from booking_
+    capture.py's own deterministic read-back/confirm flow, not a model guess -- see ground_slots' own docstring.
+    Returns `data` with cleaned slots; never mutates the dict it is given (it may be the semantic cache's own copy)."""
     names_test, names_doctor = await _catalogue_mentions(text, lang)
     cleaned = dict(data)
     total_dropped = 0
     for key in ("slots", "secondary_slots"):
         value = data.get(key)
         if isinstance(value, dict) and value:
-            new, dropped = ground_slots(text, value, names_a_test=names_test, names_a_doctor=names_doctor)
+            new, dropped = ground_slots(text, value, names_a_test=names_test, names_a_doctor=names_doctor, trust_age=trust_age)
             if dropped:
                 cleaned[key] = new
                 total_dropped += len(dropped)
@@ -3549,6 +3583,15 @@ _CHECK_CUES = (
     "did you say", "you said", "you mean", "do you mean", "is it", "was it",
     "क्या कहा", "आपने कहा", "कहा आपने", "कहा", "मतलब", "बोला", "बोले",
 )
+# Owner, 2026-10-27: "কত বললেন" / "kitna bola" -- asking generically what AMOUNT was just said, no guessed number
+# of their own (that's spoken_number's job, just above). Combined with _CHECK_CUES already matching ("বললেন"/"did
+# you say"), this is specifically "what figure did you give me", not the many other things "কত" alone could mean.
+_GENERIC_AMOUNT_CUES = (
+    "কত", "কতো", "কত টাকা", "টাকা",
+    "koto", "kototaka", "kitna", "kitne", "kitni",
+    "कितना", "कितने", "कितनी", "कितना था", "कितने का",
+    "how much", "what amount", "what was the amount", "what price",
+)
 _BN_DIGIT_WORD = ["শূন্য", "এক", "দুই", "তিন", "চার", "পাঁচ", "ছয়", "সাত", "আট", "নয়"]
 _HI_DIGIT_WORD = ["शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ"]
 _EN_DIGIT_WORD = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
@@ -3594,6 +3637,26 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
         return await _answer_echo(session, text, lang)  # no "did you say": a word asked back by sound ("বেনিয়া পুকুর কেয়া?")
     n = owner_answers.spoken_number(text)
     if n is None:
+        # Owner, 2026-10-27: "আচ্ছা কত বললেন?" (okay, what did you say?) -- a GENERIC repeat of an amount, no guessed
+        # number to check (unlike "did you say 500?", handled below). Cut the number straight out of what was just
+        # said and read that sentence back, rather than falling through to the word-sound echo (which has nothing
+        # to match here and would simply fail the turn).
+        if any(c in low for c in _GENERIC_AMOUNT_CUES):
+            said = re.sub(r"(?<=\d),(?=\d)", "", last.translate(_ANY_DIGITS))
+            m = re.search(r"(?<!\d)\d{1,6}(?!\d)", said)
+            if m:
+                sentences = [s.strip() for s in re.split(r"(?<=[।.?!])\s+", last) if s.strip()]
+                holder = next(
+                    (s for s in sentences if m.group(0) in re.sub(r"(?<=\d),(?=\d)", "", s.translate(_ANY_DIGITS))),
+                    last,
+                )
+                spoken = {
+                    "bn": f"আমি বলেছিলাম: {holder}",
+                    "hi": f"मैंने कहा था: {holder}",
+                    "en": f"I said: {holder}",
+                }[lang if lang in ("bn", "hi") else "en"]
+                await _speak(session, spoken, lang)
+                return True
         return await _answer_echo(session, text, lang)
     said = re.sub(r"(?<=\d),(?=\d)", "", last.translate(_ANY_DIGITS))
     present = re.search(rf"(?<!\d){n}(?!\d)", said) is not None
@@ -4054,6 +4117,20 @@ async def _answer_when_to_come(session: CallSession, text: str, lang: str) -> bo
         session.pending_when = session.turn_count
         await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
         return True
+    booking = session.booking
+    if booking is not None and not booking.is_stale() and booking.slots.get("doctor_name") == name:
+        booked_date, booked_time = booking.slots.get("date"), shown_time(booking.slots)
+        if booked_date and booked_time:
+            # Owner, 2026-10-27: real call -- "আমার অ্যাপয়েন্টমেন্ট ছিল, কখন বললেন?" (I had an appointment, what
+            # time did you say) asked again later in the SAME booking, after other questions came between. The
+            # caller's own slot may not be the doctor's bare sitting start (they could have asked for a later
+            # time themselves, shown_time/agent/reply_templates.py already carries that distinction) -- re-deriving
+            # a fresh, generic "doctor sits at X" from the clinic API here would contradict what was actually
+            # agreed for THIS booking, so the booking's own slots (the one place holding that truth) are read
+            # back verbatim instead of calling get_doctor_availability again.
+            spoken = slot_proposal.conclusion(_bare_doctor_name(name), booked_date, booked_time, lang)
+            await _speak(session, _with_resume(session, spoken, lang), lang)
+            return True
     ctx = session.last_doctor_enquiry or {}
     date_iso = ctx.get("date") or (session.booking.slots.get("date") if session.booking is not None else None)
     try:
@@ -4588,6 +4665,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.turn_epoch = session.speak_epoch  # this turn is current; an interrupt from now on makes it stale
         session.acks.next_turn()
         session.turn_acknowledged = False
+        session.turn_spoken = False
         session.reply_noted = False
         prior_lang = session.lang  # the language the call was in BEFORE this turn's recognition (see _keep_language)
         # An answer to a question we asked: the last thing we said had a question mark, or a flow that asks in commands
@@ -4706,8 +4784,6 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         lang = _resolve_reply_language(
             session, lang, lang_decisive
         )  # what the AGENT replies in -- sticky; see the function
-        # Owner, 2026-10-18 (a first turn of noise heard as English locked the whole call to English; the caller then spoke Bengali and kept being answered in English):
-        # a clear sentence in Bengali or Hindi -- four words or more, nearly all in that script -- is answered in that language at once, whatever the call was locked to.
         _heard = (asr_result.text or "").strip()
         _digits_said, _digit_hits, _digit_total = booking_capture.read_digits(_heard)
         _short_booking_answer = (
@@ -4732,26 +4808,15 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # the reply language jumped to Hindi for the rest of the call. Digit words say nothing about the language: it stays what it was.
             lang = _keep_language(session, prior_lang)
             detected_lang = lang
-        if (
-            session.lang_locked
-            and not _short_booking_answer
-            and detected_lang in ("bn", "hi")
-            and lang != detected_lang
-            and len(_heard.split()) >= 4
-            and script_share(_heard, detected_lang) >= 0.85
-            # owner, 2026-10-24: script purity alone is nearly a tautology here -- the recognizer that "won" always
-            # writes ITS OWN script, whether or not it actually understood anything. Real call: a Bengali "robi
-            # bare bosen?" (does he sit Sunday) misheard by the Hindi engine as "रोबी बारे बॉसन उन्नी" at decoder
-            # agreement 0.40 (openly garbled) still flipped the whole call to Hindi on script alone. A "clear"
-            # sentence must also be a CONFIDENTLY heard one -- the same bar this file already uses elsewhere for
-            # "this engine's reading is trustworthy" (agent/lang_select.STABLE_CALL_ENGLISH_AGREEMENT = 0.7; 0.85
-            # here matches the script_share bar right above, not a new number pulled from nowhere).
-            and asr_result.decoder_agreement >= 0.85
-        ):
-            logger.info("[%s] a clear %s sentence: the reply language moves from %s to %s", session.call_id, detected_lang, lang, detected_lang)
-            _lock_reply_language(session, detected_lang)
-            session.lang_router.note_response_language(detected_lang)
-            lang = detected_lang
+        # Owner, 2026-10-27: removed the "one confident, clear, 4+ word sentence in the other script instantly
+        # relocks the call" shortcut that used to live here. Only two things may ever move the reply language once
+        # a call is running: two turns in a row in the other language (asked, then switched on the caller's yes --
+        # the block below, and _continue_language_switch_offer) or an explicit request (detect_language_switch_
+        # request). This shortcut was a third path firing on ANY ordinary, confidently-heard sentence in the other
+        # script, never mind whether it named a language or asked for anything -- exactly the unwanted mid-call
+        # flip the owner reported (2026-10-26 voice note). The two-turns path already recovers a genuinely
+        # mislocked call (its original motivation, a bad first-turn lock), just with a confirmation step instead of
+        # an instant, unasked one.
         confidence = confidence_state(getattr(asr_result, "decoder_used", None), asr_result.decoder_agreement)
         apply_confidence(session.call_state, confidence != VERIFIED)
         apply_channel_quality(session.call_state, channel_quality)
@@ -5002,6 +5067,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 await _speak(session, owner_answers.payment_link_missing_reply(lang), lang)
             elif early == early_routing.GOOD_DOCTOR:
                 await _answer_good_doctor(session, text, lang)
+            elif early == early_routing.QUALITY_REASSURANCE:
+                await _speak(session, _with_resume(session, doctor_enquiry_cues.quality_reassurance_reply(lang), lang), lang)
             elif early == early_routing.DOCTOR_WEEKDAYS:
                 await _answer_doctor_weekdays(session, text, lang)
             elif early == early_routing.NEXT_IF_ABSENT:
@@ -5251,7 +5318,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     data = _name_answer_repair(session, text, data)
     data = _lock_doctor_name_during_name_capture(session, data)
     if not confirmed_entity:
-        data = await _ground_model_slots(session, text, lang, data)
+        data = await _ground_model_slots(session, text, lang, data, trust_age=capture_plan.skip_model)
         # Real call 2026-10-14: "সিবিসি টেস্টের দাম কত ফাস্টিং করতে হবে" got only the price; the fasting half was dropped.
         data = add_implied_second_question(text, data)
     intent = data["intent"]
@@ -5631,6 +5698,19 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             _turn_text.set(text)
             reply = await _answer_enquiry_intent(intent, slots, lang)
             if reply is None:
+                # Owner, 2026-10-27: a real call asked "ডাক্তার কে দেখাতে কত টাকা লাগে" (how much to see the doctor) --
+                # a bare price question with no test name in it -- and the model still classified it test_rate,
+                # answered with "which lab test's rate do you want to know". agent/owner_answers.asks_visit_fee
+                # already catches this phrasing earlier in the turn (_answer_owner_faq, before the model is ever
+                # asked), so this should no longer be reached for it -- this is the safety net for whichever
+                # phrasing that cue list has not been taught yet: a price question with NO test name, that also
+                # names or implies a doctor, is never defaulted to "which test", it is answered as a visit-fee
+                # question (or asks which doctor, same as the fee question would on its own).
+                if not (slots.get("test_name") or slots.get("test_names")) and owner_answers.asks_visit_fee(text):
+                    fee_reply = await _visit_fee_reply(session, text, lang)
+                    if fee_reply:
+                        await _finish_enquiry_turn(session, text, lang, intent, slots, fee_reply, data)
+                        return
                 session.pending_enquiry = (intent, session.turn_count)
                 await _speak(session, missing_slot_prompt(intent, "test_name", lang), lang)
                 return
@@ -5697,6 +5777,18 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             slots, ask_back = booking_capture.after_model(st, text, lang, slots, capture_plan, window=chamber_window)
             prior_slots = dict(st.slots)
             changed = merge_slots(st, slots)
+            if not st.slots.get("doctor_name") and _fast_path is not None:
+                # Owner, 2026-10-27 (real call): "মন্ডল আছে ডাক্তার মন্ডল" (Mondal is there, doctor
+                # Mondal) named a real doctor by bare surname -- the model's own slot extraction
+                # came back empty, and book_appointment had no catalogue fallback for a bare
+                # surname the way enquiry contexts already do (_enquiry_doctor/_named_doctor): the
+                # booking asked "which doctor and day" as if nothing had been said. Same catalogue
+                # lookup those contexts already use, applied here too.
+                with contextlib.suppress(Exception):
+                    doc = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang))  # noqa: SLF001
+                    if doc is not None:
+                        st.slots["doctor_name"] = doc[1] or doc[0]
+                        changed.append("doctor_name")
             # KCD-lead-7: an address can also arrive here -- volunteered in the same sentence as other
             # details, or extracted by the model out of the order the clinic would have asked for it -- not
             # only through agent/booking_capture._detail_turn's own direct "what's the address?" question and

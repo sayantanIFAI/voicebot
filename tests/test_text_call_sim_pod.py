@@ -62,8 +62,8 @@ def test_a_number_that_came_out_one_digit_short_is_read_back_so_far_and_never_gi
         "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "ঠিক",
         "নাইন সিক্স থ্রি ডবল ফাইভল নাইট থ্রি জিরো ওন", "ঠিক আছে",
     )
-    assert "9 6 3 5 5 8 3 0 1 পেয়েছি" in _said(t, 4)  # "ফাইভল" is a five; nine digits so far
-    assert "বয়স" not in _said(t, 5) and "9 6 3 5 5 8 3 0 1 পেয়েছি। বাকিটা বলুন" in _said(t, 5)  # still on the number (what was heard, and the rest asked for), not on to the age
+    assert "9 6 3 5 , 5 8 3 0 1 পেয়েছি" in _said(t, 4)  # "ফাইভল" is a five; nine digits so far
+    assert "বয়স" not in _said(t, 5) and "9 6 3 5 , 5 8 3 0 1 পেয়েছি। বাকিটা বলুন" in _said(t, 5)  # still on the number (what was heard, and the rest asked for), not on to the age
 
 
 def test_the_number_given_in_pieces_and_then_again_whole_is_the_whole_one():
@@ -71,7 +71,7 @@ def test_the_number_given_in_pieces_and_then_again_whole_is_the_whole_one():
         "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "ঠিক", "নয় আট", "সাত ছয়",
         "নাইন সিক্স থ্রি ডবল ফাইভ এইট থ্রি জিরো ওয়ান ফোর",
     )
-    assert "আমি নম্বরটা শুনেছি 9 6 3 5 5 8 3 0 1 4। রোগীর বয়স কত?" in _said(t, 6)  # the whole number, read back, with the age asked next
+    assert "আমি নম্বরটা শুনেছি 9 6 3 5 5 , 8 3 0 1 4। রোগীর বয়স কত?" in _said(t, 6)  # the whole number, read back, with the age asked next
 
 def test_in_bengali_the_answer_starts_with_hanyan_not_ji():
     t = _run("আমি কি সোনা স্কান এর সাথে কথা বলছি")
@@ -102,7 +102,7 @@ def test_each_read_back_asks_the_next_question_and_the_next_answer_is_the_yes():
     )
     assert "আপনার নামটা বলবেন" in _said(t, 1)
     assert "আমি নামটা শুনেছি সায়ন দাস। আপনার নম্বরটা বলবেন" in _said(t, 2) and "এটা কি ঠিক?" not in _said(t, 2)
-    assert "আমি নম্বরটা শুনেছি 9 8 7 6 5 4 3 2 1 0। রোগীর বয়স কত?" in _said(t, 3)  # the number was the yes for the name
+    assert "আমি নম্বরটা শুনেছি 9 8 7 6 5 , 4 3 2 1 0। রোগীর বয়স কত?" in _said(t, 3)  # the number was the yes for the name
     assert "রোগীর বয়স 45 বছর। ঠিকানাটা বলবেন?" in _said(t, 4)  # the age was the yes for the number
     assert "থানার নামটা বলবেন?" in _said(t, 5)  # no police station in the address
     last = _said(t, 6)
@@ -116,9 +116,18 @@ def test_a_picture_of_a_body_part_says_which_tests_there_are_before_the_prescrip
     assert said.index("এই টেস্টগুলো হয়") < said.index("প্রেসক্রিপশনের একটা ছবি")
 
 
-def test_a_clear_bengali_sentence_is_answered_in_bengali_even_when_the_call_was_locked_to_english():
-    t = asyncio.run(text_call_sim.run(["আমার বুকে খুব ব্যাথা করছে কোন ডাক্তার দেখাবো আপনাদের ওখানে কে আছে"], lang="en"))
-    said = _said(t, 0)
+def test_two_clear_bengali_turns_then_a_yes_recovers_a_call_locked_to_english():
+    # Owner, 2026-10-27: this used to be a ONE-sentence recovery (a single clear, confidently-heard Bengali
+    # sentence instantly relocked the call) -- removed because, in practice, it fired on any ordinary confident
+    # sentence in the other script, not only a genuine language mismatch, flipping calls the owner never asked
+    # to flip. Only two things may move the reply language now: an explicit request, or two consecutive turns in
+    # the other language followed by the caller's "yes" to the offer (main.py's lang_history/offer_switch path) --
+    # so recovering from a bad first-turn lock (the original 2026-10-18 bug this test guards) now takes the same
+    # sanctioned path as any other language switch, not a shortcut.
+    sentence = "আমার বুকে খুব ব্যাথা করছে কোন ডাক্তার দেখাবো আপনাদের ওখানে কে আছে"
+    t = asyncio.run(text_call_sim.run([sentence, sentence, "হ্যাঁ"], lang="en"))
+    assert "আমি কি বাংলায় কথা বলব?" in _said(t, 1)  # two Bengali turns in a row: asks before answering either
+    said = _said(t, 2)
     assert any("ঀ" <= c <= "৿" for c in said) and "Dr." not in said
 
 
@@ -133,8 +142,8 @@ def test_a_changed_name_is_read_back_and_the_number_is_not_said_twice_or_short()
         "ডাক্তার বিশ্বজিৎ সেনের অ্যাপয়েন্টমেন্ট নেব", "কালকেই করে দিন", "সায়ন দাস", "ঠিক", "নয় দুই এক তিন দুই এক চার এক জিরো", "শেষে একটা জিরো হবে আরেকটা",
         "হ্যাঁ", "নামটা চাঞ্জ হবে বিপ্লব সাহা",
     )
-    assert "পেয়েছি" in _said(t, 4) and "9 2 1 3 2 1 4 1 0 পেয়েছি" in _said(t, 4)  # nine digits so far
-    assert "আমি নম্বরটা শুনেছি 9 2 1 3 2 1 4 1 0 0" in _said(t, 5) and _said(t, 5).count("9 2 1 3 2 1 4 1 0 0") == 1  # the zero went on the end; said once
+    assert "পেয়েছি" in _said(t, 4) and "9 2 1 3 , 2 1 4 1 0 পেয়েছি" in _said(t, 4)  # nine digits so far
+    assert "আমি নম্বরটা শুনেছি 9 2 1 3 2 , 1 4 1 0 0" in _said(t, 5) and _said(t, 5).count("9 2 1 3 2 , 1 4 1 0 0") == 1  # the zero went on the end; said once
     assert "ঠিক আছে, 9213214100" not in _said(t, 5)
     assert "আমি নামটা শুনেছি বিপ্লব সাহা" in _said(t, 7)
 
@@ -147,7 +156,7 @@ def test_the_whole_order_name_number_age_address_each_read_back_then_payment_not
     assert "আপনার নামটা বলবেন" in _said(t, 1)
     assert "আমি নামটা শুনেছি সায়ন দাস। আপনার নম্বরটা বলবেন" in _said(t, 2)  # the name, with the number asked in the same breath
     assert "আপনার নম্বরটা বলবেন" in _said(t, 3)  # a Hindi "ठीক" is a yes; the number is asked again
-    assert "আমি নম্বরটা শুনেছি 9 8 7 6 5 4 3 2 1 0। রোগীর বয়স কত?" in _said(t, 4)  # the number, with the age asked next
+    assert "আমি নম্বরটা শুনেছি 9 8 7 6 5, 4 3 2 1 0। রোগীর বয়স কত?" in _said(t, 4)  # the number, with the age asked next
     assert "রোগীর বয়স কত?" in _said(t, 5)  # a bare yes: the age is asked again
     assert "রোগীর বয়স 45 বছর। ঠিকানাটা বলবেন?" in _said(t, 6)
     assert "ঠিকানাটা বলবেন?" in _said(t, 7)

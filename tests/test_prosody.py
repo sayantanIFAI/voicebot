@@ -111,6 +111,9 @@ def test_every_parameter_can_be_overridden_per_request():
         "target_peak": 0.7,
         "max_chunk_chars": 60,
         "lead_in_s": 0.1,
+        "compress_threshold": 0.6,
+        "compress_ceiling": 0.95,
+        "room_tone_level": 0.002,
     }
     p = resolve_params(ProsodyParams(), overrides)
     for key, value in overrides.items():

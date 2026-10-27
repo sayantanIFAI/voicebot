@@ -88,9 +88,38 @@ _NEXT_IF_ABSENT = [
     re.compile(
         r"\baaj\b.{0,25}\bnahi\b.{0,20}\b(mile|milenge|baithte|baithenge|hai|ho)\b.{0,20}\b(kab|next|agla|agli)\b", _I
     ),
+    # Owner, 2026-10-27: "sob theke taratari kun daktar pabo" / "jaldi se jaldi kab milenge" -- asked directly, not
+    # framed as "if not today, when" -- same question (the earliest the caller can be seen), same answer.
+    re.compile(r"\b(soonest|earliest)\b|\bas\s+soon\s+as\s+possible\b|\basap\b", _I),
+    re.compile(r"\b(fastest|quickest)\b.{0,20}\b(doctor|appointment|available|date|day)\b", _I),
+    re.compile(
+        r"\b(sob|shob|sabse|sob\s*theke|sob\s*cheye|sobcheye|sob\s*theye)\b.{0,15}\b(taratari|taratadi|taratri|jaldi|shigshir|shiggiri)\b",
+        _I,
+    ),
+    re.compile(r"\b(jaldi\s*se\s*jaldi|jaldise\s*jaldi|taratari\s*taratari)\b", _I),
+    re.compile(r"(সবচেয়ে|সব\s*থেকে|সব\s*চাইতে)\s*(তাড়াতাড়ি|শীঘ্র|আগে)"),
+    re.compile(r"(তাড়াতাড়ি|শীঘ্র)\S*\s*.{0,15}(কবে|কোনদিন|কোন\s*দিন)\s*(পাব|পাবো|পাওয়া)"),
+    re.compile(r"(सबसे|सब\s*से)\s*(जल्दी|जल्द|पहले|शीघ्र)"),
+    re.compile(r"(जल्दी|जल्द|शीघ्र)\S*\s*.{0,15}(कब|कौन\s*से\s*दिन)\s*(मिल|पा)"),
 ]
 
-_PATTERNS = {"good_doctor": _GOOD_DOCTOR, "weekdays": _WEEKDAYS, "next_if_absent": _NEXT_IF_ABSENT}
+# ---- "are [the evening doctors / he / she] good?" -- reassurance about someone ALREADY identified, not a request to
+#      pick one; "which doctor is best" (_GOOD_DOCTOR above) asks to choose, this just wants to be told it's fine.
+#      Every pattern anchors on an explicit doctor word, or a time-of-day + doctor combination -- a bare "is it/he
+#      good?" with no doctor word at all is deliberately left to the orchestrator's own context gate (a doctor must
+#      already be the live topic), not matched here, so this never fires on an unrelated "is the food good?". -------
+_QUALITY_REASSURANCE = [
+    re.compile(r"\b(is|are)\b.{0,15}\b(he|she|they|him|her|the\s+)?(doctor|doctors|dr)\b.{0,20}\b(good|fine|nice|ok|okay|reliable|experienced)\b", _I),
+    re.compile(r"\b(doctor|doctors|dr)\b.{0,15}\b(good|fine|nice|ok|okay|reliable)\b.{0,10}\b(right|na|no)?\??\s*$", _I),
+    re.compile(r"\b(uni|unara|unader|tini)\b.{0,15}\b(doctor|daktar|dagtar|dactar)?\S*\s*.{0,10}\b(valo|bhalo|bhal)\b", _I),
+    re.compile(r"\b(shondha|shondhar|shandha|sondha|sandhyar|sondhyar|shaam|shamer)\b.{0,20}\b(daktar|dagtar|dactar|doctor)\b.{0,15}\b(valo|bhalo)\b", _I),
+    re.compile(r"(উনি|উনারা|উনাদের|তিনি)\S*\s*.{0,10}(ডাক্তার|ডক্টর)?\S*\s*.{0,10}(ভালো|ভাল)"),
+    re.compile(r"(সন্ধ্যার?|সন্ধ্যে|শাম|শামের?)\S*\s*.{0,15}(ডাক্তার|ডক্টর)\S*\s*.{0,15}(ভালো|ভাল)"),
+    re.compile(r"(शाम|शाम\s*के|शाम\s*वाले)\S*\s*.{0,15}(डॉक्टर|डाक्टर)\S*\s*.{0,15}(अच्छे|अच्छा|अच्छी)"),
+    re.compile(r"(डॉक्टर|डाक्टर)\S*\s*.{0,10}(अच्छे|अच्छा|अच्छी)\S*\s*.{0,10}(है|हैं)?\s*(ना|क्या)?"),
+]
+
+_PATTERNS = {"good_doctor": _GOOD_DOCTOR, "weekdays": _WEEKDAYS, "next_if_absent": _NEXT_IF_ABSENT, "quality_reassurance": _QUALITY_REASSURANCE}
 
 
 def _nfc(t: str) -> str:
@@ -115,6 +144,17 @@ def asks_doctor_weekdays(text: str, lang: str = "en") -> bool:
 def asks_next_if_absent(text: str, lang: str = "en") -> bool:
     """ "aj doctor na pele next kobe" / "if not today, when next" / "आज नहीं मिले तो अगला कब"."""
     return _any("next_if_absent", text)
+
+
+def asks_doctor_quality_reassurance(text: str, lang: str = "en") -> bool:
+    """ "shondhar daktar ra ki valo" / "are the evening doctors good" / "शाम वाले डॉक्टर अच्छे हैं क्या" -- reassurance
+    about someone already identified (a department, a time of day, "he"), never a request to pick the best one.
+    "which doctor is good" is a SELECTION question (GOOD_DOCTOR's own job) even though it also contains
+    "doctor...good" -- the "which/kon/কোন/कौन सा" word is what tells the two apart, so it is excluded here."""
+    t = _nfc(text).lower()
+    if any(w in t for w in ("which", "kon ", "kun ", "কোন", "कौन")):
+        return False
+    return _any("quality_reassurance", text)
 
 
 # ------------------------------------------------------------------------------------------------------------------------------------ the answers
@@ -179,6 +219,19 @@ def good_doctor_reply(doctors: list[str], date_iso: str | None, lang: str) -> st
     General Medicine on the day (today unless a date is given)."""
     lang = lang if lang in _PROBLEM_ASK else "en"
     return _PROBLEM_ASK[lang] + general_medicine_line(doctors, date_iso, lang)
+
+
+_QUALITY_REASSURANCE_REPLY = {
+    "bn": "আমাদের সব ডাক্তারই ভালো, আপনি নিশ্চিন্তে যেকোনো একজনকে দেখাতে পারেন।",
+    "hi": "हमारे सभी डॉक्टर अच्छे हैं, आप निश्चिंत होकर किसी को भी दिखा सकते हैं।",
+    "en": "All our doctors are good -- you can see any of them without worry.",
+}
+
+
+def quality_reassurance_reply(lang: str) -> str:
+    """Owner, 2026-10-27: "shondhar daktar ra ki valo" -- same rule as good_doctor_reply (no doctor is ever singled
+    out as better than another), but this question wants reassurance, not a redirect to "what's your problem"."""
+    return _QUALITY_REASSURANCE_REPLY.get(lang, _QUALITY_REASSURANCE_REPLY["en"])
 
 
 _NEXT = {

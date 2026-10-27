@@ -145,7 +145,7 @@ def test_a_number_said_in_groups_is_answered_with_ok_in_each_gap():
     st.asked_fields.add("phone")
     assert bc.before_model(st, "98 76", "en").speak == "Okay, go on."
     # six digits or more and still short: what was heard is said, so a caller who FINISHED the number knows it came out short (real call 2026-10-18)
-    assert bc.before_model(st, "54 32", "en").speak == "Okay, I have 9 8 7 6 5 4 3 2 so far. Please say the rest."
+    assert bc.before_model(st, "54 32", "en").speak == "Okay, I have 9 8 7 6 , 5 4 3 2 so far. Please say the rest."
     assert bc.prompt("phone_partial", "bn", n=4) == "ঠিক আছে, বলুন।"
 
 

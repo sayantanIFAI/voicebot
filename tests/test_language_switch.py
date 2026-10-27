@@ -34,3 +34,17 @@ def test_request_is_understood_in_the_language_it_was_made_in_only():
     # module's) is not matched against the English phrase table -- this
     # function trusts the caller's ACTUAL detected language for lookup.
     assert detect_language_switch_request("speak in hindi", "hi") is None
+
+
+def test_a_caller_naming_a_language_only_to_say_they_do_not_speak_it_is_not_a_switch_request():
+    # Owner, 2026-10-27: "আমার ইংরেজি আসে না" (I don't know English) and "हिंदी नहीं आती मुझे" (I don't know
+    # Hindi) each name exactly one language in <=4 words -- the short-utterance rule below used to read that
+    # alone as a request to SWITCH TO it (the negation check only ran when two languages were named, to pick
+    # between them), flipping the call to the one language the caller just said they could not speak.
+    assert detect_language_switch_request("আমার ইংরেজি আসে না", "bn") is None
+    assert detect_language_switch_request("हिंदी नहीं आती मुझे", "hi") is None
+    assert detect_language_switch_request("mujhe hindi nahi aati", "hi") is None
+    # A real request is unaffected by the fix.
+    assert detect_language_switch_request("ইংরেজিতে বলুন প্লিজ", "bn") == "en"
+    # Two named, one negated: the other still wins (unchanged behaviour).
+    assert detect_language_switch_request("বাংলা বলুন, হিন্দি না", "bn") == "bn"

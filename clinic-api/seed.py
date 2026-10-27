@@ -568,6 +568,12 @@ def backfill_faq_keywords() -> int:
         db.close()
 
 
+# Owner, 2026-10-27: placeholder visit fees (no real fee schedule exists yet) -- 500 to 1500 INR, cycled across
+# doctors so the answer to "how much is Dr X's visit" varies by doctor instead of every one giving the same number.
+# Replace with the clinic's real fee schedule once it has one; nothing downstream treats this range as meaningful.
+FEE_LADDER = (500, 700, 1000, 1200, 1500)
+
+
 def seed():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
@@ -592,6 +598,7 @@ def seed():
                     aliases_bn=aliases,
                     aliases_hi="|".join(SURNAME_HI.get(surname, [])),
                     department_id=dept.id,
+                    consultation_fee_inr=FEE_LADDER[doctor_index % len(FEE_LADDER)],
                 )
                 db.add(doc)
                 db.flush()
@@ -615,7 +622,9 @@ def seed():
             doc = Doctor(
                 name=doc_name, full_name=latin, full_name_bn=full_bn, full_name_hi=full_hi, qualifications=quals,
                 aliases_bn="|".join(SURNAME_BN.get(surname, [])), aliases_hi="|".join(SURNAME_HI.get(surname, [])), department_id=dept.id,
+                consultation_fee_inr=FEE_LADDER[doctor_index % len(FEE_LADDER)],
             )
+            doctor_index += 1
             db.add(doc)
             db.flush()
             for weekday in template["days"]:

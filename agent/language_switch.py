@@ -259,14 +259,19 @@ def _generic_switch_request(text: str, lang: str) -> str | None:
             named[code] = min(positions)
     if not named:
         return None
-    if len(named) > 1:
-        # "bengali please, not hindi": drop a language that is followed (within two words) by a negation.
-        for code, pos in list(named.items()):
-            tail = t[pos:].split()[1:3]
-            if any(w in _NEGATIONS for w in tail):
-                named.pop(code)
-        if len(named) != 1:
-            return None
+    # Owner, 2026-10-27: real calls -- a caller naming a language ONLY to say they do NOT speak it ("আমার ইংরেজি
+    # আসে না" / "mujhe hindi nahi aata", both <=4 words) was never checked against the negation below at all: that
+    # check only ran once two or more languages were named, to pick between them. A single negated mention is just
+    # as wrong to read as a request -- it is the opposite of what was said -- and "short" alone (no verb needed)
+    # then flipped the whole call's reply language on one misread sentence, well short of the owner's 2-3-turns-
+    # or-explicit-request rule. Dropping a negated language is correct whether it is the only one named or one of
+    # several, so this now runs unconditionally.
+    for code, pos in list(named.items()):
+        tail = t[pos:].split()[1:3]
+        if any(w in _NEGATIONS for w in tail):
+            named.pop(code)
+    if len(named) != 1:
+        return None
     target = next(iter(named))
     has_verb = any(w in _VERB_WORDS_LATIN for w in words) or any(stem in t for stem in _VERB_STEMS_NATIVE)
     # Owner, 2026-10-14: "Reply in English" and "apply in english" mean the same thing -- when the call is in another

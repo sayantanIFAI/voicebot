@@ -109,7 +109,7 @@ def test_both_entry_points_answer_every_turn_of_every_booking_the_same(sessions)
 )
 def test_a_number_said_in_pieces_is_taken_whole_and_read_back(sessions, entry, name):
     rows = sessions[entry][name]
-    assert "9 8 7 6 5 4 3 2 1 0" in _said(rows, -1), _said(rows, -1)
+    assert "9 8 7 6 5 , 4 3 2 1 0" in _said(rows, -1), _said(rows, -1)  # grouped five-and-five, owner 2026-10-26
     assert "ঠিক ধরেছেন" not in _said(rows, -1) and "that is right" not in _said(rows, -1)  # not "you caught the word"
 
 
@@ -117,9 +117,9 @@ def test_a_number_said_in_pieces_is_taken_whole_and_read_back(sessions, entry, n
 def test_the_whatsapp_question_and_a_garbled_station_in_english(sessions, entry):
     rows = sessions[entry]["en_garbled_station_whatsapp_no"]
     n = len(_upto_the_address("en"))
-    assert "Does the number 9 8 7 6 5 4 3 2 1 0 have WhatsApp?" in _said(rows, n)  # right after the station is given
+    assert "Does the number 9 8 7 6 5 , 4 3 2 1 0 have WhatsApp?" in _said(rows, n)  # right after the station is given
     assert "ten digits" in _said(rows, n + 1)  # "no": the number that has WhatsApp is asked for
-    assert "9 1 2 3 4 5 6 7 8 9" in _said(rows, n + 2)  # ...read back like any phone number
+    assert "9 1 2 3 4 , 5 6 7 8 9" in _said(rows, n + 2)  # ...read back like any phone number
     assert "police station Shyampukur" in _said(rows, n + 3)  # "shamppukur" is stored under the table's own name
     assert rows[-1]["closed"] and "confirm_booking" in rows[-1]["clinic_calls"]
 

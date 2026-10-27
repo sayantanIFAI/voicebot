@@ -21,6 +21,11 @@ _LATIN = {"c": "k", "q": "k", "v": "b", "w": "", "z": "j", "f": "p", "x": "ks"}
 _DROP_LATIN = set("aeiouyh")
 _CUES = (
     "কেয়া", "কি", "কী", "ঠিক", "সঠিক", "ঠিকই", "তাই তো", "নাকি", "ना", "क्या", "सही", "ठीक", "ही", "right", "correct", "is it", "is that", "ki", "kya", "sahi", "thik", "theek", "?",
+    # Owner, 2026-10-27: real call, 2026-10-26 -- "সিটি সেন্টার ২ বললেন?" (did you say City Centre 2?), echoing an
+    # address back with a past/present-tense "say" verb instead of "কি/ঠিক", matched nothing (none of these verbs
+    # were a cue) and the turn fell through unanswered. All are already in _STOP so they are never mistaken for the
+    # word being asked back, only for the fact that something IS being asked back.
+    "বললেন", "বলছেন", "বলেছেন", "বোলে", "बोले", "बोला", "बोली", "कहा", "कहे", "bolle", "bolchen", "bola", "bole", "kaha",
 )
 
 
@@ -53,9 +58,9 @@ def _tokens(text: str) -> list[str]:
 
 # Little words that answer or soften a sentence are never the thing asked back ("ঠিক আছে" is an answer, not a question about the words "ঠিক আছে" in the agent's last sentence).
 _STOP = frozenset(
-    "ঠিক আছে আছে হ্যাঁ হ্যা হাঁ না নাকি কি কী কেয়া তো ই জি ওকে এটা ওটা এই ওই সেই এ ও আর এবং তাই সঠিক বলুন বলবেন বললেন বলেছেন "
-    "ठीक है हाँ हां जी नहीं ना क्या ही तो यह वह ये वो और सही बताइए "
-    "ok okay yes no is it that the a an right correct ji haan han hai ki kya".split()
+    "ঠিক আছে আছে হ্যাঁ হ্যা হাঁ না নাকি কি কী কেয়া তো ই জি ওকে এটা ওটা এই ওই সেই এ ও আর এবং তাই সঠিক বলুন বলবেন বললেন বলেছেন বলছেন বোলে "
+    "ठीक है हाँ हां जी नहीं ना क्या ही तो यह वह ये वो और सही बताइए बोले बोला बोली कहा कहे "
+    "ok okay yes no is it that the a an right correct ji haan han hai ki kya bolle bolchen bola bole kaha".split()
 )
 
 

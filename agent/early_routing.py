@@ -19,7 +19,9 @@ Order (first match wins), strongest reason first:
   5. HEALTH_PACKAGE  -- Sonoscan offers none (KCD-lead-13): said BEFORE the FAQ matcher or the intent model can send it to the insurance answer.
   6. REPORT_PICKUP   -- "is my report ready" (KCD-lead-8).
   7. REFERRAL        -- another center passing a number (KCD-lead-1).
-  8. GOOD_DOCTOR / DOCTOR_WEEKDAYS / NEXT_IF_ABSENT -- three doctor questions answered by rule (agent/doctor_enquiry_cues.py, owner 2026-10-23).
+  8. GOOD_DOCTOR / QUALITY_REASSURANCE / DOCTOR_WEEKDAYS / NEXT_IF_ABSENT -- doctor questions answered by rule
+     (agent/doctor_enquiry_cues.py, owner 2026-10-23/27). QUALITY_REASSURANCE ("are the evening doctors good") is
+     reassurance about someone already identified, never a request to pick one -- a different reply from GOOD_DOCTOR.
   9. WHEN_TO_COME / SERIAL_NUMBER -- "when should I come" (sitting start time + one to two hours in hand) and "what is my serial number" (it comes on WhatsApp
      after payment); skipped when the sentence carries a token number, which owner_answers answers more exactly.
   10. CANNOT_PAY_ONLINE (item 17, checked right after LINK_MISSING), SITTING_HOURS (item 16, "kota theke kota bose"), COME_TO_CLINIC (item 17, book at the
@@ -44,6 +46,7 @@ REPORT_PICKUP = "report_pickup"
 REFERRAL = "referral"
 LINK_MISSING = "link_missing"
 GOOD_DOCTOR = "good_doctor"
+QUALITY_REASSURANCE = "quality_reassurance"  # owner, 2026-10-27: "are the evening doctors good" -- reassurance, not a request to pick one
 DOCTOR_WEEKDAYS = "doctor_weekdays"
 NEXT_IF_ABSENT = "next_if_absent"
 WHEN_TO_COME = "when_to_come"
@@ -68,6 +71,7 @@ ORDER = (
     RARE_TEST,
     REPORT_PICKUP,
     REFERRAL,
+    QUALITY_REASSURANCE,
     GOOD_DOCTOR,
     DAY_AVAILABILITY,
     DOCTOR_WEEKDAYS,
@@ -114,6 +118,11 @@ def classify(text: str, lang: str = "en") -> str | None:
         return REPORT_PICKUP
     if referral_cues.asks_to_pass_a_number(text, lang):
         return REFERRAL
+    if doctor_enquiry_cues.asks_doctor_quality_reassurance(text, lang):
+        # Checked before GOOD_DOCTOR: some reassurance phrasings ("সন্ধ্যার ডাক্তাররা কি ভালো") also loosely match
+        # GOOD_DOCTOR's looser "doctor...ভালো" proximity patterns, but no genuine "which doctor is best" phrasing
+        # matches this one (verified), so this ordering only ever reroutes the overlap, never steals a real pick-one ask.
+        return QUALITY_REASSURANCE
     if doctor_enquiry_cues.asks_good_doctor(text, lang):
         return GOOD_DOCTOR
     if weekday_cues.asks_day_availability(text, lang):

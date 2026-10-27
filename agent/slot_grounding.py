@@ -38,6 +38,16 @@ _DOCTOR_CONTEXT = (
     "doctor", "dr", "ডাক্তার", "ডক্টর", "डॉक्टर", "डाक्टर", "डॉ", "specialist", "physician", "consultant",
     "appointment", "অ্যাপয়েন্টমেন্ট", "अपॉइंटमेंट", "available", "chamber", "চেম্বার", "चेंबर", "book", "বুক", "बुक",
 )
+# Owner, 2026-10-27 (real call): "চুয়াল্লিশ সিআইটি রোড ..." (44 CIT Road ...), answering "what is the address?",
+# came back from the model as patient_age=44 -- the house number in the address, not an age -- and overwrote the
+# real age already on the booking, asked the caller to confirm it, and never looked at the address at all. Same
+# root cause as doctor_name/test_name needing a context word (has_doctor_context/has_test_context) before the
+# model's reading is trusted: a real age answer always names what it is ("বছর"/"বয়স"/"years"/"old"); a bare
+# number inside an unrelated sentence does not.
+_AGE_CONTEXT = (
+    "বয়স", "বয়েস", "বছর", "বছরের", "age", "aged", "years", "year", "yrs", "yr", "old",
+    "उम्र", "उमर", "आयु", "साल", "वर्ष",
+)
 
 _PUNCT = re.compile(r"[.,;:!?\"'()\[\]{}।॥\-–—_/]+")
 
@@ -87,6 +97,10 @@ def has_doctor_context(text: str) -> bool:
     return _has_any(_norm(text), _DOCTOR_CONTEXT)
 
 
+def has_age_context(text: str) -> bool:
+    return _has_any(_norm(text), _AGE_CONTEXT)
+
+
 def _literally_in(value: str, norm_text: str) -> bool:
     """The model's name appears in the sentence, or is within one or two letters of a stretch of it."""
     v = _norm(value)
@@ -110,10 +124,14 @@ def _clean_names(values, norm_text: str):
     return kept, [v for v in values if isinstance(v, str) and v not in kept]
 
 
-def ground_slots(text: str, slots: dict | None, *, names_a_test: bool = False, names_a_doctor: bool = False):
+def ground_slots(text: str, slots: dict | None, *, names_a_test: bool = False, names_a_doctor: bool = False, trust_age: bool = False):
     """(slots, dropped). `names_a_test` / `names_a_doctor`: the catalogue found a test / doctor in `text` by one of its
-    spoken forms (the caller of this function asks agent.transcript_rules.AliasTable). Never raises; never edits the
-    dict it is given."""
+    spoken forms (the caller of this function asks agent.transcript_rules.AliasTable). `trust_age`: the age in `slots`
+    was set deterministically (agent/booking_capture.py's own read-back/confirm flow), not guessed by the model, so
+    the age-context check below -- there to catch the MODEL misreading an unrelated number as an age -- does not
+    apply to it; a caller confirming a read-back with a bare "yes" (no "বয়স"/"বছর" in that one word either) must
+    not have the age it just confirmed thrown away by the same check that protects against the model's mistake.
+    Never raises; never edits the dict it is given."""
     if not isinstance(slots, dict) or not slots:
         return slots, []
     norm_text = _norm(text)
@@ -149,4 +167,19 @@ def ground_slots(text: str, slots: dict | None, *, names_a_test: bool = False, n
         if isinstance(value, str) and not _literally_in(value, norm_text):
             dropped.append(value)
             out["doctor_name"] = None
+
+    if not trust_age and out.get("patient_age") is not None and not has_age_context(text):
+        dropped.append(str(out["patient_age"]))
+        out["patient_age"] = None
+
+    # Owner, 2026-10-27: a patient_name has no catalogue to ground against (unlike a test or doctor name), so the
+    # model guessing one from a long, confusing or rambling sentence that never actually named anyone went
+    # uncaught -- the booking then believed the name step was already done and skipped straight to asking for the
+    # phone number. Same literal-or-near-literal rule as doctor_name, no context exemption needed: a real name the
+    # caller gave is, by construction, present in their own sentence (fuzzy ASR noise included); one the model
+    # invented is not.
+    value = out.get("patient_name")
+    if isinstance(value, str) and not _literally_in(value, norm_text):
+        dropped.append(value)
+        out["patient_name"] = None
     return out, dropped

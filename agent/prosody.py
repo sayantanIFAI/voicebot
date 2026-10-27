@@ -50,6 +50,19 @@ class ProsodyParams:
     target_peak: float = 0.89  # ~-1 dBFS peak target
     max_chunk_chars: int = 90  # a long single clause still gets a breath
     lead_in_s: float = 0.04  # stops the first phoneme clipping on stream start
+    # Owner, 2026-10-27: "add a light compressor" -- a gentle soft-knee, the same tanh shape
+    # agent/level.py's soft_limit already uses for the caller's own line, just in this file's
+    # own linear-amplitude convention (not dB) to match trim_threshold/target_peak above. The
+    # threshold sits high on purpose: most of a sentence never reaches it, only the loudest
+    # syllables are gently rounded off, so the effect is a slightly steadier loudness, not an
+    # audibly squashed one. REASONED, not measured against a real handset -- a starting point.
+    compress_threshold: float = 0.55  # linear amplitude above which the soft knee engages
+    compress_ceiling: float = 0.92  # asymptotic ceiling the knee approaches, never exceeds
+    # Owner, 2026-10-27: "very quiet room tone so silence isn't dead" -- replaces the flat
+    # digital-zero padding between clauses/sentences with very low-level noise. Low enough
+    # that it is inaudible as "noise" over a phone line, but it means a pause is quiet, not
+    # the dead-zero gap a decoder's own noise gate can make sound like a dropped call.
+    room_tone_level: float = 0.0012  # linear amplitude (~-58 dBFS); 0 turns it off exactly as before
 
 
 # (min, max) for each overridable field. A request outside these is
@@ -63,6 +76,9 @@ BOUNDS: dict[str, tuple[float, float]] = {
     "target_peak": (0.1, 0.99),
     "max_chunk_chars": (20, 400),
     "lead_in_s": (0.0, 0.5),
+    "compress_threshold": (0.1, 0.99),
+    "compress_ceiling": (0.1, 0.99),
+    "room_tone_level": (0.0, 0.01),
 }
 
 
@@ -203,6 +219,33 @@ def normalize_peak(wav: np.ndarray, target: float) -> np.ndarray:
     return wav * (target / peak) if peak > 1e-6 else wav
 
 
+def soft_compress(wav: np.ndarray, threshold: float, ceiling: float) -> np.ndarray:
+    """Identity below `threshold`; a tanh soft knee above it, asymptotically approaching
+    `ceiling` and never exceeding it -- the same shape agent/level.py's soft_limit uses for
+    the caller's own line. `ceiling` must exceed `threshold`, or nothing above the threshold
+    changes (the knee has no room to curve into)."""
+    if wav.size == 0 or ceiling <= threshold:
+        return wav
+    a = np.abs(wav)
+    over = a > threshold
+    if not over.any():
+        return wav
+    out = wav.copy()
+    out[over] = np.sign(wav[over]) * (threshold + (ceiling - threshold) * np.tanh((a[over] - threshold) / (ceiling - threshold)))
+    return out
+
+
+def add_room_tone(n_samples: int, level: float, rng: np.random.Generator | None = None) -> np.ndarray:
+    """`n_samples` of very quiet white noise instead of true digital silence -- a pause that is
+    quiet, not a hard zero. `level` 0 returns exact digital silence, unchanged from before this
+    existed. `rng` is injectable so a test can assert a specific sequence; omitted, each call
+    draws its own (two consecutive pauses sounding identical would itself be a "dead" tell)."""
+    if n_samples <= 0 or level <= 0:
+        return np.zeros(max(n_samples, 0), dtype=np.float32)
+    gen = rng or np.random.default_rng()
+    return (gen.standard_normal(n_samples).astype(np.float32) * level).clip(-level * 4, level * 4)
+
+
 def assemble(
     chunk_wavs: list[tuple[np.ndarray, str]], sample_rate: int, params: ProsodyParams, pauses: bool = True
 ) -> np.ndarray:
@@ -217,11 +260,12 @@ def assemble(
             continue
         pieces.append(wav)
         if pauses:
-            pieces.append(np.zeros(int(pause_s[kind] * sample_rate), dtype=np.float32))
+            pieces.append(add_room_tone(int(pause_s[kind] * sample_rate), params.room_tone_level))
     if not pieces:
         return np.zeros(int(0.2 * sample_rate), dtype=np.float32)
     lead_in = np.zeros(int(params.lead_in_s * sample_rate), dtype=np.float32)
-    return normalize_peak(np.concatenate([lead_in, *pieces]), params.target_peak)
+    whole = soft_compress(np.concatenate([lead_in, *pieces]), params.compress_threshold, params.compress_ceiling)
+    return normalize_peak(whole, params.target_peak)
 
 
 # ------------------------------------------------------------ speaking rate

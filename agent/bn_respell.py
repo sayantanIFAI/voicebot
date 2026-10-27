@@ -48,6 +48,18 @@ _RESPELL: dict[str, str] = {
     "কয়েক": "কয়এক",
     # Same ড়া sound as সাড়া, so it gets the same treatment (nasal mark after শা). NOT yet heard by the listener.
     "সাড়ে": "শাঁড়ে",
+    # Owner, 2026-10-27: "হোয়াটসঅ্যাপ" (WhatsApp) reported mispronounced on a real call -- this is the loanword's
+    # standard Bengali spelling (agent/pronunciation.py's own English->Bengali table already uses it too), so the
+    # word itself is not wrong, the voice's reading of its opening "হোয়া" (ho-yā) cluster is. Quick fix, NOT run
+    # through tools/respell_probe.py (no pod access right now): dropping the হ, the softer-opening alternative,
+    # is the one change to try first. Owner confirms by ear; swap for a different candidate if this one is not it.
+    "হোয়াটসঅ্যাপ": "ওয়াটসঅ্যাপ",
+    # Owner, 2026-10-27: "অ্যাপয়েন্টমেন্ট" (appointment) also reported mispronounced. Quick fix, NOT run through
+    # tools/respell_probe.py (no pod access right now): simplifying the opening "অ্যা" (æ) vowel cluster to the
+    # plainer "আ" is the one change to try first -- that cluster is the usual trouble spot for this voice (see
+    # the "sh rule" comment below for the same class of issue in native words). Owner confirms by ear; swap for a
+    # different candidate ("অ্যাপোয়েন্টমেন্ট", adding a vowel instead of simplifying one) if this is not it.
+    "অ্যাপয়েন্টমেন্ট": "আপয়েন্টমেন্ট",
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
