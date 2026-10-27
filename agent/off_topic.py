@@ -20,8 +20,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# Close the call on this many off-topic turns IN A ROW (the owner's rule).
-CLOSE_AT = 3
+# Close the call on this many off-topic turns IN A ROW (the owner's rule; 2026-10-27: two, not three).
+CLOSE_AT = 2
 
 _NORM = re.compile(r"[?!.,;:()\"“”‘’|/\\।…]+")
 
@@ -73,6 +73,27 @@ def has_health_word(text: str) -> bool:
         return False
     padded = t + " "
     return any(w in padded for w in _HEALTH_NATIVE) or _HEALTH_LATIN.search(t) is not None
+
+
+# "Is this a girls' school or a police station?" / "I called the police station": the caller dialled the wrong place. Said straight away, then the call is closed (no second chance asked).
+_WRONG_PLACE_NATIVE = re.compile(
+    r"(?:এটা|ইটা|এইটা|এটাই|ওটা)\s*কি\s+(?:[^\s]+\s+){0,2}?(?:স্কুল|ইস্কুল|গির্ল্স|বয়েজ|পুলিশ|থানা|স্তেতিওন|স্টেশন|দোকান|হোটেল|ব্যাংক|ব্যাঙ্ক|অফিস|বাজার|মন্দির|মসজিদ)"
+    r"|(?:পুলিশ\s*(?:স্টেশন|স্তেতিওন|স্টেশনে)|থানা|থানায়)\s*(?:এ|এই)?\s*ফোন\s*(?:করেছি|করেছিলাম|লাগিয়েছি|লেগেছে)"
+    r"|(?:यह|ये|क्या\s+यह)\s*(?:क्या\s+)?(?:कोई\s+)?(?:[^\s]+\s+)?(?:स्कूल|पुलिस\s*स्टेशन|थाना|बैंक|दुकान|होटल|ऑफिस|बाज़ार|बाजार)\s*(?:है|हैं)"
+    r"|(?:पुलिस\s*स्टेशन|थाने)\s*(?:में|पर)?\s*फ[ोो]न\s*(?:किया|लगाया|लग)"
+)
+_WRONG_PLACE_LATIN = re.compile(
+    r"\b(?:is this (?:a |the )?(?:girls'? |boys'? )?(?:school|police station|bank|shop|hotel|office|market|temple)|i (?:called|dialled|dialed) (?:the )?(?:police station|school|bank|shop|hotel)|"
+    r"(?:ei ta ki|eta ki|ye kya|yeh kya) (?:girls |boys )?(?:school|police station|thana)|thana e phone)\b",
+    re.I,
+)
+
+
+def wrong_place(text: str) -> bool:
+    """True when the caller is plainly asking whether this is some OTHER place (a school, a police station, a bank ...) or says they called one. A hospital cue elsewhere in the sentence
+    (agent/unrelated_caller.has_hospital_cue, checked by the caller of this function) always wins; the words 'hospital', 'clinic', 'diagnostic' are not in the list on purpose."""
+    t = _norm(text)
+    return bool(t) and (_WRONG_PLACE_NATIVE.search(t) is not None or _WRONG_PLACE_LATIN.search(t) is not None)
 
 
 def chit_chat(text: str) -> bool:

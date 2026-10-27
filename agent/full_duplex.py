@@ -89,6 +89,12 @@ class FullDuplexProcessor:
         """The processor for a telephone call (Twilio): barge-in is acted on without the ERLE rule, but only on PHONE_MIN_SPEECH_S of net voiced evidence."""
         return cls(sr=sr, barge_config=BargeInConfig(min_speech_s=PHONE_MIN_SPEECH_S), assume_echo_free=True)
 
+    def enable_echo_free(self, min_speech_s: float = PHONE_MIN_SPEECH_S) -> None:
+        """The caller says the line has no echo (headphones in the browser test page, owner 2026-10-27): the same rule as a phone line, switched on for this call only. Never inferred by the
+        agent -- the 2026-10-15 attempt to infer it from the microphone made the agent interrupt itself."""
+        self.assume_echo_free = True
+        self.detector = BargeInDetector(sr=self.sr, config=BargeInConfig(min_speech_s=min_speech_s))
+
     # -- agent side ---------------------------------------------------
     def place_reference(self, pcm: np.ndarray, voice: str | None = None) -> int:
         """Register a clip the agent is about to send. Returns where on the

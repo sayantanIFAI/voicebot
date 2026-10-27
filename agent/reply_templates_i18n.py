@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-from agent import eye_words
+from agent import eye_words, off_topic
 from agent import slot_proposal
 from agent.report_time_wording import report_time_phrase, report_time_safety_note
 from agent.sample_wording import sample_sentence
@@ -278,8 +278,12 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str) -> str:
     next_date = result.get("next_available_date")
     if next_date:
         if hi:
-            return f"{name} उस दिन नहीं बैठेंगे। वे {slot_proposal.when_phrase(next_date, 'hi')} बैठेंगे।"
-        return f"{name} does not sit on that day. The next sitting is {slot_proposal.when_phrase(next_date, 'en')}."
+            asked = slots.get("date") or result.get("date")
+            day = slot_proposal.asked_day_phrase(asked, "hi") if asked else "उस दिन"
+            return f"{day} {name} नहीं बैठेंगे। वे {slot_proposal.when_phrase(next_date, 'hi')} बैठेंगे।"
+        asked = slots.get("date") or result.get("date")
+        day = slot_proposal.asked_day_phrase(asked, "en") if asked else "on that day"
+        return f"{name} does not sit {day}. The next sitting is {slot_proposal.when_phrase(next_date, 'en')}."
     if hi:
         return f"{name} अभी किसी तय दिन नहीं बैठ रहे हैं। आप हमारे काउंटर पर पूछ सकते हैं।"
     return f"{name} is not sitting on any fixed day right now. You can ask at our counter."
@@ -724,6 +728,13 @@ def department_route_reply(result: dict, symptom: str, lang: str) -> str:
         )
     if eye_words.mentions_eye(symptom):
         return eye_words.NO_EYE_DEPARTMENT["hi" if hi else "en"]
+    if not off_topic.has_health_word(symptom):
+        # Owner, 2026-10-27: no problem named -> ask what it is
+        return (
+            "ठीक है, क्या तकलीफ़ है बताइए, तब मैं बता सकूँगी किस विभाग में दिखाना है।"
+            if hi
+            else "Sure, please tell me what the problem is, and I can tell you which department to see."
+        )
     return (
         "माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर पूछ सकते हैं।"
         if hi

@@ -95,7 +95,11 @@ HELLO_NEW = """    if msg.get("type") == "playback_done":
             logger.warning("[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
                            session.call_id, rate, SAMPLE_RATE)
         logger.info("[%s] transport: %s @ %dHz", session.call_id,
-                    msg.get("format", "pcm_s16le"), rate)"""
+                    msg.get("format", "pcm_s16le"), rate)
+        if msg.get("headphones") and session.duplex is not None:
+            # the test page's "I am using headphones" box: no speaker-to-microphone echo, so talking over the agent is accepted without the echo-canceller rule (agent/full_duplex.py)
+            session.duplex.enable_echo_free()
+            logger.info("[%s] headphones mode: talking over the agent is accepted", session.call_id)"""
 
 POLL_NEW = """        sr = session.audio.sample_rate
         tail = session.audio.tail_tensor(session.processed_until_s)

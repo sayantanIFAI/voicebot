@@ -150,7 +150,7 @@ from agent import fastpath_guards  # refuse a quick answer that cannot be right 
 from agent import slot_proposal  # the machine picks the appointment time and says it
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
-from agent import clinical_safety, off_topic, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
+from agent import clinical_safety, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
 from agent import clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
@@ -1225,6 +1225,7 @@ class CallSession:
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
         self.awaiting_test_category = False
         self.awaiting_clinician_offer = False  # "a doctor will explain it, shall I connect one?" was asked (agent/clinical_safety.py); the next yes / no answers it
+        self.lang_explicit = False  # the caller ASKED for a language ("speak English"): a later clear sentence in another script never moves the call on its own
         self.noisy_asks = 0  # how many times this caller was asked, because of noise on the line, to find a quiet place / repeat
         self.noise_suppress = False  # set after NOISE_SUPPRESS_AFTER_ASKS such asks: this call's audio is then noise-filtered (when noisy) before recognition
         self.offtopic_streak = 0  # consecutive turns about nothing to do with Sonoscan (agent/off_topic.py); the third closes the call
@@ -2472,7 +2473,7 @@ def _with_whole_doctor_name(data, text: str, lang: str, session: "CallSession | 
     return data
 
 
-_NOT_A_NAME_ANSWER_INTENTS = ("test_rate", "test_prep", "clinic_faq", "department_query", "smalltalk", "unclear")
+_NOT_A_NAME_ANSWER_INTENTS = ("test_rate", "test_prep", "clinic_faq", "department_query", "smalltalk", "unclear", "doctor_availability", "lookup_booking")
 
 
 def _name_answer_repair(session: CallSession, text: str, data):
@@ -2484,6 +2485,8 @@ def _name_answer_repair(session: CallSession, text: str, data):
         return data
     if data.get("intent") not in _NOT_A_NAME_ANSWER_INTENTS or data["slots"].get("patient_name"):
         return data
+    if data.get("intent") in ("doctor_availability", "lookup_booking") and _sentence_asks_for_a_doctor(text):
+        return data  # owner, 2026-10-27: only a sentence with NO doctor word is a bare name ("সায়ন দাস" -- whose surname is also a doctor's)
     try:
         if "patient_name" not in st.asked_fields or st.slots.get("patient_name") or st.pending_name or st.name_confirmed:
             return data
@@ -2492,7 +2495,10 @@ def _name_answer_repair(session: CallSession, text: str, data):
         return data
     if not name:
         return data
-    return {**data, "intent": "book_appointment", "slots": {**data["slots"], "patient_name": name}}
+    slots = {**data["slots"], "patient_name": name}
+    if data.get("intent") == "doctor_availability":
+        slots["doctor_name"] = None  # the surname that matched a doctor was the patient's own
+    return {**data, "intent": "book_appointment", "slots": slots}
 
 
 def _sentence_asks_for_a_doctor(text: str) -> bool:
@@ -4900,6 +4906,21 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # flip the owner reported (2026-10-26 voice note). The two-turns path already recovers a genuinely
         # mislocked call (its original motivation, a bad first-turn lock), just with a confirmation step instead of
         # an instant, unasked one.
+        # Owner, 2026-10-27: the one flip that IS wanted: a call sitting in ENGLISH that nobody asked for (the first turn's language ID was wrong) while the caller speaks a clear sentence in
+        # Bengali or Hindi -- four words or more, nearly all in that script, decoders agreeing -- is answered in the caller's language. A call where English was requested is never moved.
+        if (
+            lang == "en"
+            and detected_lang in ("bn", "hi")
+            and not session.lang_explicit
+            and not _short_booking_answer
+            and len(_heard.split()) >= 4
+            and script_share(_heard, detected_lang) >= 0.85
+            and asr_result.decoder_agreement >= 0.85
+        ):
+            logger.info("[%s] an unrequested English call and a clear %s sentence: the reply language moves to %s", session.call_id, detected_lang, detected_lang)
+            _lock_reply_language(session, detected_lang)
+            session.lang_router.note_response_language(detected_lang)
+            lang = detected_lang
         confidence = confidence_state(getattr(asr_result, "decoder_used", None), asr_result.decoder_agreement)
         apply_confidence(session.call_state, confidence != VERIFIED)
         apply_channel_quality(session.call_state, channel_quality)
@@ -5016,6 +5037,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # language. The actual "okay, switching" acknowledgement is spoken further down (KCD-438, unchanged
         # position), once it is clear nothing else already consumed this turn.
         switch_target = detect_language_switch_request(text, detected_lang)
+        if switch_target:
+            session.lang_explicit = True
         if switch_target and session.booking is not None and session.booking.slots.get("_ps_pending") and booking_capture.says_english_bazar(text):
             switch_target = None  # Owner, 2026-10-27: asked "which police station?", "english was a" is English Bazar, not a request to switch to English
         if switch_target:
@@ -7056,10 +7079,15 @@ async def _continue_language_switch_offer(session: CallSession, text: str, lang:
     fresh_sentence = False
     if answer is None and target != lang and len(text.split()) >= 3 and script_share(text, lang) >= 0.85:
         answer, fresh_sentence = "no", True
+    # Owner, 2026-10-27 (real call): the offer was "shall I speak Bengali?" and the caller went on in Bengali ("…ওটা কি রিসুল্ট এসছে বলেন না"); "বলেন না" is "please tell me", but the word না read as
+    # a no, so the call stayed in English. A clear sentence (four words or more) in the OFFERED language is the caller speaking it: that is the yes, whatever small words it holds.
+    if answer in (None, "no") and not fresh_sentence and target != lang and len(text.split()) >= 4 and script_share(text, target) >= 0.85:
+        answer = "yes"
     # An explicit request in this reply ("বাংলায় বলুন", "speak English") names the language to use, whatever was offered, whatever the yes/no reads as.
     explicit = next((r for l in (lang, "bn", "hi", "en") for r in [detect_language_switch_request(text, l)] if r), None)
     if explicit:
         target, answer = explicit, "yes"
+        session.lang_explicit = True
     reply_lang = lang
     if answer == "yes":
         _lock_reply_language(session, target)
@@ -7406,8 +7434,24 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         session.awaiting_clinician_offer = True
         await _speak(session, phrase("clinical_interpretation", lang), lang)
         return True
-    kind = None
+    # Owner, 2026-10-27: questions about the doctors JUST offered ("who is better among them, who sits in the morning") keep the offered doctors as the subject
+    if await _answer_about_offered_doctors(session, text, lang):
+        return True
     free = session.booking is None and _nothing_is_open(session)
+    # a wrong place dialled ("is this a girls' school or a police station?"): said directly and the call is closed -- no second chance asked
+    if free and off_topic.wrong_place(text) and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in):
+        session.outcome = "unrelated_caller"
+        logger.info("[%s] wrong place dialled: told so and closing", session.call_id)
+        await _end_call(session, lang, "wrong_place_final")
+        return True
+    # "what was MY result?" -- never read out over the phone (agent/result_request.py)
+    if session.booking is None and result_request.asks_for_own_result(text):
+        await _speak(session, phrase("result_counter_only", lang), lang)
+        return True
+    # "which doctors do you have?" -- a few real examples and the question of whom to book
+    if free and doctor_search.asks_which_doctors(text) and await _answer_which_doctors(session, text, lang):
+        return True
+    kind = None
     if free:
         kind = unrelated_caller.classify(text, lang, _catalogue_entity_in)
     if kind != unrelated_caller.WRONG_NUMBER:
@@ -7430,6 +7474,48 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
     return True
 
 
+async def _answer_about_offered_doctors(session: CallSession, text: str, lang: str) -> bool:
+    """The doctors a department answer just offered ("tomorrow these doctors sit: A and B. Whom shall I book?") stay the subject while the caller asks about THEM: "who is better among them", "who sits
+    in the morning" (owner, 2026-10-27; it used to answer "sorry, say again" and then "tell me your problem", losing the whole conversation). All our doctors are good (the approved answer); the
+    morning / evening question is answered from the real sitting hours, and when exactly one doctor fits, the question is whether to book him. A doctor named in the sentence is the caller's
+    choice and is left to _dept_search_turn."""
+    pend = getattr(session, "dept_pending", None)
+    if not pend or pend.get("kind") != "pick" or session.turn_count - pend["turn"] > _PICK_MEMORY_TURNS:
+        return False
+    items = pend.get("doctors") or []
+    if len(items) < 2 or doctor_search.choose_by_name(text, [[d.get("name", ""), d.get("full_name", "")] for d in items]) is not None:
+        return False
+    part = doctor_search.asked_part_of_day(text)
+    good = doctor_search.asks_who_is_good(text) and re.search(r"(?:কে|কোন|কার|কাকে|কারা|who|which|कौन|किस|किसे)", text, re.I) is not None
+    if not part and not good:
+        return False
+    say, one = doctor_search.offered_followup_reply(items, part, good, lang)
+    if one is not None:
+        session.dept_pending = {"kind": "confirm_one", "doctor": one, "date": pend.get("date"), "time": pend.get("time") or one.get("start"), "turn": session.turn_count, "say": say}
+    else:
+        pend["turn"] = session.turn_count  # the list stays open
+    await _speak(session, say, lang)
+    return True
+
+
+async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> bool:
+    """"Which doctors do you have?" / "কোন কোন ডাক্তার বসে" / "क्या क्या डॉक्टर हैं" (owner, 2026-10-27): every department has doctors -- a few REAL ones from the clinic's own tables as examples, then
+    the question of whom to book. Never a name the tables do not hold; if the lookup fails the answer simply has no examples."""
+    if _tools is None:
+        return False
+    examples: list[tuple[str, str]] = []
+    for dept in ("General Medicine", "Cardiology", "Orthopaedics"):
+        try:
+            res = await _tools.department_doctors(dept, lang)
+        except ToolCallError:
+            continue
+        names = res.get("doctors") or []
+        if res.get("matched") and names:
+            examples.append((_dept_label(dept, lang), names[0]))
+    await _speak(session, _with_resume(session, doctor_search.overview_reply(examples, lang), lang), lang)
+    return True
+
+
 async def _handle_offtopic(session: CallSession, lang: str) -> None:
     """Talk about nothing to do with Sonoscan: the first two times in a row, a polite refusal and what the agent CAN help with; the third closes the call with a thank-you (the owner's
     rule, 2026-10-27). "In a row" = the previous such turn was the turn before this one; any real turn in between starts the count again. Nothing is asked or stored."""
@@ -7443,6 +7529,8 @@ async def _handle_offtopic(session: CallSession, lang: str) -> None:
         return
     logger.info("[%s] off-topic talk (%d): redirected to what the clinic can help with", session.call_id, session.offtopic_streak)
     await _speak(session, phrase("offtopic_redirect", lang), lang)
+    # the redirect ends in a question, which would make the caller's next sentence count as "the answer to a question" and keep the second strike from being recognised: nothing is open
+    session.awaiting_answer = False
 
 
 async def _offtopic_by_verdict(session: CallSession, text: str, lang: str, data: dict, asr_result) -> bool:
@@ -7638,6 +7726,10 @@ async def _handle_control(session: CallSession, raw: str):
                            session.call_id, rate, SAMPLE_RATE)
         logger.info("[%s] transport: %s @ %dHz", session.call_id,
                     msg.get("format", "pcm_s16le"), rate)
+        if msg.get("headphones") and session.duplex is not None:
+            # the test page's "I am using headphones" box: no speaker-to-microphone echo, so talking over the agent is accepted without the echo-canceller rule (agent/full_duplex.py)
+            session.duplex.enable_echo_free()
+            logger.info("[%s] headphones mode: talking over the agent is accepted", session.call_id)
     elif msg.get("type") == "interrupt":
         await _interrupt_playback(session, "manual")
 

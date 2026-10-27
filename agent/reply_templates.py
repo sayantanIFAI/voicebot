@@ -15,7 +15,7 @@ direct_reply_bn -- there is no fact to get wrong in "নমস্কার" or "
 
 from __future__ import annotations
 
-from agent import eye_words
+from agent import eye_words, off_topic
 from agent import reply_templates_i18n as _i18n
 from agent import slot_proposal
 from agent.sample_wording import sample_sentence
@@ -199,7 +199,10 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
 
     next_date = result.get("next_available_date")
     if next_date:
-        return f"{name} ওই দিন বসবেন না। তিনি {slot_proposal.when_phrase(next_date, 'bn')} বসবেন।"
+        # Owner, 2026-10-27: asked about TODAY, the answer opens with today ("আজ ডাঃ … বসবেন না"), not with "that day"
+        asked = slots.get("date") or result.get("date")
+        day = slot_proposal.asked_day_phrase(asked, "bn") if asked else "ওই দিন"
+        return f"{day} {name} বসবেন না। তিনি {slot_proposal.when_phrase(next_date, 'bn')} বসবেন।"
     return f"{name} এখন কোনো নির্দিষ্ট দিন বসছেন না। আমাদের কাউন্টারে খোঁজ নিতে পারেন।"
 
 
@@ -536,6 +539,9 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
         return f"এটা {' অথবা '.join(parts)} -- দুটোর যেকোনো একটা বিভাগ হতে পারে। কোনটা বলবেন?"
     if eye_words.mentions_eye(symptom):
         return eye_words.NO_EYE_DEPARTMENT["bn"]
+    if not off_topic.has_health_word(symptom):
+        # Owner, 2026-10-27: "শরীর ভালো নেই, কোন ডাক্তার দেখাবো" names no problem: ask what it is instead of sending the caller to the counter
+        return "ঠিক আছে, কী সমস্যা হচ্ছে বলুন, তাহলে কোন বিভাগে দেখাবেন বলতে পারব।"
     return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
 
 

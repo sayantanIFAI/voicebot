@@ -361,6 +361,17 @@ PHRASES["bn"]["offtopic_final"] = "আমি আপনাকে এই মুহ
 PHRASES["hi"]["offtopic_final"] = "मैं अभी आपकी मदद नहीं कर पा रही हूँ। धन्यवाद।"
 PHRASES["en"]["offtopic_final"] = "I am not able to help you with this right now. Thank you."
 
+# ---- owner, 2026-10-27: a wrong place dialled, a personal lab result asked for, "tell me your problem" ----------------------------------------------------------------------------
+PHRASES["bn"]["wrong_place_final"] = "এটা সোনোস্ক্যান। মনে হচ্ছে আপনি ভুল নম্বরে ফোন করেছেন। ধন্যবাদ।"
+PHRASES["hi"]["wrong_place_final"] = "यह सोनोस्कैन है। लगता है आपने गलत नंबर पर फ़ोन किया है। धन्यवाद।"
+PHRASES["en"]["wrong_place_final"] = "This is Sonoscan. It seems you have dialled the wrong number. Thank you."
+PHRASES["bn"]["result_counter_only"] = "ফোনে টেস্টের রেজাল্ট বলতে পারি না। দয়া করে কাউন্টার থেকে রিপোর্ট সংগ্রহ করে নিন।"
+PHRASES["hi"]["result_counter_only"] = "फ़ोन पर टेस्ट का रिज़ल्ट नहीं बता सकती। कृपया रिपोर्ट काउंटर से ले लीजिए।"
+PHRASES["en"]["result_counter_only"] = "I cannot tell test results over the phone. Please collect your report from the counter."
+PHRASES["bn"]["ask_problem"] = "ঠিক আছে, কী সমস্যা হচ্ছে বলুন, তাহলে কোন বিভাগে দেখাবেন বলতে পারব।"
+PHRASES["hi"]["ask_problem"] = "ठीक है, क्या तकलीफ़ है बताइए, तब मैं बता सकूँगी किस विभाग में दिखाना है।"
+PHRASES["en"]["ask_problem"] = "Sure, please tell me what the problem is, and I can tell you which department to see."
+
 # Spoken when a call is turned away before the caller has said a word, so
 # there is no language to choose: all three, shortest first is not worth the
 # complexity -- they are pre-synthesized and cached, so this costs no GPU

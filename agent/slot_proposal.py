@@ -117,6 +117,21 @@ _WHEN = {
 }
 
 
+_ASKED_DAY = {
+    "today": {"bn": "আজ", "hi": "आज", "en": "today"},
+    "tomorrow": {"bn": "আগামীকাল", "hi": "कल", "en": "tomorrow"},
+}
+
+
+def asked_day_phrase(date_iso: str, lang: str, now: datetime.datetime | None = None) -> str:
+    """The day the caller asked about, as the first word of an answer: "আজ" / "আগামীকাল" / "<date> তারিখে" (Hindi "आज" / "कल" / ...). For the day after tomorrow and later, the usual date phrase."""
+    lang = lang if lang in _WHEN else "en"
+    kind = day_kind(date_iso, now)
+    if kind in _ASKED_DAY:
+        return _ASKED_DAY[kind][lang]
+    return when_phrase(date_iso, lang, now)
+
+
 def when_phrase(date_iso: str | None, lang: str, now: datetime.datetime | None = None) -> str:
     """The day as a caller says it: "আজই" / "আগামীকাল, <date> তারিখে" / "<date> তারিখে" (Hindi "आज ही" / "कल, <date> तारीख को", English "today" / "tomorrow, <date>")."""
     lang = lang if lang in _WHEN else "en"

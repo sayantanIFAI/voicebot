@@ -25,6 +25,7 @@
   <h2>কলকাতা কেয়ার ডায়াগনস্টিকস <span class="badge">PCM</span></h2>
   <div id="warning"></div>
   <button id="micBtn">কল শুরু করুন (Start Call)</button>
+  <label style="display:block;margin:8px 0"><input type="checkbox" id="headphones"> আমি হেডফোন ব্যবহার করছি (I am using headphones) &mdash; AI-এর কথার উপর কথা বললে AI থেমে শুনবে / talk over the AI and it stops and listens</label>
   <div id="status">সিস্টেম প্রস্তুত...</div>
   <div id="diag"></div>
   <div id="log"></div>
@@ -171,6 +172,7 @@
           sampleRate: captureCtx.sampleRate,
           format: 'pcm_s16le',
           channels: 1,
+          headphones: !!(document.getElementById('headphones') && document.getElementById('headphones').checked),
         }));
 
         sourceNode = captureCtx.createMediaStreamSource(stream);

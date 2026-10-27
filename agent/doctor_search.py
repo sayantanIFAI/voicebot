@@ -254,6 +254,122 @@ def is_generic_doctor_phrase(name: str) -> bool:
     return saw_doctor
 
 
+# ------------------------------------------------------------------------------------------------------------------------------ "which doctors do you have?"
+
+# Owner, 2026-10-27: "কোন কোন ডাক্তার বসে আপনাদের ওখানে", "क्या क्या डॉक्टर है आप लोगों के पास", "কে কে বসে" were answered "which doctor do you mean?" / "sorry, say again". They are a request for the
+# range of doctors: answered with a few real examples from the catalogue and the question of whom to book. Needs a doctor word AND a "which / who / how many" shape.
+_DOCTOR_RANGE = re.compile(
+    r"(?:কোন\s*কোন|কে\s*কে|কারা\s*কারা|কি\s*কি|কী\s*কী|কয়জন|কত\s*জন|ডাক্তার\s*কারা|কোন\s*কোন\s*ডাক্তার)"
+    r"|(?:कौन\s*[- ]?\s*कौन|क्या\s*क्या|कितने|कौन\s*से\s*कौन\s*से|डॉक्टर\s*कौन)"
+    r"|\b(?:which doctors|what doctors|who are the doctors|how many doctors|list of doctors|doctors do you have|doctors are there|which all doctors)\b",
+    re.I,
+)
+_DOCTOR_WORDS_RANGE = ("ডাক্তার", "ডক্টর", "डॉक्टर", "डाक्टर", "doctor", "doctors")
+
+
+def asks_which_doctors(text: str) -> bool:
+    t = _norm(text)
+    return bool(t) and any(w in t for w in _DOCTOR_WORDS_RANGE) and _DOCTOR_RANGE.search(t) is not None
+
+
+def overview_reply(examples: list[tuple[str, str]], lang: str) -> str:
+    """`examples` = [(department label, a real doctor of it), ...]. Says every department has doctors, gives the examples, asks whom to book."""
+    listed = {
+        "bn": "; ".join(f"{d} বিভাগে {n}" for d, n in examples),
+        "hi": "; ".join(f"{d} विभाग में {n}" for d, n in examples),
+        "en": "; ".join(f"{n} in {d}" for d, n in examples),
+    }[lang if lang in ("bn", "hi") else "en"]
+    if not examples:
+        return {
+            "bn": "আমাদের সব বিভাগেই ডাক্তার আছেন। কোন ডাক্তারের কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
+            "hi": "हमारे सभी विभागों में डॉक्टर हैं। किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहेंगे?",
+            "en": "We have doctors in every department. Which doctor would you like to book?",
+        }[lang if lang in ("bn", "hi") else "en"]
+    return {
+        "bn": f"আমাদের সব বিভাগেই ভালো ডাক্তার আছেন, যেমন {listed}। কোন ডাক্তারের কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
+        "hi": f"हमारे सभी विभागों में अच्छे डॉक्टर हैं, जैसे {listed}। किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहेंगे?",
+        "en": f"We have good doctors in every department, for example {listed}. Which doctor would you like to book?",
+    }[lang if lang in ("bn", "hi") else "en"]
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ questions about the doctors JUST offered
+
+# Owner, 2026-10-27: after "আগামীকাল এই ডাক্তাররা বসেন: দেবাশিস দাস আর অমিত কর। কার কাছে অ্যাপয়েন্টমেন্ট করব?" the caller asked "কে ভালো হবে এর মধ্যে সকালে কে বসে" (who is better among these, who sits in the
+# morning): the answer was "sorry, say again" and then "I cannot say who is better; tell me your problem", which lost the whole conversation. The doctors offered stay the subject.
+_GOOD_AMONG = re.compile(r"(?:ভালো|ভাল|ভাল|অভিজ্ঞ|সেরা)|(?:अच्छा|अच्छे|बेहतर|सबसे अच्छ)|\b(?:good|better|best)\b", re.I)
+_PARTS = {
+    "morning": ("সকাল", "ভোর", "सुबह", "सवेरे", "morning"),
+    "afternoon": ("দুপুর", "दोपहर", "afternoon"),
+    "evening": ("বিকেল", "বিকাল", "সন্ধ্যা", "সন্ধ্যে", "রাত", "शाम", "रात", "evening", "night"),
+}
+_PART_WORD = {
+    "morning": {"bn": "সকালে", "hi": "सुबह", "en": "in the morning"},
+    "afternoon": {"bn": "দুপুরে", "hi": "दोपहर में", "en": "in the afternoon"},
+    "evening": {"bn": "সন্ধ্যায়", "hi": "शाम को", "en": "in the evening"},
+}
+
+
+def asked_part_of_day(text: str) -> str | None:
+    t = _norm(text)
+    for part, words in _PARTS.items():
+        if any(w in t for w in words):
+            return part
+    return None
+
+
+def asks_who_is_good(text: str) -> bool:
+    return _GOOD_AMONG.search(_norm(text)) is not None
+
+
+def part_of_day_of(start: str | None) -> str | None:
+    try:
+        h = int((start or "").split(":")[0])
+    except ValueError:
+        return None
+    return "morning" if h < 12 else "afternoon" if h < 16 else "evening"
+
+
+def _with_hours(item: dict) -> str:
+    hours = f" ({item['start']}-{item['end']})" if item.get("start") and item.get("end") else ""
+    return f"{item['name']}{hours}"
+
+
+def offered_followup_reply(items: list[dict], part: str | None, good: bool, lang: str) -> tuple[str, dict | None]:
+    """The answer about the doctors just offered and, when exactly one of them fits, that doctor (the question then is whether to book him). `part` = morning / afternoon / evening or None;
+    `good` = the caller asked who is better. No doctor is ever called better than another: "all of our doctors are good" is the approved answer."""
+    lg = lang if lang in ("bn", "hi") else "en"
+    names = "; ".join(_with_hours(i) for i in items)
+    lead = {"bn": "আমাদের সব ডাক্তারই ভালো। ", "hi": "हमारे सभी डॉक्टर अच्छे हैं। ", "en": "All our doctors are good. "}[lg] if good else ""
+    if part:
+        fits = [i for i in items if part_of_day_of(i.get("start")) == part]
+        word = _PART_WORD[part][lg]
+        if len(fits) == 1:
+            one = fits[0]
+            say = {
+                "bn": f"{lead}{one['name']} {word} বসেন ({one.get('start')}-{one.get('end')})। ওনার কাছেই অ্যাপয়েন্টমেন্ট করব?",
+                "hi": f"{lead}{one['name']} {word} बैठते हैं ({one.get('start')}-{one.get('end')})। क्या उन्हीं के साथ अपॉइंटमेंट कर दूँ?",
+                "en": f"{lead}{one['name']} sits {word} ({one.get('start')}-{one.get('end')}). Shall I book him?",
+            }[lg]
+            return say, one
+        if not fits:
+            return {
+                "bn": f"{lead}{word} এদের কেউ বসেন না। এঁরা বসেন: {names}। এদের মধ্যে কার কাছে অ্যাপয়েন্টমেন্ট করব?",
+                "hi": f"{lead}{word} इनमें से कोई नहीं बैठता। ये बैठते हैं: {names}। इनमें से किसके पास अपॉइंटमेंट करूँ?",
+                "en": f"{lead}None of them sits {word}. They sit: {names}. Whom shall I book?",
+            }[lg], None
+        shown = "; ".join(_with_hours(i) for i in fits)
+        return {
+            "bn": f"{lead}{word} বসেন: {shown}। এদের মধ্যে কার কাছে অ্যাপয়েন্টমেন্ট করব?",
+            "hi": f"{lead}{word} बैठते हैं: {shown}। इनमें से किसके पास अपॉइंटमेंट करूँ?",
+            "en": f"{lead}Sitting {word}: {shown}. Whom shall I book?",
+        }[lg], None
+    return {
+        "bn": f"{lead}এদের মধ্যে আমি কার কাছে অ্যাপয়েন্টমেন্ট করব? {names}।",
+        "hi": f"{lead}इनमें से मैं किसके पास अपॉइंटमेंट करूँ? {names}।",
+        "en": f"{lead}Whom among them shall I book? {names}.",
+    }[lg], None
+
+
 # ------------------------------------------------------------------------------------------------------------------------------ choosing one of the doctors just named
 
 # owner, 2026-10-26: "তাহলে ওই সঞ্জয় গুহার অ্যাপয়েন্টমেন্ট টা দেন কালকে" -- the doctors "রঞ্জন পাল আর সঞ্জয় গুহ" had just been offered, and the caller chose one the way people do: with the
