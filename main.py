@@ -120,6 +120,7 @@ from agent.code_switch import mixture_bucket
 from agent.conditioning import condition as condition_audio
 from agent.confidence_gate import VERIFIED, confidence_state, is_low_confidence
 from agent.detector_budget import run_within_budget
+from agent.distress import DistressEvidence, asks_for_person
 from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.disclosure import disclosure_for
 from agent.disclosure import version_label as disclosure_version_label
@@ -209,7 +210,7 @@ from agent.pause_profile import PauseProfile
 from agent.persona import is_clean as persona_clean
 from agent.phrases import HANDOFF_ALL_LANGUAGES, phrase, prewarm_lines
 from agent.playback_gate import PlaybackGate
-from agent.reask_policy import ReaskTracker
+from agent.reask_policy import DEFAULT_MAX_REASKS, ReaskTracker
 from agent.reply_templates import (
     add_test_reply,
     blood_test_list_reply,
@@ -1128,6 +1129,7 @@ class CallSession:
         self.unclear_streak = 0  # consecutive turns the agent could not answer
         self.senior_evidence = SeniorEvidence()
         self.acknowledged_state: str | None = None
+        self.distress = DistressEvidence()
         self.senior_lookup_done = False
 
         # KCD-513/514: acknowledgements are suppressed on repeat turns; KCD-155's distress
@@ -1765,6 +1767,29 @@ def _update_caller_state(session: CallSession, text: str, lang: str, analysis: d
         apply_caller_state(session.call_state, senior=True)
         senior_detections.record(ev.reason or "unknown", "call", lang)
         logger.info("[%s] senior mode on (%s)", session.call_id, ev.reason)
+
+
+def _note_distress(session: CallSession, text: str, lang: str, analysis: dict | None) -> None:
+    """Moves a call between neutral and distressed only (an emergency, from words, or a confused caller is never overwritten). In distress a failed turn hands over to a person one try sooner."""
+    change = session.distress.observe(text, unanswered_in_a_row=session.reask.consecutive, near_end=(analysis or {}).get("near_end"))
+    state = session.call_state.caller_state
+    if change == "on" and state == "neutral":
+        apply_caller_state(session.call_state, "distressed")
+        session.reask.max_reasks = 1
+        logger.info("[%s] caller sounds distressed (%s): calm delivery on", session.call_id, session.distress.reason)
+    elif change == "off" and state == "distressed":
+        apply_caller_state(session.call_state, "neutral")
+        session.reask.max_reasks = DEFAULT_MAX_REASKS
+        session.acknowledged_state = None  # a later upset is acknowledged afresh
+        logger.info("[%s] caller is calm again: normal delivery", session.call_id)
+
+
+async def _acknowledge_if_due(session: CallSession, lang: str) -> None:
+    ack = select_acknowledgement(session.policy, session.call_state.caller_state, lang)
+    if ack and session.acknowledged_state != session.call_state.caller_state:
+        session.acknowledged_state = session.call_state.caller_state
+        session.turn_acknowledged = True
+        await _speak(session, ack, lang)
 
 
 def _note_stated_age(session: CallSession, slots: dict, lang: str) -> None:
@@ -5008,6 +5033,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 await _speak(session, phrase(abuse.response_key(session.abuse_count), reply_lang), reply_lang)
                 session.awaiting_answer = False
             return
+        # Owner, 2026-10-27: a frightened or worn-out caller (agent/distress.py) hears the approved acknowledgement FIRST, whichever route the turn then takes, and the calm delivery from then on.
+        # An emergency and abuse have both returned above.
+        _note_distress(session, text, lang, analysis)
+        await _acknowledge_if_due(session, lang)
         # A yes/no to a confirmation is legitimately one short word; the
         # jumbled-transcript checks would misread it as a fragment.
         # The same holds for a dictated phone number, a spelled name or a bare
@@ -7480,6 +7509,11 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
             else:
                 await _speak(session, phrase("silence_go_on", lang), lang)
             return True
+    # "connect me to a person": always possible, and the way out the calm-delivery acknowledgement promises (agent/distress.py)
+    if asks_for_person(text):
+        logger.info("[%s] the caller asked for a person", session.call_id)
+        await _handoff_to_human(session, "caller_requested", (lang,))
+        return True
     if clinical_safety.is_clinical_interpretation(text):
         logger.info("[%s] a request to interpret a result: a clinician is offered", session.call_id)
         session.awaiting_clinician_offer = True

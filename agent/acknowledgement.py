@@ -25,9 +25,9 @@ from agent.speech_policy import SpeechPolicy
 # state -> lang -> text
 _ACK: dict[str, dict[str, str]] = {
     "distressed": {
-        "bn": "আমি বুঝতে পারছি আপনার পক্ষে এটা কঠিন। আমি আছি, আপনি নিজের মতো করে সময় নিন।",
-        "hi": "मैं समझ सकती हूँ कि यह आपके लिए मुश्किल है। मैं यहीं हूँ, आप अपना समय लीजिए।",
-        "en": "I can hear this is difficult. I am here, so please take your time.",
+        "bn": "আমি বুঝতে পারছি আপনার পক্ষে এটা কঠিন। আমি আছি, আপনি নিজের মতো করে সময় নিন। আপনি চাইলে বলুন, আমি আপনাকে আমাদের স্টাফের সাথে যুক্ত করে দেব।",
+        "hi": "मैं समझ सकती हूँ कि यह आपके लिए मुश्किल है। मैं यहीं हूँ, आप अपना समय लीजिए। आप चाहें तो बताइए, मैं आपको हमारे स्टाफ़ से जोड़ दूँगी।",
+        "en": "I can hear this is difficult. I am here, so please take your time. If you would like, just say so and I will connect you with our staff.",
     },
     "angry": {
         "bn": "আপনার অসুবিধার জন্য আমি সত্যিই দুঃখিত। আমি এটা ঠিক করতে সাহায্য করতে চাই।",
