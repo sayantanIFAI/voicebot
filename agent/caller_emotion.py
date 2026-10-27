@@ -82,25 +82,15 @@ class Classifier:
         self._lock = threading.Lock()
 
     def load(self) -> None:
-        import os
-
         from speechbrain.inference.interfaces import foreign_class
 
-        # The model's own recipe keeps its wav2vec2 base weights in "wav2vec2_checkpoints" RELATIVE to the working directory; loaded from the savedir, they land (and are found) beside the rest of the model.
-        here = os.getcwd()
-        if self.savedir:
-            os.makedirs(self.savedir, exist_ok=True)
-            os.chdir(self.savedir)
-        try:
-            self._model = foreign_class(
-                source=self.MODEL_SOURCE,
-                pymodule_file="custom_interface.py",
-                classname="CustomEncoderWav2vec2Classifier",
-                savedir=self.savedir or ".",
-                run_opts={"device": self.device},
-            )
-        finally:
-            os.chdir(here)
+        self._model = foreign_class(
+            source=self.MODEL_SOURCE,
+            pymodule_file="custom_interface.py",
+            classname="CustomEncoderWav2vec2Classifier",
+            savedir=self.savedir,
+            run_opts={"device": self.device},
+        )
         self._labels = {int(i): str(lab) for lab, i in self._model.hparams.label_encoder.lab2ind.items()}
 
     def classify_path(self, wav_path: str) -> EmotionResult:
