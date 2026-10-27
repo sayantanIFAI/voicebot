@@ -150,7 +150,7 @@ from agent import fastpath_guards  # refuse a quick answer that cannot be right 
 from agent import slot_proposal  # the machine picks the appointment time and says it
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
-from agent import clinical_safety, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
+from agent import clinical_safety, off_topic, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
 from agent import clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
@@ -1221,6 +1221,8 @@ class CallSession:
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
         self.awaiting_test_category = False
         self.awaiting_clinician_offer = False  # "a doctor will explain it, shall I connect one?" was asked (agent/clinical_safety.py); the next yes / no answers it
+        self.offtopic_streak = 0  # consecutive turns about nothing to do with Sonoscan (agent/off_topic.py); the third closes the call
+        self.offtopic_last_turn = -10  # the turn number of the last such turn, to tell "in a row" from "once, long ago"
         self.unrelated_streak = 0  # consecutive turns that were a wrong number (agent/unrelated_caller.py); the second closes the call
         self.awaiting_blood_test: int | None = None  # the turn "which blood test?" was asked (owner, 2026-10-26); the next sentence is its answer
         self.last_enquiry_turn = 0  # turn_count when the last test/doctor answer was given (agent/enquiry_followup.py)
@@ -5391,6 +5393,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
+    if intent in ("smalltalk", "unclear") and await _offtopic_by_verdict(session, text, lang, data, asr_result):
+        return
 
     # KCD-lead-1: the answer to referral_cues.referral_ask_reply's combined question -- read from THIS turn's
     # slots regardless of what intent the model guessed for it (the model has no "referral" intent to guess;
@@ -7382,11 +7386,16 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         await _speak(session, phrase("clinical_interpretation", lang), lang)
         return True
     kind = None
-    if session.booking is None and _nothing_is_open(session):
+    free = session.booking is None and _nothing_is_open(session)
+    if free:
         kind = unrelated_caller.classify(text, lang, _catalogue_entity_in)
     if kind != unrelated_caller.WRONG_NUMBER:
         session.unrelated_streak = 0
-        if session.outcome == "unrelated_caller":
+        # an explicit chit-chat / idiom phrase ("ঘুরতে যাবে", "মাথায় বাজ পড়েছে"), with no hospital cue anywhere in the sentence (agent/off_topic.py)
+        if free and off_topic.chit_chat(text) and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in):
+            await _handle_offtopic(session, lang)
+            return True
+        if session.outcome in ("unrelated_caller", "off_topic"):
             session.outcome = "completed"  # the caller went on to ask for something real
         return False
     session.unrelated_streak += 1
@@ -7397,6 +7406,36 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
     else:
         logger.info("[%s] wrong number: one more chance", session.call_id)
         await _speak(session, phrase("unrelated_first", lang), lang)
+    return True
+
+
+async def _handle_offtopic(session: CallSession, lang: str) -> None:
+    """Talk about nothing to do with Sonoscan: the first two times in a row, a polite refusal and what the agent CAN help with; the third closes the call with a thank-you (the owner's
+    rule, 2026-10-27). "In a row" = the previous such turn was the turn before this one; any real turn in between starts the count again. Nothing is asked or stored."""
+    in_a_row = session.offtopic_streak > 0 and session.turn_count - session.offtopic_last_turn <= 1
+    session.offtopic_streak = session.offtopic_streak + 1 if in_a_row else 1
+    session.offtopic_last_turn = session.turn_count
+    session.outcome = "off_topic"
+    if session.offtopic_streak >= off_topic.CLOSE_AT:
+        logger.info("[%s] off-topic talk, third turn in a row: closing the call politely", session.call_id)
+        await _end_call(session, lang, "offtopic_final")
+        return
+    logger.info("[%s] off-topic talk (%d): redirected to what the clinic can help with", session.call_id, session.offtopic_streak)
+    await _speak(session, phrase("offtopic_redirect", lang), lang)
+
+
+async def _offtopic_by_verdict(session: CallSession, text: str, lang: str, data: dict, asr_result) -> bool:
+    """Second layer: the intent model called the sentence small talk or unclear AND nothing in it points at the clinic (no hospital cue, no catalogue name, no symptom or body part, no
+    slot the model filled) AND it is a real sentence (four words or more) heard with good agreement between the decoders. Only then is it off-topic. True when answered here.
+    Everything doubtful -- a short or garbled sentence, a health word, an open booking or question -- keeps the old path (the model's reply, or "say that again")."""
+    if session.booking is not None or not _nothing_is_open(session):
+        return False
+    if len(text.split()) < 4 or getattr(asr_result, "decoder_agreement", 0.0) < 0.85 or off_topic.has_health_word(text):
+        return False
+    verdict = unrelated_caller.llm_verdict(text, lang, data.get("slots"), _catalogue_entity_in)
+    if verdict != unrelated_caller.VERDICT_UNRELATED:
+        return False
+    await _handle_offtopic(session, lang)
     return True
 
 

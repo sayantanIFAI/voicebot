@@ -351,6 +351,16 @@ PHRASES["bn"]["unrelated_final"] = "ঠিক আছে, কোনো সমস�
 PHRASES["hi"]["unrelated_final"] = "ठीक है, कोई बात नहीं। धन्यवाद, अपना ख़याल रखिए।"
 PHRASES["en"]["unrelated_final"] = "No problem. Thank you, goodbye."
 
+# ---- talk that has nothing to do with Sonoscan (agent/off_topic.py; owner, 2026-10-27) --------------------------------------------------------------------------------------------
+# First and second time: a polite "I cannot help with that", then the offer of what the agent CAN do. Third time in a row: a thank-you and the call is closed. Hindi and Bengali wording
+# is reasoned, not measured: a native speaker should review it.
+PHRASES["bn"]["offtopic_redirect"] = "এই বিষয়ে আমি কিছু বলতে পারছি না। সোনোস্ক্যান সংক্রান্ত কোনো প্রশ্নে আমি কীভাবে সাহায্য করতে পারি, বলবেন?"
+PHRASES["hi"]["offtopic_redirect"] = "इस बारे में मैं कुछ नहीं कह सकती। सोनोस्कैन से जुड़े किसी भी सवाल में मैं कैसे मदद कर सकती हूँ, बताइए?"
+PHRASES["en"]["offtopic_redirect"] = "I am not able to help with that. How can I help you with anything related to Sonoscan?"
+PHRASES["bn"]["offtopic_final"] = "আমি আপনাকে এই মুহূর্তে সাহায্য করতে পারছি না। ধন্যবাদ।"
+PHRASES["hi"]["offtopic_final"] = "मैं अभी आपकी मदद नहीं कर पा रही हूँ। धन्यवाद।"
+PHRASES["en"]["offtopic_final"] = "I am not able to help you with this right now. Thank you."
+
 # Spoken when a call is turned away before the caller has said a word, so
 # there is no language to choose: all three, shortest first is not worth the
 # complexity -- they are pre-synthesized and cached, so this costs no GPU
