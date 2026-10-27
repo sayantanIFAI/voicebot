@@ -89,6 +89,7 @@ class ASRResult:
     text: str
     decoder_used: str
     decoder_agreement: float = 1.0
+    alternatives: list = dataclasses.field(default_factory=list)
 
 
 def _word_agreement(a: str, b: str) -> float:
