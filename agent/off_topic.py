@@ -105,6 +105,24 @@ def wrong_place(text: str) -> bool:
     return _WRONG_PLACE_NATIVE.search(t) is not None or _WRONG_PLACE_LATIN.search(t) is not None
 
 
+# Insults at the clinic or at the agent ("ফালতু আপনারা", "তুই কিচ্ছু করতে পারবি না", "बकवास", "useless"): told once, and the next non-clinic turn ends the call. Swearing itself is agent/abuse.py's; these
+# are the milder insults it does not list. A REQUEST in the same sentence (book, price, report ...) means a real, if angry, caller: not counted.
+_INSULT = (
+    "ফালতু", "ফালদু", "ফাল দু", "ফাউল্টু", "বাজে", "জঘন্য", "বোকা", "পাগল", "রদ্দি", "নিকৃষ্ট", "পারবি না", "পারবে না তুমি", "তুই কিচ্ছু", "তুমি কিচ্ছু", "কিচ্ছু করতে পারবি", "চোর", "ঠগ",
+    "फालतू", "बकवास", "बेकार", "घटिया", "बेवकूफ", "पागल", "रद्दी", "तू कुछ नहीं कर", "तुम कुछ नहीं कर",
+    "useless", "stupid", "idiot", "nonsense", "rubbish", "you can't do anything", "you cannot do anything", "worst service", "bakwas", "faltu", "bekar",
+)
+_REQUEST = (
+    "বুক", "অ্যাপয়েন্টমেন্ট", "রেট", "দাম", "কত টাকা", "টেস্ট করাত", "রিপোর্ট কবে", "বুকিং", "বুक", "अपॉइंटमेंट", "रेट", "दाम", "कितने रुपये", "बुकिंग", "book", "appointment", "price", "rate", "booking",
+)
+
+
+def hostile(text: str) -> bool:
+    """True when the sentence insults (see _INSULT) and asks for nothing the clinic does."""
+    t = _norm(text)
+    return bool(t) and any(w in t for w in _INSULT) and not any(r in t for r in _REQUEST)
+
+
 def chit_chat(text: str) -> bool:
     """True when the sentence holds an explicit chit-chat / idiom phrase from the lists above. The caller (main.py) has already checked that no hospital cue is present and that nothing
     else is open; a health word vetoes this too, except inside a listed idiom."""

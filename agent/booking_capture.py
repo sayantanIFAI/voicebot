@@ -846,20 +846,21 @@ _PROMPTS = {
         "bn": "দয়া করে থানার নামটা বলুন। অ্যাপয়েন্টমেন্টের জন্য এটা দরকার।",
     },
     # Owner, 2026-10-23 (item 15): the number is always asked about -- the payment link and the serial number go to WhatsApp.
+    # Owner, 2026-10-27: the payment link goes to this number, so the question also asks whether phone pay / Google Pay / UPI can be done from it.
     "ask_whatsapp": {
-        "en": "Does this number have WhatsApp?",
-        "hi": "क्या इस नंबर पर व्हाट्सऐप है?",
-        "bn": "এই নম্বরে কি হোয়াটসঅ্যাপ আছে?",
+        "en": "Does this number have WhatsApp, and can you pay by PhonePe, Google Pay or UPI from this number?",
+        "hi": "क्या इस नंबर पर व्हाट्सऐप है, और क्या इस नंबर से फ़ोन पे, गूगल पे या यूपीआई से पेमेंट कर सकते हैं?",
+        "bn": "এই নম্বরে কি হোয়াটসঅ্যাপ আছে, আর এই নম্বর থেকে কি ফোন পে, গুগল পে বা ইউপিআই পেমেন্ট করতে পারবেন?",
     },
     "whatsapp_again": {
-        "en": "Sorry, I did not catch that. Does this number have WhatsApp, yes or no?",
-        "hi": "माफ़ कीजिए, समझ नहीं आया। क्या इस नंबर पर व्हाट्सऐप है, हाँ या नहीं?",
-        "bn": "দুঃখিত, বুঝতে পারিনি। এই নম্বরে কি হোয়াটসঅ্যাপ আছে, হ্যাঁ নাকি না?",
+        "en": "Sorry, I did not catch that. Does this number have WhatsApp, and can you pay from it by PhonePe, Google Pay or UPI, yes or no?",
+        "hi": "माफ़ कीजिए, समझ नहीं आया। क्या इस नंबर पर व्हाट्सऐप है और इससे फ़ोन पे, गूगल पे या यूपीआई से पेमेंट हो सकता है, हाँ या नहीं?",
+        "bn": "দুঃখিত, বুঝতে পারিনি। এই নম্বরে কি হোয়াটসঅ্যাপ আছে আর এই নম্বর থেকে কি ফোন পে, গুগল পে বা ইউপিআই পেমেন্ট করা যায়, হ্যাঁ নাকি না?",
     },
     "whatsapp_number": {
-        "en": "Okay. Please tell me the number that has WhatsApp, all ten digits.",
-        "hi": "ठीक है। जिस नंबर पर व्हाट्सऐप है, वह दस अंकों का नंबर बताइए।",
-        "bn": "ঠিক আছে। যে নম্বরে হোয়াটসঅ্যাপ আছে, সেই দশ সংখ্যার নম্বরটা বলুন।",
+        "en": "Okay. Please tell me the number that has WhatsApp and that you can pay from by PhonePe, Google Pay or UPI, all ten digits.",
+        "hi": "ठीक है। जिस नंबर पर व्हाट्सऐप है और जिससे फ़ोन पे, गूगल पे या यूपीआई से पेमेंट कर सकते हैं, वह दस अंकों का नंबर बताइए।",
+        "bn": "ঠিক আছে। যে নম্বরে হোয়াটসঅ্যাপ আছে আর যেখান থেকে ফোন পে, গুগল পে বা ইউপিআই পেমেন্ট করতে পারবেন, সেই দশ সংখ্যার নম্বরটা বলুন।",
     },
     "whatsapp_number_again": {
         "en": "I did not catch the number. Please say the ten-digit WhatsApp number once more.",
@@ -1391,9 +1392,21 @@ _BARE_NO_WORDS_FOR_YES = frozenset({"না", "নয়", "নেই", "no", "n
 _NO_ADDRESS = {"না", "নেই", "জানি না", "বলব না", "দেব না", "নয়", "skip", "no", "none", "नहीं", "पता नहीं", "बताऊंगा नहीं", "বলব না", "থাক"}
 
 
+_ADDRESS_LEAD = re.compile(
+    r"^(?:আমার\s+|আমাদের\s+)?(?:ঠিকানাটা|ঠিকানা|এড্রেসটা|এড্রেস|অ্যাড্রেস|মেरा\s+पता|मेरा\s+पता|मेरा\s+एड्रेस|पता|एड्रेस|my\s+address|the\s+address|address)\s*(?:হচ্ছে|হলো|হল|হয়|হইলো|হবে|টা|है|हैं|is|:)?\s*[,:\-]?\s*",
+    re.I,
+)
+
+
 def bare_address(text: str) -> str | None:
-    """The address as said (the whole answer), or None for a refusal / a non-answer."""
+    """The address as said (the whole answer), or None for a refusal / a non-answer. The lead-in words ("ঠিকানা হচ্ছে ...", "मेरा पता है ...", "my address is ...") are not part of it: owner, 2026-10-27, the
+    read-back said "ঠিকানা ঠিকানা হচ্ছে রাজারহাট ..." because they were kept."""
     t = " ".join((text or "").split()).strip(" ,.।")
+    stripped = _ADDRESS_LEAD.sub("", t, count=1).strip(" ,.।")
+    if stripped:
+        t = stripped
+    elif _ADDRESS_LEAD.match(t):
+        return None  # only the word "address" was said
     if len(t) < 3 or t.lower() in _NO_ADDRESS:
         return None
     return t[:160]

@@ -73,12 +73,65 @@ def asks_for_total(text: str) -> bool:
     return _has_any(_norm(text), _TOTAL_WORDS)
 
 
+# Owner, 2026-10-27 (real call): "যাও তো যাও আকাশে কিভাবে উঠবো আমি কিভাবে উঠবো আকাশে" ("go, go, how do I climb into the sky") was answered with the PAYMENT methods (0.75, just over the 0.72 floor): the
+# stored cue "টাকা কীভাবে দেব" shares the word "how" with it. The location topic already needed a word about a place; EVERY topic now needs at least one word that belongs to it. A sentence with
+# none goes to the model, which calls it small talk -- and agent/off_topic.py turns that down. Substring stems (3+ letters) and exact tokens (short words) are kept apart so "পে" does not match "পেট".
+_FAQ_EVIDENCE: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {
+    "hours": (
+        ("সময়", "খোলা", "খোলে", "খুলব", "খুলে", "খুলবে", "বন্ধ", "কখন", "কটা", "কটায়", "ঘণ্টা", "ঘন্টা", "সকাল", "রাত", "রবিবার", "ছুটি", "টাইম", "ভিজিটিং", "আওয়ার", "সন্ধ্যা", "বিকেল",
+         "समय", "खुल", "बंद", "बजे", "टाइम", "घंटे", "रविवार", "छुट्टी", "सुबह", "शाम", "timing", "hours", "open", "close", "sunday", "holiday", "morning", "evening", "weekday"),
+        frozenset({"কব", "কবে", "कब", "time", "when", "till", "until"}),
+    ),
+    "payment_methods": (
+        ("টাকা", "পেমেন্ট", "কার্ড", "ইউপিআই", "নগদ", "ক্যাশ", "কাশ", "অনলাইন", "গুগল", "ফোনপে", "ফোন পে", "পেটিএম", "ডেবিট", "ক্রেডিট", "রসিদ", "চার্জ", "ফিস", "ভিজিট",
+         "पेमेंट", "पैसे", "पैसा", "कार्ड", "यूपीआई", "नकद", "कैश", "ऑनलाइन", "गूगल", "फोन पे", "फोनपे", "पेटीएम", "रुपये", "फीस", "payment", "card", "cash", "upi", "online", "gpay", "paytm", "phonepe",
+         "money", "charge", "rupee", "google pay"),
+        frozenset({"পে", "পাই", "পেয়", "पे", "पाय", "pay", "fee", "fees", "gpay", "g"}),
+    ),
+    "insurance": (
+        ("ইনসিওরেন্স", "ইন্সুরেন্স", "ইনস্যুরেন্স", "বিমা", "ক্যাশলেস", "মেডিক্লেম", "বীমা", "बीमा", "इंसोरेंस", "इंश्योरेंस", "इन्श्योरेंस", "कैशलेस", "मेडिक्लेम", "insur", "cashless", "mediclaim", "policy", "tpa"),
+        frozenset(),
+    ),
+    "parking": (
+        ("পার্কিং", "গাড়ি", "গাড়ী", "বাইক", "স্কুটার", "সাইকেল", "पार्किंग", "गाड़ी", "गाडी", "बाइक", "स्कूटर", "park", "vehicle", "scooter", "bike"),
+        frozenset({"car", "cars"}),
+    ),
+    "report_collection": (
+        ("রিপোর্ট", "রেজাল্ট", "রিসুল্ট", "ফলাফল", "কালেক্ট", "সংগ্রহ", "রিপোর্টে", "रिपोर्ट", "रिज़ल्ट", "रिजल्ट", "कलेक्ट", "report", "result", "collect"),
+        frozenset(),
+    ),
+    "contact_number": (
+        ("নম্বর", "নাম্বার", "নম্বার", "ফোন", "মোবাইল", "হেল্পলাইন", "যোগাযোগ", "হোয়াটসঅ্যাপ", "नंबर", "नम्बर", "फोन", "मोबाइल", "हेल्पलाइन", "संपर्क", "व्हाट्सऐप", "व्हाट्सएप", "number", "phone", "contact", "helpline",
+         "whatsapp", "mobile"),
+        frozenset({"call", "কল", "कॉल"}),
+    ),
+    "home_collection": (
+        ("বাড়ি", "বাড়ী", "বাসা", "ঘরে", "হোম", "কালেকশন", "সংগ্রহ", "স্যাম্পল", "নমুনা", "ব্লাড", "घर", "होम", "कलेक्शन", "सैंपल", "सैम्पल", "ब्लड", "home", "collection", "collect", "sample", "house"),
+        frozenset(),
+    ),
+}
+
+
+def faq_topic_word_present(topic: str, text: str) -> bool:
+    """True when the sentence holds a word that belongs to the FAQ topic (or the topic is not one this table knows)."""
+    rule = _FAQ_EVIDENCE.get(topic)
+    if rule is None:
+        return True
+    stems, exact = rule
+    n = _norm(text)
+    if any(_norm(s) in n for s in stems):
+        return True
+    return any(tok in exact for tok in n.split())
+
+
 def veto(intent: str, slots: dict | None, text: str, tests_named) -> str | None:
     """A reason to refuse the shortcut's answer, or None to let it stand. `tests_named` is a zero-argument callable returning how many
     catalogue tests the sentence names (only evaluated when a total is asked for)."""
     slots = slots or {}
     if intent == "clinic_faq" and slots.get("faq_topic") == "location" and not location_word_present(text):
         return "location answer without any word about a place"
+    if intent == "clinic_faq" and slots.get("faq_topic") not in (None, "location") and not faq_topic_word_present(str(slots.get("faq_topic")), text):
+        return f"{slots.get('faq_topic')} answer without any word about that topic"
     if intent == "test_rate" and asks_for_total(text):
         try:
             named = int(tests_named())

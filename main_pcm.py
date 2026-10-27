@@ -150,7 +150,7 @@ from agent import fastpath_guards  # refuse a quick answer that cannot be right 
 from agent import slot_proposal  # the machine picks the appointment time and says it
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
-from agent import clinical_safety, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
+from agent import clinical_safety, lost_found, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
 from agent import clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
@@ -1690,6 +1690,12 @@ async def _reask_or_handoff(
     A second consecutive failure also marks the caller "confused", which
     slows the agent and lowers its escalation threshold for the rest of the
     call (Appendix C)."""
+    if session.offtopic_streak > 0 and session.turn_count - session.offtopic_last_turn <= 1:
+        # Owner, 2026-10-27: right after the caller was told once that this is not something Sonoscan can help with, "sorry, I did not understand, say again" only keeps the talk going: thank-you and goodbye
+        logger.info("[%s] unclear turn straight after an off-topic strike: closing the call politely", session.call_id)
+        session.outcome = "off_topic"
+        await _end_call(session, lang, "offtopic_final")
+        return
     reask_outcomes.record(decision.reason or "unclear", decision.action, lang)
     _note(session, "reasks")
     if decision.action == "reask" and decision.reason == "noisy" and NOISE_SUPPRESS_AFTER_ASKS > 0:
@@ -4018,6 +4024,16 @@ async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool
     if _names_a_test(text, lang):
         return False
     booking = session.booking
+    # Owner, 2026-10-27: "দাঁতে ব্যথা করছে একটা ডাক্তার দেখাবো নাম লেখান" -- a symptom beside the request to write a name. The doctors of that department (and who sits next) are the answer; "which doctor?"
+    # makes the caller say the symptom again.
+    if booking is None and _tools is not None and off_topic.has_health_word(text):
+        try:
+            routed = await _route_dept(text, lang, session)
+        except ToolCallError:
+            routed = {}
+        if routed.get("matched"):
+            await _speak(session, _with_resume(session, await _route_reply(session, routed, text, lang), lang), lang)
+            return True
     if booking is not None and booking.stage in ("confirming", "awaiting_charge_confirm"):
         return False  # a yes / no to the read-back is being waited for
     when = booking_capture.read_when(text, False, want_day=True)
@@ -4977,11 +4993,16 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             logger.info("[%s] abusive turn %d", session.call_id, session.abuse_count)
             await session.send_json("User", text)
             session.turn_count += 1
-            if abuse.closes_the_call(session.abuse_count):
+            # Owner, 2026-10-27: told ONCE, and the next non-clinic turn (more abuse, an insult, small talk, "I did not understand") ends the call with a thank-you; the old third-strike rule let it go on.
+            in_a_row = session.offtopic_streak > 0 and session.turn_count - session.offtopic_last_turn <= 1
+            session.offtopic_streak = session.offtopic_streak + 1 if in_a_row else 1
+            session.offtopic_last_turn = session.turn_count
+            if abuse.closes_the_call(session.abuse_count) or session.offtopic_streak >= off_topic.CLOSE_AT:
                 session.outcome = "abusive_caller"
-                await _end_call(session, reply_lang, abuse.response_key(session.abuse_count))
+                await _end_call(session, reply_lang, "offtopic_final")
             else:
                 await _speak(session, phrase(abuse.response_key(session.abuse_count), reply_lang), reply_lang)
+                session.awaiting_answer = False
             return
         # A yes/no to a confirmation is legitimately one short word; the
         # jumbled-transcript checks would misread it as a fragment.
@@ -7456,6 +7477,11 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         session.awaiting_clinician_offer = True
         await _speak(session, phrase("clinical_interpretation", lang), lang)
         return True
+    # Owner, 2026-10-27: lost and found -- something left behind, or someone to be found: the agent knows nothing about it and never guesses; the call goes to a person (the human-routing placeholder)
+    if session.booking is None and lost_found.asks_lost_and_found(text):
+        logger.info("[%s] lost and found: routing to a person", session.call_id)
+        await _handoff_to_human(session, "lost_and_found", (lang,))
+        return True
     # Owner, 2026-10-27: questions about the doctors JUST offered ("who is better among them, who sits in the morning") keep the offered doctors as the subject
     if await _answer_about_offered_doctors(session, text, lang):
         return True
@@ -7467,6 +7493,10 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         session.outcome = "unrelated_caller"
         logger.info("[%s] wrong place dialled: told so and closing", session.call_id)
         await _end_call(session, lang, "wrong_place_final")
+        return True
+    # an insult at the clinic or the agent, asking for nothing: a strike (told once; the next non-clinic turn closes the call)
+    if free and off_topic.hostile(text):
+        await _handle_offtopic(session, lang)
         return True
     # "what was MY result?" -- never read out over the phone (agent/result_request.py)
     if session.booking is None and result_request.asks_for_own_result(text):
