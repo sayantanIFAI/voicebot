@@ -5739,7 +5739,9 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
-    if intent in ("smalltalk", "unclear") and await _offtopic_by_verdict(session, text, lang, data, asr_result):
+    # Owner, 2026-10-29: a commitment ("তো একটা নাম লিখে দিন") right after a doctor was discussed is the booking of that doctor, never "off topic" (the gate is loose and state-aware).
+    _committing = session.booking is None and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count) and booking_carryover.continues_booking(text)
+    if intent in ("smalltalk", "unclear") and not _committing and await _offtopic_by_verdict(session, text, lang, data, asr_result):
         return
 
     # KCD-lead-1: the answer to referral_cues.referral_ask_reply's combined question -- read from THIS turn's

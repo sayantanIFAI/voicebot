@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-MAX_GAP_TURNS = 3  # same distance agent/enquiry_followup.FOLLOWUP_MAX_GAP treats as "just now"
+MAX_GAP_TURNS = 6  # was 3 (same distance agent/enquiry_followup.FOLLOWUP_MAX_GAP treats as "just now"): a doctor just discussed stays the subject across a couple of side questions
 
 _SAME_DAY = (
     # Bengali

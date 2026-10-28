@@ -187,6 +187,35 @@ _AVAIL_NOW = re.compile(r"(?:^|\s)(?:available|उपलब्ध|upalabdh|achhe
 _PAST_WORD = re.compile(r"(?:^|\s)(?:था|थे|थी|tha|thi|the|thhe|ছিলেন|chilen|chhilen)(?:\s|$)")
 _FUTURE_WORD = re.compile(r"\S*(?:ेंगे|ेंगी|ेगा|ेगी|ोगा|ोगी|ोगे|ूँगा|ूंगा|ूँगी|ूंगी|enge|engi|ega|egi|oga|ogi|oge|bosben|bosbe|boshben|boshbe|asben|asbe|ashben|ashbe|achhen|achen)(?:\s|$)")
 
+_SKEL_DROP = re.compile("[\u09be-\u09cd\u09d7\u0981-\u0983\u093e-\u094d\u0901-\u0903\u093c.,'-]")
+_SKEL_MAP = str.maketrans({"ণ": "ন", "শ": "স", "ষ": "স", "ৎ": "ত", "ण": "न", "श": "स", "ष": "स"})
+
+
+def _name_skeleton(w: str) -> str:
+    """A name's consonant skeleton (vowel signs, virama and the sh / n / t look-alikes removed): "রুপসা" -> "রপস", "রূপা" -> "রপ"; Latin words are lower-cased as they are."""
+    w = unicodedata.normalize("NFC", w or "").lower()
+    if w.isascii():
+        return w
+    return _SKEL_DROP.sub("", w).translate(_SKEL_MAP)
+
+
+def same_given_name(said: str, own: str) -> bool:
+    """Is the given name SAID the same name as the doctor's own word? Spelling variants of one name are (রুপসা ~ রূপা, অনির্বান ~ অনির্বাণ); a different name that merely contains it
+    is not (গোপাল is not পাল: the doctor's word sits at the END of what was said, behind extra letters)."""
+    if (said or "").lower() == (own or "").lower():
+        return True
+    a, b = _name_skeleton(said), _name_skeleton(own)
+    if not a or not b:
+        return False
+    if a.isascii() and b.isascii():
+        return difflib.SequenceMatcher(None, a, b).ratio() >= 0.75
+    if a == b:
+        return True
+    if (a.endswith(b) or b.endswith(a)) and a[0] != b[0]:
+        return False
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.8
+
+
 class Catalogue:
     """The 74 rows, with every spoken form that maps to each -- plus the
     FAQ topic table, which is the same shape (one canonical key, several
@@ -216,6 +245,13 @@ class Catalogue:
         # Which doctors (by position in the payload) a spoken form belongs to: "sen" belongs to every Sen. A form with
         # more than one owner is ambiguous, whatever its similarity score, and the fast path never answers on it.
         self._doctor_owners: dict[tuple[str, str], set[int]] = defaultdict(set)
+        # Every word of each doctor's own names (whole name in English, Bengali and Hindi), lower-cased: what a GIVEN name said before a surname must resemble (see Catalogue._given_name_ok).
+        self._doctor_words: dict[str, set[str]] = {}
+        for d in payload.get("doctors", []):
+            words: set[str] = set()
+            for f in (d.get("name"), d.get("full_name"), d.get("full_name_bn"), d.get("full_name_hi")):
+                words |= {w.strip(".,").lower() for w in (f or "").split() if w.strip(".,")}
+            self._doctor_words[d["name"]] = words
         self._tables: dict[tuple[str, str], FormTable] = {}
         for lang in sorted(langs):
             for i, d in enumerate(payload.get("doctors", [])):
@@ -275,6 +311,32 @@ class Catalogue:
     @staticmethod
     def _doctor_rows(payload: dict, lang: str):
         return [(d["name"], Catalogue._doctor_forms_of(d, lang)) for d in payload.get("doctors", [])]
+
+    # Words that may stand right before a surname without being a given name: titles, honorifics, "I / this / that", day words, particles, the letter names used as initials ("আর" = R).
+    _NOT_A_GIVEN_NAME = frozenset(
+        (
+            "dr doctor doc mr mrs ms sir madam the a of for with and or to about "
+            "ডাক্তার ডাঃ ডা ডক্টর ডাক্তর স্যার সার সির ম্যাডাম মিস্টার মিসেস মহাশয় বাবু আমি আমার আমাকে বলছি বলছিলাম থেকে তো আর ও এবং এই ওই সেই ঐ একটা একজন আজ আজকে আজই কাল কালকে পরশু আগামীকাল এখন তারপর তাহলে মানে না হ্যাঁ ওকে ঠিক আছে কি কী যে "
+            "डॉक्टर डॉ डाक्टर सर सिर मैडम मिस्टर मैं मेरा मुझे बोल रहा रही से तो और एक ये वो वह आज कल परसों अभी फिर तब मतलब नहीं हाँ हां ठीक है कि क्या जो"
+        ).split()
+    )
+
+    def given_name_ok(self, text: str, name: str, form: str | None) -> bool:
+        """Owner, 2026-10-29: "ডাক্তার অভিজিৎ চৌধুরী" was answered as Dr. Rajib Chowdhury, "গোপাল পান্ডে" as Dr. Ranjan Pal: the surname alone was matched and the GIVEN name said before it
+        was never looked at. When a name-like word stands right before the matched surname, it must be the same name as a word of that doctor's own names; if it is not, the sentence names a
+        doctor that is not in the list and is left to the model and the clinic API, which say so (and offer who they might mean) instead of reading out someone else's day."""
+        f = form or ""
+        words = self._doctor_words.get(name)
+        if not f or not words:
+            return True
+        tokens = [t.strip(".,?!।") for t in text.split()]
+        idx = next((i for i, t in enumerate(tokens) if t == f or (len(f) >= 3 and (t.startswith(f) or difflib.SequenceMatcher(None, f, t).ratio() >= 0.75))), None)
+        if idx is None or idx == 0:
+            return True
+        prev = tokens[idx - 1]
+        if not prev or prev.lower() in self._NOT_A_GIVEN_NAME or any(ch.isdigit() for ch in prev):
+            return True
+        return any(same_given_name(prev, w) for w in words)
 
     def doctor_owner_count(self, lang: str, form: str | None) -> int:
         """How many doctors the spoken form `form` belongs to (0 when unknown)."""
@@ -449,6 +511,8 @@ class FastPath:
             said = (form or name or "")
             if not (score >= 0.95 and said not in _COMMON_WORD_ALIASES and any(tok == said or tok.startswith(said) for tok in text.split())):
                 return None
+        if not whole and not self.catalogue.given_name_ok(text, name, form):
+            return None
         return name, form, score
 
     @staticmethod
