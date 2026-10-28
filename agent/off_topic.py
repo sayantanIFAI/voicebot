@@ -68,13 +68,41 @@ _HEALTH_LATIN = re.compile(
 )
 
 
+# Endings a body-part / symptom word takes in speech ("নাকে", "পায়ের", "মাথায়", "পেটটা", "চোখগুলো").
+_WORD_ENDINGS = frozenset(("", "ে", "ের", "য়", "য়ে", "য়ের", "তে", "েতে", "টা", "টি", "র", "ও", "কে", "গুলো", "েরও", "েই", "ই"))
+
+
 def has_health_word(text: str) -> bool:
-    """True when the sentence names a symptom, a body part or a health matter: a patient, never declined as off-topic."""
+    """True when the sentence names a symptom, a body part or a health matter: a patient, never declined as off-topic.
+
+    Owner, 2026-10-28: "আমি আপনাকে ভালোবাসি" ("I love you") was never recognised as small talk because "আপনাকে" CONTAINS "নাক" (nose) and "পা" (foot) hides inside পাব, পারি, পাচ্ছি ... Words are
+    now matched as WORDS: the whole word, a long word's start, or a short word with an ending a Bengali body word really takes -- never a piece in the middle of another word."""
     t = _norm(text)
     if not t:
         return False
-    padded = t + " "
-    return any(w in padded for w in _HEALTH_NATIVE) or _HEALTH_LATIN.search(t) is not None
+    tokens = t.split()
+    for w in _HEALTH_NATIVE:
+        w = w.strip()
+        if " " in w:
+            if w in t:
+                return True
+            continue
+        for tok in tokens:
+            if tok == w or (tok.startswith(w) and (len(w) >= 4 or tok[len(w):] in _WORD_ENDINGS)):
+                return True
+    return _HEALTH_LATIN.search(t) is not None
+
+
+_HOW_ARE_YOU = re.compile(
+    r"(?:আপনি|তুমি|আপনারা)?\s*(?:কেমন আছ(?:েন|ো|)|ভালো আছ(?:েন|ো|)|ভাল আছ(?:েন|ো|))|आप कैसे हैं|आप कैसी हैं|कैसे हो|कैसी हो|\bhow are you\b|\bhow do you do\b",
+    re.I,
+)
+
+
+def how_are_you(text: str) -> bool:
+    """A polite "how are you?" ("আপনি ভালো আছেন?", "কেমন আছেন", "आप कैसे हैं"): answered kindly once with a fixed line, never a strike."""
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 6 and _HOW_ARE_YOU.search(t) is not None
 
 
 # "Is this a girls' school or a police station?" / "I called the police station": the caller dialled the wrong place. Said straight away, then the call is closed (no second chance asked).

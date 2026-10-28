@@ -5806,7 +5806,21 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             else phrase("smalltalk_default", lang)
         )
         if chosen == phrase("smalltalk_default", lang) and not greeting_words.is_greeting(text):
-            chosen = phrase("silence_go_on", lang)  # "okay" / "ঠিক আছে" is not hello: do not introduce ourselves again, just say go on
+            if off_topic.how_are_you(text) and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in):
+                chosen = phrase("how_are_you_reply", lang)  # owner, 2026-10-28: "আপনি ভালো আছেন?" got "হ্যাঁ, বলুন" (yes, go on)
+            elif (
+                len(text.split()) >= 3
+                and session.booking is None
+                and _nothing_is_open(session, ignore_answering=True)
+                and not call_end.is_closing_acknowledgement(text, lang)
+                and not off_topic.has_health_word(text)
+                and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in)
+            ):
+                # Owner, 2026-10-28: real talk that has nothing to do with the clinic ("আমি আপনাকে ভালোবাসি") is not "yes, go on": told once, the next such turn ends the call
+                await _handle_offtopic(session, lang)
+                return
+            else:
+                chosen = phrase("silence_go_on", lang)  # "okay" / "ঠিক আছে" is not hello: do not introduce ourselves again, just say go on
         await _speak(session, _with_resume(session, chosen, lang), lang)
         return
 

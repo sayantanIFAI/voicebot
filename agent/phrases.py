@@ -371,6 +371,10 @@ PHRASES["en"]["result_counter_only"] = "Test results cannot be given over the ph
 PHRASES["bn"]["ask_problem"] = "কী সমস্যা হচ্ছে বলুন, তাহলে কোন বিভাগে দেখাবেন বলতে পারব।"
 PHRASES["hi"]["ask_problem"] = "क्या तकलीफ़ है बताइए, तब मैं बता सकूँगी किस विभाग में दिखाना है।"
 # Owner, 2026-10-28: the FIRST time a caller asks for a person, the agent says it will help; the caller is passed to staff only if they ask again (main.py, agent/distress.asks_for_person)
+# Owner, 2026-10-28: a polite "how are you?" is answered once, kindly, and the talk goes back to what the clinic can do
+PHRASES["bn"]["how_are_you_reply"] = "আমি ভালো আছি, ধন্যবাদ। আপনাকে কীভাবে সাহায্য করতে পারি?"
+PHRASES["hi"]["how_are_you_reply"] = "मैं ठीक हूँ, धन्यवाद। मैं आपकी कैसे मदद कर सकती हूँ?"
+PHRASES["en"]["how_are_you_reply"] = "I am well, thank you. How can I help you?"
 PHRASES["bn"]["person_help_first"] = "আমি আপনাকে সাহায্য করতে পারব। আপনার কী দরকার বলুন। তারপরও যদি স্টাফের সাথে কথা বলতে চান, আবার বলবেন, আমি যুক্ত করে দেব।"
 PHRASES["hi"]["person_help_first"] = "मैं आपकी मदद कर सकती हूँ। आपको क्या चाहिए, बताइए। फिर भी अगर आप स्टाफ़ से बात करना चाहें, तो फिर से बताइए, मैं जोड़ दूँगी।"
 PHRASES["en"]["person_help_first"] = "I can help you with this. Please tell me what you need. If you still want to speak to our staff, just ask again and I will connect you."
