@@ -4,7 +4,7 @@ __pycache__/
 .venv/
 venv/
 *.db
-static/fallback_audio/*.wav
+# the fallback apologies are committed (agent/tts.py: pre-recorded, not synthesised live); without them a TTS or model failure leaves the caller in silence
 
 # KCD-lead-1: runtime-accumulated patient data (names, phone numbers), same reason *.db is ignored above.
 clinic-api/data/*.csv
