@@ -103,12 +103,50 @@ _DO_IT = (
 )
 
 
+# Owner, 2026-10-29 ("তো একটা নাম লিখে দিন" right after "Dr X sits tomorrow, the 30th" was answered "which doctor?"): RIGHT AFTER a doctor was talked about, every way of saying "do it" is a
+# booking of THAT doctor on the day just told. People never say "book": they say write my name, put a serial, hold it, fix it, I want to see him. None of these is a booking request in a cold
+# sentence (so they are used only where a doctor was just discussed, see continues_booking / carry_over); each is a phrase, never a single common word.
+_COMMIT = (
+    # Bengali
+    "নাম লিখে", "নাম লিখুন", "নাম লেখ", "নামটা লিখে", "নামটা লেখ", "নাম লিখিয়ে", "নাম তুলে", "নাম নথিভুক্ত", "নাম ঢুকিয়ে", "নাম্বার লাগিয়ে", "নম্বর লাগিয়ে", "নাম্বার লাগান", "নম্বর লাগান",
+    "সিরিয়াল দিন", "সিরিয়াল দেন", "সিরিয়াল করে", "সিরিয়াল লাগিয়ে", "সিরিয়াল লাগান", "সিরিয়াল নিয়ে", "সিরিয়াল চাই", "সিরিয়াল ধরে", "টোকেন দিন", "টোকেন দেন", "টোকেন করে", "টোকেন চাই",
+    "ধরে দিন", "ধরে দেন", "ধরে রাখুন", "রেখে দিন", "রেখে দেন", "ঠিক করে দিন", "ঠিক করে দেন", "ঠিক করে রাখুন", "ফিক্স করে", "ফিক্স করুন", "রিজার্ভ", "কনফার্ম করে", "কনফার্ম করুন", "নিশ্চিত করে",
+    "করে দিন", "করে দেন", "করে দাও", "করে রাখুন", "তাহলে করুন", "তাহলে দিন", "তাহলে নিন", "তাহলে রাখুন", "দেখাতে চাই", "দেখাতে যাব", "দেখাতে যাবো", "দেখাতে আসব", "দেখাতে আসবো",
+    "দেখাব", "দেখাবো", "দেখাতাম", "দেখাতে এসে", "দেখা করতে চাই", "দেখা করব", "দেখা করবো", "সিরিয়ালটা", "অ্যাপয়েন্টমেন্টটা", "অ্যাপয়েন্টমেন্ট নিতে", "অ্যাপয়েন্টমেন্ট নেব", "অ্যাপয়েন্টমেন্ট নেবো",
+    "নিতে চাই", "নেব", "নেবো", "নিয়ে নিন", "নিয়ে নেন", "ওই দিনেই", "ওই দিন করুন", "ওই দিন করে", "ওই দিন দিন", "এই দিনেই করুন", "ওই তারিখেই", "ওই সময়ই", "ঠিক আছে করুন", "আচ্ছা করুন", "হ্যাঁ করুন",
+    # Hindi
+    "नाम लिख", "नाम लिखवा", "नाम दर्ज", "नाम डाल", "नाम चढ़ा", "नाम जोड़", "सीरियल लगा", "सीरियल दे", "सीरियल कर", "सीरियल चाहिए", "टोकन दे", "टोकन चाहिए", "नंबर लगा", "नम्बर लगा",
+    "रख दीजिए", "रख दो", "रख दें", "रख लीजिए", "रख लो", "फिक्स कर", "रिज़र्व", "रिजर्व", "कन्फर्म कर", "कन्फ़र्म कर", "पक्का कर", "कर दीजिए", "कर दो", "कर दें", "कर लीजिए", "कर लो", "तो कर", "तब कर",
+    "दिखाना है", "दिखाना चाहता", "दिखाना चाहती", "दिखाऊंगा", "दिखाऊँगा", "दिखाऊंगी", "दिखाएंगे", "दिखाने आऊं", "दिखाने आ", "मिलना है", "मिलना चाहता", "मिलना चाहती", "अपॉइंटमेंट ले", "अपॉइंटमेंट चाहिए", "ले लीजिए", "ले लो", "ले लूं", "ले लूँ", "उसी दिन कर", "उसी दिन के लिए",
+    # English
+    "put my name", "write my name", "write down my name", "note my name", "add my name", "enter my name", "take my name", "register me", "sign me up", "put me down", "write me down", "note me down",
+    "get me a serial", "get me a token", "get me a number", "give me a serial", "give me a token", "give me a number", "a serial for", "a token for", "reserve", "hold it", "hold a slot", "hold the slot", "fix it",
+    "fix an appointment", "fix a appointment", "fix the appointment", "confirm it", "confirm that", "lock it", "go ahead", "go for it", "i want to see", "i'd like to see", "i would like to see", "i want to consult",
+    "like to consult", "want to meet", "want to visit", "i will come", "i'll come", "i will take", "i'll take", "take me", "do that", "that works", "that day then", "that one then", "ok then book", "okay then book",
+)
+
+
+def commits_to_booking(text: str) -> bool:
+    """A way of saying "do it / take my name / put me down / I want to see him" -- meaningful as a booking only after a doctor was just talked about (see the list above)."""
+    t = _norm(text)
+    return bool(t) and not _has(t, _LOOKUP) and not _has(t, _CHANGE_CUES) and (_has(t, _COMMIT) or _write_name_cue(text))
+
+
+def _write_name_cue(text: str) -> bool:
+    try:
+        from agent import doctor_enquiry_cues
+
+        return doctor_enquiry_cues.asks_to_write_name(text)
+    except Exception:  # noqa: BLE001 - a cue module hiccup must not stop the booking
+        return False
+
+
 def continues_booking(text: str) -> bool:
-    """Right after a doctor was asked about: a booking word, a pointer to the day/time just given, or a bare \"do it\"."""
+    """Right after a doctor was asked about: a booking word, a pointer to the day/time just given, a bare \"do it\", or any other way of committing (commits_to_booking)."""
     t = _norm(text)
     if _has(t, _LOOKUP) or _has(t, _CHANGE_CUES):
         return False
-    return asks_to_book(text) or says_same_day(text) or says_same_time(text) or _has(t, _DO_IT)
+    return asks_to_book(text) or says_same_day(text) or says_same_time(text) or _has(t, _DO_IT) or commits_to_booking(text)
 
 
 # Review 2026-10-28: "don't book an appointment", "বুক করবেন না", "बुक मत करो" asked to book. A clause that names a booking AND refuses it is not a request; another clause ("but book Dr Sen")
@@ -174,6 +212,12 @@ def carry_over(ctx: dict | None, slots: dict, text: str, booking_slots: dict | N
     # already in the booking. The caller is pointing at what the agent JUST said: "that day" is its date, "that time" is its date AND its sitting
     # hours (the start of them), whether or not the doctor was already carried over.
     wants_day, wants_time = says_same_day(text), says_same_time(text)
+    # A commitment ("নাম লিখে দিন", "put my name", "ঠিক করে দিন") with no day of its own is for the day the agent JUST told -- the doctor's sitting day, with the start of his hours.
+    if commits_to_booking(text) and ctx.get("date") and not out.get("date") and not booked.get("date") and not slots.get("time_slot"):
+        out["date"] = ctx["date"]
+        start = window_start(ctx.get("window"))
+        if start and not out.get("time_slot") and not booked.get("time_slot"):
+            out["time_slot"] = start
     if (wants_day or wants_time) and ctx.get("date") and not out.get("date") and not booked.get("date"):
         out["date"] = ctx["date"]
     elif wants_day and ctx.get("date"):

@@ -3439,7 +3439,10 @@ async def _answer_owner_faq(session: CallSession, text: str, lang: str) -> bool:
     serial that cannot be pushed up, and what a doctor's visit costs (agent/owner_answers.py) -- fixed or table-read answers, no model."""
     try:
         spoken = None
-        if owner_answers.asks_link_to_other_number(text):
+        if owner_answers.asks_payment_destination(text):
+            session.pending_enquiry = None
+            spoken = owner_answers.payment_destination_reply(lang)
+        if not spoken and owner_answers.asks_link_to_other_number(text):
             session.pending_enquiry = None  # the "confirmation number?" question that was open is no longer the point
             spoken = owner_answers.link_to_other_number_reply(lang)
         if not spoken and owner_answers.asks_payment_link_timing(text):
@@ -4211,7 +4214,11 @@ async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool
         booking.asked_fields.add(missing[0])
         await _speak(session, missing_slot_prompt("book_appointment", missing[0], lang), lang)
         return True
-    # no booking yet -- even when a doctor was just discussed, the doctor is asked for (the answer starts the booking)
+    # Owner, 2026-10-29: a doctor was JUST discussed ("Dr X sits tomorrow, the 30th") and the caller says "write my name": that is the booking of THAT doctor on THAT day -- the booking flow
+    # (booking_carryover) takes the doctor and the day from what was just told; "which doctor?" is only for a call where no doctor has come up.
+    if booking is None and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count):
+        return False
+    # no booking yet and no doctor in the air -- the doctor is asked for (the answer starts the booking)
     session.pending_enquiry = ("book_appointment", session.turn_count)
     ask = missing_slot_prompt("book_appointment", "doctor_name", lang)
     if doctor_enquiry_cues.asks_can_book_name(text, lang):

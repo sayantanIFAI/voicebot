@@ -610,6 +610,32 @@ def payment_link_timing_reply(lang: str) -> str:
     return _LINK_REPLY_TIMING.get(lang, _LINK_REPLY_TIMING["en"])
 
 
+# Owner, 2026-10-29: "ওই চল্লিশ টাকা কোন নম্বরে পাঠাতে হবে" ("to which number do I send the forty rupees?") was answered with the helpdesk number. Nobody sends money to a number: the payment link
+# goes to the number the booking was made from, and the payment is made through that link. The same for "kun number e 40 taka dite hobe", "किस नंबर पर पैसे भेजने हैं", "which number do I pay to".
+_MONEY = ("টাকা", "taka", "tk", "rupee", "rupees", "rs", "পেমেন্ট", "payment", "pay", "ফি", "fee", "fees", "चार्ज", "रुपये", "रुपए", "रुपया", "पैसे", "पैसा", "पेमेंट", "फीस", "চার্জ", "ভিজিট")
+_WHICH_NUMBER = (
+    "কোন নম্বরে", "কোন নাম্বারে", "কোন নম্বর", "কোন নাম্বার", "কোন নম্বরটায়", "কোন নম্বরটাতে", "কোন একাউন্টে", "কোন অ্যাকাউন্টে", "কোথায় পাঠাতে", "কোথায় পাঠাব", "কোথায় পাঠাবো", "কোথায় দিতে", "কোথায় দেব",
+    "কাকে পাঠাতে", "কাকে পাঠাব", "কাকে দিতে", "কার নম্বরে", "কার নাম্বারে", "কোন গুগল পে", "কোন ফোনপে",
+    "kon number", "kun number", "kon nombore", "kun nombore", "kon numbare", "kothay pathate", "kothay pathabo", "kothay dite", "kake pathate", "kake dite",
+    "which number", "what number", "which account", "where to send", "where do i send", "where should i send", "where do i pay", "where to pay", "to whom", "whom to pay", "whom do i pay",
+    "किस नंबर", "किस नम्बर", "कौन से नंबर", "कौन सा नंबर", "किस अकाउंट", "कहाँ भेजना", "कहां भेजना", "कहाँ भेजें", "कहां भेजें", "कहाँ देना", "कहां देना", "किसको भेजना", "किसे भेजना", "किसको देना",
+)
+_PAY_DEST_REPLY = {
+    "bn": "কোনো নম্বরে টাকা পাঠাতে হবে না। যে নম্বর থেকে বুকিং করেছেন, সেই নম্বরেই একটা পেমেন্ট লিংক যাবে। ওই লিংক দিয়েই পেমেন্ট করুন।",
+    "hi": "किसी नंबर पर पैसे भेजने की ज़रूरत नहीं है। जिस नंबर से बुकिंग की है, उसी नंबर पर एक पेमेंट लिंक आएगा। उसी लिंक से पेमेंट कीजिए।",
+    "en": "You do not send money to any number. A payment link goes to the number you booked from; please pay through that link.",
+}
+
+
+def asks_payment_destination(text: str) -> bool:
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 24 and _has(t, _MONEY) and _has(t, _WHICH_NUMBER)
+
+
+def payment_destination_reply(lang: str) -> str:
+    return _PAY_DEST_REPLY.get(lang, _PAY_DEST_REPLY["en"])
+
+
 def asks_bare_cost(text: str) -> bool:
     """A short "how much?" with no word for what: only meant where a doctor's booking is open (the caller of this function checks that)."""
     t = _norm(text)
