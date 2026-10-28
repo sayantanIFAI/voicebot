@@ -377,18 +377,20 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
     ),
     (
         "Diabetology & Endocrinology",
-        ["সুগারের সমস্যা", "ডায়াবেটিস", "থাইরয়েড সমস্যা"],
-        ["शुगर की समस्या", "डायबिटीज़", "थायराइड"],
-        ["diabetes", "sugar problem", "thyroid problem"],
+        ["সুগারের সমস্যা", "ডায়াবেটিস", "থাইরয়েড সমস্যা", "সুগারের ডাক্তার", "সুগার এর ডাক্তার", "ডায়াবেটিসের ডাক্তার", "ডায়াবেটিস এর ডাক্তার", "থাইরয়েডের ডাক্তার", "এন্ডোক্রিনোলজিস্ট", "সুগার আছে", "সুগার বেড়েছে", "ডায়াবেটিস আছে"],
+        ["शुगर की समस्या", "डायबिटीज़", "थायराइड", "शुगर का डॉक्टर", "शुगर के डॉक्टर", "डायबिटीज़ का डॉक्टर", "डायबिटीज़ के डॉक्टर", "थायराइड का डॉक्टर", "एंडोक्रिनोलॉजिस्ट", "शुगर है", "शुगर बढ़ गई"],
+        ["diabetes", "sugar problem", "thyroid problem", "sugar doctor", "sugar er doctor", "sugarer doctor", "sugarer daktar", "sugar er daktar", "diabetes doctor", "diabetes er doctor", "diabetes er daktar", "diabeteser doctor", "diabeteser daktar", "thyroid doctor", "thyroider doctor", "endocrinologist", "endocrinology", "sugar bere geche", "sugar ache"],
     ),
     (
         "General Medicine",
         # See the Orthopaedics row above for why "হাতে ব্যথা"/"hand pain" and general body ache are listed here too.
         ["জ্বর", "সর্দি কাশি", "দুর্বলতা", "পেট খারাপ", "হাতে ব্যথা", "গায়ে ব্যথা", "শরীরে ব্যথা",
+         # owner, 2026-10-28: "পেটের ডাক্তার ... পায়খানা ক্লিয়ার হচ্ছে না" was answered "could not tell which department"
+         "পেটের ডাক্তার", "পেটের সমস্যা", "পেটে ব্যথা", "পেট ব্যথা", "পেট ব্যাথা", "পেট ফাঁপা", "পেটে গ্যাস", "গ্যাস", "অম্বল", "বদহজম", "হজম", "পায়খানা", "পায়খানা ক্লিয়ার", "ক্লিয়ার হচ্ছে না", "কোষ্ঠকাঠিন্য", "কোষ্ঠ", "বমি", "ডায়রিয়া", "পাতলা পায়খানা", "খিদে নেই", "পেট ভার",
          # owner, 2026-10-28: "আমার মাথা ফেটে গেছে" (head split open / cut) went to Neurology; a cut or split is the ordinary doctor
          "ফেটে গেছে", "ফেটে গিয়েছে", "ফেটে গেল", "কেটে গেছে", "কেটে গিয়েছে", "কেটে গেল", "ছড়ে গেছে", "কাটা ছেঁড়া", "ক্ষত", "মাথা ফেটে", "মাথা কেটে", "হাত কেটে", "পা কেটে"],
-        ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब", "हाथ में दर्द", "शरीर में दर्द", "कट गया", "कट गई", "फट गया", "फट गई", "सिर फट", "सिर कट", "छिल गया", "घाव"],
-        ["fever", "cold and cough", "weakness", "stomach upset", "hand pain", "body ache", "cut my head", "head is cut", "head cut", "split open", "got cut", "cut on my", "wound", "kete geche", "kete gechhe", "phete geche", "fete geche", "kete gelo", "mathat kete", "matha phete", "matha fete"],
+        ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब", "हाथ में दर्द", "शरीर में दर्द", "पेट दर्द", "पेट के डॉक्टर", "पेट की समस्या", "पेट साफ नहीं", "कब्ज", "कब्ज़", "गैस", "एसिडिटी", "अपच", "दस्त", "उल्टी", "कट गया", "कट गई", "फट गया", "फट गई", "सिर फट", "सिर कट", "छिल गया", "घाव"],
+        ["fever", "cold and cough", "weakness", "stomach upset", "hand pain", "body ache", "stomach pain", "stomach problem", "stomach doctor", "constipation", "not able to pass motion", "gas problem", "acidity", "vomiting", "diarrhoea", "diarrhea", "loose motion", "peter daktar", "peter doctor", "peter byatha", "pet byatha", "paykhana", "pet kharap", "cut my head", "head is cut", "head cut", "split open", "got cut", "cut on my", "wound", "kete geche", "kete gechhe", "phete geche", "fete geche", "kete gelo", "mathat kete", "matha phete", "matha fete"],
     ),
     (
         "Dentistry",

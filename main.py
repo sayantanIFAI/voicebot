@@ -4579,6 +4579,16 @@ async def _finish_enquiry_turn(
             session.dept_pending = None  # another department was named: the old department's doctors are no longer the subject
         session.last_route = {**_rf, "turn": session.turn_count}
         _route_found.set(None)
+        _pend2 = getattr(session, "dept_pending", None)
+        if _rf.get("dept") and (_pend2 is None or _pend2.get("turn", 0) < session.turn_count):
+            with contextlib.suppress(ToolCallError):
+                _today_iso = slot_proposal.clinic_now().date().isoformat()
+                _sit = (await _tools.department_doctors(_rf["dept"], lang, on_date=_today_iso)).get("sitting") or []
+                # owner, 2026-10-28: "ওনার সাথে অ্যাপয়েন্টমেন্ট করতে চান?" -- the caller's "হ্যাঁ করে দিন" must find the offer it answers
+                if len(_sit) == 1:
+                    session.dept_pending = {"kind": "confirm_one", "doctor": _sit[0], "date": _today_iso, "time": _sit[0].get("start"), "turn": session.turn_count, "say": base_reply}
+                elif len(_sit) >= 2:
+                    session.dept_pending = {"kind": "pick", "doctors": _sit, "date": _today_iso, "time": None, "turn": session.turn_count, "say": base_reply}
     _nso = _next_sit_offer.get()
     if _nso:
         session.dept_pending = {**_nso["pending"], "turn": session.turn_count, "say": _nso["say"]}
@@ -5815,14 +5825,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 chosen = phrase("how_are_you_reply", lang)  # owner, 2026-10-28: "আপনি ভালো আছেন?" got "হ্যাঁ, বলুন" (yes, go on)
             elif (
                 len(text.split()) >= 3
-                and session.booking is None
-                and _nothing_is_open(session, ignore_answering=True)
+                and _free_for_offtopic(session)
+                and classify_yes_no(text, lang) is None  # a yes / no is always an answer, never small talk
                 and not call_end.is_closing_acknowledgement(text, lang)
                 and not off_topic.has_health_word(text)
                 and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in)
             ):
                 # Owner, 2026-10-28: real talk that has nothing to do with the clinic ("আমি আপনাকে ভালোবাসি") is not "yes, go on": told once, the next such turn ends the call
-                await _handle_offtopic(session, lang)
+                await _handle_offtopic(session, lang, text)
                 return
             else:
                 chosen = phrase("silence_go_on", lang)  # "okay" / "ঠিক আছে" is not hello: do not introduce ourselves again, just say go on
@@ -7517,6 +7527,35 @@ def _abuse_reply_language(text: str, lang: str, prior_lang: str) -> str:
     return prior_lang if prior_lang in _languages_active else lang
 
 
+_GENERIC_PROMPT_KEYS = ("offtopic_redirect", "how_are_you_reply", "smalltalk_default", "silence_go_on", "ask_problem")
+
+
+def _last_line_generic(session: CallSession) -> bool:
+    """True when the last thing the agent said was a generic prompt (the greeting, a redirect, "how can I help"), whose answer can be anything. A SPECIFIC question ("do you want an appointment with Dr X?",
+    "which doctor?") is not generic: the caller's next words are its answer."""
+    last = (session.last_spoken or "").strip()
+    if not last:
+        return True
+    for lg in ("bn", "hi", "en"):
+        if any(last == phrase(k, lg).strip() for k in _GENERIC_PROMPT_KEYS):
+            return True
+        if phrase("greeting", lg).strip()[:15] in last:
+            return True
+    return False
+
+
+def _free_for_offtopic(session: CallSession) -> bool:
+    """The ONLY gate for declining a sentence as "nothing to do with the clinic" (owner, 2026-10-28: "make sure the out-of-topic path never breaks a patient's correct path"). Nothing may be open: no booking, no
+    flow, no remembered offer of a doctor waiting for its yes / no, and the last thing said must not have been a specific question."""
+    if session.booking is not None or not _nothing_is_open(session, ignore_answering=True):
+        return False
+    if getattr(session, "dept_pending", None) is not None:
+        return False
+    if session.answering and not _last_line_generic(session):
+        return False
+    return True
+
+
 def _nothing_is_open(session: CallSession, ignore_answering: bool = False) -> bool:
     """True when no question is waiting for an answer and no flow is under way, so a bare "okay" / "thik ache" is a goodbye and not a yes to something (owner,
     2026-10-23, item 6). The last thing said ended in a question, a booking being collected or confirmed, an offer, a pending "which doctor/test?" -- any of them
@@ -7620,7 +7659,7 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         return True
     # Owner, 2026-10-27 (live test): the FIRST sentence after the greeting is the commonest place for "which doctors do you have?", a wrong number or small talk, and it was never reached: the greeting
     # ends in a question, so the turn counted as "the answer to a question" and every guard below stood down. Only a real open flow (a booking, a pending choice ...) holds them back now.
-    free = session.booking is None and _nothing_is_open(session, ignore_answering=True)
+    free = _free_for_offtopic(session)
     # a wrong place dialled ("is this a girls' school or a police station?"): said directly and the call is closed -- no second chance asked
     if free and off_topic.wrong_place(text) and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in):
         session.outcome = "unrelated_caller"
@@ -7773,7 +7812,7 @@ async def _offtopic_by_verdict(session: CallSession, text: str, lang: str, data:
     """Second layer: the intent model called the sentence small talk or unclear AND nothing in it points at the clinic (no hospital cue, no catalogue name, no symptom or body part, no
     slot the model filled) AND it is a real sentence (four words or more) heard with good agreement between the decoders. Only then is it off-topic. True when answered here.
     Everything doubtful -- a short or garbled sentence, a health word, an open booking or question -- keeps the old path (the model's reply, or "say that again")."""
-    if session.booking is not None or not _nothing_is_open(session, ignore_answering=True):
+    if not _free_for_offtopic(session):
         return False
     if len(text.split()) < 4 or getattr(asr_result, "decoder_agreement", 0.0) < 0.85 or off_topic.has_health_word(text):
         return False
