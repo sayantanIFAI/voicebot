@@ -74,3 +74,52 @@ for _w, _n in {**_BN_EXTRA, **_HI_EXTRA}.items():
 def digits_of(token: str) -> str | None:
     """"আটানব্বই" -> "98", "चौहत्तर" -> "74"; None when the token is not one of these numbers."""
     return TWO_DIGIT.get(_loose(token or ""))
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+# A NUMBER ANSWERED IN A LATIN WORD THE RECOGNISER MISHEARD (owner, 2026-10-28): asked "রোগীর বয়স কত?", the caller said সাত (seven) and the English recogniser wrote "south". When
+# the question itself expects a number, a word that SOUNDS like a number name is read as a candidate for it. Matching is on a consonant skeleton ("saat", "saath", "sat", "south" are all
+# "st"), over Bengali, Hindi and English number names. A skeleton that fits one number is returned; one that fits several ("st" is both 7 and 60: Bengali saat / Hindi saath) returns all
+# of them, and the caller is ASKED which -- nothing is guessed between two. Only used where a number is expected (age); the answer is then read back like any other.
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+_ROMAN_NUMBER_NAMES: dict[int, tuple[str, ...]] = {
+    1: ("ek", "one", "wan"), 2: ("dui", "do", "two"), 3: ("tin", "teen", "three"), 4: ("char", "chaar", "four"), 5: ("panch", "paanch", "five"),
+    6: ("chhoy", "chhe", "chhay", "six"), 7: ("saat", "sat", "seven", "saath", "south"), 8: ("aat", "aath", "eight"), 9: ("noy", "nau", "nine"),
+    10: ("dosh", "das", "ten"), 11: ("egaro", "gyarah", "eleven"), 12: ("baro", "barah", "twelve"), 13: ("tero", "terah", "thirteen"),
+    14: ("choddo", "chaudah", "fourteen"), 15: ("ponero", "pandrah", "fifteen"), 16: ("sholo", "solah", "sixteen"), 17: ("shotero", "satrah", "seventeen"),
+    18: ("atharo", "atharah", "eighteen"), 19: ("unish", "unnis", "nineteen"), 20: ("bish", "bis", "twenty"), 30: ("tirish", "tees", "thirty"),
+    40: ("chollish", "chalis", "forty"), 50: ("ponchash", "pachas", "fifty"), 60: ("shaat", "saath", "sixty"), 70: ("sottor", "sattar", "seventy"),
+    80: ("ashi", "assi", "eighty"), 90: ("nobboi", "nabbe", "ninety"),
+}  # fmt: skip
+_AGE_FILLER = frozenset("years year old age is he she my the i am its it's sal saal bochhor bachhar varsh yrs yr of".split())
+
+
+def _skeleton(word: str) -> str:
+    import re
+
+    t = re.sub(r"[^a-z]", "", word.lower())
+    for a, b in (("chh", "c"), ("ch", "c"), ("sh", "s"), ("th", "t"), ("dh", "d"), ("kh", "k"), ("ph", "f"), ("gh", "g"), ("bh", "b"), ("ou", "o"), ("ee", "i"), ("oo", "u"), ("ph", "f")):
+        t = t.replace(a, b)
+    if not t:
+        return ""
+    body = re.sub(r"[aeiouy]", "", t[1:])
+    sk = t[0] + body
+    return re.sub(r"(.)\1+", r"\1", sk)
+
+
+_SKELETONS: dict[str, set[int]] = {}
+for _n, _names in _ROMAN_NUMBER_NAMES.items():
+    for _w in _names:
+        _SKELETONS.setdefault(_skeleton(_w), set()).add(_n)
+
+
+def phonetic_numbers(text: str, lo: int = 1, hi: int = 120) -> list[int]:
+    """The numbers a Latin-script answer that is not a numeral could be (see above); [] when it is not a lone number-sounding word."""
+    import re
+
+    if not text or re.search(r"[\u0980-\u09ff\u0900-\u097f]", text) or re.search(r"\d", text):
+        return []
+    words = [w for w in re.findall(r"[A-Za-z']+", text) if w.lower() not in _AGE_FILLER]
+    if len(words) != 1:
+        return []
+    return sorted(n for n in _SKELETONS.get(_skeleton(words[0]), set()) if lo <= n <= hi)

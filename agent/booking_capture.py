@@ -50,7 +50,7 @@ _MULTIPLIER = {
 _EXTRA_DIGIT_WORD = {
     "জিরো": "0", "জিরও": "0", "ওয়ান": "1", "টু": "2", "থ্রি": "3", "ফোর": "4", "ফাইভ": "5", "সিক্স": "6", "সেভেন": "7", "এইট": "8",
     "নাইট": "8", "সেবেন": "7", "সেবন": "7", "সেভন": "7", "সিক্ষ": "6", "ফাইব": "5", "থ্রী": "3", "ওয়ন": "1", "ওন": "1", "নাইন": "9", "वन": "1", "टू": "2", "थ्री": "3", "फोर": "4", "फाइव": "5", "सिक्स": "6", "सेवन": "7", "एट": "8", "नाइन": "9",
-    "ছ": "6", "শুন্য": "0", "शुन्य": "0", "नो": "9", "छे": "6", "छै": "6", "paach": "5", "saath": "7", "nine": "9", "aat": "8",
+    "south": "7", "sauth": "7", "ছ": "6", "শুন্য": "0", "शुन्य": "0", "नो": "9", "छे": "6", "छै": "6", "paach": "5", "saath": "7", "nine": "9", "aat": "8",
     # real call, 2026-10-27: "सेवन आइट ज़ीरो ऐट सेवन नाइन सेवन नाइन सिक्स वन" (10 digits) came back missing exactly its
     # two "eight"s -- the recogniser wrote the English word "eight" as "आइट" and, two words later in the SAME
     # sentence, as "ऐट", neither of which was "एट" (already in this table). Same miss class as "छ" for "six" --
@@ -812,6 +812,11 @@ _PROMPTS = {
         "hi": "मरीज़ की उम्र {value} साल है, ठीक है?",
         "bn": "রোগীর বয়স {value} বছর, ঠিক আছে?",
     },
+    "age_which": {
+        "en": "Is the age {a} or {b}? Please say it clearly.",
+        "hi": "उम्र {a} है या {b}? कृपया साफ़ बोलिए।",
+        "bn": "বয়স {a} নাকি {b}? একটু পরিষ্কার করে বলবেন?",
+    },
     "age_again": {
         "en": "All right. Please tell me the patient's age again.",
         "hi": "ठीक है। मरीज़ की उम्र दोबारा बताइए।",
@@ -1211,6 +1216,11 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
         return True
     if field in st.asked_fields and not st.slots.get(field) and not st.slots.get(done_key):
         value = parse(text)
+        if not value and tag == "age":
+            candidates = number_words.phonetic_numbers(text)
+            if len(candidates) >= 2:  # a number-sounding word that fits two ages (7 or 60): ask, never pick
+                plan.speak = prompt("age_which", lang, a=candidates[0], b=candidates[1])
+                return True
         if not value:
             st.slots[done_key] = "1"  # no value in this answer: let it go
             plan.slots, plan.skip_model = {}, True
@@ -1384,7 +1394,11 @@ def bare_age(text: str) -> int | None:
         if any(tok == word or (tok.startswith(word) and tok[len(word):] in ("ের", "এর", "ও", "টা", "ই")) for tok in tokens):
             return n
     n = owner_answers.token_number(t)
-    return n if n and 0 < n <= 120 else None
+    if n and 0 < n <= 120:
+        return n
+    # Owner, 2026-10-28: "south" for সাত -- a lone number-sounding word is a candidate when it fits exactly one number (a two-number fit is asked about, see _detail_turn / the phone read-back)
+    candidates = number_words.phonetic_numbers(t)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 _YES_FIRST = frozenset({"হ্যাঁ", "হ্যা", "হাঁ", "হা", "জি", "ঠিক", "আচ্ছা", "ওকে", "ok", "okay", "yes", "yeah", "haan", "han", "ji", "हाँ", "हां", "हा", "ठीक", "जी", "अच्छा", "ओके"})
@@ -1569,8 +1583,12 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
             if not new_number:
                 plan.speak = prompt("phone_cleared", lang)
                 return plan
-        else:  # neither a yes, a no nor an age: the same read-back once more
-            plan.speak = readback(st, lang, "phone", spoken_digit_groups(pending_phone))
+        else:  # neither a yes, a no nor an age: the number was read back once; only the QUESTION is asked again (owner, 2026-10-28)
+            candidates = number_words.phonetic_numbers(text)
+            if len(candidates) >= 2:
+                plan.speak = prompt("age_which", lang, a=candidates[0], b=candidates[1])
+            else:
+                plan.speak = next_ask(st, lang, "patient_age") or readback(st, lang, "phone", spoken_digit_groups(pending_phone))
             return plan
 
     # 1c-wa. The answer to "does this number have WhatsApp?" (owner, 2026-10-23).
