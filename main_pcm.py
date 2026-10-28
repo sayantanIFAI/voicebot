@@ -3513,7 +3513,14 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
         if offer is not None:
             session.dept_pending = {**offer["pending"], "turn": session.turn_count, "say": offer["say"]}
             return offer["say"]
-    return department_route_reply(_dept_labelled(routed, lang), symptom, lang)
+    reply = department_route_reply(_dept_labelled(routed, lang), symptom, lang)
+    if routed.get("matched") and len(routed.get("doctors_today") or []) >= 2:
+        with contextlib.suppress(ToolCallError):
+            today_iso = slot_proposal.clinic_now().date().isoformat()
+            sitting = (await _tools.department_doctors(routed["department_name"], lang, on_date=today_iso)).get("sitting") or []
+            if len(sitting) >= 2:
+                session.dept_pending = {"kind": "pick", "doctors": sitting, "date": today_iso, "time": None, "turn": session.turn_count, "say": reply}
+    return reply
 
 
 async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex: str | None, on_date: str, when_phrase: str, label: str) -> bool:
@@ -3644,6 +3651,8 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
     when = booking_capture.read_when(text, False, want_day=True)
     wants_when = bool(when.date or when.time)
     wants_book = booking_carryover.asks_to_book(text) or bool(re.search(r"\b(book|appointment)\b|বুক|অ্যাপয়েন্টমেন্ট|अपॉइंटमेंट|बुक", text, re.I))
+    if wants_when and not wants_book and not sex and len(text.split()) <= 12:
+        wants_book = True  # owner, 2026-10-28: "आज के कार्डियोलॉजी ..." / "আজ কার্ডিওলজি..." names a department and a day: who sits then (the department lookup below decides whether a department was really named)
     if not sex and not (wants_when and wants_book):
         return False
     if _fast_path is not None:
@@ -3888,7 +3897,20 @@ async def _answer_good_doctor(session: CallSession, text: str, lang: str) -> Non
         _route_found.set({"dept": routed["department_name"], "names": routed.get("doctors_today") or routed.get("doctors") or []})
         spoken = (await _route_reply(session, routed, text, lang))
     else:
-        spoken = doctor_enquiry_cues.good_doctor_reply(await _general_medicine_today(lang), None, lang)
+        recent = getattr(session, "last_route", None)
+        sticky = None
+        if recent and recent.get("dept") and session.turn_count - recent["turn"] <= _PICK_MEMORY_TURNS:
+            # Owner, 2026-10-28: "কে ভালো" right after the cardiology doctors were named is about THEM, not General Medicine's list
+            with contextlib.suppress(ToolCallError):
+                today_iso = slot_proposal.clinic_now().date().isoformat()
+                res = await _tools.department_doctors(recent["dept"], lang, on_date=today_iso)
+                if res.get("matched") and res.get("doctors"):
+                    sticky = {"matched": True, "department_name": recent["dept"], "doctors": res.get("doctors") or [], "doctors_today": [d["name"] for d in res.get("sitting") or [] if d.get("name")]}
+        if sticky is not None:
+            lead = {"bn": "কোন ডাক্তার ভালো সেটা আমি বলতে পারি না, আমাদের সব ডাক্তারই ভালো। ", "hi": "कौन सा डॉक्टर बेहतर है, यह मैं नहीं बता सकती; हमारे सभी डॉक्टर अच्छे हैं। ", "en": "I cannot say which doctor is better; all our doctors are good. "}[lang if lang in ("bn", "hi") else "en"]
+            spoken = lead + department_route_reply(_dept_labelled(sticky, lang), "", lang)
+        else:
+            spoken = doctor_enquiry_cues.good_doctor_reply(await _general_medicine_today(lang), None, lang)
     await _speak(session, _with_resume(session, spoken, lang), lang)
 
 
@@ -7635,9 +7657,10 @@ async def _answer_about_offered_doctors(session: CallSession, text: str, lang: s
     return True
 
 
-async def _department_week_reply(route: dict, lang: str) -> str | None:
+async def _department_week_reply(route: dict, lang: str) -> tuple[str, list] | None:
     """One department's doctors, each with the weekdays they sit (the weekly pattern from the clinic API, never a date), then the question of whom to book. Doctors without a stored schedule are left out."""
     lines = []
+    items = []
     for name in (route.get("doctors") or [])[:4]:
         try:
             wd = await _tools.doctor_weekdays(name)
@@ -7647,6 +7670,9 @@ async def _department_week_reply(route: dict, lang: str) -> str | None:
             continue
         hours = set((wd.get("hours") or {}).values())
         lines.append(doctor_enquiry_cues.weekdays_reply(name, list(wd["weekdays"]), next(iter(hours)) if len(hours) == 1 else None, lang))
+        first = sorted(hours)[0] if hours else ""
+        start, _, end = first.partition("-")
+        items.append({"name": name, "full_name": name, "start": start.strip() or None, "end": end.strip() or None})
     if not lines:
         return None
     dept = _dept_label(route["department_name"], lang)
@@ -7656,7 +7682,7 @@ async def _department_week_reply(route: dict, lang: str) -> str | None:
         "hi": "किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहेंगे?",
         "en": "Which doctor would you like to book?",
     }[lang if lang in ("bn", "hi") else "en"]
-    return f"{intro} {' '.join(lines)} {ask}"
+    return f"{intro} {' '.join(lines)} {ask}", items
 
 
 async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> bool:
@@ -7670,8 +7696,12 @@ async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> b
     except ToolCallError:
         route = {}
     if route.get("matched") and route.get("doctors"):
-        reply = await _department_week_reply(route, lang)
-        if reply:
+        weekly = await _department_week_reply(route, lang)
+        if weekly:
+            reply, items = weekly
+            # the doctors just offered stay the subject ("কে ভালো এর মধ্যে", "who sits in the morning"), and the department stays the subject of the next questions
+            session.dept_pending = {"kind": "pick", "doctors": items, "date": None, "time": None, "turn": session.turn_count, "say": reply}
+            session.last_route = {"dept": route["department_name"], "names": [i["name"] for i in items], "turn": session.turn_count}
             await _speak(session, _with_resume(session, reply, lang), lang)
             return True
     examples: list[tuple[str, str]] = []
