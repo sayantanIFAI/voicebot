@@ -47,6 +47,8 @@ _MWF_NOON = {"days": [0, 2, 4], "start": "11:00", "end": "13:00"}
 _TTS_NOON = {"days": [1, 3, 5], "start": "11:00", "end": "13:00"}
 _MWF_EVE = {"days": [0, 2, 4], "start": "17:00", "end": "19:00"}
 _TTS_EVE = {"days": [1, 3, 5], "start": "17:30", "end": "19:30"}
+# Owner's own words on the call: sits from 1pm.
+_MWF_1PM = {"days": [0, 2, 4], "start": "13:00", "end": "15:00"}
 NEW_DOCTORS = [
     ("General Surgery", "Dr. A. Lahiri", "Dr. Ashis Lahiri", "আশিস লাহিড়ী", "आशीष लाहिड़ी", "MBBS, MS (General Surgery)", "M", 700, ["লাহিড়ী", "লাহিড়ি"], ["लाहिड़ी"], _TTS_NOON),
     ("General Surgery", "Dr. S. Dasgupta", "Dr. Sharmila Dasgupta", "শর্মিলা দাশগুপ্ত", "शर्मिला दासगुप्ता", "MBBS, MS (General Surgery)", "F", 700, ["দাশগুপ্ত", "দাসগুপ্ত"], ["दासगुप्ता"], _MWF_NOON),
@@ -55,6 +57,16 @@ NEW_DOCTORS = [
     ("Urology", "Dr. T. Ghoshal", "Dr. Tanmoy Ghoshal", "তন্ময় ঘোষাল", "तन्मय घोषाल", "MBBS, MS, MCh (Urology)", "M", 800, ["ঘোষাল"], ["घोषाल"], _TTS_NOON),
     # a male gynaecologist, so "a lady gynaecologist" is a real filter and not the whole department
     ("Gynaecology & Obstetrics", "Dr. A. Pathak", "Dr. Alok Pathak", "আলোক পাঠক", "आलोक पाठक", "MBBS, MS (Obs & Gynae)", "M", 700, ["পাঠক"], ["पाठक"], _MWF_NOON),
+    # Real call, 2026-10-28: a caller asked for "Dr. Sanjay Saha" and the booking never flowed -- the doctor was never in the catalogue at all, not a mishearing of an
+    # existing one. Added here (never from seed.seed(), which would wipe every booking already made). "সাহা"/"साहा" (Saha) is close enough to "শাহ"/"शाह" (Shah) that
+    # the recogniser wrote the wrong but real surname rather than a typo on the real call ("संजो शाह", "डॉ संजोय शाह" for "Dr. Sanjay Saha") -- those exact heard forms
+    # are kept as aliases alongside the correct spelling, same discipline as every other alias in this file (a confirmed real form for a real doctor, never a guess).
+    (
+        "General Medicine", "Dr. S. Saha", "Dr. Sanjay Saha", "সঞ্জয় সাহা", "संजय साहा", "MBBS, MD (Gen. Med.)", "M", 600,
+        ["সাহা", "শাহ", "সঞ্জয় সাহা", "সঞ্জয় শাহ", "সঞ্জো শাহ"],
+        ["साहा", "शाह", "संजय साहा", "संजय शाह", "संजो शाह", "संजोय शाह"],
+        _MWF_1PM,
+    ),
 ]
 
 # (department, keywords_bn, keywords_hi, keywords_en) -- symptoms the clinic's clinicians route to that department. Specific on purpose: a bare
