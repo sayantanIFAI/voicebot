@@ -4801,6 +4801,23 @@ async def _with_spelled_tests(session: CallSession, lang: str, result, english_t
         return result
 
 
+def _keep_established_bengali(session: CallSession, lang: str, result, candidates) -> tuple[str, object]:
+    """Owner, 2026-10-28 ("to ekta naam likhe din" was heard as the Hindi "तो आपका नाम लेकर रही हो"): in a call that is ALREADY Bengali, a turn picked as Hindi stays Bengali unless Hindi clearly beats
+    Bengali's own decoder agreement (by 0.15) -- language ID is unreliable on telephone-quality Bengali and the Hindi decoders can agree 1.00 on words never said. Used on every route that can pick
+    Hindi (the single-recogniser path has the same rule inline). `candidates` = [(lang, ASRResult), ...] that actually ran."""
+    if lang != "hi" or not (session.lang_locked and session.lang == "bn"):
+        return lang, result
+    bn = next((r for lg, r in candidates if lg == "bn"), None)
+    if bn is None:
+        return lang, result
+    bn_agree, hi_agree = float(bn.decoder_agreement or 0.0), float(getattr(result, "decoder_agreement", 0.0) or 0.0)
+    logger.info("[%s] Hindi picked in a Bengali call: Hindi %.2f / Bengali %.2f decoder agreement", session.call_id, hi_agree, bn_agree)
+    if bn_agree >= 0.75 and bn_agree >= hi_agree - 0.15 and getattr(bn, "text", "").strip():
+        logger.info("[%s] the call is Bengali and Bengali's reading stands: Bengali", session.call_id)
+        return "bn", bn
+    return lang, result
+
+
 async def _route_and_transcribe(session: CallSession, utterance_wav: str):
     """LID -> routing decision -> ASR. Returns (language, ASRResult, decisive), or
     (None, None, True) when the router says a human should take the call.
@@ -4871,6 +4888,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         need = engines_needed(lid.language, lid.scores, _languages_active, prior)
         outcomes = await outcomes_for(need)
         lang, result = pick_candidate(outcomes, lid.scores, session.lang_router.previous_language)
+        lang, result = _keep_established_bengali(session, lang, result, outcomes)
         logger.info(
             "[%s] LID %s %s not decisive -> ran %s, chose %s (%s)",
             session.call_id,
@@ -4911,6 +4929,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         both = await outcomes_for([primary, secondary])
         if len(both) == 2:
             lang, result = pick_candidate(both, lid.scores, session.lang_router.previous_language)
+            lang, result = _keep_established_bengali(session, lang, result, both)
         else:
             lang, result = both[0]
         # the same spelled-code rescue as the single-language path below: the English recogniser keeps "C B C" apart
