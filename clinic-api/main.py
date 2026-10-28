@@ -616,6 +616,26 @@ PHONETIC_ASSISTED_FLOOR = 0.45
 # Honorifics stripped from what the caller said before it is compared with a doctor's name.
 _TITLE_WORDS = frozenset({"dr", "doctor", "doc", "ডাক্তার", "ডক্টর", "ডাঃ", "डॉक्टर", "डॉ", "डाक्टर"})
 
+# Owner, 2026-10-28: "Sir" is said before a name, after it, after the full name, or beside "Dr": "Dr Amit Sir", "Amit Sir", "Amit Kumar Sir", "Amit Kumar Saha Sir", "Sir Amit"; in Bengali "স্যার/সার/সির",
+# in Hindi "सर/सिर", and the recogniser spells it any of these ways. None of them is part of a name. Stripped from what was said wherever it stands (never when nothing else is left).
+_HONORIFICS = frozenset(
+    "sir sar saar sahab saheb sahib sab madam maam mam ji babu mahashay mahasay "
+    "স্যার স্যর সার সির সাহেব সাব ম্যাডাম ম্যাম বাবু মহাশয় জি "
+    "सर सिर साहब साहेब सहाब मैडम मैम बाबू महोदय जी".split()
+)
+
+
+def _bare_word(w: str) -> str:
+    return w.strip(".,!?।").replace("\u094d", "").replace("\u09cd", "").lower()  # no dots, no halant
+
+
+def _strip_honorifics(name: str) -> str:
+    """`name` without titles ("Dr", "ডাক্তার", "डॉक्टर") and honorifics ("Sir", "স্যার", "सर") wherever they stand. The original is returned when nothing else would be left."""
+    stop = {_bare_word(w) for w in _HONORIFICS | _TITLE_WORDS}
+    kept = [w for w in (name or "").split() if _bare_word(w) and _bare_word(w) not in stop]
+    return " ".join(kept) if kept else (name or "")
+
+
 # A name fragment shorter than this is not matched as a substring of a doctor's name (REASONED).
 MIN_SUBSTRING_CHARS = 3
 
@@ -648,6 +668,7 @@ def _bn_vowel_variants(s: str) -> set[str]:
 def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
     """Doctors whose WRITTEN name or alias contains what the caller said ("Sen", "Dr Sen", a Bengali
     or Hindi alias). Several matches are returned as several: choosing among them is the caller's job."""
+    name = _strip_honorifics(name)
     needle_tokens = [w for w in (x.strip(".,") for x in (name or "").lower().split()) if w and w not in _TITLE_WORDS]
     needle = " ".join(needle_tokens)
     if not needle:
@@ -790,6 +811,7 @@ def _find_doctor_candidates(db: Session, name: str) -> list[Doctor]:
     The floor and the "within a hair of the top" rule are unchanged; what changed (KCD-096) is which doctors
     they are applied to: the gazetteer's shortlist, not every row. The floor is a character similarity of at
     least 0.60, and every form that clears it shares character pairs with the query, so it is on the shortlist."""
+    name = _strip_honorifics(name)
     shortlisted = {c for c, _f, _r in _gazetteer(db, "doctor").neighbours(name)}
     if not shortlisted:
         return []
@@ -823,6 +845,7 @@ def _looks_like_a_name(candidate: str) -> bool:
 def _doctor_suggestions(db: Session, name: str) -> list[str]:
     """Who the caller MIGHT have meant: sound-alikes (including one- and two-consonant surnames such as Sen,
     Das, Roy) and near-spellings, best first (KCD-436/096). Never acted on -- see _find_doctor."""
+    name = _strip_honorifics(name)
     return [sg.canonical for sg in _gazetteer(db, "doctor").suggest(name, limit=3) if _looks_like_a_name(sg.canonical)]
 
 

@@ -27,3 +27,16 @@ def test_a_given_name_that_is_nobody_still_is_not_the_surname_doctor():
     with clinic_app(sample_patients=False) as (_app, client):
         r = _found(client, "শুভদীপ মন্ডল")
         assert not r.get("found"), r
+
+
+def test_sir_before_after_or_around_a_name_is_ignored():
+    with clinic_app(sample_patients=False) as (_app, client):
+        for said in (
+            "Dr Arun Kumar Sir", "Arun Kumar Sir", "Arun Kumar Saha Sir", "Sir Arun Kumar", "Sir Arun Kumar Saha", "Dr Arun Kumar Saha Sir",
+            "অরুণ কুমার স্যার", "ডাক্তার অরুণ কুমার সির", "স্যার অরুণ কুমার", "अरुण कुमार सर", "डॉक्टर् अरुण कुमार साहब", "Arun Kumar sar",
+        ):
+            r = _found(client, said)
+            assert r.get("found") and "Arun" in str(r), (said, r)
+        # a name that is nobody stays nobody, with or without Sir
+        for said in ("Rahul Verma Sir", "Sir Rahul Verma", "রাহুল ভার্মা স্যার"):
+            assert not _found(client, said).get("found"), said
