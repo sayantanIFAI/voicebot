@@ -1839,7 +1839,7 @@ async def _echo_new_slots(session: CallSession, changed: list[str], prior_slots:
         value = slots.get(field)
         if field in ("phone", "contact_phone", "patient_name", "patient_age", "patient_address"):
             continue  # these are READ BACK for a yes in their own turn: echoing them first says them twice (real call 2026-10-18)
-        if value and field in _ECHOED_FIELDS:
+        if value and field in _ECHOED_FIELDS and _readable_in(str(value), lang):  # evidence pack 2026-10-28: "ঠিক আছে, Dr. Abhijit Sarkar।" was blocked as unspeakable -- the caller heard nothing
             await _speak(session, slot_echo(str(value), lang), lang)
             return
 
@@ -5217,10 +5217,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # language. The actual "okay, switching" acknowledgement is spoken further down (KCD-438, unchanged
         # position), once it is clear nothing else already consumed this turn.
         switch_target = detect_language_switch_request(text, detected_lang)
-        if switch_target:
-            session.lang_explicit = True
         if switch_target and session.booking is not None and session.booking.slots.get("_ps_pending") and booking_capture.says_english_bazar(text):
             switch_target = None  # Owner, 2026-10-27: asked "which police station?", "english was a" is English Bazar, not a request to switch to English
+        if switch_target:
+            session.lang_explicit = True  # set only once the request is accepted (review 2026-10-28: it used to be set before a place-name false positive was rejected)
         if switch_target:
             _lock_reply_language(session, switch_target)
             session.lang_router.note_response_language(switch_target)

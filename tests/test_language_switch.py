@@ -48,3 +48,22 @@ def test_a_caller_naming_a_language_only_to_say_they_do_not_speak_it_is_not_a_sw
     assert detect_language_switch_request("ইংরেজিতে বলুন প্লিজ", "bn") == "en"
     # Two named, one negated: the other still wins (unchanged behaviour).
     assert detect_language_switch_request("বাংলা বলুন, হিন্দি না", "bn") == "bn"
+
+
+def test_negated_language_mentions_are_never_requests():
+    # external review 2026-10-28: "Please do not speak in Hindi" returned Hindi
+    for text, lang in (
+        ("Please do not speak in Hindi", "en"), ("don't speak in hindi", "en"), ("stop speaking in hindi", "en"), ("never talk in bengali", "en"),
+        ("I do not want you to speak in english", "en"), ("হিন্দিতে বলবেন না", "bn"), ("না না হিন্দিতে বলবেন না", "bn"), ("আমি হিন্দিতে কথা বলতে চাই না", "bn"),
+        ("আমি হিন্দি জানি না", "bn"), ("हिंदी में मत बोलिए", "hi"), ("हिंदी में बात मत करो", "hi"), ("हिंदी नहीं आती मुझे", "hi"), ("ইংলিশ বাজার", "bn"),
+    ):
+        assert detect_language_switch_request(text, lang) is None, text
+
+
+def test_an_affirmative_clause_beside_a_negated_one_wins():
+    assert detect_language_switch_request("Speak Bengali, not Hindi", "en") == "bn"
+    assert detect_language_switch_request("speak in hindi but not english", "en") == "hi"
+    assert detect_language_switch_request("হিন্দিতে বলবেন না বাংলায় বলুন", "bn") == "bn"
+    assert detect_language_switch_request("बंगाली में बोलिए हिंदी नहीं", "hi") == "bn"
+    assert detect_language_switch_request("বাংলায় কথা বলতে পারবেন না?", "bn") == "bn"  # a polite request, not a refusal
+    assert detect_language_switch_request("please speak in hindi", "en") == "hi"

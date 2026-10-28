@@ -171,11 +171,83 @@ _PLACE_NAMES = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------------------------------------------------------
+# POLARITY (owner / external review, 2026-10-28): "Please do not speak in Hindi" matched the phrase "speak in hindi" and returned Hindi. A language that is
+# MENTIONED is not a language that is REQUESTED. The sentence is split into clauses; a clause that carries a negation ("do not speak in Hindi", "हिंदी में मत बोलिए",
+# "হিন্দিতে বলবেন না", "I don't understand Hindi") is never a request, and a sentence with an affirmative clause beside it ("Speak Bengali, not Hindi",
+# "হিন্দিতে বলবেন না বাংলায় বলুন") is answered by that affirmative clause alone. Only a sentence that has no negation at all takes the old whole-sentence path,
+# byte for byte as before.
+# ---------------------------------------------------------------------------------------------------------------------------
+_NEG_TOKENS = frozenset(
+    "not no don't dont never stop without cannot can't cant won't wont nahi nahin nai mat "
+    "নয় না নেই নয় नहीं नही मत".split()
+)
+# postposed negations END their clause: "হিন্দিতে বলবেন না | বাংলায় বলুন"
+_NEG_ENDS_CLAUSE = frozenset("না নয় নেই नहीं नही nahi nahin".split())
+_NEG_PHRASES = (
+    "বলবেন না", "বলবে না", "বলবি না", "বলতে চাই না", "বলতে চাইনা", "বলতে হবে না", "চাই না", "চাইনা", "চাইছি না", "লাগবে না", "আসে না", "জানি না", "বুঝি না", "বুঝতে পারি না",
+    "do not", "does not", "did not", "stop speaking", "stop talking",
+)
+# "বাংলায় বলতে পারবেন না?" is a polite REQUEST ("can't you speak Bengali?"), not a refusal
+_POLITE_NA = ("পারবেন না", "পারেন না", "পারবে না", "পারো না", "পারিস না", "বলুন না", "বলুননা")
+_CLAUSE_BREAKS = frozenset("but instead rather however বরং কিন্তু लेकिन बल्कि".split())
+_CLAUSE_PUNCT = re.compile(r"[,;:!?.।॥|]+")
+
+
+def _clauses(text: str) -> list[str]:
+    raw = _CLAUSE_PUNCT.sub(" | ", unicodedata.normalize("NFC", text).lower())
+    out: list[str] = []
+    cur: list[str] = []
+    for tok in raw.split():
+        if tok == "|" or tok in _CLAUSE_BREAKS:
+            if cur:
+                out.append(" ".join(cur))
+            cur = []
+            continue
+        cur.append(tok)
+        if tok in _NEG_ENDS_CLAUSE:
+            out.append(" ".join(cur))
+            cur = []
+    if cur:
+        out.append(" ".join(cur))
+    return out
+
+
+def _is_negative(clause: str) -> bool:
+    for p in _POLITE_NA:
+        clause = clause.replace(p, " ")
+    if any(p in clause for p in _NEG_PHRASES):
+        return True
+    return any(tok in _NEG_TOKENS for tok in clause.split())
+
+
 def detect_language_switch_request(text: str, lang: str) -> str | None:
+    """The requested target language, or None. A negated or merely mentioned language is never a request (see POLARITY above)."""
+    clauses = _clauses(text)
+    if not any(_is_negative(c) for c in clauses):
+        return _detect_unsigned(text, lang)
+    for clause in clauses:
+        if _is_negative(clause):
+            # "बंगाली में बोलिए हिंदी नहीं" ("speak Bengali, not Hindi"): the clause ends in "<language> <negator>"; what comes before that pair is still an affirmative request
+            words = clause.split()
+            if len(words) >= 3 and words[-1] in _NEG_ENDS_CLAUSE and any(n in words[-2] for names in _LANGUAGE_NAMES.values() for n in names):
+                rest = " ".join(words[:-2])
+                if rest and not _is_negative(rest):
+                    hit = _detect_unsigned(rest, lang)
+                    if hit:
+                        return hit
+            continue
+        hit = _detect_unsigned(clause, lang)
+        if hit:
+            return hit
+    return None
+
+
+def _detect_unsigned(text: str, lang: str) -> str | None:
     """`lang` is the ASR-detected language of THIS utterance (the request
     itself is understood correctly regardless of which language it was
     made in). Returns the requested target language code, or None if this
-    utterance was not a language-switch request."""
+    utterance was not a language-switch request. (Polarity is handled by the caller.)"""
     # Owner, 2026-10-18: "ইংলিশ বাজার" / "English Bazar" is a police station in Malda, said in an address -- not a request to speak English.
     text = _PLACE_NAMES.sub(" ", text)
     t = text.strip().lower()

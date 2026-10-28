@@ -18,6 +18,8 @@ import os
 import time
 import uuid
 
+import asyncio
+
 import httpx
 from pydantic import BaseModel
 
@@ -57,6 +59,52 @@ class ClinicToolsClient:
 
     async def aclose(self):
         await self._client.aclose()
+
+    # ---- writes: ONE Idempotency-Key per operation, reused on every retry of it (review 2026-10-28) ----
+    # The clinic API claims the key before it runs the operation (clinic-api/idempotency.py), so a retry after a timeout cannot run a booking, hold, cancel,
+    # reschedule or message twice: if the first attempt finished, the retry gets its stored answer; if it is still running the API answers 409 and the retry waits.
+    # An attempt that could not reach the server is repeated; an attempt that MAY have been executed (a read timeout) is repeated only for endpoints that carry the guard.
+    # When the outcome is still unknown after that, the caller gets a ToolCallError -- never a guessed success.
+    _GUARDED_PATHS = frozenset(
+        {
+            "/api/v1/appointments", "/api/v1/bookings/hold", "/api/v1/bookings/confirm", "/api/v1/bookings/reschedule", "/api/v1/bookings/cancel", "/api/v1/patients/senior",
+            "/api/v1/bookings/tests", "/api/v1/bookings/add-test", "/api/v1/doctors/leave", "/api/v1/notifications/sms", "/api/v1/bookings/resend", "/api/v1/bookings/draft",
+            "/api/v1/calls/out-of-scope", "/api/v1/callbacks", "/api/v1/payments/send-link", "/api/v1/bookings/serial/resend", "/api/v1/bookings/send-whatsapp-confirmation",
+            "/api/v1/reports/request-otp", "/api/v1/reports/deliver",
+        }
+    )
+    _WRITE_RETRIES = 1
+    _IN_PROGRESS_WAITS = (0.4, 0.8, 1.2)
+
+    @classmethod
+    def _is_guarded(cls, path: str) -> bool:
+        return path in cls._GUARDED_PATHS or (path.startswith("/api/v1/patients/") and path.endswith("/preferences"))
+
+    async def _write(self, path: str, json=None, headers=None):
+        key = uuid.uuid4().hex  # one key for this operation, whatever happens below
+        merged = {**(headers or {}), "Idempotency-Key": key}
+        guarded = self._is_guarded(path)
+        attempts_left = (self._WRITE_RETRIES if guarded else 0) + 1
+        waits = list(self._IN_PROGRESS_WAITS)
+        while True:
+            try:
+                r = await self._client.post(path, json=json, headers=merged)
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                attempts_left -= 1  # never reached the server: safe to repeat
+                if attempts_left <= 0 or not guarded:
+                    raise
+                await asyncio.sleep(0.3)
+                continue
+            except (httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError):
+                attempts_left -= 1  # it may have been executed: only a guarded endpoint answers the same key with the stored result
+                if attempts_left <= 0 or not guarded:
+                    raise
+                await asyncio.sleep(0.3)
+                continue
+            if r.status_code == 409 and guarded and waits:
+                await asyncio.sleep(waits.pop(0))  # the first attempt is still running on the server: ask again with the same key
+                continue
+            return r
 
     # ---- Tool 1: GET /api/v1/tests/search?name=... ----
     # Expected response shape:
@@ -197,7 +245,7 @@ class ClinicToolsClient:
             "phone": phone,
         }
         try:
-            r = await self._client.post("/api/v1/appointments", json=body)
+            r = await self._write("/api/v1/appointments", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "book_appointment")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -212,7 +260,7 @@ class ClinicToolsClient:
     async def hold_slot(self, doctor_name: str, date: str, time_slot: str) -> dict:
         body = {"doctor_name": doctor_name, "date": date, "time_slot": time_slot}
         try:
-            r = await self._client.post("/api/v1/bookings/hold", json=body)
+            r = await self._write("/api/v1/bookings/hold", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "hold_slot")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -246,7 +294,7 @@ class ClinicToolsClient:
             "patient_sex": patient_sex or "",
         }
         try:
-            r = await self._client.post("/api/v1/bookings/confirm", json=body)
+            r = await self._write("/api/v1/bookings/confirm", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "confirm_booking")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -255,7 +303,7 @@ class ClinicToolsClient:
     async def reschedule_appointment(self, confirmation_id: str, new_date: str, new_time_slot: str) -> dict:
         body = {"confirmation_id": confirmation_id, "new_date": new_date, "new_time_slot": new_time_slot}
         try:
-            r = await self._client.post("/api/v1/bookings/reschedule", json=body)
+            r = await self._write("/api/v1/bookings/reschedule", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "reschedule_appointment")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -264,7 +312,7 @@ class ClinicToolsClient:
     async def cancel_appointment(self, confirmation_id: str, confirm_charge: bool = False) -> dict:
         body = {"confirmation_id": confirmation_id, "confirm_charge": confirm_charge}
         try:
-            r = await self._client.post("/api/v1/bookings/cancel", json=body)
+            r = await self._write("/api/v1/bookings/cancel", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "cancel_appointment")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -284,7 +332,7 @@ class ClinicToolsClient:
     # KCD-084: senior mode persisted against the patient (a boolean only).
     async def set_patient_senior(self, phone: str, senior: bool = True, caller_phone: str | None = None) -> dict:
         try:
-            r = await self._client.post(
+            r = await self._write(
                 "/api/v1/patients/senior", json={"phone": phone, "senior": senior, "caller_phone": caller_phone}
             )
             r.raise_for_status()
@@ -332,7 +380,7 @@ class ClinicToolsClient:
             "relationship": relationship,
         }
         try:
-            r = await self._client.post("/api/v1/bookings/tests", json=body)
+            r = await self._write("/api/v1/bookings/tests", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "book_tests")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -341,7 +389,7 @@ class ClinicToolsClient:
     async def add_test_to_booking(self, confirmation_id: str, test_name: str) -> dict:
         body = {"confirmation_id": confirmation_id, "test_name": test_name}
         try:
-            r = await self._client.post("/api/v1/bookings/add-test", json=body)
+            r = await self._write("/api/v1/bookings/add-test", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "add_test_to_booking")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -424,10 +472,9 @@ class ClinicToolsClient:
 
     async def resend_confirmation(self, confirmation_id: str) -> dict:
         try:
-            r = await self._client.post(
+            r = await self._write(
                 "/api/v1/bookings/resend",
                 json={"confirmation_id": confirmation_id},
-                headers={"Idempotency-Key": uuid.uuid4().hex},
             )
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "resend_confirmation")
@@ -449,7 +496,7 @@ class ClinicToolsClient:
             "call_summary": call_summary,
         }
         try:
-            r = await self._client.post("/api/v1/callbacks", json=body)
+            r = await self._write("/api/v1/callbacks", json=body)
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "request_callback")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
@@ -489,10 +536,9 @@ class ClinicToolsClient:
         """sourav, 2026-10-24: queue a paid booking's serial number to its WhatsApp number again (clinic-api /api/v1/bookings/serial/resend). The channel is a placeholder: the
         answer says "success" when it was QUEUED, never that it reached the phone."""
         try:
-            r = await self._client.post(
+            r = await self._write(
                 "/api/v1/bookings/serial/resend",
                 json={"phone": phone, "confirmation_id": confirmation_id},
-                headers={"Idempotency-Key": uuid.uuid4().hex},
             )
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "resend_serial")
@@ -504,10 +550,9 @@ class ClinicToolsClient:
         lab test's confirmation_id belongs to a different table there and is never found, by design: a lab test is
         paid and booked at the counter, never over the call."""
         try:
-            r = await self._client.post(
+            r = await self._write(
                 "/api/v1/payments/send-link",
                 json={"confirmation_id": confirmation_id},
-                headers={"Idempotency-Key": uuid.uuid4().hex},
             )
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "send_payment_link")
@@ -519,10 +564,9 @@ class ClinicToolsClient:
         send_booking_confirmation_whatsapp), sent once a doctor appointment is confirmed -- separate from
         send_payment_link's own message above."""
         try:
-            r = await self._client.post(
+            r = await self._write(
                 "/api/v1/bookings/send-whatsapp-confirmation",
                 json={"confirmation_id": confirmation_id},
-                headers={"Idempotency-Key": uuid.uuid4().hex},
             )
             r.raise_for_status()
             return validated(SuccessAnswer, r.json(), "send_booking_confirmation_whatsapp")
@@ -540,7 +584,7 @@ class ClinicToolsClient:
         """KCD-lead-1: staff at another Sonoscan center passing along a patient's number for a later outbound
         call (clinic-api/referral_log.py) -- a CSV worklist for staff, never a claim that the call was made."""
         try:
-            r = await self._client.post(
+            r = await self._write(
                 "/api/v1/referrals",
                 json={
                     "patient_name": patient_name,
@@ -561,7 +605,7 @@ class ClinicToolsClient:
     async def save_draft_booking(self, caller_phone: str, call_id: str, slots_json: str) -> dict:
         body = {"caller_phone": caller_phone, "call_id": call_id, "slots_json": slots_json}
         try:
-            r = await self._client.post("/api/v1/bookings/draft", json=body)
+            r = await self._write("/api/v1/bookings/draft", json=body)
             r.raise_for_status()
             return r.json()
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON
@@ -586,7 +630,7 @@ class ClinicToolsClient:
 
     async def _post(self, path: str, body: dict, what: str, model: type[BaseModel] | None = None) -> dict:
         try:
-            r = await self._client.post(path, json=body, headers={"Idempotency-Key": uuid.uuid4().hex})
+            r = await self._write(path, json=body)
             r.raise_for_status()
             return validated(model, r.json(), what) if model else r.json()
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
