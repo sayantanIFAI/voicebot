@@ -157,6 +157,25 @@ _NAME_ENDINGS = frozenset(
 )
 
 
+# Owner, 2026-10-28: "only words with the জয়দেব structure -- where the second letter is য় -- should be said as two words: জয় দেব". The rule is on the SHAPE: জয় + a rest that starts with a consonant (not
+# a vowel sign, not a conjunct such as ন্ত) and has at least two consonant letters (জয়দেব, জয়দীপ, জয়কৃষ্ণ, জয়গোপাল, জয়সেন, and with any ending: জয়দেবের). It is limited to the জয় prefix on purpose: other
+# words with য় second (বয়স, বয়সের, শয়তান, নয়ন, পয়সা, ময়দা, দয়াল, হয়েছে) are ordinary words and must not be cut, and জয়ন্ত, জয়শ্রী, জয়িতা, জয়ী are not this shape.
+_JOY_PREFIX = unicodedata.normalize("NFC", "জয়")
+_VIRAMA = "\u09cd"
+_CONSONANTS = frozenset(chr(c) for c in list(range(0x0995, 0x09BA)) + [0x09DC, 0x09DD, 0x09DF, 0x09CE])
+
+
+def _joy_compound(w: str) -> str | None:
+    if not w.startswith(_JOY_PREFIX):
+        return None
+    rest = w[len(_JOY_PREFIX):]
+    if len(rest) < 3 or rest[0] not in _CONSONANTS or rest[1] == _VIRAMA:
+        return None
+    if sum(1 for ch in rest if ch in _CONSONANTS and ch not in ("\u0982", "\u0983")) < 2:
+        return None
+    return f"{_JOY_PREFIX} {respell(rest)}"
+
+
 def _name_family(w: str) -> str | None:
     for base in _NAME_BASES:
         if w.startswith(base) and w[len(base):] in _NAME_ENDINGS:
@@ -182,6 +201,9 @@ def respell(word: str) -> str:
     name = _name_family(w)
     if name is not None:
         return name
+    joy = _joy_compound(w)
+    if joy is not None:
+        return joy
     if w in _NATIVE_SH and os.environ.get("BN_RESPELL_RULES", "1") != "0":
         return _sh(w)
     return word

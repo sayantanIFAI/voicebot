@@ -107,3 +107,11 @@ def test_days_numbers_and_inflected_forms_are_covered_too():
 def test_the_reviewed_list_never_contains_an_english_origin_word():
     loans = {"সিবিসি", "সিটি", "সুগার", "সেন্টার", "ক্যালসিয়াম", "প্রেসক্রিপশন", "সোনোস্ক্যান", "সিরাম", "অ্যাসিড", "সরি", "সিরিয়াল", "সেপ্টেম্বর", "ডিসেম্বর"}
     assert not (loans & bn_respell._NATIVE_SH)
+
+
+def test_joy_names_are_said_as_two_words_and_ordinary_words_with_second_letter_ya_are_not_cut():
+    # Owner, 2026-10-28: জয়দেব -> জয় দেব; the rule is the জয় + consonant-start shape, never বয়স / শয়তান / নয়ন
+    for word, spelling in {"জয়দেব": "জয় দেব", "জয়দীপ": "জয় দীপ", "জয়দেবের": "জয় দেবের", "জয়কৃষ্ণ": "জয় কৃষ্ণ", "জয়গোপাল": "জয় গোপাল", "জয়দীপকে": "জয় দীপকে"}.items():
+        assert bn_respell.respell(word) == spelling
+    for word in ("জয়", "জয়ন্ত", "জয়ন্তী", "জয়শ্রী", "জয়িতা", "জয়ী", "জয়ের", "বয়স", "বয়সের", "শয়তান", "নয়ন", "পয়সা", "ময়দা", "দয়াল", "হয়েছে"):
+        assert bn_respell.respell(word) == word
