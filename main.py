@@ -4945,10 +4945,18 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             bn_early = await asyncio.wait_for(asyncio.shield(tasks["bn"]), timeout=1.5)
         except Exception:  # noqa: BLE001 - optional check
             bn_early = None
-        if bn_early is not None and float(bn_early.decoder_agreement or 0.0) >= 0.8 and float(bn_early.decoder_agreement or 0.0) >= agree + 0.03:
-            logger.info("[%s] language ID said Hindi but Bengali's decoders agree better (%.2f against %.2f): Bengali", session.call_id, bn_early.decoder_agreement, agree)
-            session.lang_router.note_response_language("bn")
-            return "bn", bn_early, True
+        if bn_early is not None:
+            bn_agree = float(bn_early.decoder_agreement or 0.0)
+            # Owner, 2026-10-28 ("to ekta naam likhe din" was heard as Hindi "तो आपका नाम लेकर रही हो"): language ID is not reliable on telephone-quality Bengali, and the Hindi decoders can agree
+            # 1.00 on words that were never said. In a call that is ALREADY Bengali, a single Hindi-labelled turn must show clear evidence to count: Hindi has to beat Bengali's own agreement by 0.15.
+            # A call not yet settled on Bengali keeps the stricter rule (Bengali better by 0.03).
+            established = bool(session.lang_locked and session.lang == "bn")
+            margin = -0.15 if established else 0.03
+            logger.info("[%s] Hindi %.2f / Bengali %.2f decoder agreement (established Bengali call: %s)", session.call_id, agree, bn_agree, established)
+            if bn_agree >= 0.75 and bn_agree >= agree + margin:
+                logger.info("[%s] language ID said Hindi but the Bengali reading stands (%.2f against %.2f): Bengali", session.call_id, bn_agree, agree)
+                session.lang_router.note_response_language("bn")
+                return "bn", bn_early, True
     if chosen == "hi" and "bn" in _languages_active and agree < LOW_AGREEMENT_FOR_LOCK:
         # Owner, 2026-10-28: Bengali speech that language ID called Hindi at 0.99 came back as Devanagari nonsense ("पुलच हम य शगरटकताता", decoder agreement 0.30), and that guess then answered the whole
         # call in Hindi. A Hindi read the two decoders do not agree on is checked against Bengali's; the better-agreeing one is used, and neither locks the call's language.
