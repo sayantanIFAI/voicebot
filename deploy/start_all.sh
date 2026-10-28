@@ -115,6 +115,18 @@ chmod +x /workspace/bin/_run_*.sh
 start tts         8002 /workspace/logs/tts_server.log   /workspace/bin/_run_tts.sh
 start indic-asr   8004 /workspace/logs/indic_asr.log    /workspace/bin/_run_indic_asr.sh
 start clinic-api  8080 /workspace/logs/clinic_api.log   /workspace/bin/_run_clinic.sh
+# The agents load their language-ID client ONCE at startup. Started before the recogniser service answered, they came up "Bengali only" with no language ID and recognised nothing
+# (2026-10-28, twice). So they wait here, up to WAIT_FOR_ASR_S, until the Bengali/Hindi recogniser and the clinic API answer.
+wait_for_http() {
+    local url=$1 name=$2 waited=0
+    until curl -fs -m 3 "$url" >/dev/null 2>&1; do
+        [ "$waited" -ge "${WAIT_FOR_ASR_S:-420}" ] && { echo "  WARNING: $name did not answer within ${WAIT_FOR_ASR_S:-420}s -- starting the agents anyway"; return 1; }
+        sleep 5; waited=$((waited + 5))
+    done
+    echo "  $name answers ($waited s)"
+}
+wait_for_http http://127.0.0.1:8004/health indic-asr
+wait_for_http http://127.0.0.1:8080/api/health clinic-api
 # Admission control counts calls PER PROCESS, so two media entrypoints share no cap (an external
 # review flagged this). ONLY_PCM=1 starts just the PCM entrypoint, which is the one to run when
 # real capacity limits matter; the WebM one is the browser-prototype path.
