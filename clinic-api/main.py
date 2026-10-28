@@ -708,9 +708,15 @@ def _given_name_fits(d: Doctor, said: str, alias: str) -> bool:
     """Real call 2026-10-28: "শুভদীপা মণ্ডল" was answered as Dr. Anirban Mondal because the surname alias "মণ্ডল" sits INSIDE what was said. The surname alone matching does not make a
     doctor the one named: when the caller said MORE than the surname, every other word (the given name) must be a near-match for a word of this doctor's own name, otherwise this is a doctor
     that does not exist, and the caller hears "no doctor of that name" with the real suggestions (Doctor Nobody)."""
-    import difflib
+    def _bare(w: str) -> str:
+        return w.strip(".,").replace("्", "").replace("্", "").lower()  # no dots, no halant: "डॉक्टर्" is "डॉक्टर"
 
-    extra = [w for w in said.replace(alias, " ").split() if w.strip(".,") and w.strip(".,") not in _NAME_NOISE]
+    noise = {_bare(n) for n in _NAME_NOISE}
+    extra = [
+        w
+        for w in said.replace(alias, " ").split()
+        if _bare(w) and _bare(w) not in noise and not any(difflib.SequenceMatcher(None, _bare(w), n).ratio() >= 0.8 for n in noise if len(n) >= 3)
+    ]
     if not extra:
         return True
     own = [t.strip(".,").lower() for t in ((d.full_name_bn or "") + " " + (d.full_name_hi or "") + " " + d.name + " " + (d.full_name or "")).split()]

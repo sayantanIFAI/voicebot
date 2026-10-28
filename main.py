@@ -4937,6 +4937,18 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         if en_result is not None:
             result = await _with_spelled_tests(session, chosen, result, en_result.text)
     agree = float(getattr(result, "decoder_agreement", 1.0) or 0.0)
+    if chosen == "hi" and "bn" in _languages_active and prior == "bn" and tasks.get("bn") is not None and agree >= LOW_AGREEMENT_FOR_LOCK:
+        # Live replay, 2026-10-28: two Bengali clips were labelled Hindi by language ID at 0.98 and 0.997 (telephone-quality speech). The Hindi decoders still agreed (0.81, 0.84), so the check
+        # below (agreement under 0.5) never ran, and the Bengali call was answered in Hindi. The Bengali recogniser was already running (it is the call's own language, started with language ID),
+        # so comparing costs nothing: where it agrees with ITSELF better than Hindi does (0.97 against 0.81; 0.88 against 0.84), the speech is Bengali. A call that is not in Bengali is not touched.
+        try:
+            bn_early = await asyncio.wait_for(asyncio.shield(tasks["bn"]), timeout=1.5)
+        except Exception:  # noqa: BLE001 - optional check
+            bn_early = None
+        if bn_early is not None and float(bn_early.decoder_agreement or 0.0) >= 0.8 and float(bn_early.decoder_agreement or 0.0) >= agree + 0.03:
+            logger.info("[%s] language ID said Hindi but Bengali's decoders agree better (%.2f against %.2f): Bengali", session.call_id, bn_early.decoder_agreement, agree)
+            session.lang_router.note_response_language("bn")
+            return "bn", bn_early, True
     if chosen == "hi" and "bn" in _languages_active and agree < LOW_AGREEMENT_FOR_LOCK:
         # Owner, 2026-10-28: Bengali speech that language ID called Hindi at 0.99 came back as Devanagari nonsense ("पुलच हम य शगरटकताता", decoder agreement 0.30), and that guess then answered the whole
         # call in Hindi. A Hindi read the two decoders do not agree on is checked against Bengali's; the better-agreeing one is used, and neither locks the call's language.
@@ -5140,25 +5152,6 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             and asr_result.decoder_agreement >= 0.85
         ):
             logger.info("[%s] the call was locked from a doubtful read and a clear %s sentence followed: the reply language moves to %s", session.call_id, detected_lang, detected_lang)
-            _lock_reply_language(session, detected_lang)
-            session.lang_lock_weak = False
-            session.lang_router.note_response_language(detected_lang)
-            lang = detected_lang
-        # Owner, 2026-10-28: the first sentence of a Bengali call was read as Hindi (garbled, language ID 0.98 Hindi) and the whole call was answered in Hindi. Within the first two turns,
-        # before anything has been understood, a clear sentence of two words or more in the OTHER of Bengali/Hindi moves the lock (never an explicit request, never English, never a booking answer).
-        if (
-            session.turn_count <= 2
-            and lang in ("bn", "hi")
-            and lang != detected_lang
-            and detected_lang in ("bn", "hi")
-            and not session.lang_explicit
-            and not _short_booking_answer
-            and len(_heard.split()) >= 2
-            and script_share(_heard, detected_lang) >= 0.85
-            and asr_result.decoder_agreement >= 0.85
-            and session.booking is None
-        ):
-            logger.info("[%s] early call, a clear %s sentence after a %s lock: the reply language moves to %s", session.call_id, detected_lang, lang, detected_lang)
             _lock_reply_language(session, detected_lang)
             session.lang_lock_weak = False
             session.lang_router.note_response_language(detected_lang)
