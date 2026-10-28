@@ -1037,6 +1037,27 @@ _DEPT_ALIASES: dict[str, str] = {
 }
 
 
+# Owner, 2026-10-28 (real call): "...একটা জেনারেল মেডিসিন এর একটা ডাক্তার দেখাতে চাই আজকে কাকে পাবো" -- the caller NAMED the department, but only English and a few Bengali forms were known, so the agent asked
+# "what is the problem?". Every department's own Bengali and Hindi display name (the words the agent itself says) now resolves to it.
+_DEPT_ALIASES.update(
+    {
+        "জেনারেল মেডিসিন": "General Medicine", "जनरल मेडिसिन": "General Medicine", "জেনারেল ফিজিশিয়ান": "General Medicine", "जनरल फिजिशियन": "General Medicine", "জেনারেল ফিজিসিয়ান": "General Medicine",
+        "কার্ডিওলজি": "Cardiology", "कार्डियोलॉजी": "Cardiology",
+        "গাইনোকোলজি": "Gynaecology & Obstetrics", "गायनेकोलॉजी": "Gynaecology & Obstetrics", "গাইনি": "Gynaecology & Obstetrics", "गायनी": "Gynaecology & Obstetrics",
+        "অর্থোপেডিক্স": "Orthopaedics", "ऑर्थोपेडिक्स": "Orthopaedics", "অর্থোপেডিক": "Orthopaedics",
+        "ডার্মাটোলজি": "Dermatology", "डर्मेटोलॉजी": "Dermatology", "ডার্মাটোলজি": "Dermatology",
+        "পেডিয়াট্রিক্স": "Paediatrics", "पीडियाट्रिक्स": "Paediatrics", "পেডিয়াট্রিক": "Paediatrics",
+        "ডায়াবেটিস ও এন্ডোক্রিনোলজি": "Diabetology & Endocrinology", "এন্ডোক্রিনোলজি": "Diabetology & Endocrinology", "एंडोक्रिनोलॉजी": "Diabetology & Endocrinology",
+        "ডেন্টিস্ট্রি": "Dentistry", "डेंटिस्ट्री": "Dentistry",
+        "জেনারেল সার্জারি": "General Surgery", "जनरल सर्जरी": "General Surgery",
+        "নিউরোলজি": "Neurology", "न्यूरोलॉजी": "Neurology",
+        "নিউরোসার্জারি": "Neurosurgery", "न्यूरोसर्जरी": "Neurosurgery",
+        "ইউরোলজি": "Urology", "यूरोलॉजी": "Urology",
+        "ই এন টি": "ENT", "ई एन टी": "ENT",
+    }
+)
+
+
 def _alias_department(q: str) -> str | None:
     """The department a short form in `q` stands for, or None. Longest key first, so 'general medicine' beats 'medicine'."""
     import re

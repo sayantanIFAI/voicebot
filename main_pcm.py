@@ -3663,7 +3663,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
     when = booking_capture.read_when(text, False, want_day=True)
     wants_when = bool(when.date or when.time)
     wants_book = booking_carryover.asks_to_book(text) or bool(re.search(r"\b(book|appointment)\b|বুক|অ্যাপয়েন্টমেন্ট|अपॉइंटमेंट|बुक", text, re.I))
-    if wants_when and not wants_book and not sex and len(text.split()) <= 12:
+    if wants_when and not wants_book and not sex and len(text.split()) <= 40:  # was 12: a real caller's sentence ("... একটা জেনারেল মেডিসিন এর একটা ডাক্তার দেখাতে চাই আজকে কাকে পাবো") has 19 words; the department lookup below decides whether a department was really named
         wants_book = True  # owner, 2026-10-28: "आज के कार्डियोलॉजी ..." / "আজ কার্ডিওলজি..." names a department and a day: who sits then (the department lookup below decides whether a department was really named)
     if not sex and not (wants_when and wants_book):
         return False
