@@ -1242,6 +1242,8 @@ class CallSession:
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
         self.awaiting_test_category = False
         self.awaiting_clinician_offer = False  # "a doctor will explain it, shall I connect one?" was asked (agent/clinical_safety.py); the next yes / no answers it
+        self.lang_lock_weak = False  # the language was locked from a doubtful first read (decoders disagreeing): the first clear sentence in the other script may correct it
+        self.last_enquiry = None  # {"text", "turn"}: the last read-only enquiry answered, replayed in a language the caller then asks for ("বাংলায় বলুন এটা")
         self.lang_explicit = False  # the caller ASKED for a language ("speak English"): a later clear sentence in another script never moves the call on its own
         self.noisy_asks = 0  # how many times this caller was asked, because of noise on the line, to find a quiet place / repeat
         self.noise_suppress = False  # set after NOISE_SUPPRESS_AFTER_ASKS such asks: this call's audio is then noise-filtered (when noisy) before recognition
@@ -4539,6 +4541,7 @@ async def _finish_enquiry_turn(
     ToolCallError handling one level up in _dispatch_turn, just scoped
     so a second-question failure cannot blow away a first-question
     success."""
+    session.last_enquiry = {"text": text, "turn": session.turn_count}  # a read-only enquiry: it may be replayed in another language on request
     turn_entities = [(intent, slots)]
     secondary_intent = data.get("secondary_intent")
     if secondary_intent:
@@ -4871,7 +4874,19 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             return "en", en_result, True
         if en_result is not None:
             result = await _with_spelled_tests(session, chosen, result, en_result.text)
-    return chosen, result, True
+    agree = float(getattr(result, "decoder_agreement", 1.0) or 0.0)
+    if chosen == "hi" and "bn" in _languages_active and agree < LOW_AGREEMENT_FOR_LOCK:
+        # Owner, 2026-10-28: Bengali speech that language ID called Hindi at 0.99 came back as Devanagari nonsense ("पुलच हम य शगरटकताता", decoder agreement 0.30), and that guess then answered the whole
+        # call in Hindi. A Hindi read the two decoders do not agree on is checked against Bengali's; the better-agreeing one is used, and neither locks the call's language.
+        try:
+            bn_result = (await outcomes_for(["bn"]))[0][1]
+        except Exception:  # noqa: BLE001 - the check is optional
+            bn_result = None
+        if bn_result is not None and float(bn_result.decoder_agreement or 0.0) > agree:
+            logger.info("[%s] doubtful Hindi read (agreement %.2f) beaten by Bengali (%.2f): Bengali", session.call_id, agree, bn_result.decoder_agreement)
+            session.lang_router.note_response_language("bn")
+            return "bn", bn_result, float(bn_result.decoder_agreement or 0.0) >= LOW_AGREEMENT_FOR_LOCK
+    return chosen, result, (agree >= LOW_AGREEMENT_FOR_LOCK) if chosen in ("bn", "hi") else True
 
 
 async def _dispatch_turn(session: CallSession, utterance_wav: str):
@@ -4999,7 +5014,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         detected_lang = lang  # what the CALLER actually spoke this turn -- kept for analytics; never overridden
         _rec(session, "language", detected_lang)
         lang = _resolve_reply_language(
-            session, lang, lang_decisive
+            session, lang, lang_decisive, float(getattr(asr_result, "decoder_agreement", 1.0) or 0.0)
         )  # what the AGENT replies in -- sticky; see the function
         _heard = (asr_result.text or "").strip()
         _digits_said, _digit_hits, _digit_total = booking_capture.read_digits(_heard)
@@ -5047,6 +5062,21 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         ):
             logger.info("[%s] an unrequested English call and a clear %s sentence: the reply language moves to %s", session.call_id, detected_lang, detected_lang)
             _lock_reply_language(session, detected_lang)
+            session.lang_router.note_response_language(detected_lang)
+            lang = detected_lang
+        if (
+            session.lang_lock_weak
+            and lang != detected_lang
+            and detected_lang in ("bn", "hi")
+            and not session.lang_explicit
+            and not _short_booking_answer
+            and len(_heard.split()) >= 4
+            and script_share(_heard, detected_lang) >= 0.85
+            and asr_result.decoder_agreement >= 0.85
+        ):
+            logger.info("[%s] the call was locked from a doubtful read and a clear %s sentence followed: the reply language moves to %s", session.call_id, detected_lang, detected_lang)
+            _lock_reply_language(session, detected_lang)
+            session.lang_lock_weak = False
             session.lang_router.note_response_language(detected_lang)
             lang = detected_lang
         confidence = confidence_state(getattr(asr_result, "decoder_used", None), asr_result.decoder_agreement)
@@ -5385,6 +5415,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # LOCKED up there is acknowledged here, now that nothing earlier (a pending security/draft/history
         # continuation) has already consumed this turn with its own reply.
         if switch_target:
+            _prev_enquiry = session.last_enquiry
+            if _prev_enquiry and session.turn_count - _prev_enquiry["turn"] <= 2:
+                # Owner, 2026-10-28: after "বাংলায় বলুন এটা" the answer just given is said again in Bengali (a read-only enquiry only; nothing is ever re-done that writes)
+                session.last_enquiry = None
+                await _answer_content_turn(session, _prev_enquiry["text"], switch_target, asr_result)
+                return
             await _speak(session, phrase("language_switched", switch_target), switch_target)
             return
 
@@ -7476,7 +7512,7 @@ def _caller_thanked(text: str, lang: str) -> bool:
     return bool(table and table.any(_cues.normalise_cue(text), table.thanks))
 
 
-def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True) -> str:
+def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True, agreement: float = 1.0) -> str:
     """The language to REPLY in this turn (KCD-lay-terms, a live call 2026-09-28) -- locked to the first language
     established for the call, not re-derived from this turn's own language ID. `detected_lang` is what THIS turn's
     LID/ASR-verification actually settled on (used to select the ASR engine already, by the time this runs) --
@@ -7498,6 +7534,7 @@ def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: 
     gets a fair first shot at locking it, instead of a coin-flip from noise becoming permanent."""
     if not session.lang_locked and decisive:
         _lock_reply_language(session, detected_lang)
+        session.lang_lock_weak = agreement < 0.6
     session.lang_router.note_response_language(session.lang)
     apply_language(session.call_state, session.lang)
     return session.lang
@@ -7526,6 +7563,9 @@ def _abuse_reply_language(text: str, lang: str, prior_lang: str) -> str:
             return candidate
     return prior_lang if prior_lang in _languages_active else lang
 
+
+# below this decoder agreement a recognition is too doubtful to decide which language the whole call is in
+LOW_AGREEMENT_FOR_LOCK = 0.5
 
 _GENERIC_PROMPT_KEYS = ("offtopic_redirect", "how_are_you_reply", "smalltalk_default", "silence_go_on", "ask_problem")
 
