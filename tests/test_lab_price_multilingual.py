@@ -229,6 +229,13 @@ class RecordingTools:
         self.lookups.append((name, result))
         return result
 
+    async def route_department(self, query_text, lang="bn", age=None):
+        # the orchestrator routes a sentence that names no test to a department (lay terms, symptoms); this stand-in forwards to the real clinic API and records nothing
+        params = {"query": query_text, "lang": lang}
+        if age is not None:
+            params["age"] = age
+        return self.client.get("/api/v1/departments/route", params=params).json()
+
     async def get_test_prep(self, test_name, lang="bn"):
         # sourav, 2026-10-16 (final verification): a price question that also says "fasting" / "empty stomach" now makes the orchestrator
         # answer the implied preparation question too (agent/combined_question.py, b356fbe), through get_test_prep. This stand-in lacked it, so

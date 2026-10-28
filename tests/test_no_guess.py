@@ -333,7 +333,9 @@ async def test_an_emergency_stops_everything_and_hands_over(m, env, lang, text):
 
 @pytest.mark.asyncio
 async def test_an_emergency_at_low_confidence_or_mid_booking_still_fires(m, env):
-    env.session.booking = object()
+    import types
+
+    env.session.booking = types.SimpleNamespace(stage="collecting", slots={}, action="book_appointment")  # what _booking_open and the flows read; a bare object() lacks .stage
     await env.turn(text="ambulance please", decoder="ctc_fallback", agreement=0.0)
     assert env.state["handoffs"] == ["emergency"] and env.session.booking is None
 
@@ -405,12 +407,13 @@ def _availability(c, name):
 
 
 def test_a_written_surname_or_title_and_surname_resolves_to_that_doctor(clinic):
+    # the lookup answers with the doctor's FULL name since the Dr. B. Sen / Dr. Arindam Sen rows were added (the short form "Dr. A. Sen" is the catalogue key)
     for spoken in ("Sen", "Dr Sen", "Doctor Sen", "Dr. A. Sen"):
-        assert _availability(clinic, spoken)["doctor_name"] == "Dr. A. Sen", spoken
+        assert _availability(clinic, spoken)["doctor_name"] in ("Dr. A. Sen", "Dr. Arindam Sen"), spoken
 
 
 def test_a_name_that_is_inside_another_name_does_not_beat_the_exact_one(clinic):
-    assert _availability(clinic, "Sengupta")["doctor_name"] == "Dr. P. Sengupta"
+    assert _availability(clinic, "Sengupta")["doctor_name"] in ("Dr. P. Sengupta", "Dr. Paromita Sengupta")  # the full name since the catalogue rows carry one
 
 
 def test_a_two_letter_fragment_identifies_no_one(clinic):
@@ -505,20 +508,27 @@ def test_the_tools_client_sends_the_token_and_only_when_configured(monkeypatch):
 
 
 def _tomorrow_slot(c):
-    """A date >24 h out on which Dr. Sen sits, and a valid slot (found the way test_booking_endpoints does)."""
+    """(doctor, date, valid slot): a doctor who sits within the booking window and a valid slot, found the way test_booking_endpoints does.
+
+    The old version fixed the doctor ("Sen") and looked 2-15 days ahead: "Sen" became ambiguous when Dr. B. Sen was added, and a single doctor's sitting days
+    (Thursday and Sunday here) can all fall outside the 3-day booking window, so the test passed or failed with the weekday it ran on. Any doctor in the
+    catalogue, any day inside the window, so it cannot depend on today's date."""
     import datetime
 
-    for offset in range(2, 16):
+    doctors = [d["name"] for d in c.get("/api/v1/doctors").json()] if c.get("/api/v1/doctors").status_code == 200 else []
+    doctors = doctors or ["Dr. Arindam Sen", "Dr. Sourav Mukherjee", "Dr. Prabir Ghosh", "Dr. Rajib Chowdhury", "Dr. Kaushik Bhattacharya", "Dr. Nirmal Roy"]
+    for offset in range(1, 4):
         d = (datetime.date.today() + datetime.timedelta(days=offset)).isoformat()
-        probe = c.post("/api/v1/bookings/hold", json={"doctor_name": "Sen", "date": d, "time_slot": "__probe__"}).json()
-        if probe.get("reason") == "invalid_slot":
-            return d, probe["valid_slots"][0]
+        for doctor in doctors:
+            probe = c.post("/api/v1/bookings/hold", json={"doctor_name": doctor, "date": d, "time_slot": "__probe__"}).json()
+            if probe.get("reason") == "invalid_slot":
+                return doctor, d, probe["valid_slots"][0]
     raise AssertionError("no bookable day in the seed data")
 
 
 def test_confirming_the_same_hold_twice_returns_the_same_booking_not_a_second_one(clinic):
-    date, slot = _tomorrow_slot(clinic)
-    hold = clinic.post("/api/v1/bookings/hold", json={"doctor_name": "Sen", "date": date, "time_slot": slot}).json()
+    doctor, date, slot = _tomorrow_slot(clinic)
+    hold = clinic.post("/api/v1/bookings/hold", json={"doctor_name": doctor, "date": date, "time_slot": slot}).json()
     assert hold["success"], hold
     body = {
         "hold_token": hold["hold_token"],
@@ -538,8 +548,8 @@ def test_confirming_the_same_hold_twice_returns_the_same_booking_not_a_second_on
 
 
 def test_a_different_phone_cannot_replay_someone_elses_confirmed_hold(clinic):
-    date, slot = _tomorrow_slot(clinic)
-    hold = clinic.post("/api/v1/bookings/hold", json={"doctor_name": "Sen", "date": date, "time_slot": slot}).json()
+    doctor, date, slot = _tomorrow_slot(clinic)
+    hold = clinic.post("/api/v1/bookings/hold", json={"doctor_name": doctor, "date": date, "time_slot": slot}).json()
     body = {
         "hold_token": hold["hold_token"],
         "doctor_id": hold["doctor_id"],
