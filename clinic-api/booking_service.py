@@ -1114,7 +1114,13 @@ def _department_doctors_today(db: Session, department_id: int, lang: str = "bn")
     return out
 
 
-_BROKEN_BONE = re.compile(r"ভেঙে|ভেঙ্গে|ভাঙা|ভাঙ্গা|ফ্র্যাকচার|প্লাস্টার|टूट|फ्रैक्चर|प्लास्टर|fractur|broke|plaster", re.I)
+# a broken / sprained / slipped bone word, or plain hand pain: with the bone doctor already a match, no choice between the bone doctor and the ordinary one is offered
+_BROKEN_BONE = re.compile(
+    r"ভেঙে|ভেঙ্গে|ভাঙা|ভাঙ্গা|ফ্র্যাকচার|প্লাস্টার|মচক|স্লিপ|ডিস্ক|কলার ?বোন|স্পাইন|মেরুদণ্ড|হাতে? ব্যথা|"
+    r"टूट|फ्रैक्चर|प्लास्टर|मोच|स्लिप|डिस्क|कॉलर|रीढ़|हाथ (?:में )?दर्द|"
+    r"fractur|broke|plaster|sprain|slip(?:ped)? dis[ck]|collar ?bone|spinal|spine|dislocat|hand pain|hat[eu]? byatha|haat byatha",
+    re.I,
+)
 
 
 def route_department(db: Session, query_text: str, lang: str, age: int | None = None) -> dict:
