@@ -695,10 +695,27 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
         ]
         # a one- or two-letter fragment ("ry") sits inside far too many names to identify any of them
         if (len(needle) >= MIN_SUBSTRING_CHARS and needle in d.name.lower()) or any(
-            nv in a or a in nv for a in aliases for nv in name_variants
+            (nv in a) or (a in nv and _given_name_fits(d, nv, a)) for a in aliases for nv in name_variants
         ):
             out.append(d)
     return out
+
+
+_NAME_NOISE = frozenset("ডাঃ ডা ডাক্তার ডক্টর ডাক্তর স্যার ম্যাডাম বাবু কে কেই এর র কে দেখাব দেখাবো দেখাতে ডা. डॉ डॉक्टर जी साहब से को".split())
+
+
+def _given_name_fits(d: Doctor, said: str, alias: str) -> bool:
+    """Real call 2026-10-28: "শুভদীপা মণ্ডল" was answered as Dr. Anirban Mondal because the surname alias "মণ্ডল" sits INSIDE what was said. The surname alone matching does not make a
+    doctor the one named: when the caller said MORE than the surname, every other word (the given name) must be a near-match for a word of this doctor's own name, otherwise this is a doctor
+    that does not exist, and the caller hears "no doctor of that name" with the real suggestions (Doctor Nobody)."""
+    import difflib
+
+    extra = [w for w in said.replace(alias, " ").split() if w.strip(".,") and w.strip(".,") not in _NAME_NOISE]
+    if not extra:
+        return True
+    own = [t.strip(".,").lower() for t in ((d.full_name_bn or "") + " " + (d.full_name_hi or "") + " " + d.name + " " + (d.full_name or "")).split()]
+    own = [t for t in own if t]
+    return all(any(difflib.SequenceMatcher(None, w.lower(), t).ratio() >= 0.72 for t in own) for w in extra)
 
 
 def _doctor_choices(db: Session, name: str, doctors: list[Doctor], near: bool = False) -> dict:

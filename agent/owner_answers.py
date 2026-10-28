@@ -564,6 +564,58 @@ _PRICE_WORD = (
 # above cover the real "how much" question; a bare "what" is too generic a signal to use on its own.
 
 
+# Owner, 2026-10-28 (real calls). (1) "অন্য একটা নম্বার দিচ্ছি ওটাতে পাঠিয়ে দিবেন পেমেন্ট লিঙ্ক": a payment link goes ONLY to the number the booking was made from -- never to a number the caller
+# names -- so the answer is fixed and the caller is told how to get it. (2) "পেমেন্ট লিংক কতক্ষণে আসবে" was answered with the payment METHODS, and in the address step was taken for the address.
+# (3) a bare "কত লাগবে" in the middle of a booking was not answered at all.
+_LINK = ("লিঙ্ক", "লিংক", "link", "लिंक", "লিনক")
+_SENDW = ("পাঠ", "send", "भेज", "resend")
+_OTHER_NUMBER = (
+    "অন্য একটা নম", "অন্য নম", "অন্য একটি নম", "আরেকটা নম", "আরেকটি নম", "নতুন নম", "অন্য ফোন", "another number", "other number", "different number", "new number", "another phone", "दूसरे नंबर", "दूसरा नंबर",
+    "दूसरे नम्बर", "नया नंबर", "अलग नंबर",
+)
+_LINK_TIME = (
+    "কতক্ষণ", "কত সময়", "কখন", "কবে", "কত দেরি", "কতদিন", "how long", "when will", "when do", "how soon", "how much time", "कब", "कितनी देर", "कितने समय", "कितना समय",
+)
+_LINK_REPLY_OTHER = {
+    "bn": "দুঃখিত, পেমেন্ট লিংক শুধু যে নম্বর দিয়ে বুকিং করা হয়েছিল সেই নম্বরেই পাঠানো যায়, অন্য নম্বরে পাঠানো যায় না। লিংকটা যাঁর নম্বরে গেছে, তাঁকে বলুন আপনাকে লিংকটা বা পেমেন্টের নম্বরটা পাঠিয়ে দিতে।",
+    "hi": "माफ़ कीजिए, पेमेंट लिंक सिर्फ़ उसी नंबर पर भेजा जा सकता है जिससे बुकिंग हुई थी, किसी दूसरे नंबर पर नहीं। जिनके नंबर पर लिंक गया है, उनसे कहिए कि वे आपको लिंक या पेमेंट का नंबर भेज दें।",
+    "en": "Sorry, the payment link can only be sent to the number the booking was made from, never to another number. Please ask the person whose number received the link to forward it, or to send you the payment number.",
+}
+_LINK_REPLY_TIMING = {
+    "bn": "বুকিং শেষ হলে পেমেন্ট লিংকটা আপনার হোয়াটসঅ্যাপে পাঠানো হয়। লিংক পাওয়ার পনেরো মিনিটের মধ্যে পেমেন্ট করতে হবে।",
+    "hi": "बुकिंग पूरी होने पर पेमेंट लिंक आपके व्हाट्सऐप पर भेजा जाता है। लिंक मिलने के पंद्रह मिनट के अंदर पेमेंट करना होगा।",
+    "en": "When the booking is complete, the payment link is sent to your WhatsApp. The payment has to be made within fifteen minutes of getting the link.",
+}
+_BARE_COST = (
+    "কত লাগবে", "কত লাগে", "কত খরচ", "কত পড়বে", "কত টাকা লাগবে", "কত দিতে হবে", "কত টাকা দিতে", "কত টাকা পড়বে", "কত দেব", "কত দিব", "কত টাকা", "कितना लगेगा", "कितने पैसे", "कितना खर्च",
+    "कितना देना", "how much will it", "how much do i", "how much is it", "how much does it cost", "how much to pay",
+)
+
+
+def asks_link_to_other_number(text: str) -> bool:
+    t = _norm(text)
+    return bool(t) and _has(t, _LINK) and _has(t, _OTHER_NUMBER) and (_has(t, _SENDW) or "দিচ্ছি" in t or "दे रहा" in t or "দিব" in t)
+
+
+def link_to_other_number_reply(lang: str) -> str:
+    return _LINK_REPLY_OTHER.get(lang, _LINK_REPLY_OTHER["en"])
+
+
+def asks_payment_link_timing(text: str) -> bool:
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 14 and _has(t, _LINK) and _has(t, _LINK_TIME) and not _has(t, _OTHER_NUMBER)
+
+
+def payment_link_timing_reply(lang: str) -> str:
+    return _LINK_REPLY_TIMING.get(lang, _LINK_REPLY_TIMING["en"])
+
+
+def asks_bare_cost(text: str) -> bool:
+    """A short "how much?" with no word for what: only meant where a doctor's booking is open (the caller of this function checks that)."""
+    t = _norm(text)
+    return bool(t) and len(t.split()) <= 6 and _has(t, _BARE_COST)
+
+
 def asks_visit_fee(text: str) -> bool:
     """A question about what a doctor's visit costs -- the formal "visit/fee" wording, or the far more common "কত
     টাকা লাগবে দেখাতে" (how much to SEE him) phrasing. The figure is read from the doctors table by the caller of

@@ -1571,6 +1571,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
             return plan
         if answer is None and not new_number and bare_age(text):
             # the read-back asked the age next, and the age was the answer: the number is accepted and the age is taken below
+            st.asked_fields.add("patient_age")
             st.slots.pop("_phone_pending", None)
             st.slots["_phone_ok"] = pending_phone
             plan.skip_model, plan.readback_answer = True, True
@@ -1597,6 +1598,11 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
 
     # 1c. The age, then the address, each asked alone and each read back for a yes (owner, 2026-10-18).
     if st.action == "book_appointment" and st.slots.get("patient_name") and (st.slots.get("phone") or st.phone_declined):
+        # Owner, 2026-10-28 (real call): the age was taken as the answer to the PHONE read-back ("...রোগীর বয়স কত?" -> "আটাত্তর বছর"), so the agent went straight on to "ঠিকানাটা বলবেন?" -- but that question was
+        # never registered as asked, and "ওই মালদা ঠিকানা" (even a bare "মালদা") was then not read as the address: the same question came back every time. An age that is in and an address that is not
+        # means the address is the question in the air.
+        if st.slots.get("patient_age") and not st.slots.get("patient_address") and not st.slots.get("_address_done"):
+            st.asked_fields.add("patient_address")
         if _detail_turn(st, text, lang, plan, "patient_age", bare_age, "age") or _detail_turn(st, text, lang, plan, "patient_address", bare_address, "address"):
             return plan
 

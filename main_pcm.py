@@ -3393,7 +3393,15 @@ async def _answer_owner_faq(session: CallSession, text: str, lang: str) -> bool:
     """Which branch this is, whether Swasthya Sathi / Ayushman Bharat cover the visit, how far from the stations, when to come with a token number, a
     serial that cannot be pushed up, and what a doctor's visit costs (agent/owner_answers.py) -- fixed or table-read answers, no model."""
     try:
-        spoken = owner_answers.branch_identity(text, lang) or owner_answers.scheme_cover(text, lang)
+        spoken = None
+        if owner_answers.asks_link_to_other_number(text):
+            session.pending_enquiry = None  # the "confirmation number?" question that was open is no longer the point
+            spoken = owner_answers.link_to_other_number_reply(lang)
+        if not spoken and owner_answers.asks_payment_link_timing(text):
+            spoken = owner_answers.payment_link_timing_reply(lang)
+        if not spoken and session.booking is not None and getattr(session.booking, "action", "") == "book_appointment" and owner_answers.asks_bare_cost(text):
+            spoken = await _visit_fee_reply(session, text, lang)  # "কত লাগবে" in the middle of a doctor booking: that doctor's visit fee
+        spoken = spoken or owner_answers.branch_identity(text, lang) or owner_answers.scheme_cover(text, lang)
         if not spoken and owner_answers.asks_token_push(text):
             spoken = owner_answers.token_push_reply(lang)
         if not spoken:

@@ -146,10 +146,17 @@ _REQUEST = (
 )
 
 
+_DOCTOR_CUES = ("ডাক্তার", "ডক্টর", "ডাক্তর", "डॉक्टर", "डाक्टर", "doctor", "বিভাগ", "विभाग", "হাসপাতাল", "अस्पताल", "hospital", "clinic", "ক্লিনিক", "क्लिनिक", "রোগী", "मरीज")
+
+
 def hostile(text: str) -> bool:
     """True when the sentence insults (see _INSULT) and asks for nothing the clinic does."""
     t = _norm(text)
-    return bool(t) and any(w in t for w in _INSULT) and not any(r in t for r in _REQUEST)
+    if not t or not any(w in t for w in _INSULT) or any(r in t for r in _REQUEST):
+        return False
+    # Owner, 2026-10-28: a daughter-in-law "talking like mad people" since the birth, and a request for "a good head doctor", was refused as an insult: "পাগল" sat in the sentence. A sentence that asks
+    # for a doctor or describes a health problem is a patient, whatever words it uses.
+    return not (has_health_word(t) or any(w in t for w in _DOCTOR_CUES))
 
 
 def chit_chat(text: str) -> bool:
