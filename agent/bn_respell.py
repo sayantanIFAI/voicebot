@@ -65,6 +65,9 @@ _RESPELL: dict[str, str] = {
     "দুই": "দুঈ",
     "তিন": "তীন",
     "সাত": "সাত",
+    # 6 and 9 chosen from the listener's own recordings and the spelling "Chhwoy" / "Nwoy": sixw_2 and ninew_2 of the second round of samples.
+    "ছয়": "ছওয়্",
+    "নয়": "নওয়্",
     "আট": "আট্",
 }
 
