@@ -3822,10 +3822,74 @@ async def _answer_echo(session: CallSession, text: str, lang: str) -> bool:
     return True
 
 
+_WEEKDAY_NAMES = {
+    "bn": ["সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার", "রবিবার"],
+    "hi": ["सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार"],
+    "en": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+}
+_DATE_WEEKDAY_CUES = ("মানে", "মানে কি", "নাকি", "না ", "কি ", "কী", "तो", "मतलब", "या", "क्या", "means", "mean", "or", "is it", "isn't", "not", "?")
+
+
+async def _answer_date_weekday(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29 ("একত্রিশ তারিখ মানে তো শনিবার বুধবার বলবেন"): a day of the month and a weekday in one short question is a CALENDAR question, answered from the calendar -- never "I did not say 31".
+    "The 31st is a Saturday" (yes / no, and what it really is); and, when a doctor was just discussed, whether he sits on the weekday the caller named, from the schedule table (the same reply as any
+    weekday question). Nothing is said when no real date can be made of it."""
+    n = owner_answers.spoken_number(text)
+    wds = [w for w in dict.fromkeys(weekday_cues.weekday_of(tok) for tok in text.split()) if w is not None]  # every weekday named, in order ("শনিবার বুধবার")
+    if n is None or not (1 <= n <= 31) or not wds or len(text.split()) > 14:
+        return False
+    low = " ".join(text.lower().split())
+    if not any(c in low for c in _DATE_WEEKDAY_CUES):
+        return False
+    today = slot_proposal.clinic_now().date()
+    ctx = session.last_doctor_enquiry or {}
+    date = None
+    try:
+        if ctx.get("date") and datetime.date.fromisoformat(ctx["date"]).day == n:
+            date = datetime.date.fromisoformat(ctx["date"])
+    except ValueError:
+        date = None
+    if date is None:
+        for i in range(0, 62):
+            d = today + datetime.timedelta(days=i)
+            if d.day == n:
+                date = d
+                break
+    if date is None:
+        return False
+    lg = lang if lang in ("bn", "hi") else "en"
+    names = _WEEKDAY_NAMES[lg]
+    actual = names[date.weekday()]
+    wd = date.weekday() if date.weekday() in wds else wds[0]
+    said = names[wd]
+    if date.weekday() == wd:
+        line = {"bn": f"হ্যাঁ, {date.isoformat()} তারিখ {actual}।", "hi": f"हाँ, {date.isoformat()} को {actual} है।", "en": f"Yes, {date.isoformat()} is a {actual}."}[lg]
+    else:
+        line = {"bn": f"{date.isoformat()} তারিখ {actual}, {said} নয়।", "hi": f"{date.isoformat()} को {actual} है, {said} नहीं।", "en": f"{date.isoformat()} is a {actual}, not a {said}."}[lg]
+    # and the doctor just discussed on the weekday named, when there is one
+    doctor = ctx.get("doctor_name") or (session.booking.slots.get("doctor_name") if session.booking is not None else None)
+    extra = ""
+    other_wds = [w for w in wds if w != date.weekday()]
+    if doctor and _tools is not None and other_wds:
+        _w = other_wds[0]
+        wd_date = (today + datetime.timedelta(days=(_w - today.weekday()) % 7 or 7)).isoformat()  # the coming such weekday
+        if wd_date:
+            try:
+                info = await _tools.get_doctor_availability(doctor, wd_date)
+                extra = " " + (doctor_weekday_yes_reply({"doctor_name": doctor, "date": wd_date}, info, lang, wd_date) or doctor_availability_reply({"doctor_name": doctor, "date": wd_date}, info, lang))
+                session.last_doctor_enquiry = {"doctor_name": doctor, "date": info.get("next_available_date") if info.get("available") is False and info.get("next_available_date") else wd_date, "turn": session.turn_count}
+            except ToolCallError:
+                extra = ""
+    await _speak(session, _with_resume(session, line + extra, lang), lang)
+    return True
+
+
 async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool:
     """The caller wants to be sure of a word in what was just said ("চুয়াল্লিশ বললেন?", "did you say forty-four?"). A number they name is looked for in the last
     thing the agent said: if it is there, it is confirmed digit by digit and the sentence is said again; if it is not, they are told plainly it was not said and
     what was. Only for a short sentence that asks (a checking word) about a number -- never a guess about anything else."""
+    if await _answer_date_weekday(session, text, lang):
+        return True
     last = getattr(session, "last_spoken", "") or ""
     low = " ".join(text.lower().split())
     if not last or len(low.split()) > 10:
@@ -4613,6 +4677,9 @@ async def _finish_enquiry_turn(
     session.last_enquiry = {"text": text, "turn": session.turn_count}  # a read-only enquiry: it may be replayed in another language on request
     turn_entities = [(intent, slots)]
     secondary_intent = data.get("secondary_intent")
+    # Owner, 2026-10-29: the same kind of question again with no name in it ("the doctor" asked twice in one sentence) is not a second question: it was answered by the first. Not asked back.
+    if secondary_intent and secondary_intent == intent and not any((data.get("secondary_slots") or {}).get(k) for k in ("doctor_name", "test_name", "faq_topic", "symptom_description", "test_names")):
+        secondary_intent = None
     if secondary_intent:
         secondary_slots = data.get("secondary_slots") or {}
         secondary_slots, _ = resolve_followup_slot(
@@ -6185,6 +6252,19 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 _said_day = booking_capture.read_when(text, False, want_day=True).date
                 if _said_day and _said_day >= slot_proposal.clinic_now().date().isoformat():
                     slots = {**(slots or {}), "date": _said_day}
+            # Owner, 2026-10-29 ("তাহলে বুধবারে করে দিন উনার"): a weekday named for the doctor just discussed is first ANSWERED -- does she sit on that weekday? if not, when does she -- from the schedule
+            # table; the booking then goes on from that answer. It used to be replaced silently by another date ("ঠিক আছে, মজুমদার", then the 31st).
+            if session.booking is None and _tools is not None and weekday_cues.weekday_of(text) is not None:
+                _wd_doctor = (slots or {}).get("doctor_name") or (session.last_doctor_enquiry or {}).get("doctor_name")
+                _wd_date = weekday_cues.resolve_date(text, slot_proposal.clinic_now().date())
+                if _wd_doctor and _wd_date:
+                    try:
+                        _wd_info = await _tools.get_doctor_availability(_wd_doctor, _wd_date)
+                    except ToolCallError:
+                        _wd_info = None
+                    if _wd_info and _wd_info.get("found") and _wd_info.get("available") is False:
+                        await _speak_day_availability(session, _wd_doctor, _wd_date, lang)
+                        return
             # sourav, 2026-10-14: "book him / for that day" right after a doctor-availability answer -> that doctor (and date).
             slots = booking_carryover.carry_over(
                 session.last_doctor_enquiry,
