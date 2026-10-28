@@ -384,9 +384,11 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
     (
         "General Medicine",
         # See the Orthopaedics row above for why "হাতে ব্যথা"/"hand pain" and general body ache are listed here too.
-        ["জ্বর", "সর্দি কাশি", "দুর্বলতা", "পেট খারাপ", "হাতে ব্যথা", "গায়ে ব্যথা", "শরীরে ব্যথা"],
-        ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब", "हाथ में दर्द", "शरीर में दर्द"],
-        ["fever", "cold and cough", "weakness", "stomach upset", "hand pain", "body ache"],
+        ["জ্বর", "সর্দি কাশি", "দুর্বলতা", "পেট খারাপ", "হাতে ব্যথা", "গায়ে ব্যথা", "শরীরে ব্যথা",
+         # owner, 2026-10-28: "আমার মাথা ফেটে গেছে" (head split open / cut) went to Neurology; a cut or split is the ordinary doctor
+         "ফেটে গেছে", "ফেটে গিয়েছে", "ফেটে গেল", "কেটে গেছে", "কেটে গিয়েছে", "কেটে গেল", "ছড়ে গেছে", "কাটা ছেঁড়া", "ক্ষত", "মাথা ফেটে", "মাথা কেটে", "হাত কেটে", "পা কেটে"],
+        ["बुखार", "सर्दी खांसी", "कमज़ोरी", "पेट खराब", "हाथ में दर्द", "शरीर में दर्द", "कट गया", "कट गई", "फट गया", "फट गई", "सिर फट", "सिर कट", "छिल गया", "घाव"],
+        ["fever", "cold and cough", "weakness", "stomach upset", "hand pain", "body ache", "cut my head", "head is cut", "head cut", "split open", "got cut", "cut on my", "wound", "kete geche", "kete gechhe", "phete geche", "fete geche", "kete gelo", "mathat kete", "matha phete", "matha fete"],
     ),
     (
         "Dentistry",

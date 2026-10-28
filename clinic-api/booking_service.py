@@ -1123,6 +1123,14 @@ _BROKEN_BONE = re.compile(
 )
 
 
+# a cut / split / scraped place ("মাথা ফেটে গেছে", "হাত কেটে গেছে", "सिर फट गया", "kete geche"): the ordinary doctor, even when a body word beside it ("মাথা") would send the caller to a specialist
+_CUT_WOUND = re.compile(
+    r"(?:ফেটে|কেটে|ছড়ে|কাটা ছেঁড়া)\s*(?:গেছে|গিয়েছে|গেল|গিয়ে|যাওয়া)|(?:कट|फट|छिल)\s*(?:गया|गई|गयी|गए)|सिर\s+(?:फट|कट)|"
+    r"(?:ph?ete|fete|kete|kate)\s+(?:gech?he|geche|gelo|gese)|split open|got cut|cut my (?:head|hand|leg|finger)|(?:head|hand|leg) is cut",
+    re.I,
+)
+
+
 def route_department(db: Session, query_text: str, lang: str, age: int | None = None) -> dict:
     """Symptom text -> department, plus (KCD-lay-terms) the real doctors in it, so the agent can name someone
     instead of only the department. `phrase_matches` tolerates a word or two inserted inside a keyword phrase --
@@ -1144,6 +1152,17 @@ def route_department(db: Session, query_text: str, lang: str, age: int | None = 
         ortho = db.query(Department).filter_by(name="Orthopaedics").first()
         if ortho is not None and ortho.id in matches:
             matches = [ortho.id]
+    if _CUT_WOUND.search(q):
+        gm = db.query(Department).filter_by(name=lay_departments.GENERAL_MEDICINE).first()
+        if gm is not None:
+            dept = gm
+            return {
+                "matched": True,
+                "department_name": dept.name,
+                "department_id": dept.id,
+                "doctors": _department_doctor_names(db, dept.id, lang),
+                "doctors_today": _department_doctors_today(db, dept.id, lang),
+            }
     lay_names = lay_departments.resolve(q, age)
     if lay_names:
         by_name = {d.name: d.id for d in db.query(Department).all()}
