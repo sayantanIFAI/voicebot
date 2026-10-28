@@ -2171,7 +2171,44 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
         hint = _doctor_booking_hint(text, text_lang)
         if hint is not None:
             return hint
+        if isinstance(data, dict) and data.get("intent") == "unclear":
+            hint = _doctor_presence_hint(text)
+            if hint is not None:
+                return hint
     return _without_generic_doctor_name(_with_whole_doctor_name(data, text, text_lang, session))
+
+
+_PRESENCE_WORDS = frozenset("আছে আছেন আছো बैठते बैठती है हैं available".split())
+_DOCTOR_TITLES = frozenset("ডাক্তার ডাঃ ডা ডাক্তর ডক্টর डॉक्टर डॉ dr dr. doctor".split())
+_PRESENCE_STOP = frozenset("কে কেউ কি কী কোন কোনো কিছু আর এখানে ওখানে সব আমার আমি আমাকে আমাদের আপনার আপনি তার তাঁর সব सब कौन कोई क्या यहाँ मेरा मुझे मेरी".split())
+
+
+def _doctor_presence_hint(text: str) -> dict | None:
+    """Real call 2026-10-28: "শুভদীপ মন্ডল আছে" (is there a Shubhadip Mondal?) was read "unclear" by the model and answered "I did not understand". A short sentence that is only a person's name
+    followed by "is there / does he sit" (optionally after "Dr") is a doctor-availability question: the clinic's own list answers it, including "no doctor of that name, did you mean ...?"."""
+    words = [w.strip(".,?!।") for w in text.split()]
+    words = [w for w in words if w]
+    if len(words) < 2 or not words[-1].lower() in _PRESENCE_WORDS:
+        return None
+    head = words[:-1]
+    titled = bool(head) and head[0].lower() in _DOCTOR_TITLES
+    name = [w for w in head if w.lower() not in _DOCTOR_TITLES]
+    if not name or len(name) > 3 or (len(name) < 2 and not titled):
+        return None
+    if off_topic.has_health_word(" ".join(name)):
+        return None  # "আমার জ্বর আছে" is a symptom, not a doctor
+    if any(w in _PRESENCE_STOP or any(ch.isdigit() for ch in w) or not re.fullmatch(r"[\wঀ-৿ऀ-ॿ]+", w) for w in name):
+        return None
+    logger.info("a bare 'name + is there' is a doctor question: %r", " ".join(name))
+    return {
+        "intent": "doctor_availability",
+        "slots": {k: (" ".join(name) if k == "doctor_name" else None) for k in (
+            "test_name", "test_names", "doctor_name", "date", "time_slot", "new_date", "new_time_slot", "confirmation_id",
+            "patient_name", "patient_age", "phone", "contact_phone", "relationship", "spelled_letters", "symptom_description", "faq_topic")},
+        "direct_reply_bn": None,
+        "secondary_intent": None,
+        "secondary_slots": None,
+    }
 
 
 _WHEN_SITS = ("কবে", "কখন", "কোন দিন", "কোন কোন", "বসেন", "বসে", "কটায়", "कब", "कौन से दिन", "बैठते", "बैठती", "when", "which day", "what time", "schedule")
@@ -5092,6 +5129,25 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             and asr_result.decoder_agreement >= 0.85
         ):
             logger.info("[%s] the call was locked from a doubtful read and a clear %s sentence followed: the reply language moves to %s", session.call_id, detected_lang, detected_lang)
+            _lock_reply_language(session, detected_lang)
+            session.lang_lock_weak = False
+            session.lang_router.note_response_language(detected_lang)
+            lang = detected_lang
+        # Owner, 2026-10-28: the first sentence of a Bengali call was read as Hindi (garbled, language ID 0.98 Hindi) and the whole call was answered in Hindi. Within the first two turns,
+        # before anything has been understood, a clear sentence of two words or more in the OTHER of Bengali/Hindi moves the lock (never an explicit request, never English, never a booking answer).
+        if (
+            session.turn_count <= 2
+            and lang in ("bn", "hi")
+            and lang != detected_lang
+            and detected_lang in ("bn", "hi")
+            and not session.lang_explicit
+            and not _short_booking_answer
+            and len(_heard.split()) >= 2
+            and script_share(_heard, detected_lang) >= 0.85
+            and asr_result.decoder_agreement >= 0.85
+            and session.booking is None
+        ):
+            logger.info("[%s] early call, a clear %s sentence after a %s lock: the reply language moves to %s", session.call_id, detected_lang, lang, detected_lang)
             _lock_reply_language(session, detected_lang)
             session.lang_lock_weak = False
             session.lang_router.note_response_language(detected_lang)
