@@ -3680,6 +3680,9 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
     label = _dept_label(result["department_name"], lang)
     if on_date or at_time:
         sitting = result.get("sitting") or []
+        _part = doctor_search.asked_part_of_day(text)
+        if _part:
+            sitting = [s for s in sitting if doctor_search.part_of_day_of(s.get("start")) == _part]  # owner, 2026-10-28: "আজকে কে বসছে বিকালের দিকে"
         phrase_when = _when_phrase(on_date, at_time, lang)
         if len(sitting) == 1:
             item = sitting[0]
@@ -5537,7 +5540,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # the model -- the real call never reached the read-back because phone and name depended on the model alone.
         # agent/booking_capture.py holds the rules; this only speaks what they say.
         dept_found = None
-        if session.booking is None or getattr(session, "dept_pending", None):
+        _asks_who_sits = (
+            session.booking is not None
+            and not (session.booking.slots or {}).get("doctor_name")
+            and re.search(r"কে (?:আছে|আছেন|বসে|বসেন|বসছে|বসছেন)|কারা|কোন কোন ডাক্তার|\bwho (?:is|sits|are)\b|कौन|which doctors", text, re.I) is not None
+        )
+        if session.booking is None or getattr(session, "dept_pending", None) or _asks_who_sits:
             dept_found = await _dept_search_turn(session, text, lang)
             if dept_found is True:
                 return
@@ -7645,7 +7653,7 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         session.unrelated_streak = 0
         # an explicit chit-chat / idiom phrase ("ঘুরতে যাবে", "মাথায় বাজ পড়েছে"), with no hospital cue anywhere in the sentence (agent/off_topic.py)
         if free and off_topic.chit_chat(text) and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in):
-            await _handle_offtopic(session, lang)
+            await _handle_offtopic(session, lang, text)
             return True
         if session.outcome in ("unrelated_caller", "off_topic"):
             session.outcome = "completed"  # the caller went on to ask for something real
@@ -7750,9 +7758,11 @@ async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> b
     return True
 
 
-async def _handle_offtopic(session: CallSession, lang: str) -> None:
+async def _handle_offtopic(session: CallSession, lang: str, text: str | None = None) -> None:
     """Talk about nothing to do with Sonoscan: the first two times in a row, a polite refusal and what the agent CAN help with; the third closes the call with a thank-you (the owner's
     rule, 2026-10-27). "In a row" = the previous such turn was the turn before this one; any real turn in between starts the count again. Nothing is asked or stored."""
+    if text:
+        lang = language_of_script(text, lang)  # owner, 2026-10-28: a Bengali sentence got the Hindi refusal because the call's language was still Hindi
     in_a_row = session.offtopic_streak > 0 and session.turn_count - session.offtopic_last_turn <= 1
     session.offtopic_streak = session.offtopic_streak + 1 if in_a_row else 1
     session.offtopic_last_turn = session.turn_count

@@ -34,6 +34,7 @@ def _norm(text: str) -> str:
 # an explicit chit-chat / idiom phrase (matched as a substring of the normalised sentence)
 _CHIT_CHAT_NATIVE = (
     # Bengali: invitations, romance, jokes / songs / stories, weather, sport, politics, cinema, idioms
+    "ওয়েদার", "উইআথার", "উয়েদার", "উইদার", "ওয়েদার", "গরম পড়েছে", "ঠান্ডা পড়েছে", "বৃষ্টি পড়ছে", "बारिश होगी", "बारिश हो रही", "मौसम", "वेदर", "वेथर", "वेदार", "वेदर", "मौसम कैसा",
     "ঘুরতে যাবে", "ঘুরতে যাবি", "ঘুরতে যাই", "ঘুরতে যাব", "বেড়াতে যাবে", "সিনেমা দেখতে", "সিনেমায় যাবে", "ডেটে যাবে", "ডেট করবে", "আমার সাথে বেরোবে",
     "ভালোবাসি", "ভালবাসি", "প্রেম করবে", "প্রেম করবি", "বিয়ে করবে", "বিয়ে করবি", "বন্ধু হবে", "বন্ধুত্ব করবে", "গান শোনাও", "গান গাও", "গান গেয়ে", "জোক বল", "জোকস", "মজার গল্প",
     "গল্প বল", "কবিতা শোনাও", "আবহাওয়া", "বৃষ্টি হবে", "ক্রিকেট", "ফুটবল", "আইপিএল", "নির্বাচন", "ভোট", "রাজনীতি", "মোদি", "মমতা", "বাজ পড়", "বাজ পড়েছে", "আকাশ ভেঙে পড়",
@@ -46,7 +47,7 @@ _CHIT_CHAT_NATIVE = (
 )
 _CHIT_CHAT_LATIN = re.compile(
     r"\b(?:go(?:ing)? out with me|come out with me|go for a (?:walk|drive) with me|date me|marry me|love you|i love|be my (?:friend|girlfriend|boyfriend)|tell me a joke|sing (?:me )?a song|"
-    r"tell me a story|sing for me|the weather|cricket|football|ipl|election|politics|movie tonight|lightning (?:struck|hit)|(?:hit|struck) by lightning|"
+    r"tell me a story|sing for me|the weather|weather today|how(?:'s| is) the weather|cricket|football|ipl|election|politics|movie tonight|lightning (?:struck|hit)|(?:hit|struck) by lightning|"
     r"ghurte jabe|ghurte jabo|bhalobashi|prem korbe|biye korbe|gan shonao|joke bolo|baj poreche|baj pore geche|ghoomne chalogi|ghumne chalogi|pyaar karta|pyar karta|shaadi karogi)\b",
     re.I,
 )
