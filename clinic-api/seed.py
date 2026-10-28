@@ -44,6 +44,8 @@ import lab_days
 # সেন" actually matches "Dr. A. Sen". Keyed on the surname as it appears
 # as the last word of the English name below.
 SURNAME_BN = {
+    # owner, 2026-10-28: a caller's "ডাক্তার সান্নাল" / "ডক্টর সানাল" must find Dr Sanyal (ন্য is said "nn")
+    "Sanyal": ["সান্যাল", "সান্নাল", "সান্ন্যাল", "সানাল", "স্যান্যাল", "সান্ইয়াল"],
     "Mukherjee": ["মুখার্জী", "মুখোপাধ্যায়"],
     "Sen": ["সেন"],
     "Ghosh": ["ঘোষ"],

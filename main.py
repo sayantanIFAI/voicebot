@@ -3503,12 +3503,14 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
             session.dept_pending = {**offer["pending"], "turn": session.turn_count, "say": offer["say"]}
             return offer["say"]
     reply = department_route_reply(_dept_labelled(routed, lang), symptom, lang)
-    if routed.get("matched") and len(routed.get("doctors_today") or []) >= 2:
+    if routed.get("matched") and len(routed.get("doctors_today") or []) >= 1:
         with contextlib.suppress(ToolCallError):
             today_iso = slot_proposal.clinic_now().date().isoformat()
             sitting = (await _tools.department_doctors(routed["department_name"], lang, on_date=today_iso)).get("sitting") or []
             if len(sitting) >= 2:
                 session.dept_pending = {"kind": "pick", "doctors": sitting, "date": today_iso, "time": None, "turn": session.turn_count, "say": reply}
+            elif len(sitting) == 1:
+                session.dept_pending = {"kind": "confirm_one", "doctor": sitting[0], "date": today_iso, "time": sitting[0].get("start"), "turn": session.turn_count, "say": reply}
     return reply
 
 
@@ -3569,6 +3571,12 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
     # 1. the answer to a question asked here
     pend = getattr(session, "dept_pending", None)
     if pend and session.turn_count - pend["turn"] <= 3 and pend.get("say") and pend["kind"] in ("confirm_one", "pick") and _asks_when(text) and booking_capture.confirm_answer(text, lang) is None:
+        # Owner, 2026-10-28: "কালকে কবে বসবে বা পরশু" names ANOTHER day than the one just told: the answer is for that day (the doctor's own availability, with his next sitting when he is off), never today's line again
+        if pend["kind"] == "confirm_one":
+            _other = booking_capture.read_when(text, False, want_day=True).date
+            if _other and _other != pend.get("date"):
+                session.dept_pending = None
+                return {"intent": "doctor_availability", "slots": {"doctor_name": _resolve_doctor_for_booking(pend["doctor"]), "date": _other}}
         # "কবে আছে, নেক্স্ট কবে পাব, পরে কবে বসছে" after the next sitting was just told: that IS the answer to "when" -- said again, and the question stays open (owner, 2026-10-24)
         pend["turn"] = session.turn_count
         await _speak(session, pend["say"], lang)
@@ -7681,7 +7689,8 @@ async def _department_week_reply(route: dict, lang: str) -> tuple[str, list] | N
         if not wd.get("found") or not wd.get("weekdays"):
             continue
         hours = set((wd.get("hours") or {}).values())
-        lines.append(doctor_enquiry_cues.weekdays_reply(name, list(wd["weekdays"]), next(iter(hours)) if len(hours) == 1 else None, lang))
+        titled = name if name.startswith(("ডাঃ", "ডাক্তার", "ডক্টর", "डॉ", "Dr")) else {"bn": "ডাঃ ", "hi": "डॉ. "}.get(lang, "Dr. ") + name
+        lines.append(doctor_enquiry_cues.weekdays_reply(titled, list(wd["weekdays"]), next(iter(hours)) if len(hours) == 1 else None, lang))
         first = sorted(hours)[0] if hours else ""
         start, _, end = first.partition("-")
         items.append({"name": name, "full_name": name, "start": start.strip() or None, "end": end.strip() or None})
@@ -7689,10 +7698,11 @@ async def _department_week_reply(route: dict, lang: str) -> tuple[str, list] | N
         return None
     dept = _dept_label(route["department_name"], lang)
     intro = {"bn": f"{dept} বিভাগে", "hi": f"{dept} विभाग में", "en": f"In {dept}:"}[lang if lang in ("bn", "hi") else "en"]
+    # owner, 2026-10-28: with ONE doctor the question is not "which doctor"
     ask = {
-        "bn": "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?",
-        "hi": "किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहेंगे?",
-        "en": "Which doctor would you like to book?",
+        "bn": "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?" if len(lines) > 1 else "অ্যাপয়েন্টমেন্ট করতে চান?",
+        "hi": "किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहेंगे?" if len(lines) > 1 else "अपॉइंटमेंट लेना चाहेंगे?",
+        "en": "Which doctor would you like to book?" if len(lines) > 1 else "Would you like to book an appointment?",
     }[lang if lang in ("bn", "hi") else "en"]
     return f"{intro} {' '.join(lines)} {ask}", items
 
@@ -7712,7 +7722,10 @@ async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> b
         if weekly:
             reply, items = weekly
             # the doctors just offered stay the subject ("কে ভালো এর মধ্যে", "who sits in the morning"), and the department stays the subject of the next questions
-            session.dept_pending = {"kind": "pick", "doctors": items, "date": None, "time": None, "turn": session.turn_count, "say": reply}
+            if len(items) == 1:
+                session.dept_pending = {"kind": "confirm_one", "doctor": items[0], "date": None, "time": None, "turn": session.turn_count, "say": reply}
+            else:
+                session.dept_pending = {"kind": "pick", "doctors": items, "date": None, "time": None, "turn": session.turn_count, "say": reply}
             session.last_route = {"dept": route["department_name"], "names": [i["name"] for i in items], "turn": session.turn_count}
             await _speak(session, _with_resume(session, reply, lang), lang)
             return True

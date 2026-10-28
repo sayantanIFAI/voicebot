@@ -97,6 +97,7 @@ TEST_ALIASES_EN: dict[str, list[str]] = {
 }
 
 SURNAME_HI: dict[str, list[str]] = {
+    "Sanyal": ["सान्याल", "सान्नाल", "सन्याल", "सानयाल", "सान्यल"],
     "Mukherjee": ["मुखर्जी"],
     "Sen": ["सेन"],
     "Ghosh": ["घोष"],

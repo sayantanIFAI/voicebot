@@ -526,6 +526,8 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
         doctors, today = result.get("doctors") or [], result.get("doctors_today") or []
         dept = result["department_name"]
         if today:
+            if len(today) == 1:  # owner, 2026-10-28: one doctor -- not "which one"
+                return f"আজ {dept} বিভাগে {today[0]} আছেন। ওনার সাথে অ্যাপয়েন্টমেন্ট করতে চান?"
             return f"আজ {dept} বিভাগে {len(today)} জন ডাক্তার আছেন: {', '.join(today)}। কাকে দেখাতে চান?"
         if doctors:
             return f"{dept} বিভাগে {', '.join(doctors)} আছেন, তবে আজ কেউ বসছেন না। কার কথা জানতে চান?"
