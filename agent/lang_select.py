@@ -335,6 +335,16 @@ def pick_candidate(
                     and lid_scores.get("en", 0.0) < SHORT_ENGLISH_MIN_LID
                 ):
                     continue
+                # Live replay 2026-10-28: a Bengali clip ("তো একটা নাম লিখে দিন", Bengali decoders agreeing 0.88) was taken as the English "to economic a" (three words, agreement 1.00) because
+                # language ID was wrong about it, and the sentence was lost. Inside an Indic call, a THREE-word English reading does not beat an Indic reading whose decoders agree well.
+                if (
+                    prior in ("bn", "hi")
+                    and len(r.text.split()) <= 3
+                    and lid_scores
+                    and lid_scores.get("en", 0.0) < SHORT_ENGLISH_MIN_LID
+                    and any(l2 != "en" and getattr(r2, "text", "").strip() and r2.decoder_agreement >= 0.85 for l2, r2 in usable)
+                ):
+                    continue
                 return lang, r
     rest = [(lang, r) for lang, r in usable if lang != "en"] or usable
     if lid_scores:

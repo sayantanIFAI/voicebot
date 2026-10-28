@@ -309,6 +309,12 @@ def too_far_ahead_reply(result: dict, lang: str, rescheduling: bool = False) -> 
     n = int((result or {}).get("max_advance_days") or 3)
     lg = lang if lang in ("bn", "hi") else "en"
     d = _DAYS_WORD[lg].get(n, str(n))
+    nm = (result or {}).get("next_month_first")
+    if nm:
+        # Owner, 2026-10-28: a date in NEXT month is answered with the first day next month the doctor sits, and only that
+        from agent.reply_templates_i18n import next_month_first_reply
+
+        return next_month_first_reply(nm, lg, rescheduling)
     if lg == "bn":
         base = f"দুঃখিত, আমরা শুধু {d} দিন আগে পর্যন্ত অ্যাপয়েন্টমেন্ট নিতে পারি। অনুগ্রহ করে তারিখের কাছাকাছি সময়ে আবার ফোন করুন।"
         return base + (" আপনার আগের অ্যাপয়েন্টমেন্টটা আগের মতোই আছে।" if rescheduling else "")

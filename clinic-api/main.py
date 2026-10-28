@@ -701,7 +701,7 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
     return out
 
 
-_NAME_NOISE = frozenset("ডাঃ ডা ডাক্তার ডক্টর ডাক্তর স্যার ম্যাডাম বাবু কে কেই এর র কে দেখাব দেখাবো দেখাতে ডা. डॉ डॉक्टर जी साहब से को".split())
+_NAME_NOISE = frozenset("সির সার সাব সাহেব স্যর sir सिर सर साहब ডাঃ ডা ডাক্তার ডক্টর ডাক্তর স্যার ম্যাডাম বাবু কে কেই এর র কে দেখাব দেখাবো দেখাতে ডা. डॉ डॉक्टर जी साहब से को".split())
 
 
 def _given_name_fits(d: Doctor, said: str, alias: str) -> bool:
@@ -1090,7 +1090,28 @@ def _validate_date_not_past(date_str: str) -> dict | None:
 MAX_ADVANCE_DAYS = int(os.environ.get("BOOKING_MAX_ADVANCE_DAYS", "3"))
 
 
-def _validate_not_too_far_ahead(date_str: str) -> dict | None:
+def _first_sitting_next_month(db: Session | None, doctor: Doctor | None) -> dict | None:
+    """Owner, 2026-10-28: a caller who asks for a date in NEXT month is told the first day next month this doctor sits (and the hours), nothing more. The first date on or after the 1st
+    of next month with a schedule row and no leave. None when there is no doctor or no such day within 62 days."""
+    if db is None or doctor is None:
+        return None
+    today = datetime.date.today()
+    first = (today.replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
+    from models import DoctorLeave
+
+    leaves = db.query(DoctorLeave).filter_by(doctor_id=doctor.id).all()
+    for i in range(62):
+        day = first + datetime.timedelta(days=i)
+        sched = _schedule_for_weekday(db, doctor.id, day.weekday())
+        if not sched:
+            continue
+        if any(lv.start_date <= day.isoformat() <= lv.end_date for lv in leaves):
+            continue
+        return {"date": day.isoformat(), "start": sched.start_time, "end": sched.end_time}
+    return None
+
+
+def _validate_not_too_far_ahead(date_str: str, db: Session | None = None, doctor: Doctor | None = None) -> dict | None:
     """sourav, 2026-10-24: the booking-window rule. Returns the refusal (reason "too_far_ahead", with the limit and the last date that can be booked today) or None. Flow: the
     date is compared with today + MAX_ADVANCE_DAYS; a past or unparseable date is not this check's business (the check before it already answered)."""
     try:
@@ -1099,7 +1120,13 @@ def _validate_not_too_far_ahead(date_str: str) -> dict | None:
         return None
     last = datetime.date.today() + datetime.timedelta(days=MAX_ADVANCE_DAYS)
     if target > last:
-        return {"success": False, "reason": "too_far_ahead", "max_advance_days": MAX_ADVANCE_DAYS, "last_bookable_date": last.isoformat()}
+        out = {"success": False, "reason": "too_far_ahead", "max_advance_days": MAX_ADVANCE_DAYS, "last_bookable_date": last.isoformat()}
+        today = datetime.date.today()
+        if (target.year, target.month) > (today.year, today.month) and (target.year * 12 + target.month) - (today.year * 12 + today.month) == 1:
+            nxt = _first_sitting_next_month(db, doctor)
+            if nxt:
+                out["next_month_first"] = nxt
+        return out
     return None
 
 
@@ -1117,7 +1144,7 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
     err = _validate_date_not_past(date_str)
     if err:
         return err
-    err = _validate_not_too_far_ahead(date_str)
+    err = _validate_not_too_far_ahead(date_str, db, doctor)
     if err:
         return err
     target = datetime.date.fromisoformat(date_str)

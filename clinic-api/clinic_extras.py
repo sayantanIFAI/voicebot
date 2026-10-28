@@ -128,9 +128,25 @@ RELATIONSHIPS = [
 ]
 
 
+# Owner, 2026-10-28: sample data -- Dr. Subrata Banerjee (Dr. S. Banerjee) sits on EVERY day of the week, so every date this month and next month is one he sits. The table is by weekday, so
+# seven rows cover every date; the hours stay the ones he already has. Added only where a weekday is missing (never changes an hour a clinician edited).
+SITS_EVERY_DAY = ("Dr. S. Banerjee",)
+
+
 def apply_extras(db: Session) -> dict:
     """Idempotent. Returns what it changed."""
-    out = {"doctor_sex_set": 0, "departments": 0, "doctors": 0, "routes": 0, "relationships": 0}
+    out = {"doctor_sex_set": 0, "departments": 0, "doctors": 0, "routes": 0, "relationships": 0, "weekdays_added": 0}
+    for short in SITS_EVERY_DAY:
+        doc = db.query(Doctor).filter_by(name=short).first()
+        if doc is None:
+            continue
+        rows = db.query(DoctorSchedule).filter_by(doctor_id=doc.id).all()
+        have = {r.weekday for r in rows}
+        start, end = (rows[0].start_time, rows[0].end_time) if rows else ("18:00", "20:00")
+        for wd in range(7):
+            if wd not in have:
+                db.add(DoctorSchedule(doctor_id=doc.id, weekday=wd, start_time=start, end_time=end))
+                out["weekdays_added"] += 1
     for d in db.query(Doctor).filter(Doctor.sex == "").all():
         s = DOCTOR_SEX.get(d.name)
         if s:

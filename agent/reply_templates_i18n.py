@@ -833,3 +833,17 @@ def spelling_prompt(lang: str) -> str:
 def spelling_readback(spelled: str, lang: str) -> str:
     hi = lang == "hi"
     return f"मैंने सुना {spelled.upper()} -- क्या यह ठीक है?" if hi else f"I heard {spelled.upper()} -- is that right?"
+
+
+def next_month_first_reply(nm: dict, lang: str, rescheduling: bool = False) -> str:
+    """Owner, 2026-10-28: a date in NEXT month is answered with the first day next month the doctor sits (the clinic's own date and hours), and only that -- the date is turned into words
+    by main._speak (agent/date_phrase.speak_dates). The booking itself is taken nearer the day."""
+    d, a, b = nm.get("date"), nm.get("start"), nm.get("end")
+    if lang == "bn":
+        base = f"আমি শুধু পরের মাসের প্রথম সময়টা বলতে পারব: {d} তারিখে, {a} থেকে {b}। বুকিং তারিখের তিন দিন আগে থেকে করা যায়, তখন আবার ফোন করুন।"
+        return base + (" আপনার আগের অ্যাপয়েন্টমেন্টটা আগের মতোই আছে।" if rescheduling else "")
+    if lang == "hi":
+        base = f"मैं सिर्फ़ अगले महीने की पहली उपलब्धता बता सकती हूँ: {d} को, {a} से {b} तक। बुकिंग तारीख़ से तीन दिन पहले से हो सकती है, तब फिर से फ़ोन कीजिए।"
+        return base + (" आपकी पुरानी अपॉइंटमेंट वैसी ही है।" if rescheduling else "")
+    base = f"I can only tell you the first availability next month: {d}, from {a} to {b}. Booking opens three days before the date, so please call again then."
+    return base + (" Your original appointment is unchanged." if rescheduling else "")
