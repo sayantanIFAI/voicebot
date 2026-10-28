@@ -3552,7 +3552,9 @@ async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
     return {"say": say, "pending": {"kind": "pick", "doctors": sit, "date": iso, "time": None}}
 
 
-_PICK_MEMORY_TURNS = 6  # owner, 2026-10-26: how long the doctors just offered stay remembered for the caller's choice
+# Owner, 2026-10-28: "until the user specifically changes context, it must not be lost by the algorithm". The department just discussed and the doctors just offered stay the subject for the rest of the call;
+# they are replaced only when the caller names another department or doctor (a new route result below) -- never by the number of turns that passed.
+_PICK_MEMORY_TURNS = 10**6
 
 
 async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict | bool:
@@ -4560,6 +4562,10 @@ async def _finish_enquiry_turn(
         _rx_asked.set(None)
     _rf = _route_found.get()
     if _rf:
+        _prev = getattr(session, "last_route", None)
+        _pend = getattr(session, "dept_pending", None)
+        if _prev and _prev.get("dept") != _rf.get("dept") and _pend and _pend.get("kind") == "pick" and _pend.get("turn", 0) < session.turn_count:
+            session.dept_pending = None  # another department was named: the old department's doctors are no longer the subject
         session.last_route = {**_rf, "turn": session.turn_count}
         _route_found.set(None)
     _nso = _next_sit_offer.get()
