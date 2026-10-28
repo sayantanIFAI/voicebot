@@ -1220,11 +1220,16 @@ class RescheduleRequest(BaseModel):
     confirmation_id: str
     new_date: str
     new_time_slot: str
+    caller_phone: str | None = None  # a change needs the id AND a phone number that belongs to the booking (booking_service.check_change_authorized)
+    call_id: str | None = None
 
 
 @app.post("/api/v1/bookings/reschedule")
 @idempotent("bookings.reschedule")
 def reschedule_booking(req: RescheduleRequest, db: Session = Depends(get_db)):
+    denied = bs.check_change_authorized(db, req.confirmation_id, req.caller_phone, req.call_id)
+    if denied:
+        return denied
     appt = db.query(Appointment).filter_by(confirmation_id=req.confirmation_id, status="confirmed").first()
     if not appt:
         return {"success": False, "reason": "not_found"}
@@ -1238,11 +1243,16 @@ def reschedule_booking(req: RescheduleRequest, db: Session = Depends(get_db)):
 class CancelRequest(BaseModel):
     confirmation_id: str
     confirm_charge: bool = False
+    caller_phone: str | None = None  # see RescheduleRequest
+    call_id: str | None = None
 
 
 @app.post("/api/v1/bookings/cancel")
 @idempotent("bookings.cancel")
 def cancel_booking(req: CancelRequest, db: Session = Depends(get_db)):
+    denied = bs.check_change_authorized(db, req.confirmation_id, req.caller_phone, req.call_id)
+    if denied:
+        return denied
     return bs.cancel_appointment(db, req.confirmation_id, req.confirm_charge)
 
 

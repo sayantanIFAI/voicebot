@@ -46,6 +46,8 @@ _HI_MISSING = {
     ("add_test_booking", "confirmation_id"): "आपका कन्फ़र्मेशन नंबर बताइए?",
     ("add_test_booking", "test_name"): "कौन सा टेस्ट जोड़ना चाहते हैं?",
     ("lookup_booking", "phone"): "जिस नंबर से बुक किया था वह बताइए?",
+    ("cancel_appointment", "phone"): "सुरक्षा के लिए, जिस नंबर से बुकिंग हुई थी वह बताइए?",
+    ("reschedule_appointment", "phone"): "सुरक्षा के लिए, जिस नंबर से बुकिंग हुई थी वह बताइए?",
 }
 _HI_MISSING_DEFAULT = "माफ़ कीजिए, क्या आप थोड़ा साफ़ बोलेंगे?"
 
@@ -77,6 +79,8 @@ _EN_MISSING = {
     ("add_test_booking", "confirmation_id"): "Could you give me your confirmation number?",
     ("add_test_booking", "test_name"): "Which test would you like to add?",
     ("lookup_booking", "phone"): "Could you give me the number you booked from?",
+    ("cancel_appointment", "phone"): "For security, could you tell me the number the booking was made from?",
+    ("reschedule_appointment", "phone"): "For security, could you tell me the number the booking was made from?",
 }
 _EN_MISSING_DEFAULT = "Sorry, could you say that a little more clearly?"
 

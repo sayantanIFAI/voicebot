@@ -201,6 +201,12 @@ def end_append(text: str) -> str:
     return digits if 1 <= len(digits) <= 3 else ""
 
 
+def partial_prompt(old: str, new: str, lang: str) -> str:
+    """What to say in the pause after a group of digits (see "phone_echo"): the group just heard, or the plain "go on" when nothing new was added (the caller repeated themselves)."""
+    group = new[len(old):] if new.startswith(old) else new
+    return prompt("phone_echo", lang, digits=" ".join(group)) if group else prompt("phone_partial", lang)
+
+
 def absorb(buffer: str, text: str, asked: bool) -> PhoneStep:
     """One turn of phone capture. `buffer` = digits kept from earlier turns of THIS booking; `asked` = the phone is the question
     the caller is answering (so a sentence of a few digits is certainly the number). When it is not asked, only a complete
@@ -761,6 +767,13 @@ _PROMPTS = {
         "hi": "ठीक है, बोलिए।",
         "bn": "ঠিক আছে, বলুন।",
     },
+    # Owner, 2026-10-28: a number said in groups with a pause between them ("9530 ... 4132 ... 33", "95304 ... 132 ... 33") is repeated back group by group IN the pauses, the way a
+    # person writing it down would ("9 5 3 0 ... 4 1 3 2 ..."), so the caller hears at once whether a group was misheard. Only the group just heard; the whole number is read back, and confirmed, at the end.
+    "phone_echo": {
+        "en": "{digits}. Go on.",
+        "hi": "{digits}। बोलिए।",
+        "bn": "{digits}। বলুন।",
+    },
     # Owner, 2026-10-23: a caller who stops after TWO digits is told what was heard and asked for the other eight (a number said in groups keeps the short "ok" above).
     "phone_partial_two": {
         "en": "Okay, I have {digits}. Please say the other eight digits.",
@@ -1285,10 +1298,15 @@ def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
         return _use_whatsapp_number(st, number, plan)  # "no, 98765 43210" / the number itself
     tries = int(st.slots.get("_wa_tries") or 0)
     if st.slots.get("_wa_number"):
+        old_buffer = st.phone_buffer
         step = absorb(st.phone_buffer, text, True)
         if step.status == "partial":
             st.phone_buffer = step.buffer
-            plan.speak = prompt("phone_partial_two" if len(step.buffer) == 2 else "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial", lang, n=len(step.buffer), digits=spoken_digit_groups(step.buffer))
+            plan.speak = (
+                prompt("phone_partial_two" if len(step.buffer) == 2 else "phone_partial_long", lang, n=len(step.buffer), digits=spoken_digit_groups(step.buffer))
+                if len(step.buffer) == 2 or len(step.buffer) >= 6
+                else partial_prompt(old_buffer, step.buffer, lang)
+            )
             return True
         if step.status in ("invalid", "compound", "cleared"):
             st.phone_buffer = ""
@@ -1624,6 +1642,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     asked = "phone" in missing and (missing[0] == "phone" or "phone" in st.asked_fields)
     if "phone" in missing and not asked and any(t in _PHONE_CUES for t in _words(text)):
         asked = True  # "the number is ..." -- the caller is plainly giving the phone number, asked or not
+    old_buffer = st.phone_buffer
     step = PhoneStep("none", buffer=st.phone_buffer) if name_not_yet_given else absorb(st.phone_buffer, text, asked)
     if step.status == "complete":
         st.phone_buffer = ""
@@ -1637,12 +1656,10 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         st.retry_counts.pop("phone", None)  # digits were heard: that is progress, not a miss (the phone is never given up on mid-number)
         # a few digits so far: "ok, go on" (a number said in groups). Nearly all of it (6 or more): say what was heard, so a caller who FINISHED a number that came out short
         # knows which digits are missing -- an "ok" alone made them think it was complete (real call 2026-10-18).
-        spoken = prompt(
-            "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial_two" if len(step.buffer) == 2 else "phone_partial",
-            lang,
-            n=len(step.buffer),
-            digits=spoken_digit_groups(step.buffer),
-        )
+        if len(step.buffer) >= 6 or len(step.buffer) == 2:
+            spoken = prompt("phone_partial_long" if len(step.buffer) >= 6 else "phone_partial_two", lang, n=len(step.buffer), digits=spoken_digit_groups(step.buffer))
+        else:
+            spoken = partial_prompt(old_buffer, step.buffer, lang)  # 3-5 digits: the group just heard is repeated in the pause (owner, 2026-10-28)
         if step.pure:
             plan.speak = spoken
         else:

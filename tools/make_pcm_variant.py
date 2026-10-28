@@ -84,7 +84,11 @@ HELLO_NEW = """    if msg.get("type") == "playback_done":
         # what the client reports over what we requested: a wrong assumed
         # rate would not fail loudly, it would just make every timestamp
         # and every transcript quietly wrong.
-        rate = int(msg.get("sampleRate") or SAMPLE_RATE)
+        rate = SAMPLE_RATE
+        if msg.get("sampleRate") is not None:
+            rate = ws_guard.valid_sample_rate(msg.get("sampleRate"))
+            if rate is None:  # 0, 10**9, a string, a boolean: not a rate this agent can resample from
+                raise ws_guard.Rejected(ws_guard.CLOSE_BAD_DATA, "unsupported sample rate")
         session.declared_rate = rate
         session.audio.sample_rate = rate
         if rate != SAMPLE_RATE and session.duplex is not None:

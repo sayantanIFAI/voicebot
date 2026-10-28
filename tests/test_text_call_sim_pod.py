@@ -171,6 +171,6 @@ def test_the_whole_order_name_number_age_address_each_read_back_then_payment_not
     async def cancel():
         tools = text_call_sim.main_module().ClinicToolsClient(text_call_sim.main_module().CLINIC_API_BASE)
         for b in (await tools.lookup_bookings(phone="9876543210")).get("bookings") or []:
-            await tools.cancel_appointment(b["confirmation_id"], True)
+            await tools.cancel_appointment(b["confirmation_id"], True, caller_phone="9876543210")
 
     asyncio.run(cancel())

@@ -50,7 +50,7 @@ found = c.get("/api/v1/bookings/lookup", params={"phone": PHONE}).json()
 mine = [b for b in found.get("bookings", []) if b.get("confirmation_id") == cid]
 check("the booking is found by phone number alone", bool(mine), mine[:1])
 
-moved = c.post("/api/v1/bookings/reschedule", json={"confirmation_id": cid, "new_date": thursday, "new_time_slot": fs_t["free_slots"][1]}).json()
+moved = c.post("/api/v1/bookings/reschedule", json={"confirmation_id": cid, "new_date": thursday, "new_time_slot": fs_t["free_slots"][1], "caller_phone": PHONE}).json()
 check(f"postpone to {thursday} {fs_t['free_slots'][1]}", moved.get("success"), {k: moved.get(k) for k in ("success", "reason")})
 back = c.get("/api/v1/doctors/free-slots", params={"name": "Sen", "date": sunday}).json()["free_slots"]
 check("the old slot is free again after the move", slot in back)
@@ -61,7 +61,7 @@ new_cid = next((b["confirmation_id"] for b in now if b.get("date") == thursday a
 res = c.post("/api/v1/bookings/resend", json={"confirmation_id": new_cid}).json()
 check("confirmation can be sent again for the booking", bool(res) and res.get("success", True) is not False, res)
 
-canc = c.post("/api/v1/bookings/cancel", json={"confirmation_id": new_cid, "confirm_charge": True}).json()
+canc = c.post("/api/v1/bookings/cancel", json={"confirmation_id": new_cid, "confirm_charge": True, "caller_phone": PHONE}).json()
 check("cancel", canc.get("success", False) or canc.get("status") == "cancelled", {k: canc.get(k) for k in ("success", "status", "reason")})
 free_after = c.get("/api/v1/doctors/free-slots", params={"name": "Sen", "date": thursday}).json()["free_slots"]
 check("the cancelled slot is free again", fs_t["free_slots"][1] in free_after)

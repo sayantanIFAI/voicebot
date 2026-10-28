@@ -300,8 +300,12 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"confirm_booking({body!r}): {e}") from e
 
-    async def reschedule_appointment(self, confirmation_id: str, new_date: str, new_time_slot: str) -> dict:
+    async def reschedule_appointment(self, confirmation_id: str, new_date: str, new_time_slot: str, caller_phone: str | None = None, call_id: str | None = None) -> dict:
         body = {"confirmation_id": confirmation_id, "new_date": new_date, "new_time_slot": new_time_slot}
+        if caller_phone:
+            body["caller_phone"] = caller_phone
+        if call_id:
+            body["call_id"] = call_id
         try:
             r = await self._write("/api/v1/bookings/reschedule", json=body)
             r.raise_for_status()
@@ -309,8 +313,12 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"reschedule_appointment({body!r}): {e}") from e
 
-    async def cancel_appointment(self, confirmation_id: str, confirm_charge: bool = False) -> dict:
+    async def cancel_appointment(self, confirmation_id: str, confirm_charge: bool = False, caller_phone: str | None = None, call_id: str | None = None) -> dict:
         body = {"confirmation_id": confirmation_id, "confirm_charge": confirm_charge}
+        if caller_phone:
+            body["caller_phone"] = caller_phone
+        if call_id:
+            body["call_id"] = call_id
         try:
             r = await self._write("/api/v1/bookings/cancel", json=body)
             r.raise_for_status()

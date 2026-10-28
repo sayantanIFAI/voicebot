@@ -85,7 +85,7 @@ def test_the_window_is_today_plus_three_days_for_hold_and_for_reschedule():
             assert done["success"]
         finally:
             db.close()
-        r = client.post("/api/v1/bookings/reschedule", json={"confirmation_id": done["confirmation_id"], "new_date": far.isoformat(), "new_time_slot": slot}, headers={"Idempotency-Key": "w1"}).json()
+        r = client.post("/api/v1/bookings/reschedule", json={"confirmation_id": done["confirmation_id"], "new_date": far.isoformat(), "new_time_slot": slot, "caller_phone": "9811111111"}, headers={"Idempotency-Key": "w1"}).json()
         assert r["success"] is False and r["reason"] == "too_far_ahead"
         db = SessionLocal()
         try:

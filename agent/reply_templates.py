@@ -97,6 +97,8 @@ def missing_slot_prompt(intent: str, missing: str, lang: str = "bn") -> str:
         ("add_test_booking", "confirmation_id"): "আপনার কনফার্মেশন নম্বরটা বলবেন?",
         ("add_test_booking", "test_name"): "কোন টেস্টটা যোগ করতে চান?",
         ("lookup_booking", "phone"): "যে নম্বর থেকে বুক করেছিলেন সেটা বলবেন?",
+        ("cancel_appointment", "phone"): "নিরাপত্তার জন্য, যে নম্বর থেকে বুকিংটা করা হয়েছিল সেটা বলবেন?",
+        ("reschedule_appointment", "phone"): "নিরাপত্তার জন্য, যে নম্বর থেকে বুকিংটা করা হয়েছিল সেটা বলবেন?",
     }
     return prompts.get((intent, missing), "দুঃখিত, একটু স্পষ্ট করে বলবেন?")
 

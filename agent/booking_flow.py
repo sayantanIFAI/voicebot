@@ -31,8 +31,9 @@ from dataclasses import dataclass, field
 REQUIRED_SLOTS: dict[str, tuple[str, ...]] = {
     "book_appointment": ("doctor_name", "date", "time_slot", "patient_name", "phone"),
     "book_test": ("test_names", "date", "patient_name", "phone"),
-    "reschedule_appointment": ("confirmation_id", "new_date", "new_time_slot"),
-    "cancel_appointment": ("confirmation_id",),
+    # a change needs the confirmation id AND a phone number that belongs to the booking (review 2026-10-28, P0); a booking found BY phone already has it
+    "reschedule_appointment": ("confirmation_id", "phone", "new_date", "new_time_slot"),
+    "cancel_appointment": ("confirmation_id", "phone"),
     "add_test_booking": ("confirmation_id", "test_name"),
     "lookup_booking": (),  # phone/confirmation_id/name -- any one is enough, checked specially
 }

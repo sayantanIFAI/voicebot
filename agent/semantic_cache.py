@@ -130,6 +130,9 @@ ENTITY_MATCH_FLOOR = 0.55
 # from a different caller's utterance.
 _PII_SLOTS = ("phone", "patient_name")
 
+_NEGATION_TOKENS = frozenset(
+    "না নয় নয়তো নেই নাহ নি নহে নাই নেবো-না not no dont don't never cannot cant nahi nahin nhi mat na नहीं नही मत ना न नही".split()
+)
 _RE_WS = re.compile(r"\s+")
 _RE_STRIP = re.compile(r"[।?!,.‌‍]+")
 
@@ -213,12 +216,29 @@ class SemanticCache:
     # reply, so smalltalk/unclear entries are L1 (exact-text)-only, same restriction as PII.
     _NO_FACT_TO_VERIFY_INTENTS = ("smalltalk", "unclear")
 
+    # Review 2026-10-28: "Book CBC tomorrow" and "Book CBC today" are close in embedding space (0.78 .. 0.82 for rewordings) and the cached value is the model's intent AND SLOTS, so the other
+    # day's slots could be handed back. Transactional intents, and any entry carrying a day, time, id, count or relationship, are exact-text (L1) only: a reworded request goes to the model.
+    _TRANSACTIONAL_INTENTS = ("book_appointment", "reschedule_appointment", "cancel_appointment", "book_test", "add_test_booking", "lookup_booking")
+    _EXACT_ONLY_SLOTS = (
+        "date", "time_slot", "new_date", "new_time_slot", "confirmation_id", "relationship", "patient_age", "patient_count", "count", "quantity", "contact_phone",
+    )
+
     @staticmethod
     def _is_l2_eligible(value: dict) -> bool:
         slots = (value or {}).get("slots") or {}
         if (value or {}).get("intent") in SemanticCache._NO_FACT_TO_VERIFY_INTENTS:
             return False
+        if (value or {}).get("intent") in SemanticCache._TRANSACTIONAL_INTENTS:
+            return False
+        if any(slots.get(field) for field in SemanticCache._EXACT_ONLY_SLOTS):
+            return False
         return not any(slots.get(field) for field in _PII_SLOTS)
+
+    @staticmethod
+    def _negated(text: str) -> bool:
+        """A negation anywhere in the sentence ("don't book", "বুক করবেন না", "बुक मत करो"). An L2 hit between a negated and an un-negated wording is a different request, never the same."""
+        words = set(normalize_text(text).replace("'", "").split())
+        return bool(words & _NEGATION_TOKENS)
 
     @staticmethod
     def _entity_guard(value: dict, text: str) -> bool:
@@ -289,6 +309,8 @@ class SemanticCache:
                 entry = self._exact.get(best_key)
                 if entry and self._expired(entry):
                     self._drop_locked(best_key)
+                elif entry and self._negated(text) != self._negated(best_key):
+                    logger.info("semantic hit rejected: negation differs between %r and %r", text, best_key)
                 elif entry and self._entity_guard(entry["value"], text):
                     entry["last_used"] = time.time()
                     self.stats["l2_hits"] += 1

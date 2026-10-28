@@ -100,7 +100,7 @@ def test_hold_then_confirm_full_flow(clinic_client):
     lookup = c.get("/api/v1/bookings/lookup", params={"phone": "9123456780"}).json()
     assert lookup["found"] and lookup["bookings"][0]["confirmation_id"] == confirm["confirmation_id"]
 
-    cancel = c.post("/api/v1/bookings/cancel", json={"confirmation_id": confirm["confirmation_id"]}).json()
+    cancel = c.post("/api/v1/bookings/cancel", json={"confirmation_id": confirm["confirmation_id"], "caller_phone": "9123456780"}).json()
     assert cancel["success"]
 
 
@@ -327,6 +327,7 @@ def test_reschedule_rejects_a_past_date(clinic_client):
             "confirmation_id": confirm["confirmation_id"],
             "new_date": past,
             "new_time_slot": "10:00",
+            "caller_phone": "9123456781",
         },
     ).json()
     # Used to skip validation entirely and attempt a hold on a past date.
@@ -363,6 +364,7 @@ def test_reschedule_rejects_a_slot_outside_chamber_hours(clinic_client):
             "confirmation_id": confirm["confirmation_id"],
             "new_date": date,
             "new_time_slot": "03:45",
+            "caller_phone": "9123456782",
         },
     ).json()
     assert result["success"] is False

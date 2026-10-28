@@ -91,3 +91,15 @@ The reply templates mostly distinguish found / not found / unavailable, but "cli
 - `test_a_written_surname_or_title_and_surname_resolves_to_that_doctor`: the doctor lookup returns the full name now; the expected "Dr. A. Sen" was out of date.
 - `tests/test_smoke.py::TestClinicAPI`: needs a live clinic API at localhost.
 - `tests/test_lab_price_multilingual.py`: the stand-in tool had no `route_department`.
+
+## Implemented later the same day (commit after 60f5a08)
+
+| Item | What was done |
+|---|---|
+| P0 ownership check | `booking_service.check_change_authorized`: cancel and reschedule need the confirmation id AND a phone number that belongs to the booking (booked-from, contact, patient, or a verified proxy; last ten digits compared). Refusals (`phone_required`, `not_authorized`, `too_many_attempts`) are written to `audit_log`; five refusals per booking or per number lock changes for 15 minutes (`CHANGE_MAX_FAILS`, `CHANGE_LOCK_MINUTES`, `CHANGE_REQUIRES_PHONE=0` turns it off). The agent asks for the number (`phone` is now a required slot of cancel / reschedule; a booking found by phone already has it), allows three wrong numbers, then hands the caller to the counter. A spoken phone number is still a claim, not an identity: the second factor (date of birth, or a code to the number on file once SMS is real) remains the next step. |
+| `asks_to_book` negation | Clause-wise: a clause that names a booking and refuses it is not a request; another clause still can be. "বুক তো করিনি" stays a request. |
+| Semantic cache | Transactional intents and entries with a date, time, id, count, relationship or contact number are exact-text only; an L2 hit between a negated and an un-negated wording is rejected. |
+| WebSocket | `agent/ws_guard.py`: control frames must be a JSON object with a known type, bounded size; sample rate from a whitelist (else close 1003); per-message, per-call-bytes and per-call-duration limits (close 1009 / 1008). |
+| Three language fields | `detected_input_language`, `tts_output_language` and a mismatch counter are recorded beside the reply language; no behaviour change. |
+| State vocabulary | NOT done (audit of every reply template; separate piece of work). |
+| Transactional outbox | NOT done (needs a real SMS / payment provider). |

@@ -91,6 +91,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent import abuse, action_gate, call_end, slot_grouping, topic_flow
+from agent import ws_guard  # limits and validation for what a client may send (review 2026-10-28)
 from agent import entity_confirmation as entity_text
 from agent import history_templates as history_text
 from agent import messages as agent_messages
@@ -1232,6 +1233,12 @@ class CallSession:
         # question (agent.lay_terms.match_category_answer), not as a fresh question; see the dispatch site.
         self.awaiting_test_category = False
         self.awaiting_clinician_offer = False  # "a doctor will explain it, shall I connect one?" was asked (agent/clinical_safety.py); the next yes / no answers it
+        # THREE LANGUAGES, kept apart (review 2026-10-28). `lang` (below) is the PREFERRED REPLY language: it moves only on the first decisive turn, an accepted explicit request, or the
+        # two guarded early-call / weak-lock corrections. `detected_input_language` is what the caller spoke THIS turn (set every turn, never a preference). `tts_output_language` is the
+        # language of the last line actually synthesised. A detected difference alone never moves the preference; the mismatch is counted so it can be reviewed.
+        self.detected_input_language: str | None = None
+        self.tts_output_language: str | None = None
+        self.language_mismatch_turns = 0
         self.lang_lock_weak = False  # the language was locked from a doubtful first read (decoders disagreeing): the first clear sentence in the other script may correct it
         self.last_enquiry = None  # {"text", "turn"}: the last read-only enquiry answered, replayed in a language the caller then asks for ("বাংলায় বলুন এটা")
         self.lang_explicit = False  # the caller ASKED for a language ("speak English"): a later clear sentence in another script never moves the call on its own
@@ -1393,6 +1400,7 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
     elsewhere in this file, so streaming several clips here is the same,
     already-proven pattern, not a new one."""
     lang = lang or session.lang
+    session.tts_output_language = lang
     if fallback_reason in ("llm_failure", "tool_failure"):
         _note(session, "system_failures")
     session.agent_spoke_since_commit = True
@@ -5077,6 +5085,9 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             )
             return
         detected_lang = lang  # what the CALLER actually spoke this turn -- kept for analytics; never overridden
+        session.detected_input_language = detected_lang
+        if session.lang_locked and detected_lang != session.lang:
+            session.language_mismatch_turns += 1
         _rec(session, "language", detected_lang)
         lang = _resolve_reply_language(
             session, lang, lang_decisive, float(getattr(asr_result, "decoder_agreement", 1.0) or 0.0)
@@ -6915,8 +6926,10 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
 
         elif st.action == "reschedule_appointment":
             result = await _tools.reschedule_appointment(
-                st.slots["confirmation_id"], st.slots["new_date"], st.slots["new_time_slot"]
+                st.slots["confirmation_id"], st.slots["new_date"], st.slots["new_time_slot"], caller_phone=st.slots.get("phone"), call_id=session.call_id
             )
+            if await _change_refused(session, st, result, lang):
+                return
             if result.get("reason") == "write_unverified":
                 session.booking = None
                 await _handle_unverified_write(session, lang)
@@ -6931,7 +6944,9 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
 
         elif st.action == "cancel_appointment":
             confirm_charge = st.stage == "awaiting_charge_confirm"
-            result = await _tools.cancel_appointment(st.slots["confirmation_id"], confirm_charge)
+            result = await _tools.cancel_appointment(st.slots["confirmation_id"], confirm_charge, caller_phone=st.slots.get("phone"), call_id=session.call_id)
+            if await _change_refused(session, st, result, lang):
+                return
             if not result.get("success") and result.get("reason") == "charge_confirmation_required":
                 mark_awaiting_charge_confirm(st, result["charge_inr"])
                 await _speak(session, cancel_reply(result, lang), lang)
@@ -6950,6 +6965,39 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
         logger.error("[%s] clinic API call failed during booking confirmation: %s", session.call_id, e)
         await _speak(session, phrase("tool_failure", lang), lang, fallback_reason="tool_failure")
         session.booking = None
+
+
+_CHANGE_REFUSED = {
+    "not_authorized": {
+        "bn": "এই নম্বরটা এই বুকিংয়ের সাথে মেলেনি, তাই আমি এটা বদলাতে পারছি না। বুকিংয়ের সময় যে নম্বর দিয়েছিলেন সেটা আরেকবার বলবেন?",
+        "hi": "यह नंबर इस बुकिंग से मेल नहीं खाया, इसलिए मैं इसे बदल नहीं सकती। बुकिंग के समय जो नंबर दिया था वह फिर से बताइए?",
+        "en": "That number does not match this booking, so I cannot change it. Could you tell me the number you gave when you booked?",
+    },
+    "too_many_attempts": {
+        "bn": "নিরাপত্তার কারণে এই বুকিংটা এখন আমি বদলাতে পারব না। অনুগ্রহ করে কাউন্টারে এসে বা আমাদের স্টাফের সাথে কথা বলুন।",
+        "hi": "सुरक्षा के कारण मैं अभी यह बुकिंग नहीं बदल सकती। कृपया काउंटर पर आइए या हमारे स्टाफ़ से बात कीजिए।",
+        "en": "For security I cannot change this booking right now. Please come to the counter or speak to our staff.",
+    },
+}
+
+
+async def _change_refused(session: CallSession, st, result: dict, lang: str) -> bool:
+    """A cancel / reschedule the clinic refused because the number does not belong to the booking (P0 review 2026-10-28). True when this turn is dealt with: the booking task stays open
+    for another try at the number (three misses, or the clinic's own lock, end it), nothing is changed, and nothing about the booking is said to the caller."""
+    reason = result.get("reason")
+    if result.get("success") or reason not in ("phone_required", "not_authorized", "too_many_attempts"):
+        return False
+    if reason == "too_many_attempts" or (reason == "not_authorized" and st.note_retry("change_denied") >= 3):
+        await _speak(session, _CHANGE_REFUSED["too_many_attempts"].get(lang, _CHANGE_REFUSED["too_many_attempts"]["en"]), lang)
+        session.booking = None
+        return True
+    st.slots.pop("phone", None)
+    st.stage = "collecting"
+    if reason == "phone_required":
+        await _speak(session, missing_slot_prompt(st.action, "phone", lang), lang)
+    else:
+        await _speak(session, _CHANGE_REFUSED["not_authorized"].get(lang, _CHANGE_REFUSED["not_authorized"]["en"]), lang)
+    return True
 
 
 def _take_gate_release(session: CallSession):
@@ -8096,10 +8144,9 @@ async def _handle_control(session: CallSession, raw: str):
     honest, buildable version of "stop the AI, let the caller talk": the
     caller asks for the floor instead of the system trying to detect it
     from the muted mic, which structurally cannot see it."""
-    try:
-        msg = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("[%s] unparseable control frame: %r", session.call_id, raw[:80])
+    msg = ws_guard.parse_control(raw)  # an object with a known type, or None; an oversized frame raises ws_guard.Rejected
+    if msg is None:
+        logger.warning("[%s] ignored control frame: %r", session.call_id, str(raw)[:80])
         return
     if msg.get("type") == "playback_done":
         # remember WHERE in the audio the agent finished, so the caller's first words (spoken as it finished) are not skipped by the resync
@@ -8110,7 +8157,11 @@ async def _handle_control(session: CallSession, raw: str):
         # what the client reports over what we requested: a wrong assumed
         # rate would not fail loudly, it would just make every timestamp
         # and every transcript quietly wrong.
-        rate = int(msg.get("sampleRate") or SAMPLE_RATE)
+        rate = SAMPLE_RATE
+        if msg.get("sampleRate") is not None:
+            rate = ws_guard.valid_sample_rate(msg.get("sampleRate"))
+            if rate is None:  # 0, 10**9, a string, a boolean: not a rate this agent can resample from
+                raise ws_guard.Rejected(ws_guard.CLOSE_BAD_DATA, "unsupported sample rate")
         session.declared_rate = rate
         session.audio.sample_rate = rate
         if rate != SAMPLE_RATE and session.duplex is not None:
@@ -8159,16 +8210,23 @@ async def ws_audio(ws: WebSocket):
             # the canceller simply sees silence (safe, just no barge-in).
             await session.ws.send_text(json.dumps({"type": "config", "aec": True}))
         await _speak(session, phrase("greeting", "bn"), "bn")
+        limits = ws_guard.CallLimits(time.monotonic())
         while True:
             message = await ws.receive()
             if message["type"] == "websocket.disconnect":
                 break
             if message.get("bytes") is not None:
+                limits.check_audio(len(message["bytes"]), time.monotonic())
                 await session.append(message["bytes"])
             elif message.get("text"):
+                limits.check_time(time.monotonic())
                 await _handle_control(session, message["text"])
     except WebSocketDisconnect:
         pass
+    except ws_guard.Rejected as e:
+        logger.warning("[%s] call closed by the socket guard: %s", session.call_id, e.reason)
+        with contextlib.suppress(Exception):
+            await ws.close(code=e.code)
     except Exception:
         logger.exception("[%s] session crashed", session.call_id)
     finally:

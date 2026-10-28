@@ -33,6 +33,7 @@ import payments
 from disclosure import with_notice as _with_disclosure_notice
 from models import (
     Appointment,
+    AuditLog,
     CancellationPolicy,
     Department,
     DepartmentRoute,
@@ -536,6 +537,73 @@ def cancellation_charge(db: Session, appt: Appointment) -> tuple[int, Cancellati
     if appt_dt - _now() >= datetime.timedelta(hours=policy.free_window_hours):
         return 0, policy
     return round(fee * policy.charge_percent / 100), policy
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+# WHO MAY CHANGE A BOOKING (review 2026-10-28, P0). A confirmation id alone used to be enough to cancel or move any booking: 8 hex characters, said aloud, texted and printed, is a
+# reference, not a credential. Now a change needs the id AND a phone number that belongs to the booking (the number it was made from, its contact number, the patient's number, or a
+# proxy already verified for that patient). There is no caller ID in this stack, so the number is still something the caller SAYS: it removes the one-factor path (a guessed, overheard
+# or leaked id), not a determined impersonator who also knows the phone number. A second factor (date of birth, or a code sent to the number on file once SMS is real) is the next step.
+# Every refusal is written to audit_log, and repeated refusals lock the booking and the number for a while (the lock only blocks changes; the booking itself is untouched).
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+CHANGE_REQUIRES_PHONE = os.environ.get("CHANGE_REQUIRES_PHONE", "1") != "0"
+CHANGE_MAX_FAILS = int(os.environ.get("CHANGE_MAX_FAILS", "5"))
+CHANGE_LOCK_MINUTES = int(os.environ.get("CHANGE_LOCK_MINUTES", "15"))
+
+
+def _phone_key(value: str | None) -> str:
+    """The last ten digits of a phone number, '' when there are fewer (so 'not_provided' never matches anything)."""
+    digits = re.sub(r"\D", "", value or "")
+    return digits[-10:] if len(digits) >= 10 else ""
+
+
+def _recent_change_denials(db: Session, needle: str) -> int:
+    since = _now() - datetime.timedelta(minutes=CHANGE_LOCK_MINUTES)
+    return (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "booking.change_denied", AuditLog.at >= since, AuditLog.detail_json.like(f"%{needle}%"))
+        .count()
+    )
+
+
+def check_change_authorized(db: Session, confirmation_id: str, caller_phone: str | None, call_id: str | None = None) -> dict | None:
+    """None when this caller may change the booking; otherwise the refusal to return ({"success": False, "reason": ...}). An unknown id is left to the caller's own not_found."""
+    if not CHANGE_REQUIRES_PHONE:
+        return None
+    appt = db.query(Appointment).filter_by(confirmation_id=confirmation_id, status="confirmed").first()
+    if appt is None:
+        return None
+    who = _phone_key(caller_phone)
+    if not who:
+        return {"success": False, "reason": "phone_required"}
+    if _recent_change_denials(db, f'"confirmation_id": "{confirmation_id}"') >= CHANGE_MAX_FAILS or _recent_change_denials(db, f'"caller": "{who}"') >= CHANGE_MAX_FAILS:
+        _audit_denied(db, appt, confirmation_id, who, call_id, "locked")
+        return {"success": False, "reason": "too_many_attempts"}
+    patient = db.get(Patient, appt.patient_id) if appt.patient_id else None
+    own = {_phone_key(appt.phone), _phone_key(getattr(appt, "caller_phone", None)), _phone_key(patient.phone if patient else None)} - {""}
+    if who in own:
+        return None
+    if patient is not None and authorize_disclosure(db, patient, caller_phone or ""):
+        return None
+    _audit_denied(db, appt, confirmation_id, who, call_id, "denied")
+    return {"success": False, "reason": "not_authorized"}
+
+
+def _audit_denied(db: Session, appt, confirmation_id: str, who: str, call_id: str | None, outcome: str) -> None:
+    import json
+
+    db.add(
+        AuditLog(
+            at=_now(),
+            call_id=call_id,
+            patient_id=appt.patient_id,
+            actor="agent",
+            action="booking.change_denied",
+            outcome=outcome,
+            detail_json=json.dumps({"confirmation_id": confirmation_id, "caller": who}),
+        )
+    )
+    db.commit()
 
 
 def cancel_appointment(db: Session, confirmation_id: str, confirm_charge: bool = False) -> dict:

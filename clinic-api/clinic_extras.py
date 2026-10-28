@@ -67,6 +67,14 @@ NEW_DOCTORS = [
         ["साहा", "शाह", "संजय साहा", "संजय शाह", "संजो शाह", "संजोय शाह"],
         _MWF_1PM,
     ),
+    # Owner, 2026-10-28: sample data -- Dr. Arun Kumar Saha, General Physician, Monday / Wednesday / Friday, 10 pm to 11:45 pm (as given). Bengali "অরুণ", Hindi "अरुण"; the surname
+    # "সাহা" is shared with the other Sahas, which is right: "Dr Saha" is then asked about, never guessed.
+    (
+        "General Medicine", "Dr. A. K. Saha", "Dr. Arun Kumar Saha", "অরুণ কুমার সাহা", "अरुण कुमार साहा", "MBBS, MD (Gen. Med.)", "M", 600,
+        ["অরুণ কুমার সাহা", "অরুণ সাহা", "অরুণ কুমার", "অরুণ কুমার শাহ", "অরুণ শাহ"],
+        ["अरुण कुमार साहा", "अरुण साहा", "अरुण कुमार", "अरुण कुमार शाह", "अरुण शाह"],
+        {"days": [0, 2, 4], "start": "22:00", "end": "23:45"},
+    ),
 ]
 
 # (department, keywords_bn, keywords_hi, keywords_en) -- symptoms the clinic's clinicians route to that department. Specific on purpose: a bare

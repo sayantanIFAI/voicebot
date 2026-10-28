@@ -111,12 +111,30 @@ def continues_booking(text: str) -> bool:
     return asks_to_book(text) or says_same_day(text) or says_same_time(text) or _has(t, _DO_IT)
 
 
+# Review 2026-10-28: "don't book an appointment", "বুক করবেন না", "बुक मत करो" asked to book. A clause that names a booking AND refuses it is not a request; another clause ("but book Dr Sen")
+# still is. (NOT "বুক তো করিনি" -- "I did not book" -- which is a complaint that the booking is missing, and stays a booking request.)
+_NOT_BOOKING = (
+    "করবেন না", "করবো না", "করব না", "করো না", "করবে না", "করতে চাই না", "চাই না", "চাইনা", "দিবেন না", "দেবেন না", "নেবেন না", "দিতে হবে না", "লাগবে না", "দরকার নেই", "প্রয়োজন নেই", "করতে হবে না", "করার দরকার নেই",
+    "मत ", "नहीं करना", "नहीं करनी", "नहीं चाहिए", "नहीं चाहता", "नहीं चाहती", "ना करें", "ना करो", "जरूरत नहीं", "ज़रूरत नहीं",
+    "don't", "dont", "do not", "no need", "not to book", "not book", "not want", "never", "no booking", "no appointment",
+)
+_CLAUSE_SPLIT = re.compile(r"\s+(?:but|however|কিন্তু|তবে|বরং|लेकिन|बल्कि)\s+|[,;।.?!]")
+
+
+def _refuses(clause: str) -> bool:
+    return _has(clause + " ", _NOT_BOOKING)
+
+
 def asks_to_book(text: str) -> bool:
-    """The caller asks for a booking (and is not asking about one they already have)."""
+    """The caller asks for a booking (and is not asking about one they already have, nor refusing one)."""
     t = _norm(text)
     if _has(t, _LOOKUP):
         return False
-    return _has(t, _BOOK_REQUEST) or any(w in t for w in _BOOK_WORDS) or _has(t, ("book",))
+    for raw in _CLAUSE_SPLIT.split((text or "").lower()):
+        c = _norm(raw)
+        if c and (_has(c, _BOOK_REQUEST) or any(w in c for w in _BOOK_WORDS) or _has(c, ("book",))) and not _refuses(c):
+            return True
+    return False
 
 
 def recent(ctx: dict | None, turn_count: int) -> bool:
