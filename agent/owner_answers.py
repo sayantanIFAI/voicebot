@@ -276,6 +276,11 @@ _ADDRESS_PARTS = (
     "লেডিজ", "লাডিজ", "লেডিস", "লাডিস", "ladies", "পার্ক", "park", "বেনিয়া", "বিনিয়া", "বেনিআ", "বিনিআ", "benia", "beniya", "beniapukur", "পুকুর",
     "সি আই টি", "সিআইটি", "সিআই টি", "cit road", "c i t", "लेडीज़", "लेडीज", "पार्क", "बेनिया", "सी आई टी",
 )
+_DIRECTIONS = (
+    "কীভাবে যাব", "কিভাবে যাব", "কীভাবে যাওয়া", "কিভাবে যাওয়া", "কীভাবে যেতে", "কিভাবে যেতে", "কীভাবে আসব", "কিভাবে আসব", "কীভাবে আসতে", "কিভাবে আসতে", "রাস্তা", "যাব কীভাবে", "যাব কিভাবে",
+    "कैसे जाए", "कैसे जाएं", "कैसे जाये", "कैसे जाना", "कैसे पहुंच", "कैसे पहुँच", "कैसे आएं", "कैसे आए", "कैसे आना", "कैसे आऊं", "कैसे आऊँ", "रास्ता", "कैसे जा सकते",
+    "how do i get", "how do i reach", "how can i reach", "how to reach", "how to get", "how can i get", "directions", "route to", "way to the clinic",
+)
 _WHERE_REPLY = {
     "bn": "জায়গাটা মুখে ঠিকঠাক বুঝিয়ে বলা একটু কঠিন। আপনি গুগল ম্যাপে দেখে নেবেন। অথবা আপনার যে নম্বরে হোয়াটসঅ্যাপ আছে সেটা বলুন, আমরা লোকেশনটা পাঠিয়ে দিচ্ছি।",
     "hi": "जगह मुँह से ठीक से समझाना थोड़ा मुश्किल है। आप गूगल मैप में देख लीजिए। या आपके जिस नंबर पर व्हाट्सऐप है वह बताइए, हम लोकेशन भेज देते हैं।",
@@ -299,6 +304,10 @@ def asks_where_in_address(text: str) -> bool:
     t = _norm(text)
     if not t or len(t.split()) > 14:
         return False
+    # Owner, 2026-10-28: "तो इधर हावड़ा से उतर के कैसे जाए" (how do I get there from Howrah) was answered with the clinic's address again. A HOW-TO-GET-THERE question gets the same honest
+    # answer as a where-question: it is hard to explain by voice -- Google Maps, or the WhatsApp number to send the location to. No route is ever invented.
+    if _has(t, _DIRECTIONS):
+        return True
     return _has(t, _WHERE) and _has(t, _ADDRESS_PARTS)
 
 

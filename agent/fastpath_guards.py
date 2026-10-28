@@ -135,10 +135,17 @@ def _seeks_care(text: str) -> bool:
     return any(w in n for w in _DOCTOR_WORDS) and off_topic.has_health_word(text)
 
 
+# "ঠিকানা হলো মালদা ..." / "my address is ..." -- the caller GIVING an address (answering the booking's question), not asking the clinic's. Real call 2026-10-28: the answer was taken for the
+# location FAQ and the clinic's own address was read out instead of capturing the patient's.
+_GIVES_ADDRESS = re.compile(r"(?:আমার\s+|আমাদের\s+)?(?:ঠিকানাটা|ঠিকানা|এড্রেস|অ্যাড্রেস|पता|एड्रेस|address)\s*(?:হচ্ছে|হলো|হল|হয়|है|is|:)\s*\S+", re.I)
+
+
 def veto(intent: str, slots: dict | None, text: str, tests_named) -> str | None:
     """A reason to refuse the shortcut's answer, or None to let it stand. `tests_named` is a zero-argument callable returning how many
     catalogue tests the sentence names (only evaluated when a total is asked for)."""
     slots = slots or {}
+    if intent == "clinic_faq" and _GIVES_ADDRESS.search(text or ""):
+        return "the caller is giving an address, not asking for the clinic's"
     if intent == "clinic_faq" and _seeks_care(text):
         # a sentence that lists symptoms AND asks for a doctor / department is a patient looking for care, never a clinic FAQ whose keyword happens to appear in it
         return "a symptom with a request for a doctor is not an FAQ"
