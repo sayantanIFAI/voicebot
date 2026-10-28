@@ -79,6 +79,11 @@ _RESPELL: dict[str, str] = {
     "জোয়দীপ": "জয় দীপ",
     "জইদীপ": "জয় দীপ",
     "যয়দীপ": "জয় দীপ",
+    # Owner, 2026-10-28: Dr Nirmal Roy; chosen by the listener from numbered samples (nir_3: "নির মল"). Other spellings of the name and its endings follow below (_NAME_BASES).
+    "নির্মল": "নির মল",
+    "নিরমল": "নির মল",
+    "নির্মোল": "নির মল",
+    "নীর্মল": "নির মল",
     "আট": "আট্",
 }
 
@@ -151,7 +156,7 @@ _FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", 
 
 # A person's name with the endings it takes in speech: "জয়দীপের" (of), "জয়দীপকে" (to), "জয়দীপবাবু" (Mr), "জয়দীপদা" (elder brother) ... The chosen spelling of the name is kept and the ending
 # appended, the same way _FAMILY_BASES works for ordinary words.
-_NAME_BASES = tuple(unicodedata.normalize("NFC", b) for b in ("জয়দীপ", "জয়দিপ", "জয়দীপ্", "জয়দিপ্", "জয়দ্বীপ", "জয়দ্বিপ", "জোয়দীপ", "জইদীপ", "যয়দীপ"))
+_NAME_BASES = tuple(unicodedata.normalize("NFC", b) for b in ("জয়দীপ", "জয়দিপ", "জয়দীপ্", "জয়দিপ্", "জয়দ্বীপ", "জয়দ্বিপ", "জোয়দীপ", "জইদীপ", "যয়দীপ", "নির্মল", "নিরমল", "নির্মোল", "নীর্মল"))
 _NAME_ENDINGS = frozenset(
     ("র", "ের", "কে", "ও", "ই", "ে", "েরও", "কেও", "বাবু", "বাবুর", "বাবুকে", "বাবুও", "দা", "দার", "দাকে", "দাও", "টা", "টির", "স্যার", "স্যারের", "স্যারকে", "ডাক্তার")
 )
