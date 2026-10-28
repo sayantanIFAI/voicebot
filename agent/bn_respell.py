@@ -70,6 +70,15 @@ _RESPELL: dict[str, str] = {
     "নয়": "নওয়্",
     # Owner, 2026-10-28: the doctor's first name, chosen by the listener from numbered samples (joy_10: said as two words)
     "জয়দীপ": "জয় দীপ",
+    # the same name as the recogniser and the clinic data may spell it (owner, 2026-10-28: "cover all and similar words with similar spellings of names")
+    "জয়দিপ": "জয় দীপ",
+    "জয়দীপ্": "জয় দীপ",
+    "জয়দিপ্": "জয় দীপ",
+    "জয়দ্বীপ": "জয় দীপ",
+    "জয়দ্বিপ": "জয় দীপ",
+    "জোয়দীপ": "জয় দীপ",
+    "জইদীপ": "জয় দীপ",
+    "যয়দীপ": "জয় দীপ",
     "আট": "আট্",
 }
 
@@ -127,6 +136,9 @@ def _key(word: str) -> str:
     return unicodedata.normalize("NFC", word)
 
 
+_RESPELL = {_key(k): v for k, v in _RESPELL.items()}  # a key typed with a precomposed য় still matches the recogniser's decomposed one
+
+
 # LAYER 2 -- the same word with a common ending. A native listener chose a spelling for the BASE word ("নেওয়া", "যাওয়া", "কয়েক",
 # "স্যাম্পল"); the caller hears the same sound in "নেওয়ার", "যাওয়াটা", "কয়েকটা", "স্যাম্পলের". So the chosen spelling of the base is kept and the
 # ending is appended unchanged. Only these endings, only on these bases: a longer word that merely starts the same is left alone.
@@ -136,6 +148,20 @@ _FAMILY_ENDINGS = frozenset(
 
 
 _FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল", "নদিয়া", "অ্যাপয়েন্টমেন্ট")
+
+# A person's name with the endings it takes in speech: "জয়দীপের" (of), "জয়দীপকে" (to), "জয়দীপবাবু" (Mr), "জয়দীপদা" (elder brother) ... The chosen spelling of the name is kept and the ending
+# appended, the same way _FAMILY_BASES works for ordinary words.
+_NAME_BASES = tuple(unicodedata.normalize("NFC", b) for b in ("জয়দীপ", "জয়দিপ", "জয়দীপ্", "জয়দিপ্", "জয়দ্বীপ", "জয়দ্বিপ", "জোয়দীপ", "জইদীপ", "যয়দীপ"))
+_NAME_ENDINGS = frozenset(
+    ("র", "ের", "কে", "ও", "ই", "ে", "েরও", "কেও", "বাবু", "বাবুর", "বাবুকে", "বাবুও", "দা", "দার", "দাকে", "দাও", "টা", "টির", "স্যার", "স্যারের", "স্যারকে", "ডাক্তার")
+)
+
+
+def _name_family(w: str) -> str | None:
+    for base in _NAME_BASES:
+        if w.startswith(base) and w[len(base):] in _NAME_ENDINGS:
+            return _RESPELL[base] + w[len(base):]
+    return None
 
 
 def _family(w: str) -> str | None:
@@ -153,6 +179,9 @@ def respell(word: str) -> str:
     fam = _family(w)
     if fam is not None:
         return fam
+    name = _name_family(w)
+    if name is not None:
+        return name
     if w in _NATIVE_SH and os.environ.get("BN_RESPELL_RULES", "1") != "0":
         return _sh(w)
     return word
