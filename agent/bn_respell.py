@@ -57,6 +57,15 @@ _RESPELL: dict[str, str] = {
     # Owner, 2026-10-27: "অ্যাপয়েন্টমেন্ট" (appointment) was reported mispronounced. CHOSEN BY A NATIVE LISTENER from six numbered audio candidates on the pod's Bengali voice
     # (the original, আপয়েন্টমেন্ট, অ্যাপোয়েন্টমেন্ট, এপয়েন্টমেন্ট, অ্যাপইন্টমেন্ট, অ্যাপয়ন্টমেন্ট): candidate 6. Its inflected forms (…টা, …র, …ের, …কে) follow the base word.
     "অ্যাপয়েন্টমেন্ট": "অ্যাপয়ন্টমেন্ট",
+    # Owner, 2026-10-28: CHOSEN BY A NATIVE LISTENER from numbered audio samples of the pod's Bengali voice (kolkata_2; digit0_2, digit1_2, digit2_2, digit3_2, digit4_1, digit5_1, digit7_1, digit8_2).
+    # চার, পাঁচ and সাত were chosen as written; সাত is listed so the "sh" rule below does not turn it into শাত. ছয় (6) and নয় (9) are still open: the listener gave their own recordings.
+    "কলকাতা": "কোলকাতা",
+    "শূন্য": "শুন্য",
+    "এক": "অ্যাক",
+    "দুই": "দুঈ",
+    "তিন": "তীন",
+    "সাত": "সাত",
+    "আট": "আট্",
 }
 
 # ---------------------------------------------------------------------------------------------------------------------

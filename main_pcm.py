@@ -1124,6 +1124,7 @@ class CallSession:
         self.senior_evidence = SeniorEvidence()
         self.acknowledged_state: str | None = None
         self.distress = DistressEvidence()
+        self.person_requests = 0
         self.senior_lookup_done = False
 
         # KCD-513/514: acknowledgements are suppressed on repeat turns; KCD-155's distress
@@ -7545,8 +7546,14 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
             return True
     # "connect me to a person": always possible, and the way out the calm-delivery acknowledgement promises (agent/distress.py)
     if asks_for_person(text):
-        logger.info("[%s] the caller asked for a person", session.call_id)
-        await _handoff_to_human(session, "caller_requested", (lang,))
+        # Owner, 2026-10-28: the first request is answered "I will help you"; a person only if the caller asks again. A caller already in calm delivery was told they could simply say so, so they are connected at once.
+        session.person_requests += 1
+        logger.info("[%s] the caller asked for a person (request %d)", session.call_id, session.person_requests)
+        if session.person_requests >= 2 or session.call_state.caller_state == "distressed":
+            await _handoff_to_human(session, "caller_requested", (lang,))
+        else:
+            await _speak(session, phrase("person_help_first", lang), lang)
+            session.awaiting_answer = False
         return True
     if clinical_safety.is_clinical_interpretation(text):
         logger.info("[%s] a request to interpret a result: a clinician is offered", session.call_id)

@@ -29,7 +29,7 @@ def test_the_switch_turns_it_off(monkeypatch):
 
 def test_an_entry_is_never_the_word_itself_or_empty():
     for word, spelling in bn_respell.table().items():
-        assert spelling and spelling != word
+        assert spelling and (spelling != word or word == "সাত")  # সাত: pinned as written by the listener (7), so the sh rule leaves it
 
 
 def test_the_words_a_native_listener_chose_are_in_the_table():
@@ -65,7 +65,7 @@ def test_the_chosen_spelling_carries_over_to_the_same_word_with_an_ending():
 def test_native_words_with_a_plain_sa_get_sha():
     for word, spelling in {
         "সময়": "শময়", "সব": "শব", "সেটা": "শেটা", "সাথে": "শাথে", "সকাল": "শকাল", "সুবিধা": "শুবিধা",
-        "সাত": "শাত", "সত্তর": "শত্তর", "সেন": "শেন", "সৌরভ": "শৌরভ", "মাস": "মাশ", "হাসপাতাল": "হাশপাতাল",
+        "সাত": "সাত", "সত্তর": "শত্তর", "সেন": "শেন", "সৌরভ": "শৌরভ", "মাস": "মাশ", "হাসপাতাল": "হাশপাতাল",
     }.items():
         assert bn_respell.respell(word) == spelling
 
@@ -95,7 +95,7 @@ def test_the_rule_can_be_switched_off_without_losing_the_chosen_words(monkeypatc
 
 def test_a_whole_sentence_is_respelled_word_by_word():
     out = bn_respell.apply("সাত দিনের মধ্যে সময়ের সাথে সিবিসি রিপোর্ট পাবেন।", "bn")
-    assert out == "শাত দিনের মধ্যে শময়ের শাথে সিবিসি রিপোর্ট পাবেন।"
+    assert out == "সাত দিনের মধ্যে শময়ের শাথে সিবিসি রিপোর্ট পাবেন।"
 
 
 def test_days_numbers_and_inflected_forms_are_covered_too():
