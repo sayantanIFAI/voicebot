@@ -83,10 +83,11 @@ _FAQ_EVIDENCE: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {
         frozenset({"কব", "কবে", "कब", "time", "when", "till", "until"}),
     ),
     "payment_methods": (
-        ("টাকা", "পেমেন্ট", "কার্ড", "ইউপিআই", "নগদ", "ক্যাশ", "কাশ", "অনলাইন", "গুগল", "ফোনপে", "ফোন পে", "পেটিএম", "ডেবিট", "ক্রেডিট", "রসিদ", "চার্জ", "ফিস", "ভিজিট",
+        ("টাকা", "পেমেন্ট", "কার্ড", "ইউপিআই", "নগদ", "ক্যাশ", "অনলাইন", "গুগল", "ফোনপে", "ফোন পে", "পেটিএম", "ডেবিট", "ক্রেডিট", "রসিদ", "চার্জ", "ফিস", "ভিজিট",
          "पेमेंट", "पैसे", "पैसा", "कार्ड", "यूपीआई", "नकद", "कैश", "ऑनलाइन", "गूगल", "फोन पे", "फोनपे", "पेटीएम", "रुपये", "फीस", "payment", "card", "cash", "upi", "online", "gpay", "paytm", "phonepe",
          "money", "charge", "rupee", "google pay"),
-        frozenset({"পে", "পাই", "পেয়", "पे", "पाय", "pay", "fee", "fees", "gpay", "g"}),
+        # "কাশ" (the recogniser's spelling of ক্যাশ) is an exact word only: as a stem it sat inside "কাশি" (cough) and a patient listing "জ্বর সর্দি কাশি" was answered with the payment methods (real call 2026-10-28)
+        frozenset({"পে", "পাই", "পেয়", "पे", "पाय", "pay", "fee", "fees", "gpay", "g", "কাশ"}),
     ),
     "insurance": (
         ("ইনসিওরেন্স", "ইন্সুরেন্স", "ইনস্যুরেন্স", "বিমা", "ক্যাশলেস", "মেডিক্লেম", "বীমা", "बीमा", "इंसोरेंस", "इंश्योरेंस", "इन्श्योरेंस", "कैशलेस", "मेडिक्लेम", "insur", "cashless", "mediclaim", "policy", "tpa"),
@@ -124,10 +125,23 @@ def faq_topic_word_present(topic: str, text: str) -> bool:
     return any(tok in exact for tok in n.split())
 
 
+_DOCTOR_WORDS = ("ডাক্তার", "ডক্টর", "ডাক্তর", "डॉक्टर", "डाक्टर", "doctor", "বিভাগ", "विभाग", "জেনারেল মেডিসিন", "जनरल मेडिसिन")
+
+
+def _seeks_care(text: str) -> bool:
+    from agent import off_topic
+
+    n = _norm(text)
+    return any(w in n for w in _DOCTOR_WORDS) and off_topic.has_health_word(text)
+
+
 def veto(intent: str, slots: dict | None, text: str, tests_named) -> str | None:
     """A reason to refuse the shortcut's answer, or None to let it stand. `tests_named` is a zero-argument callable returning how many
     catalogue tests the sentence names (only evaluated when a total is asked for)."""
     slots = slots or {}
+    if intent == "clinic_faq" and _seeks_care(text):
+        # a sentence that lists symptoms AND asks for a doctor / department is a patient looking for care, never a clinic FAQ whose keyword happens to appear in it
+        return "a symptom with a request for a doctor is not an FAQ"
     if intent == "clinic_faq" and slots.get("faq_topic") == "location" and not location_word_present(text):
         return "location answer without any word about a place"
     if intent == "clinic_faq" and slots.get("faq_topic") not in (None, "location") and not faq_topic_word_present(str(slots.get("faq_topic")), text):

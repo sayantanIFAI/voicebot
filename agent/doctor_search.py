@@ -311,10 +311,14 @@ _PART_WORD = {
 
 def asked_part_of_day(text: str) -> str | None:
     t = _norm(text)
+    # Owner, 2026-10-28: "সকালে হবে বা ... আজকে বিকালে" names morning first and evening last: the LAST part of the day said is the one meant
+    best, best_pos = None, -1
     for part, words in _PARTS.items():
-        if any(w in t for w in words):
-            return part
-    return None
+        for w in words:
+            pos = t.rfind(w)
+            if pos > best_pos:
+                best, best_pos = part, pos
+    return best
 
 
 def asks_who_is_good(text: str) -> bool:
