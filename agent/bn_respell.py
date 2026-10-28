@@ -53,7 +53,11 @@ _RESPELL: dict[str, str] = {
     # word itself is not wrong, the voice's reading of its opening "হোয়া" (ho-yā) cluster is. Quick fix, NOT run
     # through tools/respell_probe.py (no pod access right now): dropping the হ, the softer-opening alternative,
     # is the one change to try first. Owner confirms by ear; swap for a different candidate if this one is not it.
-    "হোয়াটসঅ্যাপ": "ওয়াটসঅ্যাপ",
+    "হোয়াটসঅ্যাপ": "ওয়াটস অ্যাপ",  # Owner, 2026-10-28: whatsapp_4 (was ওয়াটসঅ্যাপ)
+    "গুগল": "গুগল্",  # google_4
+    "প্লিজ": "প্লিস",  # please_4
+    # 96_1: nine and six are said as the plain words "নয় ছয়" -- the earlier ছওয়্ / নওয়্ respelling (sixw_2, ninew_2) is withdrawn by the listener
+
     # Owner, 2026-10-27: "অ্যাপয়েন্টমেন্ট" (appointment) was reported mispronounced. CHOSEN BY A NATIVE LISTENER from six numbered audio candidates on the pod's Bengali voice
     # (the original, আপয়েন্টমেন্ট, অ্যাপোয়েন্টমেন্ট, এপয়েন্টমেন্ট, অ্যাপইন্টমেন্ট, অ্যাপয়ন্টমেন্ট): candidate 6. Its inflected forms (…টা, …র, …ের, …কে) follow the base word.
     "অ্যাপয়েন্টমেন্ট": "অ্যাপয়ন্টমেন্ট",
@@ -66,8 +70,6 @@ _RESPELL: dict[str, str] = {
     "তিন": "তীন",
     "সাত": "সাত",
     # 6 and 9 chosen from the listener's own recordings and the spelling "Chhwoy" / "Nwoy": sixw_2 and ninew_2 of the second round of samples.
-    "ছয়": "ছওয়্",
-    "নয়": "নওয়্",
     # Owner, 2026-10-28: the doctor's first name, chosen by the listener from numbered samples (joy_10: said as two words)
     # Owner, 2026-10-28: সরকার is said as written (sarkar_1): it is NOT in the "sh" rule's list above any more, so সরকার and সরকারের stay as they are. ডায়াবেটিস is said "ডায়া বেটিস" (diab_3).
     "ডায়াবেটিস": "ডায়া বেটিস",
@@ -155,7 +157,7 @@ _FAMILY_ENDINGS = frozenset(
 )
 
 
-_FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল", "নদিয়া", "অ্যাপয়েন্টমেন্ট", "ডায়াবেটিস", "ডায়াবিটিস")
+_FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", "স্যাম্পল", "নদিয়া", "অ্যাপয়েন্টমেন্ট", "ডায়াবেটিস", "ডায়াবিটিস", "হোয়াটসঅ্যাপ")
 
 # A person's name with the endings it takes in speech: "জয়দীপের" (of), "জয়দীপকে" (to), "জয়দীপবাবু" (Mr), "জয়দীপদা" (elder brother) ... The chosen spelling of the name is kept and the ending
 # appended, the same way _FAMILY_BASES works for ordinary words.

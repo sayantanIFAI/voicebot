@@ -59,7 +59,8 @@ async def _bookings(rig, phone):
 async def test_a_phone_number_said_in_words_or_local_digits_reaches_the_read_back_without_the_model(rig, lang, said, phone):
     await _to_phone(rig, lang)
     readback = await rig.say(said)  # the model stand-in queue is EMPTY: only the deterministic capture can fill the phone
-    assert phone in readback, readback
+    # the number is read back in two groups of digits with a pause between ("9 8 7 6 5 , 4 3 2 1 0", owner 2026-10-26: agent/digit_speech.py): compare the digits, not the spacing
+    assert phone in "".join(ch for ch in readback if ch.isdigit()), readback
     done = await rig.say({"en": "yes", "hi": "हाँ", "bn": "হ্যাঁ"}[lang])
     assert "KCD-" in done, done
     assert len(await _bookings(rig, phone)) == 1

@@ -2949,6 +2949,15 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
                 if offer is not None:
                     _next_sit_offer.set(offer)
                     return offer["say"]
+        if result.get("matched") and result.get("doctors_today"):
+            # Owner, 2026-10-28: "আজ পেডিয়াট্রিক্স বিভাগে অনির্বাণ মন্ডল আছেন" -- and WHEN he sits (the hours from the schedule), not only that he is there
+            try:
+                today_iso = slot_proposal.clinic_now().date().isoformat()
+                sitting = (await _tools.department_doctors(result["department_name"], lang, on_date=today_iso)).get("sitting") or []
+            except ToolCallError:
+                sitting = []
+            if sitting:
+                return doctor_search.sitting_list_reply(sitting, _when_phrase(today_iso, None, lang), _dept_label(result["department_name"], lang), lang)
         return department_route_reply(_dept_labelled(result, lang), symptom, lang)
     return None
 
