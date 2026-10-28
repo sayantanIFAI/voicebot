@@ -316,13 +316,18 @@ DEPARTMENT_ROUTE_KEYWORDS: list[tuple[str, list[str], list[str], list[str]]] = [
         # or an orthopaedic one -- route_department() already returns both as candidates when a query matches more
         # than one department's keywords, rather than guessing; this is what makes that happen here.
         ["হাড়ে ব্যথা", "গাঁটে ব্যথা", "কোমরে ব্যথা", "পিঠে ব্যথা", "হাতে ব্যথা", "পায়ে ব্যথা",
-         "পা ভেঙে", "পা ভাঙা", "হাড় ভেঙে", "ফ্র্যাকচার", "পায়ে চোট", "অ্যাক্সিডেন্ট", "পায়ে আঘাত"],
+         "পা ভেঙে", "পা ভাঙা", "হাড় ভেঙে", "ফ্র্যাকচার", "পায়ে চোট", "অ্যাক্সিডেন্ট", "পায়ে আঘাত",
+         # owner, 2026-10-28 (real call): "আমার হাত ভেঙে গেছে ... তিন সপ্তাহ হয়ে গেছে, ব্যথা যায়নি, হাত সোজা হচ্ছে না" was answered "I could not tell which department"
+         "হাত ভেঙে", "হাত ভেঙ্গে", "হাত ভাঙা", "হাত ভাঙ্গা", "হাড় ভাঙা", "হাড় ভাঙ্গা", "হাত সোজা হচ্ছে না", "হাতে চোট", "হাতে আঘাত", "প্লাস্টার", "মচকে", "হাঁটুতে ব্যথা", "কাঁধে ব্যথা", "ঘাড়ে ব্যথা"],
         ["हड्डी में दर्द", "जोड़ों में दर्द", "कमर दर्द", "पीठ दर्द", "हाथ में दर्द", "पैर में दर्द",
-         "हड्डियों में दर्द", "पैर टूट", "हड्डी टूट", "फ्रैक्चर", "फ्रेक्चर", "पैर में चोट", "एक्सीडेंट"],
+         "हड्डियों में दर्द", "पैर टूट", "हड्डी टूट", "फ्रैक्चर", "फ्रेक्चर", "पैर में चोट", "एक्सीडेंट",
+         "हाथ टूट", "हाथ की हड्डी", "हाथ में चोट", "हाथ सीधा नहीं", "प्लास्टर", "मोच", "घुटने में दर्द", "कंधे में दर्द", "गर्दन में दर्द"],
         # romanized Bengali sits in this column too: the recogniser writes what it hears in whichever script it likes
         ["bone pain", "joint pain", "back pain", "knee pain", "hand pain", "leg pain",
          "pain in my bones", "bones hurt", "leg hurt", "foot hurt", "foot is broken", "leg is broken", "broken leg", "broken foot", "broke my leg", "fracture", "fractured",
          "hurt his leg", "hurt her leg", "leg injury", "foot injury", "accident",
+         "broken hand", "broken arm", "arm is broken", "hand is broken", "broke my arm", "broke my hand", "broken bone", "plaster", "sprain", "shoulder pain", "knee pain", "neck pain",
+         "haat bhenge", "hat bhenge", "haat venge", "haat bhanga", "haat ve nge", "haat e chot",
          "har-e byatha", "hare byatha", "har e byatha", "payer byatha", "paye byatha", "pa bhenge", "pa venge", "paye fracture", "accident hoyeche", "paye chot"],
     ),
     (

@@ -7620,11 +7620,45 @@ async def _answer_about_offered_doctors(session: CallSession, text: str, lang: s
     return True
 
 
+async def _department_week_reply(route: dict, lang: str) -> str | None:
+    """One department's doctors, each with the weekdays they sit (the weekly pattern from the clinic API, never a date), then the question of whom to book. Doctors without a stored schedule are left out."""
+    lines = []
+    for name in (route.get("doctors") or [])[:4]:
+        try:
+            wd = await _tools.doctor_weekdays(name)
+        except ToolCallError:
+            continue
+        if not wd.get("found") or not wd.get("weekdays"):
+            continue
+        hours = set((wd.get("hours") or {}).values())
+        lines.append(doctor_enquiry_cues.weekdays_reply(name, list(wd["weekdays"]), next(iter(hours)) if len(hours) == 1 else None, lang))
+    if not lines:
+        return None
+    dept = _dept_label(route["department_name"], lang)
+    intro = {"bn": f"{dept} বিভাগে", "hi": f"{dept} विभाग में", "en": f"In {dept}:"}[lang if lang in ("bn", "hi") else "en"]
+    ask = {
+        "bn": "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?",
+        "hi": "किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहेंगे?",
+        "en": "Which doctor would you like to book?",
+    }[lang if lang in ("bn", "hi") else "en"]
+    return f"{intro} {' '.join(lines)} {ask}"
+
+
 async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> bool:
     """"Which doctors do you have?" / "কোন কোন ডাক্তার বসে" / "क्या क्या डॉक्टर हैं" (owner, 2026-10-27): every department has doctors -- a few REAL ones from the clinic's own tables as examples, then
     the question of whom to book. Never a name the tables do not hold; if the lookup fails the answer simply has no examples."""
     if _tools is None:
         return False
+    # Owner, 2026-10-28: "বুক এর ডাক্তার ... কোন কোন ডাক্তার বসে এই সপ্তাহে" names a department ("chest" = heart): only THAT department's doctors, each with the weekdays they sit
+    try:
+        route = await _route_dept(text, lang, session)
+    except ToolCallError:
+        route = {}
+    if route.get("matched") and route.get("doctors"):
+        reply = await _department_week_reply(route, lang)
+        if reply:
+            await _speak(session, _with_resume(session, reply, lang), lang)
+            return True
     examples: list[tuple[str, str]] = []
     for dept in ("General Medicine", "Cardiology", "Orthopaedics"):
         try:

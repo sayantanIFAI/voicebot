@@ -529,7 +529,7 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
             return f"আজ {dept} বিভাগে {len(today)} জন ডাক্তার আছেন: {', '.join(today)}। কাকে দেখাতে চান?"
         if doctors:
             return f"{dept} বিভাগে {', '.join(doctors)} আছেন, তবে আজ কেউ বসছেন না। কার কথা জানতে চান?"
-        return f"{dept} বিভাগের ডাক্তারদের তালিকা এখন আমার কাছে নেই। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
+        return f"{dept} বিভাগের ডাক্তারদের তালিকা এখন আমার কাছে নেই। কাউন্টারে এসে জিজ্ঞেস করে নিতে পারেন।"
     if result.get("ambiguous"):
         by_dept = result.get("doctors_by_department") or {}
         parts = []
@@ -542,7 +542,7 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
     if not off_topic.has_health_word(symptom):
         # Owner, 2026-10-27: "শরীর ভালো নেই, কোন ডাক্তার দেখাবো" names no problem: ask what it is instead of sending the caller to the counter
         return "কী সমস্যা হচ্ছে বলুন, তাহলে কোন বিভাগে দেখাবেন বলতে পারব।"
-    return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে জিজ্ঞেস করে নিতে পারেন।"
+    return "দুঃখিত, ঠিক কোন বিভাগে দেখাবেন বুঝতে পারলাম না। কাউন্টারে এসে জিজ্ঞেস করে নিতে পারেন।"
 
 
 # KCD-dentistry: the caller is ALREADY inside book_appointment (they said so) and gave a symptom instead of a

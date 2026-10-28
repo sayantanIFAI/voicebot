@@ -285,7 +285,7 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str) -> str:
         day = slot_proposal.asked_day_phrase(asked, "en") if asked else "on that day"
         return f"{name} does not sit {day}. The next sitting is {slot_proposal.when_phrase(next_date, 'en')}."
     if hi:
-        return f"{name} अभी किसी तय दिन नहीं बैठ रहे हैं। आप हमारे काउंटर पर पूछ सकते हैं।"
+        return f"{name} अभी किसी तय दिन नहीं बैठ रहे हैं। आप हमारे काउंटर पर आकर पूछ सकते हैं।"
     return f"{name} is not sitting on any fixed day right now. You can ask at our counter."
 
 
@@ -658,7 +658,7 @@ def blood_test_list_reply(spoken_names: list[str], lang: str) -> str:
     hi = lang == "hi"
     if not spoken_names:
         return (
-            "माफ़ कीजिए, अभी हमारी सूची में कोई ब्लड टेस्ट नहीं है। काउंटर पर पूछ सकते हैं।"
+            "माफ़ कीजिए, अभी हमारी सूची में कोई ब्लड टेस्ट नहीं है। काउंटर पर आकर पूछ सकते हैं।"
             if hi
             else "Sorry, we don't have any blood tests listed right now. You could ask at the counter."
         )
@@ -684,7 +684,7 @@ def category_test_list_reply(spoken_names: list[str], category: str, lang: str) 
     hi_label, en_label = _CATEGORY_LABEL.get(category, ("इस तरह के", "this kind of"))
     if not spoken_names:
         return (
-            f"माफ़ कीजिए, अभी हमारी सूची में कोई {hi_label} टेस्ट नहीं है। काउंटर पर पूछ सकते हैं।"
+            f"माफ़ कीजिए, अभी हमारी सूची में कोई {hi_label} टेस्ट नहीं है। काउंटर पर आकर पूछ सकते हैं।"
             if hi
             else f"Sorry, we don't have any {en_label} tests listed right now. You could ask at the counter."
         )
@@ -711,8 +711,8 @@ def department_route_reply(result: dict, symptom: str, lang: str) -> str:
                 return f"{dept} विभाग में {', '.join(doctors)} हैं, पर आज कोई नहीं बैठ रहा। किसके बारे में जानना चाहेंगे?"
             return f"The {dept} department has {', '.join(doctors)}, but none of them sits today. Whose timings would you like?"
         if hi:
-            return f"{dept} विभाग के डॉक्टरों की सूची अभी मेरे पास नहीं है। काउंटर पर पूछ सकते हैं।"
-        return f"I do not have the {dept} department's doctors listed right now. You can ask at the counter."
+            return f"{dept} विभाग के डॉक्टरों की सूची अभी मेरे पास नहीं है। काउंटर पर आकर पूछ सकते हैं।"
+        return f"I do not have the {dept} department's doctors listed right now. You can come to the counter and ask."
     if result.get("ambiguous"):
         by_dept = result.get("doctors_by_department") or {}
 
@@ -736,7 +736,7 @@ def department_route_reply(result: dict, symptom: str, lang: str) -> str:
             else "Please tell me what the problem is, and I can tell you which department to see."
         )
     return (
-        "माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर पूछ सकते हैं।"
+        "माफ़ कीजिए, ठीक से समझ नहीं पाई किस विभाग में दिखाना होगा। काउंटर पर आकर पूछ सकते हैं।"
         if hi
         else "Sorry, I couldn't quite tell which department this needs. You could ask at the counter."
     )

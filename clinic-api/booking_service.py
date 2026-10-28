@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import uuid
 
 import lay_departments  # sourav, 2026-10-24: lay doctor phrases -> department, and the paediatric age limit (lay_departments.py)
@@ -1113,6 +1114,9 @@ def _department_doctors_today(db: Session, department_id: int, lang: str = "bn")
     return out
 
 
+_BROKEN_BONE = re.compile(r"ভেঙে|ভেঙ্গে|ভাঙা|ভাঙ্গা|ফ্র্যাকচার|প্লাস্টার|टूट|फ्रैक्चर|प्लास्टर|fractur|broke|plaster", re.I)
+
+
 def route_department(db: Session, query_text: str, lang: str, age: int | None = None) -> dict:
     """Symptom text -> department, plus (KCD-lay-terms) the real doctors in it, so the agent can name someone
     instead of only the department. `phrase_matches` tolerates a word or two inserted inside a keyword phrase --
@@ -1129,6 +1133,11 @@ def route_department(db: Session, query_text: str, lang: str, age: int | None = 
     matches = list(dict.fromkeys(matches))
     # sourav, 2026-10-24: (1) lay doctor phrases ("peter doctor", "mathar doctor", "bachhader haarer doctor" ...) -- a specific one overrides the symptom rows, an ordinary-
     # physician one ("pain er doctor") is used only when nothing else matched; (2) a patient of 13 or more is never sent to the paediatrician. See lay_departments.py.
+    # owner, 2026-10-28: a broken-bone word beside "hand pain" is the bone doctor, not a choice between the bone doctor and the ordinary one
+    if len(matches) > 1 and _BROKEN_BONE.search(q):
+        ortho = db.query(Department).filter_by(name="Orthopaedics").first()
+        if ortho is not None and ortho.id in matches:
+            matches = [ortho.id]
     lay_names = lay_departments.resolve(q, age)
     if lay_names:
         by_name = {d.name: d.id for d in db.query(Department).all()}
