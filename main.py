@@ -8342,11 +8342,26 @@ def _close_pair(text: str, close: list[dict]) -> bool:
     return len(close) > 1 and abs(best(close[0]) - best(close[1])) < 0.08
 
 
+def _names_offered_doctor(session: CallSession, text: str) -> bool:
+    """Owner, 2026-10-29 ("सुतापा चटर्जी" answering "which of them?" was re-asked as "are you asking about Dr. Sutapa?"): when the sentence names ONE of the doctors just offered (any script), it is the
+    answer to the offer and the booking goes on -- the name is not asked about again."""
+    pend = getattr(session, "dept_pending", None)
+    if not pend or len((text or "").split()) > 8:
+        return False
+    if pend.get("kind") == "pick":
+        docs = pend.get("doctors") or []
+    elif pend.get("kind") == "confirm_one" and pend.get("doctor"):
+        docs = [pend["doctor"]]
+    else:
+        return False
+    return bool(docs) and doctor_search.choose_by_name(text, [[d.get("name", ""), d.get("full_name", "")] for d in docs]) is not None
+
+
 async def _name_rescue(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-29 ("it is fine to ask again, but if you hear a name, check the table and ask"): a turn that would be dropped or re-asked in general words ("someone else is talking", "say that again") but
     whose words sound like one of OUR doctors is answered with "আপনি কি ডাঃ X-এর কথা জিজ্ঞেস করছেন?". The department being discussed is searched first (looser), then every doctor (stricter). Never an answer
     about the doctor -- only the question; the yes that follows is read by _dept_talk_turn."""
-    if _fast_path is None or not (text or "").strip() or len(text.split()) > 14:
+    if _fast_path is None or not (text or "").strip() or len(text.split()) > 14 or _names_offered_doctor(session, text):
         return False
     topic = getattr(session, "dept_topic", None) or (getattr(session, "last_route", None) or {}).get("dept")
     pools = []
@@ -8399,7 +8414,7 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-29 (live call): "অর্থপেটি ডাক্তার ... কেন বসে" -> "হ্যাঁ, বসেন।"; "ডাক্তারের নাম কি আছে" -> the count and all the department's doctors; "কলকাতা ডাক্তার এদিকের মালদারে" -> each doctor's yes / no;
     "ও ভালো কোনটা হবে কখন বসবে" -> all are good, every doctor's days and hours, who to book; a first name said as the caller can ("শুভজিৎ দিপ") -> the one doctor it sounds like. Every department, all three
     languages; the department stays the subject. Nothing here is a guess about a person: the doctors are the clinic's own rows, and a name is matched only among the department's doctors."""
-    if _fast_path is None or _tools is None or _booking_open(session) or len(text.split()) > 30:
+    if _fast_path is None or _tools is None or _booking_open(session) or len(text.split()) > 30 or _names_offered_doctor(session, text):
         return False
     # the answer to "are you asking about Dr. X?" asked a moment ago
     chk = getattr(session, "doctor_check", None)
