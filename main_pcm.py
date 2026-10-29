@@ -3735,10 +3735,16 @@ def _resolve_doctor_for_booking(item: dict) -> str:
 
 _WHEN_ASK = ("কবে", "কখন", "kobe", "kokhon", "when", "कब", "कितने दिन")
 _NOBODY_LEAD = {
-    "bn": "{w} ওই বিভাগের কেউ বসেন না।",
-    "hi": "{w} उस विभाग का कोई डॉक्टर नहीं बैठता।",
-    "en": "Nobody from that department sits {w}.",
+    "bn": "{w} {d} বিভাগের কেউ বসেন না।",
+    "hi": "{w} {d} विभाग का कोई डॉक्टर नहीं बैठता।",
+    "en": "Nobody from {d} sits {w}.",
 }
+
+
+def _nobody_lead(lang: str, when: str, label: str) -> str:
+    """"আজ জেনারেল সার্জারি বিভাগের কেউ বসেন না।" -- the department is NAMED (it used to say "that department")."""
+    d = label if label and label != when else {"bn": "ওই", "hi": "उस", "en": "that department"}.get(lang, "that")
+    return _NOBODY_LEAD.get(lang, _NOBODY_LEAD["en"]).format(w=when or label, d=d)
 
 
 def _asks_when(text: str) -> bool:
@@ -3787,7 +3793,7 @@ async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex:
     if not nxt:
         return False
     iso, sit = nxt
-    lead = _NOBODY_LEAD.get(lang, _NOBODY_LEAD["en"]).format(w=when_phrase or label)
+    lead = _nobody_lead(lang, when_phrase, label)
     if len(sit) == 1:
         item = sit[0]
         say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
@@ -3960,7 +3966,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
             nxt = await _next_dept_sitting(text, lang, sex, on_date)
             if nxt:
                 iso, sit = nxt
-                lead = _NOBODY_LEAD.get(lang, _NOBODY_LEAD["en"]).format(w=phrase_when or label)
+                lead = _nobody_lead(lang, phrase_when, label)
                 if len(sit) == 1:
                     item = sit[0]
                     say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
@@ -8459,6 +8465,15 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
         if lines:
             say = " ".join(([dept_talk.all_are_good(lang)] if asks_good else []) + lines + [dept_talk.ask_which(lang, len(lines))])
             _set_dept_state(session, topic, infos, lang, say)
+            await _speak(session, say, lang)
+            return True
+    # the caller checks one or two of the doctors just told ("শুভদীপ আর তপন কি?"): the SAME names again
+    told = getattr(session, "last_route", None) or {}
+    if told.get("names") and not (asks_names or asks_good or asks_when or asks_origin) and len(text.split()) <= 20 and not mention and not booking_carryover.asks_to_book(text) and not booking_carryover.commits_to_booking(text):
+        pool = [i for i in infos if dept_talk.spoken_name(i, lang) in told["names"]] or infos
+        hits = dept_talk.named_doctors(text, pool)
+        if hits and len(hits) < len(pool):
+            say = dept_talk.repeat_names([dept_talk.spoken_name(i, lang) for i in hits], lang)
             await _speak(session, say, lang)
             return True
     # a first name said in a garbled way, among the department's own doctors  -> only that doctor's name

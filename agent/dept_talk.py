@@ -76,7 +76,7 @@ def dept_in_text(text: str) -> str | None:
 _SIT = re.compile(r"বসে|বসেন|বসছে|বসছেন|আছে|আছেন|থাকেন|বসবে|बैठते|बैठती|बैठता|बैठ|हैं|है(?!\S)|\bsits?\b|\bsitting\b|\bavailable\b|\bthere\b|\bhave\b", re.I)
 _YESNO = re.compile(r"(?<!\S)(?:কি|কী|কেন|নাকি|না|ना)(?!\S)|\?|क्या|\bany\b|\bis there\b|\bare there\b|\bdo you\b|\bdoes\b", re.I)
 _WHO_WHEN_NAME = re.compile(r"(?<!\S)কে(?!\S)|কারা|কাকে|কবে|কখন|কটা|কতক্ষণ|কোন|নাম|কত|कौन|किस|कब|कितने|नाम|\bwho\b|\bwhen\b|\bwhich\b|\bname|\bwhat time\b|\bhow many\b", re.I)
-_NAMES = re.compile(r"নাম|কারা কারা|কে কে|কোন কোন|ডাক্তারদের|नाम|कौन कौन|कौन-कौन|किन-किन|\bnames?\b|\bwho are\b|\bwhich doctors\b", re.I)
+_NAMES = re.compile(r"নাম(?!\s*(?:লিখ|লেখ|তুল|ঢুক))|কারা কারা|কে কে|কোন কোন|ডাক্তারদের|नाम(?!\s*(?:लिख|दर्ज|डाल))|कौन कौन|कौन-कौन|किन-किन|\bnames?\b(?!\s+down)|\bwho are\b|\bwhich doctors\b", re.I)
 _WHEN = re.compile(r"কখন|কবে|কটায়|কোন সময়|সময়|বসবে|বসেন|বসে(?!\S)|कब|समय|कितने बजे|बैठ|\bwhen\b|\bwhat time\b|\btiming|\bsit\b|\bsits\b", re.I)
 _WHICH_ONE = re.compile(r"কোনটা|কোন একজন|কোনজন|কোনটি|कौन सा|कौन सी|कौन-सा|\bwhich one\b|\bwhich doctor\b", re.I)
 _GOOD = re.compile(r"ভালো|ভাল|হেলো|হেল্লো|ভালু|বেস্ট|সেরা|अच्छा|अच्छे|बेहतर|बढ़िया|भला|\bgood\b|\bbest\b|\bbetter\b", re.I)
@@ -205,6 +205,37 @@ def no_such_doctor(name: str, lang: str) -> str:
     }.get(lang, "")
 
 
+def named_doctors(text: str, infos: list[dict], floor: float = 0.62) -> list[dict]:
+    """EVERY doctor of `infos` whose given name the sentence sounds like (not only the best one): "শুভদীপ আর তপন কি?" -> both. Each must clear `floor`; a window is used for one doctor only."""
+    toks = [t for t in _tokens(text) if t not in _TITLES]
+    if not toks or not infos:
+        return []
+    out, used = [], set()
+    for info in infos:
+        cands = set()
+        for key in ("full_name_bn", "full_name_hi"):
+            parts = [p for p in (info.get(key) or "").replace(".", " ").split() if p.lower() not in _TITLES]
+            if len(parts) >= 2:
+                cands.add(name_skeleton("".join(parts[:-1])))
+        cands = {c for c in cands if len(c) >= 3 and not c.isascii()}
+        best, best_i = 0.0, None
+        for i in range(len(toks)):
+            for n in (1, 2):
+                if i + n > len(toks):
+                    continue
+                w = name_skeleton("".join(toks[i : i + n]))
+                if not w or len(w) < 3:
+                    continue
+                for c in cands:
+                    r = difflib.SequenceMatcher(None, w, c).ratio()
+                    if r > best:
+                        best, best_i = r, i
+        if best >= floor and best_i not in used:
+            used.add(best_i)
+            out.append(info)
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------------------------------------------------- sentences
 _COUNT = {
     "bn": {1: "একজন", 2: "দুইজন", 3: "তিনজন", 4: "চারজন", 5: "পাঁচজন", 6: "ছয়জন", 7: "সাতজন", 8: "আটজন", 9: "নয়জন", 10: "দশজন"},
@@ -226,6 +257,12 @@ def _join(names: list[str], lang: str) -> str:
         return "".join(names)
     word = {"bn": " এবং ", "hi": " और ", "en": " and "}.get(lang, " and ")
     return ", ".join(names[:-1]) + word + names[-1]
+
+
+def repeat_names(names: list[str], lang: str) -> str:
+    """The same names again, when the caller checks one or two of the doctors just told: "হ্যাঁ, ডাঃ A এবং ডাঃ B।"."""
+    joined = _join(names, lang)
+    return {"bn": f"হ্যাঁ, {joined}।", "hi": f"जी हाँ, {joined}।", "en": f"Yes, {joined}."}.get(lang, joined)
 
 
 def yes_sits(lang: str) -> str:
