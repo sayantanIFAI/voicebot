@@ -90,7 +90,7 @@ def answer(text: str, lang: str = "en") -> str | None:
 # Owner, 2026-10-29: asked "can you pay by PhonePe / Google Pay / UPI from this number?", the caller says what they CAN'T do ("ছোট ফোন, পারব না", "keypad phone, I can't do that", "मेरा फोन छोटा है,
 # मैं नहीं कर पाऊँगा"): that is not "another WhatsApp number" -- the payment is made at the clinic counter.
 _SMALL_PHONE = re.compile(
-    r"ছোট(?:ো)?\s*(?:ফোন|মোবাইল)|কিপ্যাড|কীপ্যাড|বাটন\s*(?:ফোন|মোবাইল)|সাধারণ\s*(?:ফোন|মোবাইল)|স্মার্ট\s*ফোন\s*(?:নেই|নাই|না)|"
+    r"(?:ফোন|মোবাইল)\s*(?:খুব|বেশ|একটু)?\s*ছোট|फोन\s*(?:बहुत\s*)?छोटा|मोबाइल\s*(?:बहुत\s*)?छोटा|ছোট(?:ো)?\s*(?:ফোন|মোবাইল)|কিপ্যাড|কীপ্যাড|বাটন\s*(?:ফোন|মোবাইল)|সাধারণ\s*(?:ফোন|মোবাইল)|স্মার্ট\s*ফোন\s*(?:নেই|নাই|না)|"
     r"छोटा\s*(?:फोन|फ़ोन|मोबाइल)|कीपैड|कीपेड|बटन\s*(?:वाला\s*)?(?:फोन|फ़ोन|मोबाइल)|स्मार्ट\s*फोन\s*नहीं|"
     r"\b(?:small|old|basic|keypad|button|simple)\s*(?:phone|mobile)\b|\bno\s+smart\s*phone\b|\b(?:chhoto|choto|chota|chhota)\s*(?:phone|mobile)\b",
     re.I,
