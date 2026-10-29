@@ -5162,6 +5162,8 @@ async def _finish_enquiry_turn(
     _de = _doctor_enquiry_found.get()
     if _de:
         session.last_doctor_enquiry = {**_de, "turn": session.turn_count}
+        if _de.get("doctor_name"):
+            session.subject_doctor = _de["doctor_name"]
     _doctor_enquiry_found.set(None)
     if intent == "doctor_availability":
         session.doctor_q_date = slots.get("date")  # "and Amrita Nandi?" next asks the same thing (the same day) about her
@@ -6209,6 +6211,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if where_doctor_sits.asks_floor(text) and not _booking_open(session):  # owner, 2026-10-29: which floor does the doctor sit on -> the counter tells
             await _speak(session, where_doctor_sits.reply(lang), lang)
             return
+        _update_doctor_subject(session, text, lang)
         if session.booking is None and await _doctor_facts_turn(session, text, lang):
             return
         if session.booking is None and await _doctor_when_turn(session, text, lang):
@@ -8566,10 +8569,33 @@ def _resembles_doctor(said: str, info: dict) -> bool:
 
 def _context_doctor_info(session: CallSession) -> dict | None:
     """The catalogue row of the doctor being talked about (the last doctor asked about, within a few turns), or None."""
-    ctx = getattr(session, "last_doctor_enquiry", None)
-    if _fast_path is None or not ctx or not booking_carryover.recent(ctx, session.turn_count):
+    if _fast_path is None:
         return None
-    return _fast_path.catalogue.doctor_info(ctx.get("doctor_name"))
+    # Owner, 2026-10-29: "doctor context must be there until the user changes it explicitly". The doctor last asked about stays the subject for the whole call, with no turn limit, until the caller
+    # names another doctor, names a department, or asks for another doctor (_update_doctor_subject).
+    name = getattr(session, "subject_doctor", None)
+    if not name:
+        ctx = getattr(session, "last_doctor_enquiry", None)
+        if ctx and booking_carryover.recent(ctx, session.turn_count):
+            name = ctx.get("doctor_name")
+    return _fast_path.catalogue.doctor_info(name) if name else None
+
+
+_OTHER_DOCTOR = ("অন্য ডাক্তার", "অন্য কোনো ডাক্তার", "আরেকজন ডাক্তার", "আরেক জন ডাক্তার", "অন্য কেউ", "another doctor", "other doctor", "different doctor", "दूसरे डॉक्टर", "दूसरा डॉक्टर", "और कोई डॉक्टर")
+
+
+def _update_doctor_subject(session: CallSession, text: str, lang: str) -> None:
+    """The doctor being talked about changes ONLY when the caller says so: names a department, asks for another doctor, or names another doctor (every doctor answer sets the new subject). A symptom
+    said on the way (\"হাতে ব্যথা\") does not change it."""
+    if getattr(session, "subject_doctor", None) is None:
+        return
+    low = (text or "").lower()
+    named_doctor = False
+    with contextlib.suppress(Exception):
+        named_doctor = _fast_path is not None and _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True) is not None  # noqa: SLF001
+    if (dept_talk.dept_in_text(text) and not named_doctor) or any(w in low for w in _OTHER_DOCTOR):
+        logger.info("[%s] the caller changed the subject: the doctor context is dropped", session.call_id)
+        session.subject_doctor = None
 
 
 def _text_has_surname_of(text: str, info: dict) -> bool:
@@ -8609,6 +8635,7 @@ async def _doctor_facts_turn(session: CallSession, text: str, lang: str) -> bool
         return False
     name = info.get("name")
     session.last_doctor_enquiry = {"doctor_name": name, "date": None, "turn": session.turn_count}
+    session.subject_doctor = name
     if asks_spec:
         dept = _dept_label(info.get("department") or "", lang)
         say = doctor_facts.speciality_reply(dept_talk.spoken_name(info, lang), dept, lang) if dept else None
@@ -8666,6 +8693,7 @@ async def _doctor_when_turn(session: CallSession, text: str, lang: str) -> bool:
         return False
     _de = _doctor_enquiry_found.get()
     session.last_doctor_enquiry = {**(_de or {"doctor_name": info.get("name"), "date": when}), "turn": session.turn_count}
+    session.subject_doctor = info.get("name")
     _doctor_enquiry_found.set(None)
     session.dept_pending = None  # the department's open "which of them?" question is no longer the point
     session.doctor_q_date = when
@@ -8712,6 +8740,8 @@ async def _doctor_name_followup_turn(session: CallSession, text: str, lang: str)
     _de = _doctor_enquiry_found.get()
     if _de:
         session.last_doctor_enquiry = {**_de, "turn": session.turn_count}
+        if _de.get("doctor_name"):
+            session.subject_doctor = _de["doctor_name"]
     _doctor_enquiry_found.set(None)
     _np = _name_pick_found.get()
     if _np:
