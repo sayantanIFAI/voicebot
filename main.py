@@ -2666,6 +2666,38 @@ _suggested: contextvars.ContextVar[dict | None] = contextvars.ContextVar("sugges
 _priced_names: contextvars.ContextVar[list | None] = contextvars.ContextVar("priced_names", default=None)
 # sourav, 2026-10-14: set by _answer_enquiry_intent when a doctor-availability lookup FOUND the doctor; _finish_enquiry_turn stores it.
 _doctor_enquiry_found: contextvars.ContextVar[dict | None] = contextvars.ContextVar("doctor_enquiry_found", default=None)
+
+
+def _dept_possessive(label: str, lang: str) -> str:
+    """"ডার্মাটোলজির" / "डर्मेटोलॉजी के" / "Dermatology's" -- the department said before a doctor's name."""
+    if lang == "bn":
+        return label + ("র" if label[-1:] in "ািীেোুূঅআইঈউঊএঐওঔ" else "ের")
+    if lang == "hi":
+        return f"{label} के"
+    return f"{label}'s"
+
+
+def _confirm_surname_match(slots: dict, result: dict, reply: str, lang: str) -> str:
+    """Owner, 2026-10-29: only a SURNAME was said ("ডাক্তার আর চৌধুরীকে কালকে পাওয়া যাবে") and one doctor has it. The answer names the doctor's department before the name and asks whether that
+    is who is meant -- "আপনি কি ডার্মাটোলজির ডাঃ রাজীব চৌধুরীর কথা বলছেন? উনি আগামীকাল ... বসবেন।" -- instead of a bare answer about someone who may not be the one asked about (and never "which doctor?" after
+    already answering). The schedule is the clinic's own; only the framing is added."""
+    from agent.reply_templates import _spoken_doctor_name
+
+    dept = _fast_path.catalogue.doctor_department(result.get("doctor_name")) if _fast_path is not None else None
+    name = _spoken_doctor_name(slots, result)
+    full = f"{_dept_possessive(_dept_label(dept, lang), lang)} {name}" if dept else name
+    pronoun = {"bn": "উনি", "hi": "वे", "en": "they"}.get(lang, "they")
+    body = reply.replace(name, pronoun, 1) if name and name in reply else reply
+    ask = {
+        "bn": f"আপনি কি {full}-এর কথা বলছেন? ",
+        "hi": f"क्या आप {full} की बात कर रहे हैं? ",
+        "en": f"Are you asking about {full}? ",
+    }.get(lang, f"Are you asking about {full}? ")
+    for lead in ("হ্যাঁ, ", "हाँ, ", "Yes, "):  # the "yes" belonged to the answer, not to the new question
+        if body.startswith(lead):
+            body = body[len(lead):]
+            break
+    return ask + body
 # The caller's words for this turn, so a total can be checked against how many tests they SAID they meant ("all three together").
 _turn_text: contextvars.ContextVar[str | None] = contextvars.ContextVar("turn_text", default=None)
 # owner 2026-10-18: the test whose price was just given and which needs a prescription (the question is asked after the price), and the department just suggested
@@ -2942,6 +2974,7 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             return None
         result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
         _note_suggestion(intent, "doctor_name", slots, result)
+        _named_surname_only = bool(result.get("found")) and _fast_path is not None and not _fast_path.catalogue.given_name_said(_turn_text.get() or "", result.get("doctor_name"))
         if not result.get("found") and not result.get("ambiguous"):
             # KCD-lead-A: "Orthopaedics Doctor" is a department the model put in the doctor slot -- not "no such doctor". Any department in the
             # clinic's database is found by its own name or short form; the answer is its real doctors (never invented), exactly as department_query's.
@@ -2967,7 +3000,10 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             if result.get("available") is False and result.get("next_available_date"):
                 _de_date = result["next_available_date"]
             _doctor_enquiry_found.set({"doctor_name": slots["doctor_name"], "date": _de_date, "window": result.get("chamber_hours")})
-        return doctor_availability_reply(slots, result, lang)
+        _reply = doctor_availability_reply(slots, result, lang)
+        if result.get("found") and _named_surname_only:
+            _reply = _confirm_surname_match(slots, result, _reply, lang)
+        return _reply
     if intent == "test_prep":
         if not slots.get("test_name"):
             return None
@@ -5792,6 +5828,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         data = add_implied_second_question(text, data)
     intent = data["intent"]
     slots = data["slots"]
+    _turn_text.set(text)  # the caller's own wording, for answers that need it (agent replies that frame who was meant)
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked

@@ -245,6 +245,7 @@ def catalogue(db: Session = Depends(get_db)):
                 "full_name_bn": d.full_name_bn,
                 "full_name_hi": d.full_name_hi,
                 "surname": d.name.split()[-1],
+                "department": d.department.name if d.department is not None else None,
                 "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
                 "aliases_hi": [a for a in (d.aliases_hi or "").split("|") if a],
             }

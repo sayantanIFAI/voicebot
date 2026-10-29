@@ -247,7 +247,21 @@ class Catalogue:
         self._doctor_owners: dict[tuple[str, str], set[int]] = defaultdict(set)
         # Every word of each doctor's own names (whole name in English, Bengali and Hindi), lower-cased: what a GIVEN name said before a surname must resemble (see Catalogue._given_name_ok).
         self._doctor_words: dict[str, set[str]] = {}
+        self._doctor_dept: dict[str, str] = {}  # short name AND whole name -> department (English name, as the clinic keeps it)
+        self._doctor_given: dict[str, set[str]] = {}  # the given-name words only (every word of the whole names but the last), for "was a first name said?"
         for d in payload.get("doctors", []):
+            if d.get("department"):
+                self._doctor_dept[d["name"]] = d["department"]
+                if d.get("full_name"):
+                    self._doctor_dept[d["full_name"]] = d["department"]
+            given: set[str] = set()
+            for f in (d.get("full_name"), d.get("full_name_bn"), d.get("full_name_hi")):
+                parts = [w.strip(".,").lower() for w in (f or "").split() if w.strip(".,")]
+                parts = [w for w in parts if w not in ("dr", "ডাঃ", "ডা", "डॉ", "डॉक्टर")]
+                given |= set(parts[:-1])
+            self._doctor_given[d["name"]] = given
+            if d.get("full_name"):
+                self._doctor_given[d["full_name"]] = given
             words: set[str] = set()
             for f in (d.get("name"), d.get("full_name"), d.get("full_name_bn"), d.get("full_name_hi")):
                 words |= {w.strip(".,").lower() for w in (f or "").split() if w.strip(".,")}
@@ -337,6 +351,16 @@ class Catalogue:
         if not prev or prev.lower() in self._NOT_A_GIVEN_NAME or any(ch.isdigit() for ch in prev):
             return True
         return any(same_given_name(prev, w) for w in words)
+
+    def doctor_department(self, doctor_name: str | None) -> str | None:
+        return self._doctor_dept.get(doctor_name or "")
+
+    def given_name_said(self, text: str, doctor_name: str | None) -> bool:
+        """Did the sentence carry a FIRST name of this doctor (not only the surname)? True when the doctor has no first name on file."""
+        given = self._doctor_given.get(doctor_name or "")
+        if not given:
+            return True
+        return any(same_given_name(tok.strip(".,?!।"), g) for tok in text.split() for g in given)
 
     def doctor_owner_count(self, lang: str, form: str | None) -> int:
         """How many doctors the spoken form `form` belongs to (0 when unknown)."""
