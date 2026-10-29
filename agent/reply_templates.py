@@ -126,7 +126,7 @@ def test_rate_reply(slots: dict, result: dict, lang: str = "bn") -> str:
             # would tell the caller something untrue.
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
-            return f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
+            return f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"  # a similar name is asked about at once; no "not found" first (owner, 2026-10-29)
         # KCD-lay-terms: nothing at all matched -- a flat "no such test" tells the caller nothing useful next.
         # Asking what else they need, once, costs nothing and might save a second call. No package/checkup offer
         # here -- there is no such catalogue entry or flow to point them to, so it never invites one.
@@ -189,7 +189,7 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
         suggestions = name_script.drop_said(suggestions, query)  # "did you mean পাল?" for "এম পাল" says nothing new
         slots = {**slots, "doctor_name": query}
         if suggestions:
-            return f"'{slots.get('doctor_name')}' নামে ডাক্তার খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
+            return f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"  # a similar name is asked about at once; no "not found" first (owner, 2026-10-29)
         # KCD-lay-terms: no name matched at all -- inviting the caller to describe the PROBLEM instead composes with
         # the existing department_query intent on their very next turn (no new state needed: the model already
         # classifies a symptom description as department_query, which already returns BOTH departments when a
@@ -238,7 +238,7 @@ def test_prep_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         if result.get("ambiguous") and suggestions:
             return f"একাধিক টেস্ট পেলাম -- কোনটার কথা বলছেন: {' নাকি '.join(suggestions)}?"
         if suggestions:
-            return f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
+            return f"আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"  # a similar name is asked about at once; no "not found" first (owner, 2026-10-29)
         return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
 
     name = _spoken_test_name(slots, result)

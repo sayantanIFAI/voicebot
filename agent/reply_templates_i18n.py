@@ -213,19 +213,11 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
     # KCD-lay-terms: see reply_templates.test_rate_reply's Bengali counterpart for why this invitation is here.
     if lang == "hi":
         if sugg:
-            return (
-                f"'{q}' नाम का टेस्ट नहीं मिला। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
-                if q
-                else f"वह टेस्ट नहीं मिला। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
-            )
+            return f"क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"  # a similar name is asked about at once, no "not found" first (owner, 2026-10-29)
         base = f"माफ़ कीजिए, '{q}' नाम का कोई टेस्ट हमारी सूची में नहीं है।" if q else "माफ़ कीजिए, वह टेस्ट हमारी सूची में नहीं है।"
         return f"{base} कोई और टेस्ट या डॉक्टर की अपॉइंटमेंट बुक करनी है?"
     if sugg:
-        return (
-            f"I couldn't find a test called '{q}'. Did you mean: {', '.join(sugg)}?"
-            if q
-            else f"I couldn't find that test. Did you mean: {', '.join(sugg)}?"
-        )
+        return f"Did you mean: {', '.join(sugg)}?"  # a similar name is asked about at once, no "not found" first (owner, 2026-10-29)
     base = f"Sorry, there is no test called '{q}' on our list." if q else "Sorry, that test is not on our list."
     return f"{base} Is there any other test or doctor's appointment you'd like to book?"
 
@@ -250,11 +242,7 @@ def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
     # is here, and why it needs no new state -- department_query already handles the caller's next turn.
     if hi:
         if sugg:
-            return (
-                f"'{q}' नाम के डॉक्टर नहीं मिले। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
-                if q
-                else f"वह डॉक्टर नहीं मिले। क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"
-            )
+            return f"क्या आप {', '.join(sugg)} कहना चाह रहे हैं?"  # a similar name is asked about at once, no "not found" first (owner, 2026-10-29)
         base = (
             f"माफ़ कीजिए, '{q}' नाम के कोई डॉक्टर हमारे यहाँ नहीं हैं।"
             if q
@@ -262,11 +250,7 @@ def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
         )
         return f"{base} आपको क्या तकलीफ़ है बताइए, तो मैं सही विभाग के डॉक्टर बता सकूँगी।"
     if sugg:
-        return (
-            f"I couldn't find a doctor named '{q}'. Did you mean {', '.join(sugg)}?"
-            if q
-            else f"I couldn't find that doctor. Did you mean {', '.join(sugg)}?"
-        )
+        return f"Did you mean {', '.join(sugg)}?"  # a similar name is asked about at once, no "not found" first (owner, 2026-10-29)
     base = f"Sorry, we don't have a doctor named '{q}'." if q else "Sorry, we don't have a doctor by that name."
     return f"{base} Tell me what's troubling you, and I can suggest the right doctor."
 
