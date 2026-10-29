@@ -96,6 +96,7 @@ from agent import abuse, action_gate, call_end, slot_grouping, topic_flow
 from agent import ws_guard  # limits and validation for what a client may send (review 2026-10-28)
 from agent import head_pain  # "mathar betha": a headache is asked about once (hurt or only a headache) before a department is named
 from agent import where_doctor_sits  # which floor / room a doctor sits in: the counter tells
+from agent import name_groups  # a doctor's name that is nobody's: the doctors with that surname / first name / the closest names
 from agent import entity_confirmation as entity_text
 from agent import history_templates as history_text
 from agent import messages as agent_messages
@@ -2390,6 +2391,12 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
             hint = _doctor_presence_hint(text)
             if hint is not None:
                 return hint
+    if isinstance(data, dict) and data.get("intent") == "lookup_booking" and not _BOOKING_WORDS.search(text or ""):
+        # Owner, 2026-10-29: "অনীর্বাণ দত্ত আছে" (is there an Anirban Dutta?) was read as a booking lookup and answered "which number did you book from?". With no booking word in the sentence, a name followed by
+        # "is there" is a question about a doctor.
+        hint = _doctor_presence_hint(text)
+        if hint is not None:
+            return hint
     return _restore_said_given_name(_without_generic_doctor_name(_with_whole_doctor_name(data, text, text_lang, session)), text)
 
 
@@ -2422,6 +2429,14 @@ def _restore_said_given_name(data, text: str):
 _PRESENCE_WORDS = frozenset("আছে আছেন আছো बैठते बैठती है हैं available".split())
 _DOCTOR_TITLES = frozenset("ডাক্তার ডাঃ ডা ডাক্তর ডক্টর डॉक्टर डॉ dr dr. doctor".split())
 _PRESENCE_STOP = frozenset("কে কেউ কি কী কোন কোনো কিছু আর এখানে ওখানে সব আমার আমি আমাকে আমাদের আপনার আপনি তার তাঁর সব सब कौन कोई क्या यहाँ मेरा मुझे मेरी".split())
+
+
+_BOOKING_WORDS = re.compile(
+    r"বুকিং|বুক|সিরিয়াল|কনফার্ম|অ্যাপয়েন্টমেন্ট|এপয়েন্টমেন্ট|আইডি|নম্বর|নাম্বার|বাতিল|ক্যানসেল|রিশিডিউল|পরিবর্তন|"
+    r"बुकिंग|बुक|सीरियल|कन्फ़र्म|कन्फर्म|अपॉइंटमेंट|आईडी|नंबर|रद्द|कैंसिल|"
+    r"\b(?:booking|booked|serial|confirm\w*|appointment|id|number|cancel\w*|reschedul\w*)\b",
+    re.I,
+)
 
 
 def _doctor_presence_hint(text: str) -> dict | None:
@@ -3290,6 +3305,13 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             if result.get("available") is False and result.get("next_available_date"):
                 _de_date = result["next_available_date"]
             _doctor_enquiry_found.set({"doctor_name": slots["doctor_name"], "date": _de_date, "window": result.get("chamber_hours")})
+        if not result.get("found") and not result.get("ambiguous") and _fast_path is not None:
+            # Owner, 2026-10-29 ("অনীর্বাণ দত্ত"): a name that is nobody's -> "no doctor named X", then the doctors with that surname, with that first name, and the closest names (agent/name_groups.py)
+            with contextlib.suppress(Exception):
+                _said = str(slots.get("doctor_name") or "")
+                _groups = name_groups.build(_said, list(_fast_path.catalogue._doctor_info.values()), result.get("did_you_mean") or [])  # noqa: SLF001
+                if _groups:
+                    result = {**result, "name_groups_reply": name_groups.reply(_groups, _said, lang)}
         _reply = doctor_availability_reply(slots, result, lang)
         if result.get("found") and _named_surname_only:
             _reply = _confirm_surname_match(slots, result, _reply, lang)

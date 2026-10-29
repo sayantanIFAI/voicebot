@@ -176,6 +176,8 @@ def multi_test_rate_reply(results: list[tuple[str, dict]], lang: str = "bn") -> 
 
 
 def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> str:
+    if not result.get("found") and result.get("name_groups_reply"):
+        return result["name_groups_reply"]  # built in main from the clinic's own list (agent/name_groups.py)
     if lang != "bn":
         return _i18n.doctor_availability_reply(slots, result, lang)
     if not result.get("found"):
