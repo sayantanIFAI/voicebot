@@ -4008,7 +4008,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
         return False
     # 1. the answer to a question asked here
     pend = getattr(session, "dept_pending", None)
-    if pend and session.turn_count - pend["turn"] <= 3 and pend.get("say") and pend["kind"] in ("confirm_one", "pick") and _asks_when(text) and booking_capture.confirm_answer(text, lang) is None:
+    if pend and session.turn_count - pend["turn"] <= 3 and pend.get("say") and pend["kind"] in ("confirm_one", "pick") and _asks_when(text) and booking_capture.confirm_answer(text, lang) is None and not _text_names_a_doctor(text, lang):
         # Owner, 2026-10-28: "কালকে কবে বসবে বা পরশু" names ANOTHER day than the one just told: the answer is for that day (the doctor's own availability, with his next sitting when he is off), never today's line again
         if pend["kind"] == "confirm_one":
             _other = booking_capture.read_when(text, False, want_day=True).date
@@ -6219,6 +6219,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _speak(session, where_doctor_sits.reply(lang), lang)
             return
         if session.booking is None and await _doctor_facts_turn(session, text, lang):
+            return
+        if session.booking is None and await _doctor_when_turn(session, text, lang):
             return
         if session.booking is None and await _head_pain_turn(session, text, lang):
             return
@@ -8623,6 +8625,49 @@ async def _doctor_facts_turn(session: CallSession, text: str, lang: str) -> bool
     if not say:
         return False
     await _speak(session, _with_resume(session, say, lang), lang)
+    return True
+
+
+_SITS_WORDS = ("বসবে", "বসবেন", "বসছে", "বসছেন", "বসেন", "বসে", "আছে", "আছেন", "থাকবে", "থাকবেন", "बैठ", "है", "हैं", "available", "sit", "there", "in tomorrow", "in today")
+_NEXT_WORDS = ("এরপরে", "এর পরে", "এরপর", "পরের", "আবার", "পরে কবে", "next", "again", "after that", "अगली", "फिर", "उसके बाद")
+
+
+async def _doctor_when_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29. "কালকে আছে আমার হাতে ব্যথা আছে" and "শুভঙ্কর নন্দী এরপরে কবে বসবে" with Dr. Shubhankar Nandi being talked about are questions about HIM -- is he sitting tomorrow, and if not
+    when next -- not "who in Orthopaedics sits tomorrow". A symptom said on the way (hand pain) is the reason for the visit, not a change of subject. The doctor is the one named in the sentence, else the one
+    just discussed; the clinic's schedule answers (he sits then, or he does not and sits next on ...). Who ELSE sits is told when the caller asks it ("কারা বসছেন", "কে কে আছে")."""
+    if _fast_path is None or _tools is None or not (text or "").strip() or len(text.split()) > 16:
+        return False
+    low = text.lower()
+    when = booking_capture.read_when(text, False, want_day=True).date
+    sits = any(w in low for w in _SITS_WORDS)
+    nxt = any(w in low for w in _NEXT_WORDS) and _asks_when(text)
+    if not ((when and sits) or nxt or (_asks_when(text) and sits and len(text.split()) <= 8)):
+        return False
+    if dept_talk.asks_names(text) or booking_carryover.asks_to_book(text) or booking_carryover.mentions_change_or_cancel(text) or dept_talk.dept_in_text(text):
+        return False
+    named = None
+    with contextlib.suppress(Exception):
+        doc = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True)  # noqa: SLF001
+        if doc is not None:
+            named = _fast_path.catalogue.doctor_info(doc[1] or doc[0])
+    info = named or _context_doctor_info(session)
+    if info is None:
+        return False
+    slots = {"doctor_name": info.get("name"), "date": when}
+    _turn_text.set(text)
+    _turn_context_doctor.set(info)
+    try:
+        reply = await _answer_enquiry_intent("doctor_availability", slots, lang)
+    except ToolCallError:
+        return False
+    if not reply:
+        return False
+    _de = _doctor_enquiry_found.get()
+    session.last_doctor_enquiry = {**(_de or {"doctor_name": info.get("name"), "date": when}), "turn": session.turn_count}
+    _doctor_enquiry_found.set(None)
+    session.dept_pending = None  # the department's open "which of them?" question is no longer the point
+    await _speak(session, _with_resume(session, reply, lang), lang)
     return True
 
 
