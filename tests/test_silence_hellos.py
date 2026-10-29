@@ -12,6 +12,7 @@ nothing was never called "hello". These tests drive the REAL `_turn_poll_loop` w
 import asyncio
 import os
 import sys
+import time
 import types
 
 import pytest
@@ -37,8 +38,16 @@ class _Tail:
 
 
 class _FakeAudio:
+    """A call whose audio clock runs in real time (the silence timer is measured on the audio clock since 2026-10-29)."""
+
     sample_rate = 16000
-    duration_s = 30.0
+
+    def __init__(self):
+        self._t0 = time.monotonic()
+
+    @property
+    def duration_s(self):
+        return 30.0 + (time.monotonic() - self._t0)
 
     def tail_tensor(self, _from_s):
         return _Tail()

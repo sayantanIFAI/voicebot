@@ -147,7 +147,7 @@ async def test_after_five_seconds_it_asks_once_whether_there_is_anything_else(m,
     s = env.session
     s.turn_count = 1  # the caller HAS spoken (a caller who never has is called "hello" instead -- owner, 2026-10-23)
     s.lang = "en"
-    s.silence_since = time.monotonic() - (m.SILENCE_PROMPT_S + 0.1)
+    s.silence_since = m._silence_clock(s) - (m.SILENCE_PROMPT_S + 0.1)
     assert await m._handle_silence(s, True) is False
     assert s.ws.spoken() == [phrase("silence_prompt", "en")] and s.silence_prompts == 1 and s.awaiting_close_answer
     assert s.ws.closed is False
@@ -156,7 +156,7 @@ async def test_after_five_seconds_it_asks_once_whether_there_is_anything_else(m,
 @pytest.mark.asyncio
 async def test_four_seconds_is_not_enough(m, env):
     s = env.session
-    s.silence_since = time.monotonic() - 4.0
+    s.silence_since = m._silence_clock(s) - 4.0
     await m._handle_silence(s, True)
     assert s.ws.spoken() == []
 
@@ -167,7 +167,7 @@ async def test_still_silent_after_the_prompt_the_call_ends_politely(m, env, monk
     s.turn_count = 1  # the caller HAS spoken (a caller who never has is called "hello" instead -- owner, 2026-10-23)
     s.lang = "en"
     s.silence_prompts = 1
-    s.silence_since = time.monotonic() - (m.SILENCE_CLOSE_S + 0.1)
+    s.silence_since = m._silence_clock(s) - (m.SILENCE_CLOSE_S + 0.1)
     assert await m._handle_silence(s, True) is True
     assert s.ws.spoken() == [phrase("idle_close", "en")] and s.ws.closed and s.outcome == "silence_timeout"
 

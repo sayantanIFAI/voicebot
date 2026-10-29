@@ -8755,6 +8755,16 @@ def _booking_open(session: CallSession) -> bool:
     return b is not None and b.stage in ("collecting", "confirming", "awaiting_charge_confirm")
 
 
+def _silence_clock(session: "CallSession") -> float:
+    """The clock the quiet is measured on. On the PCM path it is the call's AUDIO time (seconds of audio actually received and processed): if the event loop stalls, or audio stops arriving,
+    wall-clock seconds pass but audio seconds do not, so a stall can no longer read as a caller who stopped talking (blueprint 2026-10-29, section 4.2). Browser WebM sessions, which have no sample
+    clock, keep the wall clock. Watchdogs and timeouts elsewhere stay on the wall clock."""
+    audio = getattr(session, "audio", None)
+    if audio is not None and hasattr(audio, "duration_s"):
+        return float(audio.duration_s)
+    return time.monotonic()
+
+
 async def _handle_silence(session: CallSession, quiet: bool) -> bool:
     """The caller has said nothing since the agent stopped speaking. After SILENCE_PROMPT_S ask once whether there is
     anything else (one question; the call ends if not); if still nothing SILENCE_CLOSE_S later, end the call.
@@ -8762,8 +8772,11 @@ async def _handle_silence(session: CallSession, quiet: bool) -> bool:
     if not quiet or session.dispatch_lock.locked():
         session.silence_since = None
         return False
-    now = time.monotonic()
-    if session.agent_speaking and now < session.speak_deadline:
+    if _ingress_backlog_ms(session) > INGRESS_SETTLE_MS:
+        session.silence_since = None  # audio is still queued: the quiet seen so far may be a stall, not the caller
+        return False
+    now = _silence_clock(session)
+    if session.agent_speaking and time.monotonic() < session.speak_deadline:
         # Owner, 2026-10-24: "THERE WAS NO SILENCE OR PAUSE, STILL THE AI TOLD BELOW WITHIN MILLISECONDS" -- the clock ran while the question was still playing. It starts when the
         # playback is over.
         session.silence_since = None
