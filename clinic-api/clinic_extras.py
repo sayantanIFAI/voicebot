@@ -84,6 +84,14 @@ NEW_DOCTORS = [
         ["ज़ियाउल हक़", "जियाउल हक", "जियाउल", "हक", "हक़", "ज़ियाउल"],
         {"days": [0, 1, 2, 3, 4], "start": "10:00", "end": "13:00"},  # owner, 2026-10-29: from next week, weekdays only (Monday to Friday)
     ),
+    # Owner, 2026-10-29: Dr. Subhadip Mondal, Orthopaedics. Hours were not given: Tuesday / Thursday / Saturday 12:00-14:00 until a clinician sets the real ones. "মন্ডল" is shared with Dr. Anirban Mondal, so the
+    # surname alone still asks "which one?"; the first name picks him (Bengali spellings: শুভদীপ / সুভদীপ, মন্ডল / মণ্ডল).
+    (
+        "Orthopaedics", "Dr. S. Mondal", "Dr. Subhadip Mondal", "শুভদীপ মন্ডল", "शुभदीप मंडल", "MBBS, MS (Orthopaedics)", "M", 700,
+        ["শুভদীপ মন্ডল", "শুভদীপ মণ্ডল", "শুভদীপ", "সুভদীপ মন্ডল", "সুভদীপ", "শুভদীপা মণ্ডল", "শুভদীপ মোণ্ডল", "মন্ডল", "মণ্ডল"],
+        ["शुभदीप मंडल", "शुभदीप मण्डल", "शुभदीप", "सुभदीप मंडल", "सुभदीप", "मंडल", "मण्डल"],
+        {"days": [1, 3, 5], "start": "12:00", "end": "14:00"},
+    ),
 ]
 
 # (department, keywords_bn, keywords_hi, keywords_en) -- symptoms the clinic's clinicians route to that department. Specific on purpose: a bare
