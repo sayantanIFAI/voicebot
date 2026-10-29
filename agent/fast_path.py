@@ -341,6 +341,10 @@ class Catalogue:
             return prev in ("আর", "आर")
         if not prev or prev.lower() in self._NOT_A_GIVEN_NAME or any(ch.isdigit() for ch in prev):
             return True
+        # Owner, 2026-10-29 ("দেড় হক" for "জেড হক", Z. Haq): a very short unknown word right before a surname that only ONE doctor has is a misheard initial, not another person's first name
+        # (a surname two doctors share never reaches this check: _named_doctor refuses it).
+        if len(prev) <= 3:
+            return True
         return any(same_given_name(prev, w) for w in words)
 
     def doctor_info(self, doctor_name: str | None) -> dict | None:

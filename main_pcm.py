@@ -4950,7 +4950,8 @@ async def _finish_enquiry_turn(
         _pend = getattr(session, "dept_pending", None)
         if _prev and _prev.get("dept") != _rf.get("dept") and _pend and _pend.get("kind") == "pick" and _pend.get("turn", 0) < session.turn_count:
             session.dept_pending = None  # another department was named: the old department's doctors are no longer the subject
-        session.last_route = {**_rf, "turn": session.turn_count}
+        if getattr(session, "last_agreement", 1.0) >= 0.6:  # a garbled turn does not move the department being discussed
+            session.last_route = {**_rf, "turn": session.turn_count}
         _route_found.set(None)
         _pend2 = getattr(session, "dept_pending", None)
         if _rf.get("dept") and (_pend2 is None or _pend2.get("turn", 0) < session.turn_count):
@@ -5518,6 +5519,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if ASR_REFINE != "off":
             await _asr_refine_shadow(session, asr_result, detected_lang or lang)
         text = asr_result.text.strip()
+        session.last_agreement = float(getattr(asr_result, "decoder_agreement", 1.0) or 0.0)  # how sure the recognisers were about THIS turn (state is not changed by a guess)
         if detected_lang == "en":
             text = fix_asr_confusables(text)
         if text:
@@ -5599,8 +5601,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # yes/no is the whole point of that question.
             or session.awaiting_language_switch_offer
             # Owner, 2026-10-29: "ও দিপ শুভজিৎ দিপ" (a doctor's first name, said as the caller can) was thrown away as "repetitive"; while a department's doctors are the subject, a name is an answer
-            or getattr(session, "last_route", None) is not None
-            or getattr(session, "dept_pending", None) is not None,
+            or ((getattr(session, "last_route", None) is not None or getattr(session, "dept_pending", None) is not None) and float(asr_result.decoder_agreement or 0.0) >= 0.5),
         )  # KCD-104; "anything else?" -> a bare no: a bare yes or no to "shall I go back to it" is an answer
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
@@ -8307,7 +8308,9 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     if _fast_path is None or _tools is None or _booking_open(session) or len(text.split()) > 16:
         return False
     mention = dept_talk.dept_in_text(text)
-    topic = mention or (getattr(session, "last_route", None) or {}).get("dept")
+    if mention:
+        session.dept_topic = mention  # named by the caller: this is the subject until another department is named
+    topic = mention or getattr(session, "dept_topic", None) or (getattr(session, "last_route", None) or {}).get("dept")
     if not topic:
         return False
     infos = _dept_infos(topic)

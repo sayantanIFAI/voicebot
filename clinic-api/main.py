@@ -743,7 +743,9 @@ def _given_name_fits(d: Doctor, said: str, alias: str) -> bool:
     extra = [
         w
         for w in said.replace(alias, " ").split()
-        if _bare(w) and _bare(w) not in noise and not any(difflib.SequenceMatcher(None, _bare(w), n).ratio() >= 0.8 for n in noise if len(n) >= 3)
+        if len(_bare(w)) > 3  # a very short word beside a surname is a misheard initial ("দেড় হক"), not a different first name
+        and _bare(w) not in noise
+        and not any(difflib.SequenceMatcher(None, _bare(w), n).ratio() >= 0.8 for n in noise if len(n) >= 3)
     ]
     if not extra:
         return True
