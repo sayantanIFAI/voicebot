@@ -39,6 +39,12 @@ def _same(a: str, b: str) -> bool:
     return len(name_script.name_skeleton(a)) >= 2 and len(name_script.name_skeleton(b)) >= 2 and name_script.same_given_name(a, b)
 
 
+def _same_sound(a: str, b: str) -> bool:
+    """The two first names have the SAME consonant skeleton (spelling variants of one name); a merely similar name ("রাজশ্রী" / "রাজেশ") does not count here."""
+    ka, kb = name_script.name_skeleton(a), name_script.name_skeleton(b)
+    return len(ka) >= 2 and ka == kb
+
+
 def build(said: str, infos: list[dict], api_suggestions: list[str]) -> dict | None:
     """{"surname": [info...], "given": [info...], "closer": [info...], "short": info|None, "surname_word": str, "given_word": str} or None when nothing is close."""
     toks = _tokens(said)
@@ -52,9 +58,9 @@ def build(said: str, infos: list[dict], api_suggestions: list[str]) -> dict | No
             seen.add(id(info))
             uniq.append(info)
     by_sur = [i for i in uniq if any(_same(sur_word, s) for s in _own_names(i)[1])]
-    by_given = [i for i in uniq if given_word and any(_same(given_word, g) for g in _own_names(i)[0]) and i not in by_sur]
+    by_given = [i for i in uniq if given_word and any(_same_sound(given_word, g) for g in _own_names(i)[0]) and i not in by_sur]
     if not given_word:  # a single word: it may be the first name or the surname
-        by_given = [i for i in uniq if any(_same(sur_word, g) for g in _own_names(i)[0]) and i not in by_sur]
+        by_given = [i for i in uniq if any(_same_sound(sur_word, g) for g in _own_names(i)[0]) and i not in by_sur]
     sugg = []
     for s in api_suggestions or []:
         for i in uniq:
@@ -66,6 +72,30 @@ def build(said: str, infos: list[dict], api_suggestions: list[str]) -> dict | No
     if not (by_sur or by_given or closer):
         return None
     return {"surname": by_sur[:MAX_PER_GROUP], "given": by_given[:MAX_PER_GROUP], "closer": closer[:MAX_PER_GROUP], "short": short, "surname_word": sur_word, "given_word": given_word or sur_word}
+
+
+def offered(groups: dict) -> list[dict]:
+    """Every doctor the reply named (kept for the caller's next sentence)."""
+    out = []
+    for key in ("surname", "given", "closer"):
+        out += [i for i in groups.get(key, []) if i not in out]
+    if groups.get("short") is not None and groups["short"] not in out:
+        out.append(groups["short"])
+    return out
+
+
+def which_offered(text: str, infos: list[dict]) -> list[dict]:
+    """The offered doctors the sentence names by SOUND ("মানুষ দর" -> Dr. Manas Dutta): the one(s) with the best score (a first name that sounds the same = 2, the surname = 1); a tie is not a choice."""
+    toks = _tokens(text)
+    best, hits = 0, []
+    for info in infos:
+        given, sur = _own_names(info)
+        score = (2 if any(_same(t, g) for t in toks for g in given) else 0) + (1 if any(_same(t, s) for t in toks for s in sur) else 0)
+        if score > best:
+            best, hits = score, [info]
+        elif score == best and score > 0:
+            hits.append(info)
+    return hits if best >= 2 else []
 
 
 def reply(groups: dict, said_text: str, lang: str) -> str:

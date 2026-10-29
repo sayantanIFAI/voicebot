@@ -81,6 +81,7 @@ from agent import ws_guard  # limits and validation for what a client may send (
 from agent import head_pain  # "mathar betha": a headache is asked about once (hurt or only a headache) before a department is named
 from agent import where_doctor_sits  # which floor / room a doctor sits in: the counter tells
 from agent import name_groups  # a doctor's name that is nobody's: the doctors with that surname / first name / the closest names
+from agent import doctor_facts  # "কিসের ডাক্তার", the fee and the menu of what can be asked about the doctor being talked about
 from agent import entity_confirmation as entity_text
 from agent import history_templates as history_text
 from agent import messages as agent_messages
@@ -2972,6 +2973,8 @@ def _confirm_surname_match(slots: dict, result: dict, reply: str, lang: str) -> 
     return ask + body
 # The caller's words for this turn, so a total can be checked against how many tests they SAID they meant ("all three together").
 _turn_text: contextvars.ContextVar[str | None] = contextvars.ContextVar("turn_text", default=None)
+_turn_context_doctor: contextvars.ContextVar[dict | None] = contextvars.ContextVar("turn_context_doctor", default=None)  # the catalogue row of the doctor being talked about, when there is one
+_name_pick_found: contextvars.ContextVar[list | None] = contextvars.ContextVar("name_pick_found", default=None)  # the doctors a "no such doctor, but ..." reply named
 # owner 2026-10-18: the test whose price was just given and which needs a prescription (the question is asked after the price), and the department just suggested
 _rx_asked: contextvars.ContextVar[str | None] = contextvars.ContextVar("rx_asked", default=None)
 _route_found: contextvars.ContextVar[dict | None] = contextvars.ContextVar("route_found", default=None)
@@ -3249,6 +3252,11 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             _priced_names.set((_priced_names.get() or []) + [slots["test_name"]])
         if not result.get("found") and _is_scan_name(slots["test_name"]):
             return await _scan_unlisted_reply(lang)
+        _ctx_doc = _turn_context_doctor.get()
+        if not result.get("found") and not result.get("ambiguous") and _ctx_doc is not None:
+            # Owner, 2026-10-29 ("rather see the ten fees for" was answered "did you mean the Widal test?"): while a doctor is the subject, a sentence that is not understood is asked about again
+            # in the doctor's own terms, never answered with a lab-test guess.
+            return doctor_facts.menu(dept_talk.spoken_name(_ctx_doc, lang), lang)
         reply = _done_here(_turn_text.get(), lang, _found_names([(slots["test_name"], result)], lang)) + test_rate_reply(slots, result, lang)
         if result.get("found") and result.get("prescription_required"):
             _rx_asked.set(slots["test_name"])  # owner 2026-10-18: a test that needs a prescription -> ask whether the caller has one
@@ -3258,6 +3266,11 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if not slots.get("doctor_name"):
             return None
         result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
+        _cd = _turn_context_doctor.get()
+        if not result.get("found") and not result.get("ambiguous") and _cd is not None and _resembles_doctor(str(slots.get("doctor_name") or ""), _cd):
+            # Owner, 2026-10-29: Dr. Rajarshi Dutta is the subject and the caller says "রাজশ্রী দত্ত" -- the same surname and a first name that sounds close: it is him, no "no such doctor"
+            slots = {**slots, "doctor_name": _cd["name"]}
+            result = await _tools.get_doctor_availability(_cd["name"], slots.get("date"))
         _note_suggestion(intent, "doctor_name", slots, result)
         _named_surname_only = (
             bool(result.get("found"))
@@ -3301,6 +3314,7 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
                 _groups = name_groups.build(_said, list(_fast_path.catalogue._doctor_info.values()), result.get("did_you_mean") or [])  # noqa: SLF001
                 if _groups:
                     result = {**result, "name_groups_reply": name_groups.reply(_groups, _said, lang)}
+                    _name_pick_found.set(name_groups.offered(_groups))
         _reply = doctor_availability_reply(slots, result, lang)
         if result.get("found") and _named_surname_only:
             _reply = _confirm_surname_match(slots, result, _reply, lang)
@@ -5149,6 +5163,10 @@ async def _finish_enquiry_turn(
     if _de:
         session.last_doctor_enquiry = {**_de, "turn": session.turn_count}
     _doctor_enquiry_found.set(None)
+    _np = _name_pick_found.get()
+    if _np:
+        session.name_pick = {"infos": _np, "turn": session.turn_count}  # the doctors just named: the caller's next sentence may pick one ("মানুষ দর তো কালকে আছে")
+        _name_pick_found.set(None)
     suggestion, _ = _suggested.get(), _suggested.set(None)
     if suggestion is not None and session.pending_entity is None:
         replay = {
@@ -6189,6 +6207,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if where_doctor_sits.asks_floor(text) and not _booking_open(session):  # owner, 2026-10-29: which floor does the doctor sit on -> the counter tells
             await _speak(session, where_doctor_sits.reply(lang), lang)
             return
+        if session.booking is None and await _doctor_facts_turn(session, text, lang):
+            return
         if session.booking is None and await _head_pain_turn(session, text, lang):
             return
         if session.booking is None and await _answer_department_doctors(session, text, lang):
@@ -6238,6 +6258,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     intent = data["intent"]
     slots = data["slots"]
     _turn_text.set(text)  # the caller's own wording, for answers that need it (agent replies that frame who was meant)
+    _turn_context_doctor.set(_context_doctor_info(session))
     _doctor_from_context.set(bool(data.get("from_context")))
     # Owner, 2026-10-29: "আজ ডাক্তার ডন মাহমুদ চেম্বারে বসছে?" -- a name that is not one of our doctors is answered "no doctor by that name sits at Sonoscan", not "which doctor?" (checked against the clinic first)
     if data.get("unknown_doctor") and _tools is not None:
@@ -8516,6 +8537,85 @@ def _close_pair(text: str, close: list[dict]) -> bool:
         return max((difflib.SequenceMatcher(None, w, c).ratio() for w in windows if w), default=0.0) if c else 0.0
 
     return len(close) > 1 and abs(best(close[0]) - best(close[1])) < 0.08
+
+
+def _resembles_doctor(said: str, info: dict) -> bool:
+    """The name said has the doctor's surname and a first name that sounds like his (skeleton similarity of 0.6 or more)."""
+    import difflib
+
+    toks = name_groups._tokens(said)  # noqa: SLF001
+    if len(toks) < 2:
+        return False
+    given, sur = name_groups._own_names(info)  # noqa: SLF001
+    if not any(name_groups._same(toks[-1], s) for s in sur):  # noqa: SLF001
+        return False
+    a = name_script.name_skeleton(toks[0])
+    return any(difflib.SequenceMatcher(None, a, name_script.name_skeleton(g)).ratio() >= 0.6 for g in given)
+
+
+def _context_doctor_info(session: CallSession) -> dict | None:
+    """The catalogue row of the doctor being talked about (the last doctor asked about, within a few turns), or None."""
+    ctx = getattr(session, "last_doctor_enquiry", None)
+    if _fast_path is None or not ctx or not booking_carryover.recent(ctx, session.turn_count):
+        return None
+    return _fast_path.catalogue.doctor_info(ctx.get("doctor_name"))
+
+
+def _text_has_surname_of(text: str, info: dict) -> bool:
+    toks = name_groups._tokens(text)  # noqa: SLF001
+    return any(name_groups._same(t, s) for t in toks for s in name_groups._own_names(info)[1])  # noqa: SLF001
+
+
+async def _doctor_facts_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29. Three things about the doctor being talked about, decided in code before the model:
+      1. after "no doctor named X; the doctors with that surname / first name are A, B", the caller's next sentence picks one by SOUND ("আচ্ছা মানুষ দর তো কালকে আছে" -> Dr. Manas Dutta) and is
+         answered for THAT doctor (his day, or his sittings) -- never for another doctor;
+      2. "রাজশ্রী দত্ত কিসের ডাক্তার" with Dr. Rajarshi Dutta already the subject: his department, not "no such doctor" again;
+      3. the fee, even when the recogniser wrote it in English letters ("rather see the ten fees for"), for the doctor being talked about.
+    False when none of these applies (the sentence then goes on as usual)."""
+    if _fast_path is None or _tools is None or not (text or "").strip() or len(text.split()) > 14:
+        return False
+    ctx_info = _context_doctor_info(session)
+    asks_spec, asks_fee = doctor_facts.asks_speciality(text), doctor_facts.mentions_fee(text)
+    info, picked = None, False
+    pick = getattr(session, "name_pick", None)
+    if pick and session.turn_count - pick["turn"] <= 3:
+        hits = name_groups.which_offered(text, pick["infos"])
+        if len(hits) == 1:
+            info, picked = hits[0], True
+            session.name_pick = None
+    if info is None and (asks_spec or asks_fee):
+        named = None
+        with contextlib.suppress(Exception):
+            doc = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True)  # noqa: SLF001
+            if doc is not None:
+                named = _fast_path.catalogue.doctor_info(doc[1] or doc[0])
+        if named is not None:
+            info = named
+        elif ctx_info is not None and (len(text.split()) <= 3 or _text_has_surname_of(text, ctx_info)):
+            info = ctx_info  # no other doctor is named: it is about the one we are talking about (a close spelling of his surname counts)
+    if info is None:
+        return False
+    name = info.get("name")
+    session.last_doctor_enquiry = {"doctor_name": name, "date": None, "turn": session.turn_count}
+    if asks_spec:
+        dept = _dept_label(info.get("department") or "", lang)
+        say = doctor_facts.speciality_reply(dept_talk.spoken_name(info, lang), dept, lang) if dept else None
+    elif asks_fee and not picked:
+        say = await _visit_fee_reply(session, text, lang)
+    elif picked:
+        when = booking_capture.read_when(text, False, want_day=True).date
+        if when:
+            await _speak_day_availability(session, name, when, lang)
+            return True
+        lines = await _weekly_lines([info], lang)
+        say = " ".join(lines + [dept_talk.ask_which(lang, 1)]) if lines else dept_talk.ask_which(lang, 1)
+    else:
+        say = None
+    if not say:
+        return False
+    await _speak(session, _with_resume(session, say, lang), lang)
+    return True
 
 
 async def _head_pain_turn(session: CallSession, text: str, lang: str) -> bool:
