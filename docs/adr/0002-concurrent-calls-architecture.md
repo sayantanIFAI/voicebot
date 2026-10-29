@@ -26,6 +26,8 @@ Bengali / Hindi speech recognition and language identification become their own 
    language ID        mainline NeMo)  FastPitch+HiFiGAN  8 parallel requests    slots, bookings
 ```
 
+**Update 2026-10-29 ([ADR 0005](0005-capacity-round-2026-10-29.md)):** clinic-api now runs several worker processes (`CLINIC_WORKERS`, default 3) with a cached weekly schedule and a bulk availability endpoint; Ollama's 8 slots are all warmed at start-up; the echo canceller is cheaper and has an `AEC_MODE` switch.
+
 All service-to-service calls are plain HTTP on `127.0.0.1`; only the gateway port is public. The two agents are one code base: `main.py` is the source, **`main_pcm.py` is generated** from it by `python tools/make_pcm_variant.py` (never edit `main_pcm.py` by hand; transport changes for the PCM variant go in the generator; the reasoning half below `_resolve_intent` must stay byte-identical, which the generator checks).
 
 ## 3. What changed and why

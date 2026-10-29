@@ -3,6 +3,7 @@
 > **Current state (2026-10-26) -- read this first.** The text below is the original prototype write-up and is **historic**: the live system is a multi-process stack
 > (PCM agent on :8101, separate Bengali/Hindi recogniser service, three TTS workers, Ollama, clinic API, nginx gateway).
 > * Architecture and why: [`docs/adr/0002-concurrent-calls-architecture.md`](docs/adr/0002-concurrent-calls-architecture.md) (builds on [ADR 0001](docs/adr/0001-pilot-single-l4-architecture.md)).
+> * Capacity round of 2026-10-29 (clinic API workers and bulk reads, intent-model slot warm-up, cheaper echo canceller with the `AEC_MODE` switch): [`docs/adr/0005-capacity-round-2026-10-29.md`](docs/adr/0005-capacity-round-2026-10-29.md); what callers now experience: [`docs/CHANGES_2026-10-29.md`](docs/CHANGES_2026-10-29.md).
 > * Build it on an empty machine: [`docs/DEPLOY_FROM_SCRATCH.md`](docs/DEPLOY_FROM_SCRATCH.md) (exact package versions are in `deploy/locks/`).
 > * The "Deployment" section further down describes the old WebM-only setup; do not follow it.
 
