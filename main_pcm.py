@@ -268,6 +268,7 @@ from agent.speaker_change import SpeakerChangeDetector, voice_embedding
 from agent.speech_norm import contains_critical_figure
 from agent.speech_policy import derive_policy, effective_rate, limit_questions
 from agent.tools_client import ClinicToolsClient, ToolCallError
+from agent import tools_client  # noqa: E402  (API_STATS: the clinic-API calls of a turn)
 from agent.tts import FIGURE_SPEECH_SPEED, TTSClient, UnspeakableTextError
 from agent.tts_router import TTSRouter
 from agent.turn_ack import AckTracker, thanks_for
@@ -2181,6 +2182,32 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
             logger.info("[%s] fast path resolved %s (%.2f) -- no LLM call", session.call_id, hit.intent, hit.confidence)
             return hit.as_llm_shape()
 
+    # Owner, 2026-10-29: "কালকে বসবে" / "আজ আছেন?" -- a SHORT sitting question about a doctor named in the sentence or just discussed, with no booking, number or test in it, is read by rule: the model took ~650 ms
+    # to say what the words already say. (The doctor is never a fuzzy guess: _strict_enquiry_doctor.)
+    if (
+        session.booking is None
+        and len(text.split()) <= 6
+        and _SITS_VERB.search(text)
+        and booking_capture.read_digits(text)[1] < 2
+        and not booking_carryover.mentions_change_or_cancel(text)
+        and not booking_carryover.asks_to_book(text)
+        and not (_fast_path is not None and _fast_path.named_tests(text, text_lang))
+    ):
+        _qdoc = _strict_enquiry_doctor(session, text, lang)
+        if _qdoc:
+            logger.info("[%s] sitting question read by rule -- no model call", session.call_id)
+            _said = booking_capture.read_when(text, False, want_day=True).date
+            return {
+                "intent": "doctor_availability",
+                "slots": {k: (_qdoc if k == "doctor_name" else (_said if k == "date" else None)) for k in (
+                    "test_name", "test_names", "doctor_name", "date", "time_slot", "new_date", "new_time_slot", "confirmation_id",
+                    "patient_name", "patient_age", "phone", "contact_phone", "relationship", "spelled_letters", "symptom_description", "faq_topic")},
+                "direct_reply_bn": None,
+                "secondary_intent": None,
+                "secondary_slots": None,
+                "from_context": not _text_names_a_doctor(text, lang),
+            }
+
     # "do you do chest X-ray" written by the Bengali/Hindi recogniser in its own letters is read by rule, not left to the model, which
     # called it "unclear" (real call 2026-10-17). The name after the frame is a candidate for the catalogue lookup that follows.
     asked = translit_frames.match(text) or spelled_letters.bare_code_request(text)
@@ -2277,6 +2304,9 @@ def _doctor_presence_hint(text: str) -> dict | None:
         "secondary_intent": None,
         "secondary_slots": None,
     }
+
+
+_SITS_VERB = re.compile(r"বস(?:বে|বেন|ছে|ছেন|ে|েন|তেন)|আসবেন|থাকবেন|থাকছেন|बैठ(?:ेंगे|ते|ती|ेगा|ेगी)|\bsits?\b|\bsitting\b")
 
 
 _WHEN_SITS = ("কবে", "কখন", "কোন দিন", "কোন কোন", "বসেন", "বসে", "বসবে", "বসব", "বসছে", "বসছেন", "বসতেন", "কটায়", "कब", "कौन से दिन", "बैठते", "बैठती", "when", "which day", "what time", "schedule")
@@ -3082,16 +3112,20 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if not result.get("found") and not result.get("ambiguous"):
             # KCD-lead-A: "Orthopaedics Doctor" is a department the model put in the doctor slot -- not "no such doctor". Any department in the
             # clinic's database is found by its own name or short form; the answer is its real doctors (never invented), exactly as department_query's.
+            # Owner, 2026-10-29: the two lookups below were asked one after the other; they do not depend on each other, so they are asked together (the second is dropped when the first answers).
+            _dept_task = asyncio.ensure_future(_tools.department_doctors(slots["doctor_name"], lang))
+            _lay_task = asyncio.ensure_future(_route_dept(str(slots["doctor_name"]), lang))
             try:
-                dept = await _tools.department_doctors(slots["doctor_name"], lang)
+                dept = await _dept_task
             except ToolCallError:
                 dept = {}
             if dept.get("matched"):
+                _lay_task.cancel()
                 _route_found.set({"dept": dept["department_name"], "names": dept.get("doctors_today") or dept.get("doctors") or []})
                 return department_route_reply(_dept_labelled(dept, lang), "", lang)
             # owner, 2026-10-26: "ইন্ট ডাক্তার" (the recogniser's "ENT doctor") is a lay doctor phrase, not a name: the clinic's lay-phrase routing finds its department
             try:
-                lay = await _route_dept(str(slots["doctor_name"]), lang)
+                lay = await _lay_task
             except ToolCallError:
                 lay = {}
             if lay.get("matched"):
@@ -4925,6 +4959,8 @@ async def _finish_enquiry_turn(
 def _mark(session: CallSession, name: str) -> None:
     """Record when a stage of THIS turn finished (first occurrence only). Read by _log_timing at first audio."""
     marks = getattr(session, "marks", None)
+    if marks is not None and not marks:
+        session.api0 = (tools_client.API_STATS["calls"], tools_client.API_STATS["ms"])  # the clinic-API calls of this turn are counted from here
     if marks is not None and all(n != name for n, _t in marks):
         marks.append((name, time.monotonic()))
 
@@ -4939,11 +4975,14 @@ def _log_timing(session: CallSession) -> None:
     for name, t in marks[1:]:
         parts.append(f"{name} {int((t - prev) * 1000)} ms")
         prev = t
+    api0 = getattr(session, "api0", None) or (tools_client.API_STATS["calls"], tools_client.API_STATS["ms"])
+    api = f" | clinic API {tools_client.API_STATS['calls'] - api0[0]} calls {int(tools_client.API_STATS['ms'] - api0[1])} ms"
     logger.info(
-        "[%s] turn timing: %s | total %d ms",
+        "[%s] turn timing: %s | total %d ms%s",
         session.call_id,
         " | ".join(parts),
         int((marks[-1][1] - marks[0][1]) * 1000),
+        api,
     )
 
 
@@ -5175,7 +5214,20 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         return lang, result, True
 
     chosen, result = decision.language, (await outcomes_for([decision.language]))[0][1]
-    if chosen in ("bn", "hi") and "en" in _languages_active and tasks.get("en") is not None:
+    # Owner, 2026-10-29: the English recogniser is only waited for when it could change the answer. Language ID sure of the language it picked (>= 0.95, English below 0.05), the decoders agreeing
+    # (>= 0.95) and a real sentence (>= 3 words) leave nothing for it to overrule; that wait cost ~100 ms a turn. Accented English that language ID labels Hindi does not reach this rule: its Hindi
+    # decoders do not agree that well.
+    _sure = (
+        chosen in ("bn", "hi")
+        and lid.language == chosen
+        and lid.confidence >= 0.95
+        and (lid.scores or {}).get("en", 0.0) < 0.05
+        and float(getattr(result, "decoder_agreement", 0.0) or 0.0) >= 0.95
+        and len((getattr(result, "text", "") or "").split()) >= 3
+    )
+    if _sure:
+        logger.info("[%s] English recogniser not waited for (language ID %s %.2f, decoders agree %.2f)", session.call_id, chosen, lid.confidence, result.decoder_agreement)
+    if chosen in ("bn", "hi") and "en" in _languages_active and tasks.get("en") is not None and not _sure:
         # The English recogniser was started at the same moment as language ID (see the top of this function), so its answer is
         # already here or nearly. A confident but wrong language ID must not hide it (agent/lang_select.py has the evidence).
         try:
@@ -5955,7 +6007,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     intent = data["intent"]
     slots = data["slots"]
     _turn_text.set(text)  # the caller's own wording, for answers that need it (agent replies that frame who was meant)
-    _doctor_from_context.set(False)
+    _doctor_from_context.set(bool(data.get("from_context")))
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked

@@ -19,6 +19,7 @@ import time
 import uuid
 
 import asyncio
+import contextvars
 
 import httpx
 from pydantic import BaseModel
@@ -49,13 +50,32 @@ class ToolCallError(Exception):
     not-found/unavailable result, which is not an error."""
 
 
+# Owner, 2026-10-29: where does a turn's time go? Every clinic-API call a turn makes is counted and timed here (calls, milliseconds), and main._log_timing prints the turn's share beside the stage times.
+# The background availability pre-load is not counted: it is not part of any turn.
+API_STATS = {"calls": 0, "ms": 0.0}
+_COUNT_CALLS = contextvars.ContextVar("count_api_calls", default=True)
+
+
+async def _api_request_hook(request) -> None:
+    request.extensions["_t0"] = time.perf_counter()
+
+
+async def _api_response_hook(response) -> None:
+    t0 = response.request.extensions.get("_t0")
+    if t0 is not None and _COUNT_CALLS.get():
+        API_STATS["calls"] += 1
+        API_STATS["ms"] += (time.perf_counter() - t0) * 1000
+
+
 class ClinicToolsClient:
     def __init__(self, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S):
         self.base_url = base_url.rstrip("/")
         # The clinic API's service token (clinic-api/main.py), read from the environment, never logged.
         token = os.environ.get("CLINIC_API_TOKEN", "")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s, headers=headers)
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url, timeout=timeout_s, headers=headers, event_hooks={"request": [_api_request_hook], "response": [_api_response_hook]}
+        )
 
     async def aclose(self):
         await self._client.aclose()
@@ -160,6 +180,7 @@ class ClinicToolsClient:
 
         async def one(name: str, date: str | None) -> None:
             nonlocal stored
+            _COUNT_CALLS.set(False)  # background work, not a turn's
             async with gate:
                 try:
                     value = await self._fetch_availability(name, date)
