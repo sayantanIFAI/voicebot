@@ -42,7 +42,7 @@ DOCTOR_SEX: dict[str, str] = {
     "Dr. S. Kundu": "M", "Dr. M. Mallick": "F", "Dr. R. Pramanik": "M", "Dr. T. Bhowmik": "F",
 }
 
-NEW_DEPARTMENTS = ["General Surgery", "Neurology", "Neurosurgery", "Urology"]
+NEW_DEPARTMENTS = ["General Surgery", "Neurology", "Neurosurgery", "Urology", "Gastroenterology"]
 
 # (department, short name, whole name, bn, hi, qualifications, sex, fee, [bn surname aliases], [hi surname aliases], schedule)
 _MWF_NOON = {"days": [0, 2, 4], "start": "11:00", "end": "13:00"}
@@ -85,6 +85,14 @@ NEW_DOCTORS = [
         ["ज़ियाउल हक़", "जियाउल हक", "जियाउल", "हक", "हक़", "ज़ियाउल"],
         {"days": [0, 1, 2, 3, 4], "start": "10:00", "end": "13:00"},  # owner, 2026-10-29: from next week, weekdays only (Monday to Friday)
     ),
+    # Owner, 2026-10-29: Dr. Chandan Kumar, gastroenterologist, every weekday (Monday to Friday). Hours were not given: 10:00-13:00 until a clinician sets the real ones. His slots for today and tomorrow are
+    # filled at the first start (see apply_extras), so the first free day is next Monday.
+    (
+        "Gastroenterology", "Dr. C. Kumar", "Dr. Chandan Kumar", "চন্দন কুমার", "चंदन कुमार", "MBBS, MD, DM (Gastroenterology)", "M", 800,
+        ["চন্দন কুমার", "চন্দন", "চণ্ডন কুমার", "চন্দন কুমারের"],
+        ["चंदन कुमार", "चन्दन कुमार", "चंदन"],
+        {"days": [0, 1, 2, 3, 4], "start": "10:00", "end": "13:00"},
+    ),
     # Owner, 2026-10-29: Dr. Subhadip Mondal, Orthopaedics. Hours were not given: Tuesday / Thursday / Saturday 12:00-14:00 until a clinician sets the real ones. "মন্ডল" is shared with Dr. Anirban Mondal, so the
     # surname alone still asks "which one?"; the first name picks him (Bengali spellings: শুভদীপ / সুভদীপ, মন্ডল / মণ্ডল).
     (
@@ -98,6 +106,12 @@ NEW_DOCTORS = [
 # (department, keywords_bn, keywords_hi, keywords_en) -- symptoms the clinic's clinicians route to that department. Specific on purpose: a bare
 # "pain" must never route to a surgeon.
 NEW_ROUTES = [
+    (
+        "Gastroenterology",
+        ["গ্যাস্ট্রো", "গ্যাস্ট্রোএন্টারোলজি", "গ্যাস্ট্রোএন্টারোলজিস্ট", "অম্বল", "বুক জ্বালা", "বদহজম", "পেটে আলসার", "লিভারের সমস্যা", "জন্ডিস", "পিত্তথলি", "গ্যাসের সমস্যা", "হজমের সমস্যা", "অ্যাসিডিটি"],
+        ["गैस्ट्रो", "गैस्ट्रोएंटेरोलॉजी", "एसिडिटी", "अपच", "सीने में जलन", "पीलिया", "लिवर की समस्या", "पेट में अल्सर"],
+        ["gastro", "gastroenterology", "gastroenterologist", "acidity", "heartburn", "indigestion", "jaundice", "liver problem", "stomach ulcer"],
+    ),
     # Owner, 2026-10-29: "বডি ফুলে গেছে তো ডাক্তার দেখাবো" (the body has swelled) was not recognised as a symptom and was asked "which doctor?". Swelling of the body, face, feet or hands goes to General Medicine
     # (the ordinary doctor decides if a specialist is needed), in all three languages and the way the recogniser writes it.
     (
@@ -269,6 +283,33 @@ def apply_extras(db: Session) -> dict:
         if d.department is not None and d.department.name in ALL_FROM_KOLKATA and (d.from_kolkata or "") != "yes":
             d.from_kolkata = "yes"
             out["from_kolkata_set"] += 1
+    # Owner, 2026-10-29: "per doctor slot for each day should be 5 only" -- every sitting day of every doctor takes at most five patients (the table's max_bookings_per_day, which available_slots honours). Set ONCE
+    # (marker in the audit log); a number a clinician has changed afterwards stays as changed.
+    if not db.query(AuditLog).filter_by(action="seed.max_bookings_5").first():
+        db.flush()
+        for row in db.query(DoctorSchedule).all():
+            row.max_bookings_per_day = 5
+        db.add(AuditLog(at=datetime.datetime.now(), actor="system", action="seed.max_bookings_5", outcome="ok", detail_json="{}"))
+        out["max_bookings_set"] = True
+    # Owner, 2026-10-29: Dr. Chandan Kumar's five patients for today and for tomorrow are already booked (sample data, once): the first free day is next Monday.
+    if not db.query(AuditLog).filter_by(action="seed.chandan_kumar_full").first():
+        chandan = db.query(Doctor).filter_by(name="Dr. C. Kumar").first()
+        if chandan is not None:
+            import booking_service as bs
+            import clinic_clock
+
+            db.flush()
+            sched_hours = db.query(DoctorSchedule).filter_by(doctor_id=chandan.id).first()
+            slots = bs._generate_slots(sched_hours.start_time, sched_hours.end_time)[:5]  # noqa: SLF001
+            for offset in (0, 1):
+                day = (clinic_clock.today() + datetime.timedelta(days=offset)).isoformat()
+                for n, slot in enumerate(slots, start=1):
+                    held = bs.hold_slot(db, chandan.id, day, slot)
+                    if held.get("success"):
+                        phone = f"90000{offset}{n:04d}"
+                        bs.confirm_booking(db, held["hold_token"], chandan.id, day, slot, f"Sample Patient {offset}{n}", phone, phone, 40)
+            out["chandan_filled"] = True
+        db.add(AuditLog(at=datetime.datetime.now(), actor="system", action="seed.chandan_kumar_full", outcome="ok", detail_json="{}"))
     db.commit()
     return out
 

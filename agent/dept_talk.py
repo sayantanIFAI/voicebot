@@ -37,6 +37,7 @@ DEPT_WORDS: dict[str, tuple[str, ...]] = {
     "Neurology": ("নিউরোলজি", "নিউরোলজিস্ট", "न्यूरोलॉजी", "न्यूरोलॉजिस्ट", "neurology", "neurologist"),
     "Neurosurgery": ("নিউরোসার্জারি", "নিউরোসার্জন", "न्यूरोसर्जरी", "न्यूरोसर्जन", "neurosurgery", "neurosurgeon"),
     "Paediatrics": ("পেডিয়াট্রিক্স", "পেডিয়াট্রিশিয়ান", "শিশুরোগ", "বাচ্চাদের", "শিশুদের", "पीडियाट्रिक्स", "पीडियाट्रिशियन", "बच्चों", "paediatrics", "pediatrics", "paediatrician", "pediatrician"),
+    "Gastroenterology": ("গ্যাস্ট্রো", "গ্যাস্ট্রোএন্টারোলজি", "গ্যাস্ট্রোএন্টারোলজিস্ট", "গ্যাস্ট্রোলজিস্ট", "গেস্ট্রো", "পেটের ডাক্তার", "गैस्ट्रो", "गैस्ट्रोएंटेरोलॉजी", "gastro", "gastroenterology", "gastroenterologist", "gastrologist"),
     "Urology": ("ইউরোলজি", "ইউরোলজিস্ট", "यूरोलॉजी", "यूरोलॉजिस्ट", "urology", "urologist"),
 }
 
@@ -159,6 +160,9 @@ def close_doctors(text: str, infos: list[dict], floor: float = 0.55) -> list[dic
             parts = [p for p in (info.get(key) or "").replace(".", " ").split() if p.lower() not in _TITLES]
             if len(parts) >= 2:
                 cands.add(name_skeleton("".join(parts[:-1])))
+        for alias in list(info.get("aliases_bn") or []) + list(info.get("aliases_hi") or []):  # "জেড হক", "অরুণ কুমার" ... as people say them
+            if len(alias.split()) >= 2:
+                cands.add(name_skeleton("".join(alias.split())))
         cands = {c for c in cands if len(c) >= 3 and not c.isascii()}
         best = max((difflib.SequenceMatcher(None, w, c).ratio() for w in windows for c in cands if w and len(w) >= 3), default=0.0)
         if best >= floor:

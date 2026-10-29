@@ -1115,6 +1115,8 @@ _DEPT_ALIASES.update(
         "কার্ডিওলজি": "Cardiology", "कार्डियोलॉजी": "Cardiology",
         "গাইনোকোলজি": "Gynaecology & Obstetrics", "गायनेकोलॉजी": "Gynaecology & Obstetrics", "গাইনি": "Gynaecology & Obstetrics", "गायनी": "Gynaecology & Obstetrics",
         "অর্থোপেডিক্স": "Orthopaedics", "ऑर्थोपेडिक्स": "Orthopaedics", "অর্থোপেডিক": "Orthopaedics",
+        "গ্যাস্ট্রো": "Gastroenterology", "গ্যাস্ট্রোএন্টারোলজি": "Gastroenterology", "গ্যাস্ট্রোএন্টারোলজিস্ট": "Gastroenterology", "गैस्ट्रो": "Gastroenterology", "gastro": "Gastroenterology",
+        "gastroenterologist": "Gastroenterology", "gastroenterology": "Gastroenterology", "gastrologist": "Gastroenterology",
         "ডারমেটোলজিস্ট": "Dermatology", "ডার্মাটোলজিস্ট": "Dermatology", "ডার্মেটোলজিস্ট": "Dermatology", "ডারমাটোলজিস্ট": "Dermatology", "ডারমেটোলজি": "Dermatology", "ডার্মেটোলজি": "Dermatology",
         "চর্মরোগ": "Dermatology", "স্কিনের ডাক্তার": "Dermatology", "স্কিন ডাক্তার": "Dermatology", "ত্বকের ডাক্তার": "Dermatology", "चमड़ी": "Dermatology", "डर्मेटोलॉजिस्ट": "Dermatology", "स्किन डॉक्टर": "Dermatology",
         "ডার্মাটোলজি": "Dermatology", "डर्मेटोलॉजी": "Dermatology", "ডার্মাটোলজি": "Dermatology",

@@ -3669,6 +3669,7 @@ _DEPT_LABEL = {
     "Neurology": ("নিউরোলজি", "न्यूरोलॉजी", "Neurology"),
     "Neurosurgery": ("নিউরোসার্জারি", "न्यूरोसर्जरी", "Neurosurgery"),
     "Urology": ("ইউরোলজি", "यूरोलॉजी", "Urology"),
+    "Gastroenterology": ("গ্যাস্ট্রোএন্টারোলজি", "गैस्ट्रोएंटेरोलॉजी", "Gastroenterology"),
 }
 
 
@@ -6069,6 +6070,17 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         except ToolCallError:
             _chk = {"found": True}  # cannot tell: leave it to the ordinary path
         if not _chk.get("found") and not _chk.get("ambiguous"):
+            if _fast_path is not None:
+                _seen, _everyone = set(), []
+                for _info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
+                    if id(_info) not in _seen:
+                        _seen.add(id(_info))
+                        _everyone.append(_info)
+                _close = dept_talk.close_doctors(data["unknown_doctor"], _everyone, floor=0.45)
+                if _close:
+                    session.doctor_check = {"info": _close[0], "turn": session.turn_count, "date": booking_capture.read_when(text, False, want_day=True).date}
+                    await _speak(session, dept_talk.confirm_name(dept_talk.spoken_name(_close[0], lang), lang), lang)
+                    return
             await _speak(session, dept_talk.no_such_doctor(name_script.clean_query(data["unknown_doctor"], lang), lang), lang)
             return
     pending, session.pending_enquiry = session.pending_enquiry, None
@@ -8387,6 +8399,9 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
         if answer == "yes":
             info = chk["info"]
             session.last_doctor_enquiry = {"doctor_name": info.get("name"), "date": None, "turn": session.turn_count}
+            if chk.get("date"):  # the day asked about ("…বসবে আজকে") is answered for that day
+                await _speak_day_availability(session, info.get("name"), chk["date"], lang)
+                return True
             lines = await _weekly_lines([info], lang)
             say = " ".join(lines + [dept_talk.ask_which(lang, 1)]) if lines else dept_talk.ask_which(lang, 1)
             await _speak(session, say, lang)
