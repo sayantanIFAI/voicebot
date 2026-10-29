@@ -63,6 +63,6 @@ Raw results: `round_new_aecon_*` (calls, samples, timing) were produced on the p
 
 ## 4. What was not done
 
-* Server-side database for the clinic API (see 2.1, last bullet).
+* Server-side database for the clinic API: done later the same day, see [ADR 0006](0006-postgresql-static-answers-call-journal.md).
 * Browser calls with real speaker echo ignore interruptions until the canceller has converged (by design, `MIN_TRUSTED_ERLE_DB`); phone calls do not use that rule.
 * Six tests that failed before this round still fail (`tests/test_orchestrator_duplex.py` x5, `tests/test_barge_in.py::test_nothing_is_acted_on_when_the_agent_is_silent`); the reasons are test set-up and a counter, not behaviour.
