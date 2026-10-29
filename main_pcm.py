@@ -2728,6 +2728,31 @@ _priced_names: contextvars.ContextVar[list | None] = contextvars.ContextVar("pri
 _doctor_enquiry_found: contextvars.ContextVar[dict | None] = contextvars.ContextVar("doctor_enquiry_found", default=None)
 
 
+_doctor_from_context: contextvars.ContextVar[bool] = contextvars.ContextVar("doctor_from_context", default=False)  # this turn's doctor is the one just discussed, not one named in the sentence
+
+
+def _pronoun_reply(slots: dict, result: dict, reply: str, lang: str) -> str:
+    """Owner, 2026-10-29: "কালকে বসবে" about the doctor just discussed is answered "উনি আগামীকাল, ত্রিশ তারিখে বসবেন। সময়: 10:00-13:00।" -- no "yes", no name repeated, no "are you asking about ...?"."""
+    from agent.reply_templates import _spoken_doctor_name
+
+    pronoun = {"bn": "উনি", "hi": "वे", "en": "They"}.get(lang, "They")
+    if lang == "hi":
+        name = f"डॉक्टर {result['doctor_name_hi']}" if result.get("doctor_name_hi") else None
+    elif lang == "bn":
+        name = _spoken_doctor_name(slots, result)
+    else:
+        full = result.get("doctor_name") or ""
+        name = f"Doctor {full.replace('Dr.', '').replace('Dr', '').split()[-1]}" if full.split() else None
+    body = reply
+    for lead in ("হ্যাঁ, ", "जी हाँ, ", "हाँ, ", "Yes, "):
+        if body.startswith(lead):
+            body = body[len(lead):]
+            break
+    if name and name in body:
+        body = body.replace(name, pronoun, 1)
+    return body
+
+
 def _dept_possessive(label: str, lang: str) -> str:
     """"ডার্মাটোলজির" / "डर्मेटोलॉजी के" / "Dermatology's" -- the department said before a doctor's name."""
     if lang == "bn":
@@ -3082,6 +3107,8 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         _reply = doctor_availability_reply(slots, result, lang)
         if result.get("found") and _named_surname_only:
             _reply = _confirm_surname_match(slots, result, _reply, lang)
+        elif result.get("found") and _doctor_from_context.get():
+            _reply = _pronoun_reply(slots, result, _reply, lang)
         return _reply
     if intent == "test_prep":
         if not slots.get("test_name"):
@@ -5928,6 +5955,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     intent = data["intent"]
     slots = data["slots"]
     _turn_text.set(text)  # the caller's own wording, for answers that need it (agent replies that frame who was meant)
+    _doctor_from_context.set(False)
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
@@ -5952,6 +5980,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         logger.info("[%s] %s re-read as a doctor sitting question", session.call_id, intent)
         _said_day = booking_capture.read_when(text, False, want_day=True).date
         intent = "doctor_availability"
+        _doctor_from_context.set(not _text_names_a_doctor(text, lang))  # no doctor in the sentence itself: the one just discussed (answered with "উনি …")
         slots = {"doctor_name": _strict_enquiry_doctor(session, text, lang), "date": _said_day or (slots or {}).get("date")}  # the doctor NAMED or just discussed -- never the model's guess (it wrote the whole sentence as a name)
         data = {**data, "intent": intent, "slots": slots}
 
