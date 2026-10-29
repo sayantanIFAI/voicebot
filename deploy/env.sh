@@ -135,8 +135,7 @@ fi
 # Owner, 2026-10-29: the pod's own public URL, worked out from the pod id RunPod puts in the container's environment, so that no pod needs a local edit of this file (it used to be a hand-written line that
 # blocked every `git pull`). An explicit TWILIO_PUBLIC_BASE_URL set earlier (or in a .env file) always wins.
 if [ -z "${TWILIO_PUBLIC_BASE_URL:-}" ]; then
-    _POD_ID="${RUNPOD_POD_ID:-$(tr ' ' '
-' < /proc/1/environ 2>/dev/null | sed -n 's/^RUNPOD_POD_ID=//p')}"
+    _POD_ID="${RUNPOD_POD_ID:-$(tr '\0' '\n' < /proc/1/environ 2>/dev/null | sed -n 's/^RUNPOD_POD_ID=//p')}"
     [ -n "$_POD_ID" ] && export TWILIO_PUBLIC_BASE_URL="https://${_POD_ID}-8888.proxy.runpod.net"
     unset _POD_ID
 fi
