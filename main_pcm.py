@@ -2747,6 +2747,14 @@ _next_sit_offer: contextvars.ContextVar[dict | None] = contextvars.ContextVar("n
 
 def _note_suggestion(intent: str, slot: str, slots: dict, result: dict) -> None:
     names = result.get("did_you_mean") or []
+    # Owner, 2026-10-29: a suggestion that is only a word the caller already said is not SPOKEN any more ("did you mean পাল?" after "এম পাল"), so it must not wait as an open question either --
+    # the next sentence ("…জেড হাক ডক্টর আছে") was taken as the yes to it and answered about Dr. Pal.
+    bn = result.get("did_you_mean_bn") or []
+    if names and len(bn) == len(names):
+        from agent import name_script
+
+        query = name_script.clean_query(str(slots.get(slot) or ""), "bn")
+        names = [n for n, b in zip(names, bn) if name_script.drop_said([b], query)]
     if not result.get("found") and result.get("needs_confirmation") and not result.get("ambiguous") and len(names) == 1:
         _suggested.set({"intent": intent, "slot": slot, "slots": dict(slots), "name": names[0]})
 

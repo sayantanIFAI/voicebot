@@ -81,7 +81,7 @@ NEW_DOCTORS = [
         "Paediatrics", "Dr. Z. Haq", "Dr. Ziaul Haq", "জিয়াউল হক", "ज़ियाउल हक़", "MBBS, MD (Paediatrics)", "M", 600,
         ["জিয়াউল হক", "জিয়াউল", "হক", "হোক", "জিয়াউল হোক"],
         ["ज़ियाउल हक़", "जियाउल हक", "जियाउल", "हक", "हक़", "ज़ियाउल"],
-        {"days": [4], "start": "10:00", "end": "13:00"},
+        {"days": [0, 1, 2, 3, 4], "start": "10:00", "end": "13:00"},  # owner, 2026-10-29: from next week, weekdays only (Monday to Friday)
     ),
 ]
 
@@ -139,11 +139,23 @@ RELATIONSHIPS = [
 # Owner, 2026-10-28: sample data -- Dr. Subrata Banerjee (Dr. S. Banerjee) sits on EVERY day of the week, so every date this month and next month is one he sits. The table is by weekday, so
 # seven rows cover every date; the hours stay the ones he already has. Added only where a weekday is missing (never changes an hour a clinician edited).
 SITS_EVERY_DAY = ("Dr. S. Banerjee",)
+# Owner, 2026-10-29: Dr. Ziaul Haq, weekdays only (Monday to Friday), from next week. Tomorrow (Friday 2026-10-30) was already promised; the only other weekday before next Monday is today (Thursday), whose
+# 10:00-13:00 chamber has already closed when this is read, so a plain weekday schedule is exactly "from next week". Rows are only ADDED for a missing weekday.
+SITS_WEEKDAYS = {"Dr. Z. Haq": ((0, 1, 2, 3, 4), "10:00", "13:00")}
 
 
 def apply_extras(db: Session) -> dict:
     """Idempotent. Returns what it changed."""
     out = {"doctor_sex_set": 0, "departments": 0, "doctors": 0, "routes": 0, "relationships": 0, "weekdays_added": 0}
+    for short, (days, start, end) in SITS_WEEKDAYS.items():
+        doc = db.query(Doctor).filter_by(name=short).first()
+        if doc is None:
+            continue
+        have = {r.weekday for r in db.query(DoctorSchedule).filter_by(doctor_id=doc.id).all()}
+        for wd in days:
+            if wd not in have:
+                db.add(DoctorSchedule(doctor_id=doc.id, weekday=wd, start_time=start, end_time=end))
+                out["weekdays_added"] += 1
     for short in SITS_EVERY_DAY:
         doc = db.query(Doctor).filter_by(name=short).first()
         if doc is None:
