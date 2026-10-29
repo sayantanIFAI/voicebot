@@ -3869,7 +3869,7 @@ def _when_phrase(date_iso: str | None, time_hhmm: str | None, lang: str) -> str:
     """"আগামীকাল সকাল এগারোটায়" for the day and time a caller asked for; used in the "who sits then?" answers."""
     parts = []
     if date_iso:
-        today = datetime.date.today()
+        today = slot_proposal.clinic_now().date()  # the clinic's calendar (Kolkata), not the server's
         d = datetime.date.fromisoformat(date_iso)
         if d == today:
             parts.append(_WHEN_WORDS["today"][lang])
@@ -8672,8 +8672,8 @@ async def _doctor_when_turn(session: CallSession, text: str, lang: str) -> bool:
     nxt = any(w in low for w in _NEXT_WORDS) and _asks_when(text)
     if not ((when and sits) or nxt or (_asks_when(text) and sits and len(text.split()) <= 8)):
         return False
-    if dept_talk.asks_names(text) or booking_carryover.asks_to_book(text) or booking_carryover.mentions_change_or_cancel(text) or dept_talk.dept_in_text(text):
-        return False
+    if dept_talk.asks_names(text) or booking_carryover.asks_to_book(text) or booking_carryover.mentions_change_or_cancel(text) or dept_talk.dept_in_text(text) or _count_in(text):
+        return False  # "who sits", a booking, a department, or "will all five sit?" is not a question about one doctor
     named = None
     with contextlib.suppress(Exception):
         doc = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True)  # noqa: SLF001
@@ -8893,6 +8893,10 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     asks_names, asks_good, asks_when, asks_origin = dept_talk.asks_names(text), dept_talk.asks_good(text), dept_talk.asks_when(text), dept_talk.asks_origin(text)
     doctor_in_mind = booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)
 
+    # who SITS (today / tomorrow / a day), "say again", "will all five sit?" -> the doctors sitting that day, never the department's whole list
+    if await _dept_sitting_turn(session, text, lang, topic):
+        return True
+
     # does a <department> doctor sit here?  -> "yes, they sit." and nothing else
     if mention and dept_talk.yes_no_existence(text) and not asks_names:
         say = dept_talk.yes_sits(lang)
@@ -8944,6 +8948,85 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
             await _speak(session, say, lang)
             return True
     return False
+
+
+_SIT_CUES = ("বসছে", "বসছেন", "বসবে", "বসবেন", "বসেন", "বসে", "bosche", "bosben", "bosbe", "sit", "बैठ")
+_REPEAT_CUES = ("আবার", "আরেকবার", "আরেক বার", "repeat", "say again", "once more", "फिर से", "दोबारा", "एक बार और")
+_COUNT_BN = {"এক": 1, "দুই": 2, "দু": 2, "তিন": 3, "চার": 4, "পাঁচ": 5, "ছয়": 6, "ছ": 6, "সাত": 7, "আট": 8, "নয়": 9, "দশ": 10}
+_COUNT_OTHER = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                "एक": 1, "दो": 2, "तीन": 3, "चार": 4, "पांच": 5, "पाँच": 5, "छह": 6, "सात": 7, "आठ": 8}
+_COUNT_SPOKEN = {
+    "bn": {1: "একজন", 2: "দুইজন", 3: "তিনজন", 4: "চারজন", 5: "পাঁচজন", 6: "ছয়জন", 7: "সাতজন", 8: "আটজন"},
+    "hi": {1: "एक", 2: "दो", 3: "तीन", 4: "चार", 5: "पाँच", 6: "छह", 7: "सात", 8: "आठ"},
+    "en": {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"},
+}
+
+
+def _count_in(text: str) -> int | None:
+    """A number of doctors the caller names ("পাঁচজন", "five doctors", "5 জন")."""
+    for tok in (t.strip(".,?!।") for t in (text or "").lower().split()):
+        for word, n in _COUNT_BN.items():
+            if tok in (word + "জন", word + "জনই", word + "জনেই", word + "জনকে"):
+                return n
+        if tok in _COUNT_OTHER:
+            return _COUNT_OTHER[tok]
+        digits = tok.rstrip("জনই")
+        if digits.isdigit() and 1 <= int(digits) <= 12 and tok != digits:
+            return int(digits)
+    return None
+
+
+async def _dept_sitting_turn(session: CallSession, text: str, lang: str, topic: str) -> bool:
+    """Owner, 2026-10-29 (orthopaedics, three turns that each got the department's whole roster or every doctor's weekly schedule):
+      * "আবার বলেন কে কে বসছে ..." right after the sitting doctors were named -> the SAME names again;
+      * "কালকে কে কে বসছে" -> only the doctors who sit that day (today when no day is said);
+      * "কালকে পাঁচজনই বসবে?" -> the answer to the count: yes, or no with the doctors who do sit that day.
+    The doctors come from the clinic's schedule for that date; the department's full list is told only when the caller asks for the names of all of them."""
+    low = (text or "").lower()
+    sit = any(c in low for c in _SIT_CUES)
+    pend = getattr(session, "dept_pending", None)
+    if any(c in low for c in _REPEAT_CUES) and pend and pend.get("say") and pend.get("kind") in ("pick", "confirm_one") and (sit or dept_talk.asks_names(text)):
+        pend["turn"] = session.turn_count
+        await _speak(session, pend["say"], lang)
+        return True
+    count = _count_in(text)
+    if not sit or not (dept_talk.asks_names(text) or count):
+        return False
+    if _text_names_a_doctor(text, lang) and not count:
+        return False  # a particular doctor: the doctor steps answer
+    iso = booking_capture.read_when(text, False, want_day=True).date or slot_proposal.clinic_now().date().isoformat()
+    try:
+        r = await _tools.department_doctors(topic, lang, on_date=iso)
+    except ToolCallError:
+        return False
+    if not r.get("matched"):
+        return False
+    sitting = r.get("sitting") or []
+    when = _when_phrase(iso, None, lang)
+    label = _dept_label(topic, lang)
+    if not sitting:
+        return await _say_nobody_then_next(session, topic, lang, None, iso, when, label)
+    names = [s["name"] for s in sitting]
+    if count:
+        yes = count == len(sitting)
+        lead = {"bn": "হ্যাঁ" if yes else "না", "hi": "जी हाँ" if yes else "नहीं", "en": "Yes" if yes else "No"}[lang]
+        spoken_n = _COUNT_SPOKEN[lang].get(len(sitting), str(len(sitting)))
+        say = {
+            "bn": f"{lead}, {when} {spoken_n} ডাক্তার বসছেন: {dept_talk._join(names, 'bn')}।",  # noqa: SLF001
+            "hi": f"{lead}, {when} {spoken_n} डॉक्टर बैठ रहे हैं: {dept_talk._join(names, 'hi')}।",  # noqa: SLF001
+            "en": f"{lead}, {spoken_n} doctor{'s' if len(sitting) != 1 else ''} sit {when}: {dept_talk._join(names, 'en')}.",  # noqa: SLF001
+        }[lang]
+        say = f"{say} {dept_talk.ask_which(lang, len(sitting))}"
+    else:
+        say = doctor_search.sitting_list_reply(sitting, when, label, lang)
+    if len(sitting) == 1:
+        item = sitting[0]
+        session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start"), "turn": session.turn_count, "say": say}
+    else:
+        session.dept_pending = {"kind": "pick", "doctor": None, "doctors": sitting, "date": iso, "time": None, "turn": session.turn_count, "say": say}
+    session.last_route = {"dept": topic, "names": names, "turn": session.turn_count}
+    await _speak(session, _with_resume(session, say, lang), lang)
+    return True
 
 
 async def _answer_about_offered_doctors(session: CallSession, text: str, lang: str) -> bool:
