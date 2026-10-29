@@ -114,11 +114,18 @@ export CALL_RECORDING_NOTICE=${CALL_RECORDING_NOTICE:-0}
 
 # ---- admission control (agent/admission.py) -------------------------------
 # Cap is per process; the WebM and PCM services each count their own calls.
-export ADMISSION_MAX_CALLS=${ADMISSION_MAX_CALLS:-36}
+# 30 = the pilot design point (blueprint 2026-10-29). Raise it only after a 30-call load run is clean (p95 under the shed limit, backlog under 100 ms).
+export ADMISSION_MAX_CALLS=${ADMISSION_MAX_CALLS:-30}
 # `touch` this file = human-only mode for every NEW call, no deploy needed.
 export ADMISSION_BYPASS_FILE=/workspace/.ai_bypass
-# Turn-latency load shedding is OFF until calibrated against a real load
-# test; set e.g. ADMISSION_SHED_P95_S=2.5 once p95 is measured.
+# Turn-latency load shedding: NEW calls go to a person while the p95 of recent turns (caller stops -> first audio) is over this. 3.5 s is the pilot gate from the blueprint;
+# only the last 90 s of turns count, so the door re-opens when the load passes. An audio backlog above INGRESS_SHED_MS, or an event loop that wakes INGRESS_SHED_LAG_MS late,
+# closes the door the same way (main.py _ingress_watch).
+export ADMISSION_SHED_P95_S=${ADMISSION_SHED_P95_S:-3.5}
+export INGRESS_SHED_MS=${INGRESS_SHED_MS:-500}
+export INGRESS_SHED_LAG_MS=${INGRESS_SHED_LAG_MS:-400}
+export INGRESS_MAX_S=${INGRESS_MAX_S:-10}
+export SPECULATE_MAX_CALLS=${SPECULATE_MAX_CALLS:-10}
 # The HTTP kill-switch (POST /api/admission/bypass) stays disabled unless a
 # token exists -- read from a file, never committed:
 if [ -f /workspace/.admission_token ]; then
