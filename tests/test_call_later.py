@@ -54,3 +54,12 @@ def test_nothing_else_closes_the_call(text):
 def test_the_closing_line_exists_in_all_three_languages():
     for lang in ("bn", "hi", "en"):
         assert phrase("call_later_final", lang)
+
+
+def test_give_me_a_moment_and_i_will_give_the_name_closes_the_call():
+    from agent import call_later
+
+    assert call_later.asks_to_call_later("ও ঠিক আছে আপনি আমাকে একটু সময় দেন একটা নাম লেখাব")
+    assert call_later.asks_to_call_later("give me a moment, I will give the name")
+    assert not call_later.asks_to_call_later("ডাক্তারের সময় দিন আমি বুক করব")
+    assert not call_later.asks_to_call_later("ডাক্তার কখন একটু সময় বলুন")

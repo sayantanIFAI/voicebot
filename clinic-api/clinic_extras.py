@@ -190,6 +190,8 @@ EXTRA_ALIASES = {
     "Dr. Z. Haq": (["হাক", "জেড হাক", "জেড হক", "হাক সাহেব"], ["हाक", "जेड हाक", "जेड हक", "ज़ेड हक", "हॉक"]),
     # Owner, 2026-10-29: "Majumder" and "Majumdar" are the same name, said the same
     "Dr. R. Majumder": (["majumdar", "mazumdar", "mozumdar", "majumder"], ["majumdar", "mazumdar", "मजूमदार", "मजुमदार"]),
+    # Owner, 2026-10-29: the surname "দত্ত" belongs to Dr. Rajarshi Dutta as well as Dr. Manas Dutta -- the bare surname must name BOTH ("which one?"), never answer for one of them
+    "Dr. R. Dutta": (["দত্ত", "দত্ত সাহেব", "dutta", "datta"], ["दत्ता", "दत्त", "दत्ता साहब"]),
 }
 
 

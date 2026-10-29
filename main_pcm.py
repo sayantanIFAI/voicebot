@@ -2294,7 +2294,33 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
             hint = _doctor_presence_hint(text)
             if hint is not None:
                 return hint
-    return _without_generic_doctor_name(_with_whole_doctor_name(data, text, text_lang, session))
+    return _restore_said_given_name(_without_generic_doctor_name(_with_whole_doctor_name(data, text, text_lang, session)), text)
+
+
+def _restore_said_given_name(data, text: str):
+    """Owner, 2026-10-29 (hh2: "রাজেশ্বরী দত্ত ... আছেন" was answered as Dr. Manas Dutta; third time this class): the model dropped the FIRST name and kept only the surname ("দত্ত"), so the clinic was asked
+    about the surname alone and read out the one doctor it found. When the sentence carries a name-like word right before the surname the model kept, the doctor asked about is "<that word> <surname>" --
+    the clinic then matches the whole name (or says there is no such doctor and offers the closest ones); a surname alone is never turned into one doctor's answer. Nothing is guessed: only words
+    the caller said are put back."""
+    if _fast_path is None or not isinstance(data, dict) or data.get("intent") not in ("doctor_availability", "book_appointment"):
+        return data
+    slots = data.get("slots")
+    name = (slots or {}).get("doctor_name") if isinstance(slots, dict) else None
+    if not name or not isinstance(name, str) or len(name.split()) != 1:
+        return data
+    toks = [t.strip(".,?!।") for t in (text or "").split()]
+    not_given = _fast_path.catalogue._NOT_A_GIVEN_NAME  # noqa: SLF001
+    for i, t in enumerate(toks):
+        if i == 0 or not (t == name or (t.startswith(name) and len(t) - len(name) <= 2)):
+            continue
+        prev = toks[i - 1]
+        if (
+            len(prev) > 3 and prev.isalpha() and prev.lower() not in not_given
+            and not _sentence_asks_for_a_doctor(prev) and not dept_talk.dept_in_text(prev)
+            and not booking_capture.read_when(prev, False, want_day=True).date
+        ):
+            return {**data, "slots": {**slots, "doctor_name": f"{prev} {name}"}}
+    return data
 
 
 _PRESENCE_WORDS = frozenset("আছে আছেন আছো बैठते बैठती है हैं available".split())

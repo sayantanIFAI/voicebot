@@ -41,6 +41,19 @@ _REQUEST_TO_CLINIC = re.compile(
 # what is put off: a call, or the booking's details
 _THING = r"(?:নাম|সময়|দিন|তারিখ|বুকিং|অ্যাপয়েন্টমেন্ট|এপয়েন্টমেন্ট|অ্যাপয়েন্ট|নম্বর|নাম্বার|নাম\s*লেখ|नाम|समय|दिन|तारीख|बुकिंग|अपॉइंटमेंट|नंबर|नम्बर|\bnaam\b|\bnam\b|\bsomoy\b|\bsamay\b|\bdin\b|\btarikh\b|\bbooking\b|\bappointment\b|\bname\b|\btime\b|\bday\b|\bdate\b|\bnumber\b|\bdetails\b)"
 
+# "give me a moment / some time" (a request to the clinic, so it needs its own rule) together with "I will give the name / book" in the same sentence
+_GIVE_TIME_RE = re.compile(
+    r"(?:আমাকে|আমায়|আমার)\s*(?:একটু\s*|কিছুটা\s*|খানিক\s*)?সময়|একটু\s*সময়\s*(?:দিন|দেন|দিবেন|দেবেন|দাও|চাই)"
+    r"|मुझे\s*(?:थोड़ा\s*(?:सा\s*)?|थोड़ी\s*देर\s*)समय|थोड़ा\s*(?:सा\s*)?समय\s*(?:दीजिए|दीजिये|दें|दो|चाहिए)"
+    r"|\bgive\s+me\s+(?:a\s+)?(?:moment|minute|while|bit|some\s+time|little\s+time|a\s+little)\b|\bektu\s+(?:somoy|samay|shomoy)\s+(?:din|den|diben)\b",
+    re.I,
+)
+_WILL_GIVE_RE = re.compile(
+    r"(?:লেখাব|লেখাবো|লেখাবই|লিখব|লিখবো|লিখাব|লিখাবো|বলব|বলবো|দেব|দেবো|করব|করবো|নিব|নেব|নেবো|জানাব|জানাবো|জানাচ্ছি|বলছি|দিচ্ছি)"
+    r"|(?:लिखवाऊँगा|लिखवाऊंगा|लिखवाऊँगी|लिखवाऊंगी|बताऊँगा|बताऊंगा|बताऊँगी|बताऊंगी|करूँगा|करूंगा|करूँगी|करूंगी|दूँगा|दूंगा|दूँगी|दूंगी)"
+    r"|\b(?:likhabo|lekhabo|bolbo|debo|korbo|janabo)\b|\bi\s*(?:will|'ll|ll)\s+(?:give|tell|say|book|do|share|note)\b",
+    re.I,
+)
 _LATER_RE = re.compile(_LATER, re.I)
 _CALL_RE = re.compile(_CALL, re.I)
 _I_WILL_RE = re.compile(_I_WILL, re.I)
@@ -57,6 +70,8 @@ def _clean(text: str) -> str:
 def asks_to_call_later(text: str, lang: str = "") -> bool:  # noqa: ARG001  (all three languages are checked together; the argument keeps the module's usual shape)
     """True when the caller says they will call, or will give the name / day / time / booking, a little later."""
     s = _clean(text)
+    if len(s) >= 4 and _GIVE_TIME_RE.search(s) and _WILL_GIVE_RE.search(s) and not _VISIT_RE.search(s):
+        return True  # owner, 2026-10-29 (hh3): "আমাকে একটু সময় দেন, একটা নাম লেখাব" -- give me a moment, I will give the name: thanks, call again
     if len(s) < 4 or not _LATER_RE.search(s):
         return False
     if _REQUEST_TO_CLINIC.search(s):
