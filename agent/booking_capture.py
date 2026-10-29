@@ -893,6 +893,12 @@ _PROMPTS = {
         "hi": "ठीक है, मैं यह बिना व्हाट्सऐप नंबर के बुक कर रही हूँ। इस पर कन्फर्मेशन और सीरियल नंबर व्हाट्सऐप पर नहीं भेज पाऊँगी -- आप क्लिनिक काउंटर से ले सकते हैं, या बाद में व्हाट्सऐप नंबर के साथ फिर कॉल कीजिए।",
         "bn": "ঠিক আছে, হোয়াটসঅ্যাপ নম্বর ছাড়াই বুক করছি। এতে কনফার্মেশন আর সিরিয়াল নম্বর হোয়াটসঅ্যাপে পাঠাতে পারব না -- আপনি ক্লিনিক কাউন্টার থেকে নিতে পারেন, বা পরে হোয়াটসঅ্যাপ নম্বর নিয়ে আবার কল করুন।",
     },
+    # Owner, 2026-10-29: "I have a small phone, I cannot do that" -> the payment is made at the clinic counter; the booking goes on.
+    "pay_at_counter": {
+        "en": "Okay, then you will need to come to the clinic counter and pay there. I am booking the appointment.",
+        "hi": "ठीक है, तो आपको क्लिनिक के काउंटर पर आकर पेमेंट करना होगा। मैं अपॉइंटमेंट बुक कर रही हूँ।",
+        "bn": "ঠিক আছে, তাহলে আপনাকে ক্লিনিকের কাউন্টারে এসে পেমেন্ট করতে হবে। আমি অ্যাপয়েন্টমেন্ট বুক করে দিচ্ছি।",
+    },
     "name_again": {
         "en": "Sorry about that. Please tell me the patient's name again.",
         "hi": "माफ़ कीजिए। कृपया मरीज़ का नाम दोबारा बताइए।",
@@ -1320,6 +1326,11 @@ def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
             return True
         st.slots["_wa_tries"] = tries + 1
         plan.speak = prompt("whatsapp_number_again", lang)
+        return True
+    if whatsapp_cues.cannot_pay_online(text) and not number:
+        st.slots["_wa_done"] = "1"  # cannot pay from the phone: the counter takes the payment, the booking goes on
+        plan.slots, plan.skip_model = {}, True
+        plan.speak = prompt("pay_at_counter", lang)
         return True
     answer = whatsapp_cues.answer(text, lang) or confirm_answer(text, lang)
     if answer == "no":

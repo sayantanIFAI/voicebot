@@ -87,6 +87,28 @@ def answer(text: str, lang: str = "en") -> str | None:
     return None
 
 
+# Owner, 2026-10-29: asked "can you pay by PhonePe / Google Pay / UPI from this number?", the caller says what they CAN'T do ("ছোট ফোন, পারব না", "keypad phone, I can't do that", "मेरा फोन छोटा है,
+# मैं नहीं कर पाऊँगा"): that is not "another WhatsApp number" -- the payment is made at the clinic counter.
+_SMALL_PHONE = re.compile(
+    r"ছোট(?:ো)?\s*(?:ফোন|মোবাইল)|কিপ্যাড|কীপ্যাড|বাটন\s*(?:ফোন|মোবাইল)|সাধারণ\s*(?:ফোন|মোবাইল)|স্মার্ট\s*ফোন\s*(?:নেই|নাই|না)|"
+    r"छोटा\s*(?:फोन|फ़ोन|मोबाइल)|कीपैड|कीपेड|बटन\s*(?:वाला\s*)?(?:फोन|फ़ोन|मोबाइल)|स्मार्ट\s*फोन\s*नहीं|"
+    r"\b(?:small|old|basic|keypad|button|simple)\s*(?:phone|mobile)\b|\bno\s+smart\s*phone\b|\b(?:chhoto|choto|chota|chhota)\s*(?:phone|mobile)\b",
+    re.I,
+)
+_CANNOT = re.compile(
+    r"(?:পারব|পারবো|পারি|পারছি|পারবনা|পারবোনা|পারিনা)\s*না|পারব\s*না|পারবো\s*না|"
+    r"(?:कर|दे|हो)\s*(?:नहीं\s*)?(?:सकता|सकती|सकते|पाऊँगा|पाऊंगा|पाऊँगी|पाऊंगी|पाएगा)\s*(?:नहीं|हूँ नहीं)?|नहीं\s*(?:कर|दे)\s*(?:सकता|सकती|सकते|पाऊँगा|पाऊंगा|पाऊँगी|पाऊंगी)|"
+    r"\b(?:can'?t|cannot|can not|unable|won'?t be able|not able|dont know how|don'?t know how)\b|\bparbo\s*na\b|\bpar(?:bo|b|i)\s*na\b|\bnahi\s*kar\s*(?:sakta|sakti|paunga|paungi)\b",
+    re.I,
+)
+
+
+def cannot_pay_online(text: str) -> bool:
+    """The caller cannot pay from the phone (a small / keypad phone, or simply "I can't do that") -- the payment is made at the counter. A plain no ("WhatsApp nei") is NOT this."""
+    t = canonicalise(text or "")
+    return bool(_SMALL_PHONE.search(t) or _CANNOT.search(t))
+
+
 def asks_if_same_number(text: str) -> bool:
     """"this one", "ei number-ei", "yahi number", "same" -- the number already given is the WhatsApp number."""
     return any(w in {"same", "this", "ei", "eita", "eitai", "yahi", "yehi", "yeh", "ye", "এই", "এটাই", "এইটাই", "यही", "यह", "ये"} for w in _tokens(text))

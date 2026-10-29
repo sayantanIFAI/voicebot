@@ -77,6 +77,7 @@ from pydantic import BaseModel
 
 from agent import abuse, action_gate, call_end, slot_grouping, topic_flow
 from agent import ws_guard  # limits and validation for what a client may send (review 2026-10-28)
+from agent import head_pain  # "mathar betha": a headache is asked about once (hurt or only a headache) before a department is named
 from agent import entity_confirmation as entity_text
 from agent import history_templates as history_text
 from agent import messages as agent_messages
@@ -6025,6 +6026,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             return
         if session.booking is None and await _answer_body_imaging(session, text, lang):
             return
+        if session.booking is None and await _head_pain_turn(session, text, lang):
+            return
         if session.booking is None and await _answer_department_doctors(session, text, lang):
             return
         # sourav, 2026-10-16: what the caller's OWN words settle during a doctor booking (phone digits said in pieces, "double nine",
@@ -8340,6 +8343,41 @@ def _close_pair(text: str, close: list[dict]) -> bool:
         return max((difflib.SequenceMatcher(None, w, c).ratio() for w in windows if w), default=0.0) if c else 0.0
 
     return len(close) > 1 and abs(best(close[0]) - best(close[1])) < 0.08
+
+
+async def _head_pain_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29 ("mathar betha doctor"): a headache is asked about ONCE -- "only a headache, or did you hurt your head?" -- and the answer decides the department: hurt -> General Medicine,
+    a plain headache -> Neurology. From there it is the ordinary department answer (who sits, shall I book?), so a yes goes on to the booking. Nothing here states a fact about a person: the doctors
+    and sittings are the clinic's own rows. Words: agent/head_pain.py."""
+    if _tools is None or not (text or "").strip() or len(text.split()) > 20:
+        return False
+    asked = getattr(session, "head_check", None)
+    if asked and session.turn_count - asked["turn"] <= 2:
+        session.head_check = None
+        if head_pain.hurt(text):
+            dept = "General Medicine"
+        elif head_pain.a_pain_answer(text) or head_pain.asks_about_head_pain(text) or booking_capture.confirm_answer(text, lang) == "yes":
+            dept = "Neurology"
+        else:
+            return False  # not an answer to the question: the sentence is handled as any other
+        try:
+            routed = await _tools.department_doctors(dept, lang)
+        except ToolCallError:
+            return False
+        if not routed.get("matched"):
+            return False
+        reply = await _route_reply(session, routed, "", lang)
+        session.dept_topic = dept
+        session.last_route = {"dept": dept, "names": routed.get("doctors_today") or routed.get("doctors") or [], "turn": session.turn_count}
+        await _speak(session, _with_resume(session, reply, lang), lang)
+        return True
+    if getattr(session, "last_doctor_enquiry", None) and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count):
+        return False  # a doctor is already the subject
+    if head_pain.asks_about_head_pain(text) and not dept_talk.dept_in_text(text):
+        session.head_check = {"turn": session.turn_count}
+        await _speak(session, head_pain.question(lang), lang)
+        return True
+    return False
 
 
 def _names_offered_doctor(session: CallSession, text: str) -> bool:
