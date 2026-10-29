@@ -16,6 +16,7 @@ import random
 
 from models import (
     Appointment,
+    AuditLog,
     Department,
     DepartmentRoute,
     Doctor,
@@ -161,6 +162,8 @@ SITS_EVERY_DAY = ("Dr. S. Banerjee",)
 SITS_WEEKDAYS = {"Dr. Z. Haq": ((0, 1, 2, 3, 4), "10:00", "13:00")}
 # Spellings the recognisers write for a doctor that already exists: "জেড হাক" / "ज़ेड हाक" for Dr. Z. Haq (live replay, 2026-10-29). Added when missing; nothing is ever removed.
 ALL_FROM_KOLKATA = ("Orthopaedics",)
+# Owner, 2026-10-29: doctors booked only on the day they sit (set once, when this runs for the first time; changed afterwards in the table, it stays as changed)
+ON_THE_DAY_DOCTORS = ("Dr. Z. Haq",)
 EXTRA_ALIASES = {
     "Dr. Z. Haq": (["হাক", "জেড হাক", "জেড হক", "হাক সাহেব"], ["हाक", "जेड हाक", "जेड हक", "ज़ेड हक", "हॉक"]),
     # Owner, 2026-10-29: "Majumder" and "Majumdar" are the same name, said the same
@@ -256,6 +259,11 @@ def apply_extras(db: Session) -> dict:
         if not (getattr(d, "from_kolkata", "") or "").strip():
             d.from_kolkata = pick
             out["from_kolkata_set"] += 1
+    if not db.query(AuditLog).filter_by(action="seed.appointment_on_the_day").first():
+        for d in db.query(Doctor).filter(Doctor.name.in_(ON_THE_DAY_DOCTORS)).all():
+            d.appointment_on_the_day = True
+        db.add(AuditLog(at=datetime.datetime.now(), actor="system", action="seed.appointment_on_the_day", outcome="ok", detail_json="{}"))
+        out["on_the_day_seeded"] = len(ON_THE_DAY_DOCTORS)
     # Owner, 2026-10-29: every doctor of these departments is from Kolkata (set on every start; the other departments keep their own values)
     for d in db.query(Doctor).all():
         if d.department is not None and d.department.name in ALL_FROM_KOLKATA and (d.from_kolkata or "") != "yes":

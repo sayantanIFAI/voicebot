@@ -55,6 +55,7 @@ DOCTOR_BOOKING_COLUMNS: dict[str, str] = {
     "full_name_hi": "VARCHAR NOT NULL DEFAULT ''",
     "sex": "VARCHAR NOT NULL DEFAULT ''",
     "from_kolkata": "VARCHAR NOT NULL DEFAULT ''",
+    "appointment_on_the_day": "BOOLEAN NOT NULL DEFAULT FALSE",
 }
 
 

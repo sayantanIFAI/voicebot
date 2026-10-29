@@ -299,12 +299,52 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
         return "ওই তারিখটা তো চলে গেছে। আগামী সপ্তাহে ওই দিনের জন্য বুক করব?"
     if reason == "too_far_ahead":
         return too_far_ahead_reply(result, "bn")
+    if reason == "book_on_the_day":
+        return book_on_the_day_reply(result, "bn")
     if reason == "hold_expired":
         return "দুঃখিত, সময়টা ধরে রাখা যায়নি, একটু দেরি হয়ে গেছে। আবার চেষ্টা করি?"
     return "দুঃখিত, অ্যাপয়েন্টমেন্ট বুক করা গেল না। একটু পরে আবার চেষ্টা করুন, অথবা কাউন্টারে যোগাযোগ করুন।"
 
 
 _DAYS_WORD = {"bn": {1: "এক", 2: "দুই", 3: "তিন", 4: "চার", 5: "পাঁচ", 6: "ছয়", 7: "সাত"}, "hi": {1: "एक", 2: "दो", 3: "तीन", 4: "चार", 5: "पाँच", 6: "छह", 7: "सात"}, "en": {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}}  # fmt: skip
+
+
+def book_on_the_day_reply(result: dict, lang: str, rescheduling: bool = False) -> str:
+    """Owner, 2026-10-29: a doctor booked only on the day he sits. The caller is told WHEN he sits (the clinic's own next sitting) and that the booking is taken by phone at 7 am that day -- "he sits on Monday, but to
+    book please call at 7 am". Today before 7: "bookings open at seven today"."""
+    import datetime as _dt
+
+    lg = lang if lang in ("bn", "hi") else "en"
+    if lg == "bn":
+        who = f"ডাঃ {result['doctor_name_bn']}" if result.get("doctor_name_bn") else "ডাক্তার"
+    elif lg == "hi":
+        who = f"डॉक्टर {result['doctor_name_hi']}" if result.get("doctor_name_hi") else "डॉक्टर"
+    else:
+        full = (result.get("doctor_name") or "").replace("Dr.", "").replace("Dr", "").strip().split()
+        who = f"Doctor {full[-1]}" if full else "The doctor"
+    date = result.get("sitting_date")
+    note = {"bn": " আপনার আগের অ্যাপয়েন্টমেন্টটা আগের মতোই আছে।", "hi": " आपकी पुरानी अपॉइंटमेंट वैसी ही है।", "en": " Your original appointment is unchanged."}[lg] if rescheduling else ""
+    if not date:
+        return {
+            "bn": f"{who} এখন কোনো নির্দিষ্ট দিন বসছেন না। কাউন্টারে খোঁজ নিতে পারেন।",
+            "hi": f"{who} अभी किसी तय दिन नहीं बैठ रहे हैं। काउंटर पर पूछ सकते हैं।",
+            "en": f"{who} has no fixed sitting day right now. You can ask at the counter.",
+        }[lg] + note
+    if result.get("is_today"):
+        return {
+            "bn": f"{who} আজ বসবেন, তবে আজকের বুকিং সকাল সাতটা থেকে শুরু হয়। সাতটার পর ফোন করুন।",
+            "hi": f"{who} आज बैठेंगे, लेकिन आज की बुकिंग सुबह सात बजे से शुरू होती है। सात बजे के बाद फ़ोन कीजिए।",
+            "en": f"{who} sits today, but today's bookings start at 7 AM. Please call after seven.",
+        }[lg] + note
+    try:
+        wd = _WEEKDAY_NAMES[lg][_dt.date.fromisoformat(date).weekday()]
+    except Exception:  # noqa: BLE001
+        wd = ""
+    return {
+        "bn": f"{who} {wd} {date} তারিখে বসবেন। কিন্তু বুকিং করতে হলে সেদিন সকাল সাতটায় ফোন করুন।",
+        "hi": f"{who} {wd} {date} को बैठेंगे। लेकिन बुकिंग के लिए उसी दिन सुबह सात बजे फ़ोन कीजिए।",
+        "en": f"{who} sits on {wd}, {date}. But to book, please call at 7 AM on that day.",
+    }[lg] + note
 
 
 def too_far_ahead_reply(result: dict, lang: str, rescheduling: bool = False) -> str:
@@ -399,6 +439,8 @@ def reschedule_reply(result: dict, lang: str = "bn") -> str:
         return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো অ্যাপয়েন্টমেন্ট খুঁজে পেলাম না।"
     if reason == "too_far_ahead":
         return too_far_ahead_reply(result, "bn", rescheduling=True)
+    if reason == "book_on_the_day":
+        return book_on_the_day_reply(result, "bn", rescheduling=True)
     if reason == "slot_taken":
         alts = result.get("alternative_slots") or []
         if alts:

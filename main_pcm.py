@@ -2760,6 +2760,7 @@ _HOLD_FAILURE_FIELD = {
     "invalid_date": "date",
     "date_in_past": "date",
     "too_far_ahead": "date",  # sourav, 2026-10-24: a date past the booking window is cleared so a nearer day can be given
+    "book_on_the_day": "date",  # owner, 2026-10-29: a doctor booked only on the day he sits -- the date asked for is cleared
     "doctor_not_available_that_day": "date",
 }
 

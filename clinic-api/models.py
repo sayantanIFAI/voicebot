@@ -65,6 +65,9 @@ class Doctor(Base):
     sex = Column(String, nullable=False, default="", server_default="")
     # Owner, 2026-10-29: "From Kolkata?" -- "yes" | "no" | "" (not recorded). Answered when a caller asks whether the doctor is from Kolkata (agent/doctor_origin.py).
     from_kolkata = Column(String, nullable=False, default="", server_default="")
+    # Owner, 2026-10-29: "appointment on the day". TRUE = this doctor is booked only ON the day he sits, from 07:00: a caller asking for a later date is told when he next sits and to phone at 7 am that
+    # day (booking_service / main._validate_on_the_day_only). FALSE = booked ahead as usual (within the booking window).
+    appointment_on_the_day = Column(Boolean, nullable=False, default=False, server_default=false())
 
     department = relationship("Department", back_populates="doctors")
     schedule = relationship("DoctorSchedule", back_populates="doctor")

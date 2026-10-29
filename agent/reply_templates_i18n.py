@@ -410,6 +410,10 @@ def booking_reply(slots: dict, result: dict, lang: str) -> str:
         from agent.reply_templates import too_far_ahead_reply
 
         return too_far_ahead_reply(result, lang)
+    if reason == "book_on_the_day":
+        from agent.reply_templates import book_on_the_day_reply
+
+        return book_on_the_day_reply(result, lang)
     if reason == "hold_expired":
         return (
             "माफ़ कीजिए, समय रोका नहीं जा सका, थोड़ी देर हो गई। फिर कोशिश करें?"
@@ -482,6 +486,10 @@ def reschedule_reply(result: dict, lang: str) -> str:
         from agent.reply_templates import too_far_ahead_reply
 
         return too_far_ahead_reply(result, lang, rescheduling=True)
+    if reason == "book_on_the_day":
+        from agent.reply_templates import book_on_the_day_reply
+
+        return book_on_the_day_reply(result, lang, rescheduling=True)
     if reason == "not_found":
         return (
             "माफ़ कीजिए, इस कन्फ़र्मेशन नंबर पर कोई अपॉइंटमेंट नहीं मिली।"

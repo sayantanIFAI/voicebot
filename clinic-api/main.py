@@ -1162,6 +1162,36 @@ def _validate_not_too_far_ahead(date_str: str, db: Session | None = None, doctor
     return None
 
 
+ON_THE_DAY_OPENS = os.environ.get("ON_THE_DAY_OPENS", "07:00")  # the hour a doctor booked only on the day he sits starts taking that day's bookings
+
+
+def _validate_on_the_day_only(db: Session, doctor: Doctor, date_str: str) -> dict | None:
+    """Owner, 2026-10-29: a doctor marked `appointment_on_the_day` is booked only ON the day he sits, from ON_THE_DAY_OPENS. Anyone asking for a LATER date (tomorrow, the day after, next week), or for today before that
+    hour, is refused with the date he next sits and the hour to phone -- never a booking. A doctor not marked is untouched (the usual booking window applies)."""
+    if not getattr(doctor, "appointment_on_the_day", False):
+        return None
+    try:
+        target = datetime.date.fromisoformat(date_str)
+    except ValueError:
+        return None
+    now = clinic_clock.now()
+    h, m = (int(x) for x in ON_THE_DAY_OPENS.split(":")[:2])
+    too_early_today = target == now.date() and (now.hour * 60 + now.minute) < h * 60 + m
+    if not (target > now.date() or too_early_today):
+        return None
+    sitting = _next_available_date(db, doctor.id, target)
+    return {
+        "success": False,
+        "reason": "book_on_the_day",
+        "doctor_name": _doctor_ref(db, doctor),
+        "doctor_name_bn": doctor.full_name_bn or "",
+        "doctor_name_hi": doctor.full_name_hi or "",
+        "sitting_date": sitting,
+        "is_today": bool(sitting) and sitting == now.date().isoformat(),
+        "opens_at": ON_THE_DAY_OPENS,
+    }
+
+
 def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot: str) -> dict | None:
     """CodeRabbit-flagged: this used to live only inside hold_booking,
     which reschedule_booking never called -- it went straight to
@@ -1174,6 +1204,9 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
     parsing that date/time). Extracted so every endpoint that resolves a
     date+slot against a specific doctor applies the SAME checks."""
     err = _validate_date_not_past(date_str)
+    if err:
+        return err
+    err = _validate_on_the_day_only(db, doctor, date_str)
     if err:
         return err
     err = _validate_not_too_far_ahead(date_str, db, doctor)
