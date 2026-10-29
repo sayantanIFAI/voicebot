@@ -269,6 +269,7 @@ from agent.speech_norm import contains_critical_figure
 from agent.speech_policy import derive_policy, effective_rate, limit_questions
 from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent import tools_client  # noqa: E402  (API_STATS: the clinic-API calls of a turn)
+from agent import human_request  # noqa: E402  (a request for a person / staff / a complaint)
 from agent.tts import FIGURE_SPEECH_SPEED, TTSClient, UnspeakableTextError
 from agent.tts_router import TTSRouter
 from agent.turn_ack import AckTracker, thanks_for
@@ -8154,15 +8155,12 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
                 await _speak(session, phrase("silence_go_on", lang), lang)
             return True
     # "connect me to a person": always possible, and the way out the calm-delivery acknowledgement promises (agent/distress.py)
-    if asks_for_person(text):
-        # Owner, 2026-10-28: the first request is answered "I will help you"; a person only if the caller asks again. A caller already in calm delivery was told they could simply say so, so they are connected at once.
+    if asks_for_person(text) or human_request.asks_for_a_person(text, lang) or human_request.wants_to_complain(text, lang):
+        # Owner, 2026-10-29 (live call, three refusals in a row): a request for a person, for staff or a complaint is connected AT ONCE, on the first time of asking. (The 2026-10-28 "I will help you,
+        # ask again" step is removed; it left callers pleading.) Only an open clinician offer, above, takes the same words as its yes first.
         session.person_requests += 1
-        logger.info("[%s] the caller asked for a person (request %d)", session.call_id, session.person_requests)
-        if session.person_requests >= 2 or session.call_state.caller_state == "distressed":
-            await _handoff_to_human(session, "caller_requested", (lang,))
-        else:
-            await _speak(session, phrase("person_help_first", lang), lang)
-            session.awaiting_answer = False
+        logger.info("[%s] the caller asked for a person / staff / lodged a complaint (request %d): connecting", session.call_id, session.person_requests)
+        await _handoff_to_human(session, "complaint" if human_request.wants_to_complain(text, lang) else "caller_requested", (lang,))
         return True
     if clinical_safety.is_clinical_interpretation(text):
         logger.info("[%s] a request to interpret a result: a clinician is offered", session.call_id)
@@ -8328,6 +8326,14 @@ async def _handle_offtopic(session: CallSession, lang: str, text: str | None = N
     session.awaiting_answer = False
 
 
+_CLINIC_BUSINESS = re.compile(
+    r"স্টাফ|কর্মী|ম্যানেজার|অফিসার|কাউন্টার|রিসেপশন|হেল্প|কম্প্লে|কমপ্লে|অভিযোগ|লিঙ্ক|লিংক|হোয়াটস|পেমেন্ট|রিপোর্ট|বিল|টাকা|ডাক্তার|ডক্টর|বুকিং|অ্যাপয়েন্টমেন্ট|অ্যাপ্ল|টেস্ট|ফি\b|রশিদ|"
+    r"स्टाफ|मैनेजर|काउंटर|रिसेप्शन|शिकायत|लिंक|व्हाट्सऐप|पेमेंट|रिपोर्ट|बिल|पैसे|डॉक्टर|बुकिंग|अपॉइंटमेंट|टेस्ट|"
+    r"\b(?:staff|manager|counter|reception\w*|help\w*|complain\w*|link|whatsapp|payment|report|bill|doctor|booking|appointment|test|fee|receipt)\b",
+    re.I,
+)
+
+
 async def _offtopic_by_verdict(session: CallSession, text: str, lang: str, data: dict, asr_result) -> bool:
     """Second layer: the intent model called the sentence small talk or unclear AND nothing in it points at the clinic (no hospital cue, no catalogue name, no symptom or body part, no
     slot the model filled) AND it is a real sentence (four words or more) heard with good agreement between the decoders. Only then is it off-topic. True when answered here.
@@ -8335,6 +8341,10 @@ async def _offtopic_by_verdict(session: CallSession, text: str, lang: str, data:
     if not _free_for_offtopic(session):
         return False
     if len(text.split()) < 4 or getattr(asr_result, "decoder_agreement", 0.0) < 0.85 or off_topic.has_health_word(text):
+        return False
+    # Owner, 2026-10-29: "out of context must be very loose". A request for staff / a person / a complaint / lost property, or any word of the clinic's own business (staff, link, report, bill, payment, WhatsApp,
+    # doctor, booking ...) is never "off topic": the model's verdict is not even asked.
+    if human_request.asks_for_a_person(text, lang) or human_request.wants_to_complain(text, lang) or lost_found.asks_lost_and_found(text) or _CLINIC_BUSINESS.search(text):
         return False
     verdict = unrelated_caller.llm_verdict(text, lang, data.get("slots"), _catalogue_entity_in)
     if verdict != unrelated_caller.VERDICT_UNRELATED:

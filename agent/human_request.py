@@ -75,12 +75,42 @@ def _nfc(t: str) -> str:
     return unicodedata.normalize("NFC", t or "")
 
 
+# Owner, 2026-10-29 (live call): "অন্য কোন স্টাফ এর সাথে কথা বল", "স্টাফ এর সাথে যুক্ত করুন", "কোন মানুষের সাথে কথা বলা যাবে" were refused as "out of context". The list above wants "স্টাফের" in one piece and
+# one particular verb; a caller (and the recogniser) writes "স্টাফ এর", "স্টাফকে", "ম্যানেজার", "অন্য কেউ", and says connect / join / transfer / talk / give in a dozen ways. Here a PERSON NOUN and a
+# CONNECT VERB anywhere in the sentence (either order, within a few words) is a request for a person. The boundary is loose on purpose: the wrongly connected caller loses seconds, the refused one is angry.
+_BN_P_NOUN = (
+    r"(?:স্টাফ|ষ্টাফ|ম্যানেজার|ম্যানেজমেন্ট|কর্মী|কর্মচারী|মানুষ|লোক|অফিসার|অপারেটর|রিসেপশন\S*|রিসিপশন\S*|রিসেপশনিস্ট|কাস্টমার কেয়ার|কর্তৃপক্ষ|কাউকে|কেউ|কারো|কারও|কোনো লোক|অন্য কোন\S*|অন্য কেউ|আসল মানুষ|সিনিয়র|হেল্পডেস্ক|হেল্প ডেস্ক)"
+    r"(?:\s?(?:এর|কে|র|ের|দের|গুলো|টা|টি))?"
+)
+_BN_P_VERB = r"(?:কথা|যুক্ত|জুড়ে|কানেক্ট|কানেকশন|ট্রান্সফার|ধরিয়ে|ধরুন|লাইনে|দিন|দেন|দাও|দিয়ে|কল|ফোন|যোগাযোগ|বলান|বলিয়ে|বলতে|মিলিয়ে|পাঠিয়ে)"
+_BN_PERSON_LOOSE = [
+    re.compile(_BN_P_NOUN + r".{0,28}?" + _BN_P_VERB),
+    re.compile(_BN_P_VERB + r".{0,18}?" + _BN_P_NOUN),
+]
+_HI_P_NOUN = r"(?:स्टाफ|स्टाफ़|इंसान|इन्सान|आदमी|व्यक्ति|मैनेजर|ऑपरेटर|रिसेप्शन\S*|कर्मचारी|अधिकारी|कस्टमर केयर|हेल्पडेस्क|सीनियर|कोई और|किसी और|किसी इंसान)"
+_HI_P_VERB = r"(?:बात|जोड़|जोड|कनेक्ट|ट्रांसफर|दीजिए|दीजिये|दो\b|कॉल|फोन|मिला|मिलना|बोल|मिलवा)"
+_HI_PERSON_LOOSE = [
+    re.compile(_HI_P_NOUN + r".{0,28}?" + _HI_P_VERB),
+    re.compile(_HI_P_VERB + r".{0,18}?" + _HI_P_NOUN),
+    re.compile(r"किसी\s*(?:से|को)\s*(?:बात|जोड़|कनेक्ट|मिला)"),
+]
+
+
+def _joined(t: str) -> str:
+    """Bengali case endings written apart ("স্টাফ এর") are joined, and Devanagari / Bengali nukta forms are made plain, so one pattern reads both spellings."""
+    return re.sub(r"\s+(এর|কে|র)\b", r"\1", t).replace("\u09bc", "").replace("\u093c", "")
+
+
 def asks_for_a_person(text: str, lang: str = "en") -> bool:
     """True if the caller asked to speak to a person. All three languages are
     always checked (a caller may switch mid-call); `lang` only orders them."""
     t = _nfc(text).strip()
     if not t:
         return False
+    tj = _joined(t)
+    if not (_NEGATED_BN.search(t) or _NEGATED_HI.search(t) or _NEGATED_EN.search(t)):
+        if any(p.search(tj) for p in _BN_PERSON_LOOSE + _HI_PERSON_LOOSE):
+            return True
     for lg in dict.fromkeys((lang, "en", "bn", "hi")):
         if any(p.search(t) for p in _PATTERNS.get(lg, [])):
             # a bare keyword hit is dropped if the caller said they do NOT want that
@@ -154,7 +184,8 @@ _EN_COMPLAINT = [
     re.compile(r"\b(staff|doctor|receptionist|nurse)\b.{0,15}\b(was|were|is|are)\s+(rude|misbehaving)\b|\b(rude|misbehaved)\b.{0,15}\b(staff|doctor|receptionist|nurse)\b", _I),
 ]
 _BN_COMPLAINT = [
-    re.compile(r"অভিযোগ"),
+    re.compile(r"অভিযোগ|নালিশ|অসন্তুষ্ট"),
+    re.compile(r"কম্?প্?ল(?:েই|াই|েন|ায়ে|েই)ন?(?:ট)?"),  # কম্প্লাইন, কমপ্লেইন, কমপ্লেন্ট ... however the recogniser spells it
     re.compile(r"(কমপ্লেইন|কমপ্লেন|কম্প্লেইন|কম্প্লেন|কমপ্লেইন্ট|কমপ্লেন্ট|কমপ্লেইনট)"),
     re.compile(r"(খারাপ|বাজে)\s*(অভিজ্ঞতা|ব্যবহার|সার্ভিস)"),
 ]

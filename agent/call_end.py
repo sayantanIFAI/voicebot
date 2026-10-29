@@ -252,12 +252,24 @@ def _is_ack_word(word: str) -> bool:
     return word in _ACK_WORDS or (word.isascii() and any(p.fullmatch(word) for p in _ACK_PATTERNS))
 
 
+# Owner, 2026-10-29 ("ঠিক আছে রেখে দিন" -- fine, leave it -- was answered "your confirmation number?"): "leave it / never mind / forget it" said when nothing is open ends the matter like any other okay.
+_NEVER_MIND = re.compile(
+    r"^(?:(?:ঠিক আছে|ঠিক আছে তাহলে|আচ্ছা|ওকে|ok|okay|thik ache|theek hai|ठीक है|अच्छा|तो|তাহলে|তো)\s+)*"
+    r"(?:রেখে দিন|রেখে দাও|রাখুন|থাক|থাক তাহলে|থাক না|ছেড়ে দিন|ছেড়ে দাও|লাগবে না|লাগবে না তাহলে|দরকার নেই|দরকার নাই|আর কিছু লাগবে না|"
+    r"रहने दीजिए|रहने दीजिये|रहने दो|रहने दें|छोड़िए|छोड़ दीजिए|छोड़ो|कोई बात नहीं|कुछ नहीं चाहिए|ज़रूरत नहीं|जरूरत नहीं|"
+    r"never ?mind|forget it|leave it|leave it then|it'?s ok(?:ay)? no need|no need|no thanks)\s*(?:তো|ধন্যবাদ|thanks|thank you|शुक्रिया|धन्यवाद)?$",
+    re.I,
+)
+
+
 def is_closing_acknowledgement(text: str, lang: str = "en") -> bool:
     """True when the whole sentence is just an acknowledgement ("achha thik ache", "ok", "theek hai, shukriya", "ঠিক আছে ধন্যবাদ", "अच्छा ठीक है") -- short, made of
     acknowledgement words and fillers only, with at least one real acknowledgement. Judges the WORDS only; whether nothing is open is the caller's to check."""
     words = _normalise(text).replace("-", " ").split()
     if not words or len(words) > _ACK_MAX_WORDS:
         return False
+    if _NEVER_MIND.match(" ".join(words)):
+        return True
     if not all(_is_ack_word(w) or w in _ACK_FILLER for w in words):
         return False
     return any(_is_ack_word(w) for w in words)
