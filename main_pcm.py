@@ -676,16 +676,40 @@ async def _warm_answers_once() -> int:
     return n
 
 
+STATIC_RELOAD_HOUR = int(os.environ.get("STATIC_RELOAD_HOUR", "5"))  # clinic time; the day's one reload of prices, preparation and FAQ answers
+STATIC_RELOAD_FILE = os.environ.get("STATIC_RELOAD_FILE", "/workspace/reload_static_cache")  # touch it to reload now (a price changed)
+
+
 async def _answer_warm_loop() -> None:
+    """Owner, 2026-10-29: test prices, test preparation and FAQ answers are static: loaded once at start-up and once a day at STATIC_RELOAD_HOUR (clinic time), or when STATIC_RELOAD_FILE appears;
+    in between every question is answered from memory (agent/tools_client.py get_test_rate / get_test_prep / get_faq). The same pass renders their spoken audio."""
+    reloaded_on = None  # the clinic date of the last scheduled reload
+    first = True
     while True:
-        try:
-            await _warm_answers_once()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001 - advisory: a failure only means the next caller pays a synthesis
-            _answers_warm["last_error"] = str(e)
-            logger.warning("answer warm-up failed: %s", e)
-        await asyncio.sleep(ANSWER_WARM_INTERVAL_S)
+        due = first
+        now = slot_proposal.clinic_now()
+        if not due and now.hour >= STATIC_RELOAD_HOUR and reloaded_on != now.date() and now.hour < STATIC_RELOAD_HOUR + 2:
+            due = True
+        if not due and os.path.exists(STATIC_RELOAD_FILE):
+            due = True
+            with contextlib.suppress(OSError):
+                os.remove(STATIC_RELOAD_FILE)
+        if due:
+            try:
+                if not first and _tools is not None:
+                    _tools.clear_static()  # so the round below reads the clinic's tables again
+                await _warm_answers_once()
+                reloaded_on = now.date() if now.hour >= STATIC_RELOAD_HOUR else reloaded_on
+                if first and now.hour >= STATIC_RELOAD_HOUR:
+                    reloaded_on = now.date()
+                logger.info("static answers loaded (prices, preparation, FAQ)")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - advisory: a failure only means the next caller pays a synthesis
+                _answers_warm["last_error"] = str(e)
+                logger.warning("answer warm-up failed: %s", e)
+        first = False
+        await asyncio.sleep(30)
 
 
 async def _load_fast_path() -> FastPath | None:
@@ -2034,7 +2058,7 @@ def _rec(session: CallSession, method: str, *args) -> None:
         return
     try:
         getattr(rec, method)(*args)
-        asyncio.ensure_future(rec.flush())
+        rec.flush_soon()
     except Exception as e:  # noqa: BLE001
         logger.warning("[%s] call record event %s failed: %s", session.call_id, method, e)
 
@@ -2044,6 +2068,32 @@ def _record_action(session: CallSession, name: str, result: dict, slots: dict) -
         _note(session, "task_completed")
         _rec(session, "action", name, result.get("confirmation_id"))
         _rec(session, "confirmed", slots)
+
+
+_call_journal = None
+
+
+def _get_call_journal():
+    """CALL_LOG_MODE=journal (default): the call log is written to local files and loaded into the database once a night (agent/call_journal.py). CALL_LOG_MODE=live: events go to the clinic API as the call goes."""
+    global _call_journal
+    if os.environ.get("CALL_LOG_MODE", "journal").strip().lower() != "journal":
+        return None
+    if _call_journal is None:
+        from agent.call_journal import CallJournal
+
+        try:
+            _call_journal = CallJournal(os.environ.get("CALL_JOURNAL_DIR", "/workspace/call_journal"))
+        except OSError as e:  # no writable folder: fall back to the live path rather than lose the log
+            logger.warning("call journal unavailable (%s): the call log goes to the clinic API as the call goes", e)
+            os.environ["CALL_LOG_MODE"] = "live"
+            return None
+    return _call_journal
+
+
+async def _write_call_events(call_id: str, events: list, caller_phone: str | None) -> dict:
+    if _tools is None:
+        raise ToolCallError("clinic tools not ready")
+    return await _tools.write_call_events(call_id, events, caller_phone)
 
 
 async def _write_call_event(call_id: str, seq: int, kind: str, payload: dict, caller_phone: str | None) -> dict:
@@ -9099,7 +9149,7 @@ async def ws_audio(ws: WebSocket):
     session.admission = admission
     logger.info("[%s] call started (%d active)", session.call_id, _admission.active_calls)
     await _refresh_messages()
-    session.recorder = CallRecorder(session.call_id, _write_call_event)
+    session.recorder = CallRecorder(session.call_id, _write_call_event, batch_writer=_write_call_events, journal=_get_call_journal())
     _rec(session, "start", "voice", disclosure_version_label())
     session.audio_q = asyncio.Queue()
     _INGRESS[session.call_id] = session

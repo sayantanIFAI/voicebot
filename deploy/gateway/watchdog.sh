@@ -16,6 +16,7 @@ relaunch() {  # relaunch <name> <pgrep-pattern> <command...>
 }
 sleep 180   # grace: let the first start finish loading
 last_backup=0
+last_archive=""
 while true; do
     relaunch ollama     "ollama serve"                                       /workspace/bin/ollama serve
     relaunch tts_server "uvicorn tts_server"                                 /workspace/bin/_run_tts.sh
@@ -30,5 +31,12 @@ while true; do
     fi
     now=$(date +%s)
     if [ $((now - last_backup)) -ge 21600 ]; then bash /workspace/gateway/backup_db.sh >> $L/watchdog.log 2>&1; last_backup=$now; fi
+    # 01:00 clinic time, once a day: load yesterday's call journals into the database, write the CSV, compress and purge (tools/call_log_archiver.py; one process, one call at a time)
+    day=$(TZ=Asia/Kolkata date +%F); hour=$(TZ=Asia/Kolkata date +%H)
+    if [ "$hour" = "01" ] && [ "$last_archive" != "$day" ]; then
+        last_archive=$day
+        echo "$(date -Is) watchdog: nightly call-log archive starts" >> $L/watchdog.log
+        ( cd /workspace/kolkata-care-voice-agent && /workspace/venv/bin/python3 tools/call_log_archiver.py >> $L/call_log_archiver.log 2>&1 ) &
+    fi
     sleep 30
 done

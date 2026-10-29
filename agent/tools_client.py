@@ -145,11 +145,27 @@ class ClinicToolsClient:
     #   found=true:  {"found": true, "test_name": "...", "rate_inr": 650,
     #                 "sample_type": "Blood", "report_time_hours": 24}
     #   found=false: {"found": false, "query": "...", "did_you_mean": ["..."]}
+    # Owner, 2026-10-29: "everything will be static and reply from there only". Test prices, test preparation and FAQ answers are loaded ONCE a day (main._answer_warm_loop, STATIC_RELOAD_HOUR) and at
+    # start-up, and answered from memory until the next load -- no clinic API call per question and no expiry. A question the load did not cover (an odd spelling) is fetched once and then kept too.
+    # A "not found" answer is never kept. To pick up a price change before the next load: touch the file named by STATIC_RELOAD_FILE.
+    def clear_static(self) -> None:
+        self.__dict__["_static"] = {}
+
+    def _static_store(self) -> dict:
+        return self.__dict__.setdefault("_static", {})
+
     async def get_test_rate(self, test_name: str) -> dict:
+        key = ("rate", test_name)
+        hit = self._static_store().get(key)
+        if hit is not None:
+            return hit
         try:
             r = await self._client.get("/api/v1/tests/search", params={"name": test_name})
             r.raise_for_status()
-            return validated(TestAnswer, r.json(), "get_test_rate")
+            result = validated(TestAnswer, r.json(), "get_test_rate")
+            if result.get("found"):
+                self._static_store()[key] = result
+            return result
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_test_rate({test_name!r}): {e}") from e
 
@@ -288,10 +304,17 @@ class ClinicToolsClient:
     #                 "fasting_required": true, "prep_instructions": "..."}
     #   found=false: {"found": false, "query": "...", "did_you_mean": ["..."]}
     async def get_test_prep(self, test_name: str, lang: str = "bn") -> dict:
+        key = ("prep", test_name, lang)
+        hit = self._static_store().get(key)
+        if hit is not None:
+            return hit
         try:
             r = await self._client.get("/api/v1/tests/prep", params={"name": test_name, "lang": lang})
             r.raise_for_status()
-            return validated(PrepAnswer, r.json(), "get_test_prep")
+            result = validated(PrepAnswer, r.json(), "get_test_prep")
+            if result.get("found"):
+                self._static_store()[key] = result
+            return result
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_test_prep({test_name!r}): {e}") from e
 
@@ -302,16 +325,17 @@ class ClinicToolsClient:
     #   found=true:  {"found": true, "topic": "hours", "answer": "..."}
     #   found=false: {"found": false, "topic": "..."}
     async def get_faq(self, topic: str, lang: str = "bn") -> dict:
-        # The FAQ rows are fixed text that changes only when the clinic edits it: remembered for a minute (24 callers asking the address together made 24 identical lookups).
-        cache = self.__dict__.setdefault("_faq_cache", {})
-        hit = cache.get((topic, lang))
-        if hit is not None and time.monotonic() - hit[0] < 60.0:
-            return hit[1]
+        # The FAQ rows are fixed text that changes only when the clinic edits it: kept until the daily load (see clear_static); before 2026-10-29 they were remembered for a minute (24 callers asking the address together made 24 identical lookups).
+        cache = self._static_store()
+        hit = cache.get(("faq", topic, lang))
+        if hit is not None:
+            return hit
         try:
             r = await self._client.get("/api/v1/faq", params={"topic": topic, "lang": lang})
             r.raise_for_status()
             result = validated(FaqAnswer, r.json(), "get_faq")
-            cache[(topic, lang)] = (time.monotonic(), result)
+            if result.get("found"):
+                cache[("faq", topic, lang)] = result
             return result
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_faq({topic!r}): {e}") from e
@@ -798,6 +822,14 @@ class ClinicToolsClient:
         """KCD-497: any combination of phone, name, approx_date, test_name, branch."""
         return await self._post(
             "/api/v1/bookings/search", {"caller_phone": caller_phone, **criteria}, "search_bookings"
+        )
+
+    async def write_call_events(self, call_id: str, events: list[dict], caller_phone: str | None = None) -> dict:
+        """Several events of one call in one request and one commit (POST /api/v1/calls/{id}/events/batch); idempotent by seq."""
+        return await self._post(
+            f"/api/v1/calls/{call_id}/events/batch",
+            {"events": events, "caller_phone": caller_phone},
+            "write_call_events",
         )
 
     async def write_call_event(

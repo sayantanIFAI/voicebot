@@ -41,6 +41,12 @@ FINISH_DEADLINE_S = 25.0
 RETRY_BACKOFF_S = (0.2, 0.5, 1.0, 2.0)
 
 Writer = Callable[[str, int, str, dict, "str | None"], Awaitable[dict]]
+BatchWriter = Callable[[str, "list[dict]", "str | None"], Awaitable[dict]]
+
+# Owner, 2026-10-29: one commit per event was the clinic API's largest steady write load (a commit costs ~150 ms on the network volume). With a batch writer, events are held up to this long and sent
+# together in one request. A COMPLETED ACTION, an escalation and the end of the call are never held: they go at once, so a call that drops keeps everything that mattered.
+BATCH_DELAY_S = 2.0
+URGENT_KINDS = frozenset({"action", "escalation", "end"})
 
 
 @dataclasses.dataclass
@@ -58,9 +64,17 @@ class CallRecorder:
         caller_phone: str | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep=asyncio.sleep,
+        batch_writer: BatchWriter | None = None,
+        journal=None,
     ):
         self.call_id, self.caller_phone = call_id, caller_phone
         self._writer, self._clock, self._sleep = writer, clock, sleep
+        self._batch_writer = batch_writer
+        self._flush_timer: asyncio.Task | None = None
+        # Owner, 2026-10-29: with a journal (agent/call_journal.py) NOTHING is sent to the clinic API during the call: each event is appended to a local file by one writer thread, the whole call is
+        # written as one line when it ends, and a nightly batch loads it into the database (tools/call_log_archiver.py).
+        self._journal = journal
+        self._all_events: list[dict] = []
         self._seq = 0
         self._pending: list[_Event] = []
         self._lock = asyncio.Lock()
@@ -74,6 +88,10 @@ class CallRecorder:
         called from anywhere in a turn without awaiting a network round trip."""
         self._seq += 1
         self._pending.append(_Event(self._seq, kind, dict(payload or {})))
+        if self._journal is not None:
+            ev = {"seq": self._seq, "kind": kind, "payload": dict(payload or {})}
+            self._all_events.append(ev)
+            self._journal.append(self.call_id, ev)
         return self._seq
 
     def start(self, channel: str = "voice", disclosure_version: str = "") -> None:
@@ -116,11 +134,36 @@ class CallRecorder:
     def pending(self) -> int:
         return len(self._pending)
 
+    def flush_soon(self) -> None:
+        """Deliver what is queued: at once when it holds an urgent event (or there is no batch writer), else after BATCH_DELAY_S so that the events of a turn travel together."""
+        if self._journal is not None:
+            return  # journal mode: nothing is sent during the call
+        if self._batch_writer is None or any(e.kind in URGENT_KINDS for e in self._pending):
+            asyncio.ensure_future(self.flush())
+            return
+        if self._flush_timer is None or self._flush_timer.done():
+            self._flush_timer = asyncio.ensure_future(self._flush_after_delay())
+
+    async def _flush_after_delay(self) -> None:
+        await self._sleep(BATCH_DELAY_S)
+        await self.flush()
+
     async def flush(self) -> int:
         """Send what is queued, in order. An event stays queued (with its seq) if the
         write fails, and everything after it waits behind it so order is preserved.
         Returns how many are still pending."""
+        if self._journal is not None:
+            return 0 if self.finished else len(self._pending)  # the journal holds the events; the call's single line is written by finish()
         async with self._lock:
+            if self._batch_writer is not None and self._pending:
+                batch = list(self._pending)
+                try:
+                    await self._batch_writer(self.call_id, [{"seq": e.seq, "kind": e.kind, "payload": e.payload} for e in batch], self.caller_phone)
+                except Exception:  # noqa: BLE001 - the whole batch stays queued for the retry (the server skips what it already has)
+                    return len(self._pending)
+                del self._pending[: len(batch)]
+                self.acknowledged += len(batch)
+                return len(self._pending)
             while self._pending:
                 ev = self._pending[0]
                 try:
@@ -137,6 +180,14 @@ class CallRecorder:
         if not self.finished:
             self.add("end", {"outcome": outcome})
             self.finished = True
+        if self._journal is not None:
+            try:
+                await asyncio.wait_for(asyncio.wrap_future(self._journal.close_call(self.call_id, self.caller_phone, list(self._all_events))), FINISH_DEADLINE_S)
+                self._pending.clear()
+                self.unflushed_at_finish = 0
+            except Exception:  # noqa: BLE001 - reported, never raised: the in-flight file still holds every event
+                self.unflushed_at_finish = len(self._pending)
+            return self.unflushed_at_finish
         deadline = self._clock() + FINISH_DEADLINE_S
         attempt = 0
         left = await self.flush()

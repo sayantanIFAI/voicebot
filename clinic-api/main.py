@@ -188,6 +188,7 @@ def _ensure_seeded_unlocked():
             logging.getLogger("clinic-api").info("empty database -- seeding catalogue")
             from seed import seed
 
+            db.rollback()  # end this session's read transaction first: seed() drops and recreates the tables on ANOTHER connection, which PostgreSQL would make wait for this one for ever (SQLite let it pass)
             seed()
         else:
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
@@ -2088,6 +2089,17 @@ class CallEventRequest(BaseModel):
     kind: str
     payload: dict = Field(default_factory=dict)
     caller_phone: str | None = None
+
+
+class CallEventBatch(BaseModel):
+    events: list[CallEventRequest]
+    caller_phone: str | None = None
+
+
+@app.post("/api/v1/calls/{call_id}/events/batch")
+def call_events_batch(call_id: str, req: CallEventBatch, db: Session = Depends(get_db)):
+    """Several events of one call, one commit (patient_context.record_call_events). Idempotent by seq, like the single-event endpoint."""
+    return pc.record_call_events(db, call_id, [e.model_dump() for e in req.events][:200], req.caller_phone)
 
 
 @app.post("/api/v1/calls/{call_id}/events")

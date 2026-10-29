@@ -195,8 +195,43 @@ def record_call_event(
     already been applied is acknowledged and ignored, so a retried request (a dropped
     response, a duplicate delivery) cannot double an action or an intent. Events are
     applied as they happen, so a call that drops still records what was completed."""
-    payload = payload or {}
     row = db.query(CallRecord).filter_by(call_id=call_id).first() or _new_record(db, call_id, caller_phone)
+    result = _apply_call_event(db, row, call_id, seq, kind, payload or {}, caller_phone)
+    if result.get("applied"):
+        db.commit()
+        if kind == "end":
+            # KCD-501: what the call did becomes durable history, its summary is cached for a day
+            # (KCD-496) and the close is audited. Idempotent, so a retried `end` changes nothing.
+            reg.finalize_call(db, row)
+    return result
+
+
+def record_call_events(db: Session, call_id: str, events: list[dict], caller_phone: str | None = None) -> dict:
+    """Owner, 2026-10-29: SEVERAL events of one call applied in ONE commit (a commit costs ~150 ms on the network volume, and one event per commit was the largest steady write load of the
+    clinic API). Same rules as record_call_event, applied in `seq` order; an event already applied is skipped, so a retried batch changes nothing. An unknown kind is skipped but its seq
+    is passed, so one bad event can never block the ones behind it. Returns {"applied": n, "duplicates": n, "last_seq": ...}."""
+    row = db.query(CallRecord).filter_by(call_id=call_id).first() or _new_record(db, call_id, caller_phone)
+    applied = duplicates = 0
+    ended = False
+    for ev in sorted(events, key=lambda e: int(e.get("seq", 0))):
+        seq, kind = int(ev.get("seq", 0)), str(ev.get("kind", ""))
+        res = _apply_call_event(db, row, call_id, seq, kind, ev.get("payload") or {}, caller_phone)
+        if res.get("duplicate"):
+            duplicates += 1
+        elif res.get("applied"):
+            applied += 1
+            ended = ended or kind == "end"
+        elif seq > row.last_seq:  # unknown kind: skipped, but not allowed to stall the events behind it
+            row.last_seq = seq
+    if applied or row.last_seq:
+        db.commit()
+    if ended:
+        reg.finalize_call(db, row)
+    return {"applied": applied, "duplicates": duplicates, "last_seq": row.last_seq}
+
+
+def _apply_call_event(db: Session, row, call_id: str, seq: int, kind: str, payload: dict, caller_phone: str | None) -> dict:
+    """Change `row` for one event WITHOUT committing. {"applied": True} when it changed the record, {"duplicate": True} when this seq was already applied."""
     if seq <= row.last_seq:
         return {"applied": False, "duplicate": True, "last_seq": row.last_seq}
     if caller_phone and not row.caller_phone:
@@ -256,11 +291,6 @@ def record_call_event(
         return {"applied": False, "duplicate": False, "error": f"unknown event kind {kind!r}"}
     row.last_seq = seq
     row.updated_at = _now()
-    db.commit()
-    if kind == "end":
-        # KCD-501: what the call did becomes durable history, its summary is cached for a day
-        # (KCD-496) and the close is audited. Idempotent, so a retried `end` changes nothing.
-        reg.finalize_call(db, row)
     return {"applied": True, "duplicate": False, "last_seq": row.last_seq}
 
 
