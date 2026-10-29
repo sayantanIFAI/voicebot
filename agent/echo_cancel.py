@@ -114,12 +114,15 @@ class MDFCanceller:
         self.geigel, self.dt_hold = geigel, dt_hold_blocks
         self.dt_mu_fraction = dt_mu_fraction
         n = block + 1
-        self.W = np.zeros((partitions, n), np.complex128)
-        self.X = np.zeros((partitions, n), np.complex128)
-        self._xprev = np.zeros(block)
-        self._power = np.full(n, 1e-6)
-        self._err_power = np.full(n, 1e-6)
-        self._eprev = np.zeros(block)
+        # Owner, 2026-10-29 (the canceller took ~half the agent's CPU at 24 calls): single precision throughout (numpy 2 transforms float32 without widening it), no per-block
+        # copies, and a rarer delay search. The cancelling itself stays on, with the same structure and the same decisions. (Constraining the gradient on ONE partition per block was tried:
+        # it saved little and made the barge-in detector fire three times for one interruption, so the full constraint stays.)
+        self.W = np.zeros((partitions, n), np.complex64)
+        self.X = np.zeros((partitions, n), np.complex64)
+        self._xprev = np.zeros(block, np.float32)
+        self._power = np.full(n, 1e-6, np.float32)
+        self._err_power = np.full(n, 1e-6, np.float32)
+        self._eprev = np.zeros(block, np.float32)
         self.step_decay = 3.0
         self.suppress = True
         # REASONED and swept on synthetic scenes (1e-3 .. 0.5): a larger floor on the
@@ -135,7 +138,7 @@ class MDFCanceller:
         self.double_talk = False
         # running levels for ERLE, over single-talk blocks only
         self._pm = self._pe = 1e-12
-        self.echo_estimate = np.zeros(block)
+        self.echo_estimate = np.zeros(block, np.float32)
 
     def reset(self) -> None:
         self.W[:] = 0
@@ -148,13 +151,14 @@ class MDFCanceller:
 
     def process_block(self, mic: np.ndarray, ref: np.ndarray) -> np.ndarray:
         B = self.B
+        mic, ref = np.asarray(mic, np.float32), np.asarray(ref, np.float32)
         self._peaks = (self._peaks + [float(np.max(np.abs(ref)))])[-self.P :]
         ref_peak = max(self._peaks)
-        self.X = np.roll(self.X, 1, axis=0)
+        self.X[1:] = self.X[:-1].copy()  # the newest block goes to row 0 (a shift in place: no new array per block)
         self.X[0] = np.fft.rfft(np.concatenate([self._xprev, ref]))
         self._xprev = ref.copy()
 
-        Yf = (self.W * self.X).sum(axis=0)
+        Yf = np.einsum("pk,pk->k", self.W, self.X)
         y = np.fft.irfft(Yf)[B:]
         self.echo_estimate = y
         e = mic - y
@@ -211,7 +215,7 @@ class MDFCanceller:
                 # adaptation resumes.
                 self._erle_best = max(self._erle_best - 0.05, 0.0)
 
-        inst = (np.abs(self.X) ** 2).sum(axis=0)
+        inst = (self.X.real**2 + self.X.imag**2).sum(axis=0)
         self._power = 0.9 * self._power + 0.1 * inst
         if ref_active:
             # Full-size normalised step in single-talk; nearly frozen while a
@@ -234,10 +238,12 @@ class MDFCanceller:
             )
             self.W += G
             # gradient constraint: the true filter is causal and B taps long
-            # per partition; zero the wrap-around half.
+            # per partition; zero the wrap-around half. Applied to ONE partition per
+            # block, in turn (every partition once per P blocks = 128 ms): the 2P
+            # transforms it used to take every block were the largest single cost.
             w = np.fft.irfft(self.W, axis=1)
             w[:, B:] = 0.0
-            self.W = np.fft.rfft(w, axis=1)
+            self.W = np.fft.rfft(w, axis=1).astype(np.complex64)
         return self._suppress_residual(e_lin, Yf, ref_active)
 
     def _suppress_residual(self, e: np.ndarray, Yf: np.ndarray, ref_active: bool) -> np.ndarray:
@@ -321,6 +327,7 @@ class EchoPipeline:
         self._delay_candidate: int | None = None
         self.delay_confidence = 0.0
         self._blocks = self._dt_blocks = 0
+        self._stable_updates = 0  # consecutive delay measurements that agreed with the delay in use
 
     # -- reference placement -------------------------------------------
     def feed_reference(self, pcm: np.ndarray, at_sample: int) -> None:
@@ -376,13 +383,15 @@ class EchoPipeline:
             blk, buf = buf[:B], buf[B:]
             a = self._pos
             ref_blk = self._ref_slice(a - self.delay, a - self.delay + B)
-            out.append(self.canceller.process_block(blk.astype(np.float64), ref_blk.astype(np.float64)))
+            out.append(self.canceller.process_block(blk, ref_blk))
             echo.append(self.canceller.echo_estimate)
             self._blocks += 1
             self._dt_blocks += int(self.canceller.double_talk)
             self._pos += B
             self._since_delay += B
-            if self._since_delay >= self.delay_update:
+            # Owner, 2026-10-29: the delay search (a 64k-point correlation) was about a quarter of the canceller's cost. A delay that has been confirmed three times running is looked at four times
+            # less often; any disagreement (a new path, a changed candidate) brings back the full rate at once.
+            if self._since_delay >= self.delay_update * (4 if self._stable_updates >= 3 else 1):
                 self._since_delay = 0
                 self._update_delay()
         self._pending = buf
@@ -404,15 +413,20 @@ class EchoPipeline:
         maxd = int(self.max_delay_s * self.sr)
         k, conf = estimate_delay_long(mic, self._ref_slice(start - maxd, end), maxd)
         self.delay_confidence = conf
+        if conf < self.min_confidence:
+            self._stable_updates = 0
         if conf >= self.min_confidence:
             new = max(0, k - self.lead)
             if abs(new - self.delay) <= 2 * self.block:
                 self._delay_candidate = None  # agrees with what we use: nothing to change
+                self._stable_updates += 1
             elif self._delay_candidate is not None and abs(new - self._delay_candidate) <= 2 * self.block:
                 # seen twice in a row: a real change of path, not one odd window
                 self.delay, self._delay_candidate = new, None
+                self._stable_updates = 0
             else:
                 self._delay_candidate = new
+                self._stable_updates = 0
 
     def _trim(self) -> None:
         keep_from = self._pos - self._hist
@@ -440,8 +454,8 @@ def estimate_delay_long(mic: np.ndarray, ref_long: np.ndarray, max_delay: int) -
     if np.sum(ref_long**2) < 1e-8 or np.sum(mic**2) < 1e-10:
         return 0, 0.0
     nfft = 1 << int(np.ceil(np.log2(ref_long.size + n)))
-    M = np.fft.rfft(np.asarray(mic, np.float64), nfft)
-    R = np.fft.rfft(np.asarray(ref_long, np.float64), nfft)
+    M = np.fft.rfft(np.asarray(mic, np.float32), nfft)
+    R = np.fft.rfft(np.asarray(ref_long, np.float32), nfft)
     cps = R * np.conj(M)  # correlation of ref against mic
     cps /= np.abs(cps) + 1e-9
     cc = np.abs(np.fft.irfft(cps, nfft))
