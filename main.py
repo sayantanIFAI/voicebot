@@ -5876,6 +5876,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _speak(session, phrase("offer_switch", detected_lang), detected_lang)
             return
 
+        text = _consume_leading_answer(session, text, lang)  # a yes / no at the start answers the open question; the rest of the sentence goes on as the sentence
         after_prompt, session.awaiting_close_answer = session.awaiting_close_answer, False
         answer = classify_yes_no(text, lang) if after_prompt else None
         # OWNER'S INSTRUCTION, 2026-10-10 (real call): "वो मेरे पास कैश तो नहीं है मैं ऑनलाइन पाय्मेंट कर दूंगा चलेगा"
@@ -8701,6 +8702,53 @@ async def _doctor_when_turn(session: CallSession, text: str, lang: str) -> bool:
     session.doctor_q_date = when
     await _speak(session, _with_resume(session, reply, lang), lang)
     return True
+
+
+def _consume_leading_answer(session: CallSession, text: str, lang: str) -> str:
+    """Owner, 2026-10-30: "yes or no, however many words: if the algorithm sees a yes or a no, that part is answered there; after it there can be any number of questions in that same sentence".
+    While a yes/no question is open -- "are you asking about Dr. X?" (doctor_check), "shall I book him?" (a single offered doctor), or a list of doctors just offered -- a yes or no in the first
+    one or two words is the ANSWER and is taken out of the sentence; what remains (any number of further questions) is then handled as the sentence, through every step below. A yes to
+    "are you asking about Dr. X" makes him the doctor being talked about; a yes to "shall I book him" does the same; a no closes the open question. Nothing is changed when the rest is a single
+    word or there is no open question (the existing short-reply handling then applies)."""
+    words = [w for w in (text or "").split() if w.strip(".,?!।")]
+    if len(words) < 3 or session.booking is not None or _fast_path is None:
+        return text
+    chk = getattr(session, "doctor_check", None)
+    pend = getattr(session, "dept_pending", None)
+    open_chk = bool(chk) and session.turn_count - chk["turn"] <= 2
+    open_one = bool(pend) and pend.get("kind") == "confirm_one" and session.turn_count - pend["turn"] <= 3
+    open_pick = bool(pend) and pend.get("kind") == "pick" and session.turn_count - pend["turn"] <= 3
+    if not (open_chk or open_one or open_pick):
+        return text
+    ans, n = None, 0
+    for k in (2, 1):
+        got = booking_capture.confirm_answer(" ".join(w.strip(".,?!।") for w in words[:k]), lang)
+        if got in ("yes", "no"):
+            ans, n = got, k
+            break
+    if ans is None:
+        return text
+    rest = " ".join(words[n:]).strip()
+    if len(rest.split()) < 2:
+        return text
+    if open_chk:
+        info = chk["info"]
+        session.doctor_check = None
+        if ans == "yes":
+            session.subject_doctor = info.get("name")
+            session.last_doctor_enquiry = {"doctor_name": info.get("name"), "date": None, "turn": session.turn_count}
+    elif open_one:
+        if ans == "yes":
+            with contextlib.suppress(Exception):
+                one = _fast_path.catalogue.doctor_info(_resolve_doctor_for_booking(pend["doctor"]))
+                if one is not None:
+                    session.subject_doctor = one.get("name")
+                    session.last_doctor_enquiry = {"doctor_name": one.get("name"), "date": pend.get("date"), "turn": session.turn_count}
+        session.dept_pending = None
+    elif ans == "yes":
+        return text  # a yes to "which of them?" chooses nobody
+    logger.info("[%s] leading %s answers the open question; the rest is handled as the sentence: %r", session.call_id, ans, rest)
+    return rest
 
 
 async def _doctor_check_turn(session: CallSession, text: str, lang: str) -> bool:
