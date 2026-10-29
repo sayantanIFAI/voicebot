@@ -5895,7 +5895,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     # never a lookup of a booking. The doctor is the one just discussed or in the open booking; with none, the caller is asked which doctor (the answer continues the question).
     if (
         (
-            intent in ("lookup_booking", "unclear", "smalltalk")
+            intent in ("lookup_booking", "unclear", "smalltalk", "reschedule_appointment", "cancel_appointment")  # (a reschedule / cancel reading is kept only when the words themselves say change or cancel -- see below)
             or (intent == "doctor_availability" and not _text_names_a_doctor(text, lang))
         )
         and session.booking is None
