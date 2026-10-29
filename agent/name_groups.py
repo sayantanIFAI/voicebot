@@ -41,8 +41,11 @@ def _same(a: str, b: str) -> bool:
 
 def _same_sound(a: str, b: str) -> bool:
     """The two first names have the SAME consonant skeleton (spelling variants of one name); a merely similar name ("রাজশ্রী" / "রাজেশ") does not count here."""
+    import difflib
+
     ka, kb = name_script.name_skeleton(a), name_script.name_skeleton(b)
-    return len(ka) >= 2 and ka == kb
+    # same consonants AND close written forms: "অনীর্বাণ"/"অনির্বাণ" (0.88) are one name, "অমৃতা"/"অমিত" (0.67) are two
+    return len(ka) >= 2 and ka == kb and difflib.SequenceMatcher(None, a, b).ratio() >= 0.75
 
 
 def build(said: str, infos: list[dict], api_suggestions: list[str]) -> dict | None:

@@ -5174,6 +5174,8 @@ async def _finish_enquiry_turn(
     if _de:
         session.last_doctor_enquiry = {**_de, "turn": session.turn_count}
     _doctor_enquiry_found.set(None)
+    if intent == "doctor_availability":
+        session.doctor_q_date = slots.get("date")  # "and Amrita Nandi?" next asks the same thing (the same day) about her
     _np = _name_pick_found.get()
     if _np:
         session.name_pick = {"infos": _np, "turn": session.turn_count}  # the doctors just named: the caller's next sentence may pick one ("মানুষ দর তো কালকে আছে")
@@ -6222,6 +6224,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             return
         if session.booking is None and await _doctor_when_turn(session, text, lang):
             return
+        if session.booking is None and await _doctor_name_followup_turn(session, text, lang):
+            return
         if session.booking is None and await _head_pain_turn(session, text, lang):
             return
         if session.booking is None and await _answer_department_doctors(session, text, lang):
@@ -6614,6 +6618,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 # owner 2026-10-18: after three tries the AI could not answer, it says it is routing the caller to a person to help better
                 await _speak(session, phrase("handoff_better", lang), lang)
                 await _handoff_to_human(session, "unanswered_x3", (lang,), announce=False)
+                return
+            _ctx_doc = _context_doctor_info(session) if session.booking is None else None
+            if _ctx_doc is not None:
+                # Owner, 2026-10-29: while a doctor is the subject, a sentence that is not understood is asked about again in his terms, never with the bare "sorry, I did not understand"
+                await _speak(session, doctor_facts.menu(dept_talk.spoken_name(_ctx_doc, lang), lang), lang)
                 return
             await _speak(session, phrase("unclear", lang), lang)
             return
@@ -8667,6 +8676,56 @@ async def _doctor_when_turn(session: CallSession, text: str, lang: str) -> bool:
     session.last_doctor_enquiry = {**(_de or {"doctor_name": info.get("name"), "date": when}), "turn": session.turn_count}
     _doctor_enquiry_found.set(None)
     session.dept_pending = None  # the department's open "which of them?" question is no longer the point
+    session.doctor_q_date = when
+    await _speak(session, _with_resume(session, reply, lang), lang)
+    return True
+
+
+_AND_WORDS = frozenset("আর আরো আরও এবং ও আর-একজন and also then और फिर".split())
+
+
+async def _doctor_name_followup_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29 ("আর অমৃতা নন্দী" was answered "sorry, I did not understand"). While a doctor is being talked about, a short sentence that is only a person's NAME (optionally after "and") is a
+    question about that doctor too: the same question as before (the same day) -- answered from the clinic's list, including "no doctor of that name; the doctors with that surname / first name are ...".
+    Needs two name words (a given name and a surname) or a title; anything with a health word, a number, a yes/no or a department is left alone."""
+    if _fast_path is None or _tools is None or not (text or "").strip() or _context_doctor_info(session) is None:
+        return False
+    words = [w.strip(".,?!।") for w in text.split()]
+    words = [w for w in words if w]
+    while words and words[0].lower() in _AND_WORDS:
+        words = words[1:]
+    titled = bool(words) and words[0].lower() in _DOCTOR_TITLES
+    name = [w for w in words if w.lower() not in _DOCTOR_TITLES]
+    if not name or len(name) > 3 or (len(name) < 2 and not titled):
+        return False
+    if off_topic.has_health_word(" ".join(name)) or dept_talk.dept_in_text(" ".join(name)):
+        return False
+    if any(w in _PRESENCE_STOP or any(ch.isdigit() for ch in w) or not re.fullmatch(r"[\wঀ-৿ऀ-ॿ]+", w) for w in name):
+        return False
+    if booking_capture.confirm_answer(text, lang) is not None:
+        return False
+    said = " ".join(name)
+    # only words that sound like a name in the clinic's list (the surname or the first name of some doctor): "ধন্যবাদ আপনাকে" or any other two words are NOT taken for a doctor
+    if name_groups.build(said, list(_fast_path.catalogue._doctor_info.values()), []) is None and not _text_names_a_doctor(said, lang):  # noqa: SLF001
+        return False
+    slots = {"doctor_name": said, "date": getattr(session, "doctor_q_date", None)}
+    _turn_text.set(text)
+    _turn_context_doctor.set(None)
+    try:
+        reply = await _answer_enquiry_intent("doctor_availability", slots, lang)
+    except ToolCallError:
+        return False
+    if not reply:
+        return False
+    _de = _doctor_enquiry_found.get()
+    if _de:
+        session.last_doctor_enquiry = {**_de, "turn": session.turn_count}
+    _doctor_enquiry_found.set(None)
+    _np = _name_pick_found.get()
+    if _np:
+        session.name_pick = {"infos": _np, "turn": session.turn_count}
+        _name_pick_found.set(None)
+    session.dept_pending = None
     await _speak(session, _with_resume(session, reply, lang), lang)
     return True
 
