@@ -755,6 +755,27 @@ async def _warm_intent_model() -> bool:
         return False
 
 
+_WARM_SENTENCES = [
+    ("নমস্কার", "bn"), ("ডাক্তার সেন কবে বসবেন", "bn"), ("ক্লিনিক কখন খোলে", "bn"), ("আমার অ্যাপয়েন্টমেন্ট বাতিল করতে চাই", "bn"),
+    ("क्लिनिक कब खुलता है", "hi"), ("डॉक्टर घोष कब बैठते हैं", "hi"), ("when does Dr Sen sit", "en"), ("what are your opening hours", "en"),
+]
+
+
+async def _warm_intent_slots() -> int:
+    """Owner, 2026-10-29 (the slowest intent calls took 5-7 s): Ollama keeps the prompt it has already read PER SLOT (OLLAMA_NUM_PARALLEL, 8). The long shared instructions (2,600 tokens) are cached only in
+    the slots that have served a request; a request that lands on a slot that has not re-reads them (5.7 s measured under load). One request per slot, sent together at startup, puts the shared start in every
+    slot, so no caller ever meets a cold one. Advisory: a failure is logged and ignored."""
+    slots = max(1, int(os.environ.get("OLLAMA_NUM_PARALLEL", "8") or 8))
+    batch = [_WARM_SENTENCES[i % len(_WARM_SENTENCES)] for i in range(slots)]
+    t0 = time.monotonic()
+    results = await asyncio.gather(
+        *[asyncio.to_thread(extract_intent, text, 1, lang, INTENT_WARMUP_DEADLINE_S) for text, lang in batch], return_exceptions=True
+    )
+    ok = sum(1 for r in results if not isinstance(r, Exception))
+    logger.info("intent model slots warm: %d of %d in %.1fs", ok, slots, time.monotonic() - t0)
+    return ok
+
+
 @app.on_event("startup")
 async def _startup():
     global _asr, _turn_detector, _tools, _tts, _intent_cache, _fast_path
@@ -854,6 +875,7 @@ async def _startup():
     # that is the first caller's wait, and it would also poison the latency
     # window admission control sheds load on.
     await _warm_intent_model()
+    await _warm_intent_slots()
 
     # Load the 74-row catalogue once so the fast path can identify a test
     # or doctor locally. Optional: if the clinic API is not up yet, every
