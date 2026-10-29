@@ -170,13 +170,6 @@ EXTRA_ALIASES = {
 def apply_extras(db: Session) -> dict:
     """Idempotent. Returns what it changed."""
     out = {"doctor_sex_set": 0, "departments": 0, "doctors": 0, "routes": 0, "relationships": 0, "weekdays_added": 0, "from_kolkata_set": 0}
-    # Owner, 2026-10-29: the "From Kolkata?" column is filled AT RANDOM (about three in four "yes") for every doctor that has no value yet -- sample data, once; a value anyone has set is never changed.
-    _rng = random.Random(20261029)
-    for d in db.query(Doctor).order_by(Doctor.id).all():
-        pick = "yes" if _rng.random() < 0.75 else "no"  # drawn for every doctor, so a doctor's value does not depend on who else has one
-        if not (getattr(d, "from_kolkata", "") or "").strip():
-            d.from_kolkata = pick
-            out["from_kolkata_set"] += 1
     for short, (al_bn, al_hi) in EXTRA_ALIASES.items():
         doc = db.query(Doctor).filter_by(name=short).first()
         if doc is None:
@@ -255,6 +248,13 @@ def apply_extras(db: Session) -> dict:
         if key not in known:
             db.add(RelationshipRule(relationship_key=key, inferred_sex=sex, keywords_bn="|".join(bn), keywords_hi="|".join(hi), keywords_en="|".join(en)))
             out["relationships"] += 1
+    # Owner, 2026-10-29: the "From Kolkata?" column is filled AT RANDOM (about three in four "yes") for every doctor that has no value yet -- sample data, once; a value anyone has set is never changed.
+    _rng = random.Random(20261029)
+    for d in db.query(Doctor).order_by(Doctor.id).all():
+        pick = "yes" if _rng.random() < 0.75 else "no"  # drawn for every doctor, so a doctor's value does not depend on who else has one
+        if not (getattr(d, "from_kolkata", "") or "").strip():
+            d.from_kolkata = pick
+            out["from_kolkata_set"] += 1
     db.commit()
     return out
 
