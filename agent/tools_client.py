@@ -186,6 +186,28 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_doctor_availability({doctor_name!r}, {date!r}): {e}") from e
 
+    async def preload_availability_bulk(self, dates: list[str | None]) -> int:
+        """Every doctor (short and whole name) for `dates` in ONE request (GET /api/v1/doctors/availability/bulk); kept like preload_availability's entries. Raises ToolCallError when the clinic API
+        cannot answer (the caller falls back to the single lookups)."""
+        cache = self.__dict__.setdefault("_availability", {})
+        _COUNT_CALLS.set(False)  # background work, not a turn's
+        try:
+            r = await self._client.get("/api/v1/doctors/availability/bulk", params={"dates": ",".join(d or "" for d in dates)}, timeout=20.0)
+            r.raise_for_status()
+            rows = r.json().get("answers")
+            if not isinstance(rows, list):
+                raise ValueError("bulk availability did not return a list")
+        except (httpx.HTTPError, ValueError) as e:
+            raise ToolCallError(f"preload_availability_bulk: {type(e).__name__} {e}") from e
+        stored, now = 0, time.monotonic()
+        for row in rows:
+            try:
+                cache[(row["name"], row.get("date") or None)] = (now, validated(DoctorAnswer, row["answer"], "get_doctor_availability"))
+                stored += 1
+            except (KeyError, ValueError, TypeError):
+                continue
+        return stored
+
     async def preload_availability(self, names: list[str], dates: list[str | None], concurrency: int = 2) -> int:
         """Fetch every (name, date) and keep it; returns how many were stored. A failed fetch keeps the older entry (it simply expires)."""
         cache = self.__dict__.setdefault("_availability", {})

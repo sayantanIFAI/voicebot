@@ -21,6 +21,7 @@ import os
 import secrets
 import time
 import unicodedata
+from typing import NamedTuple
 
 import agent_messages as am
 import booking_service as bs
@@ -38,7 +39,7 @@ from i18n_content import TEST_ALIASES_EN
 import synonyms_extra as sx  # five more lay/clinical/loan-word names per test per language
 import spelled_forms as sf  # every test code spelled out in Bengali/Hindi letter names, generated from the code
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import event, func
 from sqlalchemy.orm import Session
 
 app = FastAPI(title="Kolkata Care Diagnostics -- Clinic Data API (dummy)")
@@ -858,8 +859,37 @@ def _doctor_suggestions(db: Session, name: str) -> list[str]:
     return [sg.canonical for sg in _gazetteer(db, "doctor").suggest(name, limit=3) if _looks_like_a_name(sg.canonical)]
 
 
-def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSchedule | None:
-    return db.query(DoctorSchedule).filter_by(doctor_id=doctor_id, weekday=weekday).first()
+class _CachedSchedule(NamedTuple):
+    """The two columns every caller of _schedule_for_weekday reads. A plain value, so it is safe to share between requests."""
+
+    start_time: str
+    end_time: str
+
+
+# Owner, 2026-10-29 (concurrent calls timed out): the database file lives on the network volume and EVERY query costs ~24 ms there; one availability answer made two to fifteen schedule queries
+# (the "next sitting" search asks day by day). The whole weekly table (a few hundred rows) is read in ONE query and kept for at most _SCHEDULE_CACHE_TTL_S seconds; any commit in this process drops it at once,
+# so a schedule or leave change made through this API is seen by the next question. A change made by another process is seen within the TTL.
+_SCHEDULE_CACHE_TTL_S = float(os.environ.get("SCHEDULE_CACHE_TTL_S", "20"))
+_schedule_cache: dict = {"key": None, "at": 0.0, "rows": None}
+
+
+def _drop_schedule_cache(_session=None) -> None:
+    _schedule_cache["rows"] = None
+
+
+event.listen(Session, "after_commit", _drop_schedule_cache)
+event.listen(Session, "after_rollback", _drop_schedule_cache)
+
+
+def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> _CachedSchedule | None:
+    key = id(db.get_bind())
+    rows = _schedule_cache["rows"]
+    if rows is None or _schedule_cache["key"] != key or time.monotonic() - _schedule_cache["at"] > _SCHEDULE_CACHE_TTL_S:
+        rows = {}
+        for r in db.query(DoctorSchedule).order_by(DoctorSchedule.id).all():
+            rows.setdefault((r.doctor_id, r.weekday), _CachedSchedule(r.start_time, r.end_time))  # .first() of the old query = the lowest id
+        _schedule_cache.update(key=key, at=time.monotonic(), rows=rows)
+    return rows.get((doctor_id, weekday))
 
 
 def _sched_still_open(sched: DoctorSchedule, d: datetime.date) -> bool:
@@ -880,6 +910,20 @@ def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date, 
         if sched and _sched_still_open(sched, d):
             return d.isoformat()
     return None
+
+
+@app.get("/api/v1/doctors/availability/bulk")
+def doctor_availability_bulk(dates: str = Query(""), db: Session = Depends(get_db)):
+    """Owner, 2026-10-29: every doctor's availability for the given dates in ONE request (the agents' background preload used to make hundreds of single requests a minute and starved the callers').
+    `dates` is a comma-separated list of ISO dates; an empty entry means "next sitting" (no date). Each answer is EXACTLY what /api/v1/doctors/availability returns for that doctor's short name and
+    whole name -- this calls the same function, so there is one rule, not two."""
+    date_list = [d.strip() or None for d in dates.split(",")] if dates else [None]
+    out = []
+    for doc in db.query(Doctor).order_by(Doctor.id).all():
+        for key in dict.fromkeys(k for k in (doc.name, doc.full_name) if k):
+            for dt in date_list:
+                out.append({"name": key, "date": dt, "answer": doctor_availability(key, dt, db)})
+    return {"answers": out}
 
 
 @app.get("/api/v1/doctors/availability")

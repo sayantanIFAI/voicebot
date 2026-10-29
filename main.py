@@ -597,10 +597,14 @@ async def _availability_preload_loop() -> None:
                         fulls.append(d["full_name"])
                 today = slot_proposal.clinic_now().date()
                 two_days = [today.isoformat(), (today + datetime.timedelta(days=1)).isoformat()]
-                # Owner, 2026-10-29: the first version asked ~550 lookups every 20 s (27 a second: the clinic API's whole capacity) and starved the callers' own lookups. Now ~250 a minute:
-                # the whole name for today, tomorrow and "next sitting", the short name for today and tomorrow only.
-                await _tools.preload_availability(fulls, two_days + [None])
-                await _tools.preload_availability(shorts, two_days)
+                # Owner, 2026-10-29: the first version asked ~550 lookups every 20 s (27 a second: the clinic API's whole capacity) and starved the callers' own lookups. Now ONE request a minute
+                # (every doctor, short and whole name, today / tomorrow / next sitting); the single lookups below are the fallback when the clinic API has no bulk answer.
+                try:
+                    await _tools.preload_availability_bulk(two_days + [None])
+                except ToolCallError as e:
+                    logger.warning("bulk availability preload failed (%s): falling back to single lookups", e)
+                    await _tools.preload_availability(fulls, two_days + [None])
+                    await _tools.preload_availability(shorts, two_days)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - advisory: a turn simply asks the clinic API
