@@ -83,6 +83,7 @@ class FullDuplexProcessor:
         self.sr = sr
         self.min_trusted_erle_db = min_trusted_erle_db
         self.assume_echo_free = assume_echo_free  # a phone line: no acoustic echo path, so the ERLE rule is not applied
+        self.skip_cancel = False  # AEC_MODE=phone_light on a phone line: the canceller's maths is not run (see for_phone_line)
         self.echo = EchoPipeline(sr=sr, **echo_kwargs)
         self.detector = BargeInDetector(sr=sr, config=barge_config)
         self._mic_pos = 0  # samples of microphone consumed so far
@@ -95,7 +96,13 @@ class FullDuplexProcessor:
     @classmethod
     def for_phone_line(cls, sr: int = 16000) -> "FullDuplexProcessor":
         """The processor for a telephone call (Twilio): barge-in is acted on without the ERLE rule, but only on PHONE_MIN_SPEECH_S of net voiced evidence."""
-        return cls(sr=sr, barge_config=BargeInConfig(min_speech_s=PHONE_MIN_SPEECH_S, absolute_floor_dbfs=PHONE_FLOOR_DBFS), assume_echo_free=True)
+        p = cls(sr=sr, barge_config=BargeInConfig(min_speech_s=PHONE_MIN_SPEECH_S, absolute_floor_dbfs=PHONE_FLOOR_DBFS), assume_echo_free=True)
+        # Owner, 2026-10-29: the echo canceller has TWO settings, chosen by the environment variable AEC_MODE (deploy/env.sh):
+        #   full        (default, for browser testing until production): the canceller runs on every call, phone or browser.
+        #   phone_light (for production): a PHONE-LINE call skips the canceller's maths -- the SIP leg has no acoustic echo, the canceller's ERLE stays at 0 dB there (it removes nothing) and its
+        #               maths was about half of the agent's CPU at 24 calls (load test 2026-10-29). Barge-in detection stays; browser calls are not affected.
+        p.skip_cancel = os.environ.get("AEC_MODE", "full").strip().lower() == "phone_light"
+        return p
 
     def enable_echo_free(self, min_speech_s: float = HEADPHONES_MIN_SPEECH_S, floor_dbfs: float = HEADPHONES_FLOOR_DBFS) -> None:
         """The caller says the line has no echo (headphones in the browser test page, owner 2026-10-27): the same rule as a phone line, switched on for this call only. Never inferred by the
@@ -131,7 +138,7 @@ class FullDuplexProcessor:
     def process(self, mic: np.ndarray) -> DuplexResult:
         speaking = self.agent_speaking()
         # Agent silent (and past the echo tail): there is no echo to cancel and a barge-in cannot be acted on -- the caller's audio goes straight through.
-        cleaned, echo = self.echo.process_ex(mic) if speaking else self.echo.passthrough(mic)
+        cleaned, echo = self.echo.process_ex(mic) if (speaking and not self.skip_cancel) else self.echo.passthrough(mic)
         self._mic_pos += len(mic)
         speaking = speaking or self.agent_speaking()
         event = self.detector.process(cleaned, echo) if (cleaned.size and speaking) else None

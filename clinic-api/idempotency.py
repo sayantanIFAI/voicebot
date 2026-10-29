@@ -32,6 +32,7 @@ import contextvars
 import functools
 import hashlib
 import json
+import os
 import threading
 
 from fastapi import HTTPException
@@ -44,6 +45,9 @@ MAX_KEY_CHARS = 200
 
 _key: contextvars.ContextVar[str | None] = contextvars.ContextVar("idempotency_key", default=None)
 _live: set[tuple[str, str]] = set()  # claims held by a request that is running right now in this process
+# Owner, 2026-10-29 (several API worker processes): a claim in the table that is still being worked on is marked with the pid of the process working on it, so ANOTHER worker that receives the retry
+# can tell "still running over there" (answer 409, retry shortly) from "its process died" (take it over). Before, only this process's own memory was asked, which would have run a booking twice.
+_RUNNING = "~running:"
 _live_lock = threading.Lock()
 
 
@@ -67,11 +71,30 @@ def _fingerprint(kwargs: dict) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
+def _process_alive(pid_text: str) -> bool:
+    """Is the process that wrote a claim still running on this machine? Anything unreadable counts as not running (the claim is taken over, as a claim from a crashed process always was)."""
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return False
+    if pid == os.getpid():
+        return False  # our own claim that is not in `_live` is a request that died inside this process
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def _claim(db: Session, key: str, scope: str, digest: str) -> IdempotencyRecord | None:
     """None: this request now OWNS the key and must run the operation. A record: the answer is already stored (replay it)."""
     for _ in range(3):
         try:
-            db.add(IdempotencyRecord(key=key, scope=scope, request_hash=digest, response_json=""))
+            db.add(IdempotencyRecord(key=key, scope=scope, request_hash=digest, response_json=f"{_RUNNING}{os.getpid()}"))
             db.commit()
             with _live_lock:
                 _live.add((key, scope))
@@ -83,10 +106,12 @@ def _claim(db: Session, key: str, scope: str, digest: str) -> IdempotencyRecord 
             continue  # released between the two statements: claim again
         if rec.request_hash != digest:
             raise HTTPException(status_code=422, detail="Idempotency-Key was already used with a different request")
-        if rec.response_json:
+        if rec.response_json and not rec.response_json.startswith(_RUNNING):
             return rec
         with _live_lock:
             running = (key, scope) in _live
+        if not running and (rec.response_json or "").startswith(_RUNNING):
+            running = _process_alive(rec.response_json[len(_RUNNING):])  # claimed by another worker process: is it still there?
         if running:
             raise HTTPException(status_code=409, detail="A request with this Idempotency-Key is still running; retry with the same key shortly", headers={"Retry-After": "1"})
         db.delete(rec)  # a stale claim from a request that died with the process: take it over
@@ -100,7 +125,9 @@ def _release(db: Session, key: str, scope: str) -> None:
         _live.discard((key, scope))
     try:
         db.rollback()
-        db.query(IdempotencyRecord).filter_by(key=key, scope=scope, response_json="").delete()
+        db.query(IdempotencyRecord).filter_by(key=key, scope=scope).filter(
+            (IdempotencyRecord.response_json == "") | IdempotencyRecord.response_json.like(_RUNNING + "%")
+        ).delete(synchronize_session=False)
         db.commit()
     except Exception:  # noqa: BLE001 - never mask the original outcome
         db.rollback()

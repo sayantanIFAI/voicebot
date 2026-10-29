@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime
 
+import contextlib
 import clinic_clock  # the clinic's own (Kolkata) clock, not the server's
 import difflib
 import json
@@ -77,8 +78,59 @@ def _warn_if_open():
         )
 
 
+# Owner, 2026-10-29 (several API worker processes, CLINIC_WORKERS): the start-up below creates tables, alters columns, seeds and backfills the one SQLite file. Two workers doing that at the same time would
+# race each other. So the whole sequence runs under a file lock (on the LOCAL disk: /tmp is not the network volume), one worker at a time; and the workers of ONE launch share a marker, so only the first
+# actually does the work -- the rest find the marker and go on serving at once. A single-process launch has no marker and does the work every time, exactly as before.
+_STARTUP_LOCK_PATH = os.environ.get("CLINIC_STARTUP_LOCK", "/tmp/clinic_api_startup.lock")
+
+
+def _process_started_at(pid: int) -> str:
+    """The start time field of /proc/<pid>/stat: tells a new process from an old one that had the same pid. Empty where /proc is not there."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            return f.read().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return ""
+
+
+def _run_startup_once_per_launch(work) -> bool:
+    """Run `work()` under the inter-process start-up lock. In a worker process of a multi-worker uvicorn the work is skipped when another worker of the same launch has already done it.
+    Returns True when `work` ran."""
+    try:
+        import fcntl
+    except ImportError:  # not a POSIX machine (development): no lock, no markers
+        work()
+        return True
+    import multiprocessing
+
+    parent = multiprocessing.parent_process()
+    marker = f"{_STARTUP_LOCK_PATH}.{parent.pid}.{_process_started_at(parent.pid)}.done" if parent is not None else None
+    with open(_STARTUP_LOCK_PATH, "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # blocks until the worker before us has finished
+        try:
+            if marker and os.path.exists(marker):
+                logging.getLogger("clinic-api").info("start-up work already done by another worker of this launch: skipped")
+                return False
+            work()
+            if marker:
+                import glob
+
+                for old in glob.glob(f"{_STARTUP_LOCK_PATH}.*.done"):
+                    with contextlib.suppress(OSError):
+                        os.remove(old)
+                with open(marker, "w", encoding="utf-8") as f:
+                    f.write("done")
+            return True
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 @app.on_event("startup")
 def _ensure_seeded():
+    _run_startup_once_per_launch(_ensure_seeded_unlocked)
+
+
+def _ensure_seeded_unlocked():
     """Create the schema, and seed it only if it is EMPTY.
 
     The catalogue is derived data -- 9 departments, 36 doctors, 34 tests,

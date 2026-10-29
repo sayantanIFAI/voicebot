@@ -70,7 +70,9 @@ cat > /workspace/bin/_run_clinic.sh <<'EOF'
 #!/bin/bash
 source /workspace/kolkata-care-voice-agent/deploy/env.sh
 cd /workspace/kolkata-care-voice-agent/clinic-api
-exec /workspace/venv/bin/python3 -m uvicorn main:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8080
+# several worker processes (2026-10-29): one process served ~45 requests a second, and every database query costs ~24 ms on the network volume, so the workers' waits overlap.
+# Start-up seeding is done by ONE worker (a file lock, see clinic-api/main.py _run_startup_once_per_launch); an Idempotency-Key claim is visible to every worker (clinic-api/idempotency.py).
+exec /workspace/venv/bin/python3 -m uvicorn main:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8080 --workers ${CLINIC_WORKERS:-3}
 EOF
 cat > /workspace/bin/_run_main.sh <<'EOF'
 #!/bin/bash

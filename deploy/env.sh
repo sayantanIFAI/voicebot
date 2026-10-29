@@ -112,6 +112,13 @@ export PRONUNCIATION_ALLOW_DRAFT=${PRONUNCIATION_ALLOW_DRAFT:-1}
 # 1 = the greeting also says "this call is being recorded to improve our service". Switch it ON whenever calls are recorded (pilot phase). Default OFF: nothing is recorded by this stack itself.
 export CALL_RECORDING_NOTICE=${CALL_RECORDING_NOTICE:-0}
 
+# ---- echo canceller mode (agent/full_duplex.py) -------------------------------------------
+# full        = the canceller runs on every call, phone or browser (default; use it for browser testing until production)
+# phone_light = a PHONE-LINE call skips the canceller's maths (the SIP leg has no acoustic echo; ~half the agent CPU at 24 calls); browser calls keep the full canceller
+export AEC_MODE=${AEC_MODE:-full}
+# clinic API worker processes (deploy/start_all.sh writes them into _run_clinic.sh); 1 = the old single process
+export CLINIC_WORKERS=${CLINIC_WORKERS:-3}
+
 # ---- admission control (agent/admission.py) -------------------------------
 # Cap is per process; the WebM and PCM services each count their own calls.
 # 30 = the pilot design point (blueprint 2026-10-29). Raise it only after a 30-call load run is clean (p95 under the shed limit, backlog under 100 ms).
