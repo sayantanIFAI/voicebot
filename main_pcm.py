@@ -2194,7 +2194,7 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # to say what the words already say. (The doctor is never a fuzzy guess: _strict_enquiry_doctor.)
     if (
         session.booking is None
-        and len(text.split()) <= 6
+        and len(text.split()) <= 12  # (was 6: "বলছি কি এক ডাক্তার ধন বাবুর চেম্বারে বসছে" has eight)
         and _SITS_VERB.search(text)
         and booking_capture.read_digits(text)[1] < 2
         and not booking_carryover.mentions_change_or_cancel(text)
@@ -5437,6 +5437,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 session.near_end.reject()
                 audio_issue_buckets.record("background_utterance", "dropped", lang or session.lang)
                 logger.info("[%s] background utterance dropped (%s)", session.call_id, verdict.reason)
+                if asr_result is not None and await _name_rescue(session, (asr_result.text or "").strip(), session.lang):
+                    return
                 # Owner, 2026-10-26: this used to just `return` -- real calls then sat in total silence, which
                 # sounds exactly like the agent having stopped, not like it noticed someone else was talking. The
                 # content is still discarded (the anti-hijack protection above is unchanged); the caller now always
@@ -5623,6 +5625,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
             lang = _keep_language(session, prior_lang)
+            if await _name_rescue(session, text, lang):
+                return
             await _reask_or_handoff(
                 session, session.reask.decide(transcript_issue=problem, audio_issues=audio_issues), lang
             )
@@ -5753,7 +5757,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if _nothing_is_open(session) and visit_cues.says_will_come_in_the_afternoon(text) and early_routing.classify(text, lang) is None:
             await _speak(session, visit_cues.afternoon_reply(lang), lang)
             return
-        if _tools is not None and doctor_origin.asks_doctor_origin(text) and await _answer_doctor_origin(session, text, lang):
+        if _tools is not None and doctor_origin.asks_doctor_origin(text, has_context=booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)) and await _answer_doctor_origin(session, text, lang):
             return
         early = early_routing.classify(text, lang)
         if early == early_routing.SITTING_HOURS and not await _answer_sitting_hours(session, text, lang):
@@ -8322,6 +8326,33 @@ def _close_pair(text: str, close: list[dict]) -> bool:
         return max((difflib.SequenceMatcher(None, w, c).ratio() for w in windows if w), default=0.0) if c else 0.0
 
     return len(close) > 1 and abs(best(close[0]) - best(close[1])) < 0.08
+
+
+async def _name_rescue(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29 ("it is fine to ask again, but if you hear a name, check the table and ask"): a turn that would be dropped or re-asked in general words ("someone else is talking", "say that again") but
+    whose words sound like one of OUR doctors is answered with "আপনি কি ডাঃ X-এর কথা জিজ্ঞেস করছেন?". The department being discussed is searched first (looser), then every doctor (stricter). Never an answer
+    about the doctor -- only the question; the yes that follows is read by _dept_talk_turn."""
+    if _fast_path is None or not (text or "").strip() or len(text.split()) > 8:
+        return False
+    topic = getattr(session, "dept_topic", None) or (getattr(session, "last_route", None) or {}).get("dept")
+    pools = []
+    if topic:
+        pools.append((_dept_infos(topic), 0.5))
+    seen, everyone = set(), []
+    for info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
+        if id(info) not in seen:
+            seen.add(id(info))
+            everyone.append(info)
+    pools.append((everyone, 0.62))
+    for infos, floor in pools:
+        close = dept_talk.close_doctors(text, infos, floor=floor)
+        if close:
+            first = dept_talk.spoken_name(close[0], lang)
+            say = dept_talk.confirm_name(first, lang)
+            session.doctor_check = {"info": close[0], "turn": session.turn_count}
+            await _speak(session, say, lang)
+            return True
+    return False
 
 
 async def _weekly_lines(infos: list[dict], lang: str) -> list[str]:

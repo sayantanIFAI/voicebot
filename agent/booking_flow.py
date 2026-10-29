@@ -331,6 +331,12 @@ def _expresses_uncertainty(tokens: list[str]) -> bool:
     return False
 
 
+_QUESTION_TOKENS = frozenset(
+    "কোন কোনটা কোনটি কোনজন কখন কবে কে কাকে কার কত কেন কীভাবে কিভাবে কোথায় কোথা কতক্ষণ कौन कौनसा कब कहाँ कहां कितना कितने क्यों कैसे किसे किसको "
+    "which when who whom whose what how why where".split()
+)
+
+
 def classify_yes_no(transcript: str, lang: str) -> str | None:
     """Deterministic, no LLM call -- confirming or cancelling a booking is
     exactly the kind of binary, high-stakes decision this project keeps
@@ -359,6 +365,10 @@ def classify_yes_no(transcript: str, lang: str) -> str | None:
     # the yes cue, so the per-cue window below would never see it and a later
     # "confirm" would commit a write on an explicitly uncertain answer.
     if lang == "en" and _expresses_uncertainty(tokens):
+        return None
+    # Owner, 2026-10-29: "ও তো হেলো কোনটা হবে কখন বসবে" (which one is good, when do they sit?) was taken as a YES because "হবে" is a yes-word. A sentence with a question word in it, longer than a bare
+    # answer, is a question and never a yes.
+    if len(tokens) > 3 and any(tok in _QUESTION_TOKENS for tok in tokens):
         return None
 
     negated_other = False
