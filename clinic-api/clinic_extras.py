@@ -88,6 +88,14 @@ NEW_DOCTORS = [
 # (department, keywords_bn, keywords_hi, keywords_en) -- symptoms the clinic's clinicians route to that department. Specific on purpose: a bare
 # "pain" must never route to a surgeon.
 NEW_ROUTES = [
+    # Owner, 2026-10-29: "বডি ফুলে গেছে তো ডাক্তার দেখাবো" (the body has swelled) was not recognised as a symptom and was asked "which doctor?". Swelling of the body, face, feet or hands goes to General Medicine
+    # (the ordinary doctor decides if a specialist is needed), in all three languages and the way the recogniser writes it.
+    (
+        "General Medicine",
+        ["ফুলে গেছে", "ফুলে যাচ্ছে", "ফুলে আছে", "ফুলে উঠেছে", "ফুলছে", "ফোলা", "শরীর ফুলে", "বডি ফুলে", "গা ফুলে", "পা ফুলে", "মুখ ফুলে", "হাত ফুলে", "শরীর ফোলা"],
+        ["सूजन", "सूज गया", "सूज गई", "सूजा", "फूल गया", "फूल गई", "फूले", "फूलेगे", "बॉडी फूल", "शरीर फूल", "बदन फूल"],
+        ["swelling", "swollen", "body swelling", "body is swollen", "puffy", "swelled up"],
+    ),
     (
         "General Surgery",
         ["হার্নিয়া", "হারনিয়া", "অ্যাপেনডিক্স", "অ্যাপেন্ডিক্স", "পাইলস", "অর্শ", "ফিস্টুলা", "ফিসার", "পিত্তথলির পাথর", "গলব্লাডারের পাথর", "পেটে চাকা", "ফোঁড়া কাটা"],

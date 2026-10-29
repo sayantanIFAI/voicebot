@@ -7998,6 +7998,10 @@ def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: 
     gets a fair first shot at locking it, instead of a coin-flip from noise becoming permanent."""
     if not session.lang_locked and decisive and detected_lang == "hi" and not session.lang_explicit and not _wholly_hindi(text, agreement):
         decisive = False  # not Hindi from end to end: the call stays Bengali this turn and nothing is locked
+    # Owner, 2026-10-29 ("বডি ফুলে গেছে" answered in Bengali, then the same speaker's next sentence written by the Hindi recogniser as "बोलती है हमारा बॉडी तो फूलेगे छे…" and answered in Hindi): once the
+    # call has been answered in Bengali, a single Hindi-LOOKING turn never moves it. Only an explicit request, or the two-turn offer, can.
+    if not session.lang_locked and decisive and detected_lang == "hi" and not session.lang_explicit and session.turn_count >= 1:
+        decisive = False
     if not session.lang_locked and decisive:
         _lock_reply_language(session, detected_lang)
         session.lang_lock_weak = agreement < 0.6

@@ -57,13 +57,13 @@ _IDIOM_NATIVE = ("বাজ পড়", "আকাশ ভেঙে পড়", "
 # a symptom, a body part or a health word: such a sentence is a patient, never "off topic"
 _HEALTH_NATIVE = (
     "ব্যথা", "ব্যাথা", "যন্ত্রণা", "জ্বর", "কাশি", "সর্দি", "বমি", "পাতলা পায়খানা", "পেট", "মাথা", "বুক", "চোখ", "কান", "নাক", "গলা", "দাঁত", "হাত", "পা", "কোমর", "পিঠ", "ঘাড়", "চোট", "আঘাত", "অ্যাক্সিডেন্ট", "এক্সিডেন্ট", "পড়ে গিয়ে", "ভেঙে", "রক্ত", "কেটে", "পুড়ে",
-    "চামড়া", "ত্বক", "চুলকানি", "ঘা ", "ফোলা", "শ্বাস", "প্রেশার", "সুগার", "থাইরয়েড", "গর্ভ", "প্রেগন্যান্সি", "ডেলিভারি", "বাচ্চা", "শিশু", "অসুস্থ", "অসুখ", "দুর্বল", "মাথা ঘোরা", "রোগী", "রোগ",
+    "চামড়া", "ত্বক", "চুলকানি", "ঘা ", "ফোলা", "ফুলে", "ফুলছে", "ফুলেছে", "ফুলতে", "সূজন", "सूजन", "सूज", "फूले", "फूल गया", "फूल गई", "फूलेगे", "শ্বাস", "প্রেশার", "সুগার", "থাইরয়েড", "গর্ভ", "প্রেগন্যান্সি", "ডেলিভারি", "বাচ্চা", "শিশু", "অসুস্থ", "অসুখ", "দুর্বল", "মাথা ঘোরা", "রোগী", "রোগ",
     "ওজন", "ঔষধ", "ওষুধ", "চিকিৎসা", "ডায়াবেটিস", "ক্যান্সার", "হার্ট", "কিডনি", "লিভার",
     "चोट", "एक्सीडेंट", "गिर", "खून", "पैर", "पैरों", "दर्द", "बुखार", "खांसी", "खाँसी", "जुकाम", "उल्टी", "दस्त", "पेट", "सिर", "सीने", "छाती", "आँख", "आंख", "कान", "नाक", "गला", "दांत", "हाथ", "पैर", "कमर", "पीठ", "त्वचा", "खुजली", "सूजन", "सांस",
     "प्रेशर", "शुगर", "थायराइड", "गर्भ", "प्रेग्नेंसी", "डिलीवरी", "बच्चे", "बच्चा", "बीमार", "बीमारी", "कमज़ोरी", "कमजोरी", "मरीज़", "मरीज", "दवा", "इलाज", "डायबिटीज", "कैंसर", "दिल", "किडनी", "लिवर",
 )
 _HEALTH_LATIN = re.compile(
-    r"\b(?:pain|ache|fever|cough|cold|injur\w*|hurt|accident|fracture|bleed\w*|broken|fell|leg|legs|arm|hand|foot|back|vomit\w*|diarrh\w*|stomach|head|headache|chest|eye|eyes|ear|nose|throat|tooth|teeth|skin|rash|itch\w*|swelling|breath\w*|pressure|sugar|thyroid|pregnan\w*|"
+    r"\b(?:swell\w*|swollen|puffy|pain|ache|fever|cough|cold|injur\w*|hurt|accident|fracture|bleed\w*|broken|fell|leg|legs|arm|hand|foot|back|vomit\w*|diarrh\w*|stomach|head|headache|chest|eye|eyes|ear|nose|throat|tooth|teeth|skin|rash|itch\w*|swelling|breath\w*|pressure|sugar|thyroid|pregnan\w*|"
     r"delivery|baby|child|sick|ill|illness|disease|weak\w*|patient|medicine|treatment|diabet\w*|cancer|heart|kidney|liver|byatha|betha|jor|kashi|sordi|pet|matha|dard|bukhar)\b",
     re.I,
 )
