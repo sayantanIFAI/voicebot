@@ -8968,6 +8968,7 @@ async def _handle_control(session: CallSession, raw: str):
 # rather than silently losing speech. A turn is never finalised while frames before its boundary are still queued (see _turn_poll_loop).
 INGRESS_MAX_S = float(os.environ.get("INGRESS_MAX_S", "10"))
 INGRESS_SETTLE_MS = float(os.environ.get("INGRESS_SETTLE_MS", "60"))
+INGRESS_BATCH_MAX = int(os.environ.get("INGRESS_BATCH_MAX", "40"))  # at most this many queued chunks are joined into one append (about 0.8 s of 20 ms frames)
 _INGRESS: dict[str, "CallSession"] = {}  # call_id -> session, for the /api/health counters
 
 
@@ -9028,6 +9029,12 @@ async def _audio_consumer(session: "CallSession") -> None:
     """Feeds the queued audio to session.append, in order. Its own task, so a slow echo/VAD step delays only this call's processing, never the socket read."""
     while True:
         chunk = await session.audio_q.get()
+        # Catching up: whatever has queued meanwhile is processed in ONE call. The echo canceller runs on a worker thread per call of `append`; one hop per 20 ms chunk per call is what a 24-call load
+        # could not keep up with (measured on the pod 2026-10-29: a 5.7 s backlog, answers at 12 s). While the audio path is keeping up the queue holds one chunk and nothing changes.
+        taken = 1
+        while taken < INGRESS_BATCH_MAX and not session.audio_q.empty():
+            chunk += session.audio_q.get_nowait()
+            taken += 1
         try:
             await session.append(chunk)
         except asyncio.CancelledError:
