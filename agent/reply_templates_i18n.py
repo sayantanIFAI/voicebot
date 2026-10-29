@@ -232,8 +232,13 @@ def _not_found_test(slots: dict, result: dict, lang: str) -> str:
 
 def _not_found_doctor(slots: dict, result: dict, lang: str) -> str:
     hi = lang == "hi"
+    from agent import name_script
+
     q = _query(slots, "doctor_name", lang)
+    q = name_script.clean_query(q, lang) if q else q
     sugg = _suggestions(result, lang)
+    if not result.get("ambiguous"):
+        sugg = name_script.drop_said(sugg, q)  # a suggestion that is only a word the caller just said tells them nothing
     if result.get("ambiguous") and sugg:
         # Doctor-side counterpart of test_rate_reply's ambiguous framing.
         return (

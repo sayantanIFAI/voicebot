@@ -187,33 +187,8 @@ _AVAIL_NOW = re.compile(r"(?:^|\s)(?:available|उपलब्ध|upalabdh|achhe
 _PAST_WORD = re.compile(r"(?:^|\s)(?:था|थे|थी|tha|thi|the|thhe|ছিলেন|chilen|chhilen)(?:\s|$)")
 _FUTURE_WORD = re.compile(r"\S*(?:ेंगे|ेंगी|ेगा|ेगी|ोगा|ोगी|ोगे|ूँगा|ूंगा|ूँगी|ूंगी|enge|engi|ega|egi|oga|ogi|oge|bosben|bosbe|boshben|boshbe|asben|asbe|ashben|ashbe|achhen|achen)(?:\s|$)")
 
-_SKEL_DROP = re.compile("[\u09be-\u09cd\u09d7\u0981-\u0983\u093e-\u094d\u0901-\u0903\u093c.,'-]")
-_SKEL_MAP = str.maketrans({"ণ": "ন", "শ": "স", "ষ": "স", "ৎ": "ত", "ण": "न", "श": "स", "ष": "स"})
-
-
-def _name_skeleton(w: str) -> str:
-    """A name's consonant skeleton (vowel signs, virama and the sh / n / t look-alikes removed): "রুপসা" -> "রপস", "রূপা" -> "রপ"; Latin words are lower-cased as they are."""
-    w = unicodedata.normalize("NFC", w or "").lower()
-    if w.isascii():
-        return w
-    return _SKEL_DROP.sub("", w).translate(_SKEL_MAP)
-
-
-def same_given_name(said: str, own: str) -> bool:
-    """Is the given name SAID the same name as the doctor's own word? Spelling variants of one name are (রুপসা ~ রূপা, অনির্বান ~ অনির্বাণ); a different name that merely contains it
-    is not (গোপাল is not পাল: the doctor's word sits at the END of what was said, behind extra letters)."""
-    if (said or "").lower() == (own or "").lower():
-        return True
-    a, b = _name_skeleton(said), _name_skeleton(own)
-    if not a or not b:
-        return False
-    if a.isascii() and b.isascii():
-        return difflib.SequenceMatcher(None, a, b).ratio() >= 0.75
-    if a == b:
-        return True
-    if (a.endswith(b) or b.endswith(a)) and a[0] != b[0]:
-        return False
-    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.8
+from agent.name_script import initial_letter as _initial_letter  # noqa: E402
+from agent.name_script import same_given_name  # noqa: E402  (also used by main.py and the reply templates)
 
 
 class Catalogue:
@@ -248,6 +223,7 @@ class Catalogue:
         # Every word of each doctor's own names (whole name in English, Bengali and Hindi), lower-cased: what a GIVEN name said before a surname must resemble (see Catalogue._given_name_ok).
         self._doctor_words: dict[str, set[str]] = {}
         self._doctor_dept: dict[str, str] = {}  # short name AND whole name -> department (English name, as the clinic keeps it)
+        self._doctor_initials: dict[str, set[str]] = {}
         self._doctor_given: dict[str, set[str]] = {}  # the given-name words only (every word of the whole names but the last), for "was a first name said?"
         for d in payload.get("doctors", []):
             if d.get("department"):
@@ -262,6 +238,10 @@ class Catalogue:
             self._doctor_given[d["name"]] = given
             if d.get("full_name"):
                 self._doctor_given[d["full_name"]] = given
+            # the initials the doctor's Latin names carry ("Dr. Ziaul Haq" -> Z; "Dr. Z. Haq" -> Z): what a spoken initial ("জেড", "जेड", "Z") before the surname must be
+            latin = [w.strip(".,") for f in (d.get("name"), d.get("full_name")) for w in (f or "").split()]
+            latin = [w for w in latin if w and w.isascii() and w.lower() not in ("dr", "doctor")]
+            self._doctor_initials[d["name"]] = {w[0].upper() for w in latin[:-1]}
             words: set[str] = set()
             for f in (d.get("name"), d.get("full_name"), d.get("full_name_bn"), d.get("full_name_hi")):
                 words |= {w.strip(".,").lower() for w in (f or "").split() if w.strip(".,")}
@@ -348,6 +328,13 @@ class Catalogue:
         if idx is None or idx == 0:
             return True
         prev = tokens[idx - 1]
+        # an INITIAL before the surname ("এম পাল" = M. Pal, "जेड हक" = Z. Haq): it must be the first letter of one of the doctor's given names. "আর" / "आर" can also be the word "and": a mismatch there passes.
+        letter = _initial_letter(prev)
+        if letter is not None:
+            initials = self._doctor_initials.get(name) or set()
+            if not initials or letter in initials:
+                return True
+            return prev in ("আর", "आर")
         if not prev or prev.lower() in self._NOT_A_GIVEN_NAME or any(ch.isdigit() for ch in prev):
             return True
         return any(same_given_name(prev, w) for w in words)

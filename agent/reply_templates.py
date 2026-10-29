@@ -179,10 +179,15 @@ def doctor_availability_reply(slots: dict, result: dict, lang: str = "bn") -> st
     if lang != "bn":
         return _i18n.doctor_availability_reply(slots, result, lang)
     if not result.get("found"):
+        from agent import name_script
+
         suggestions = result.get("did_you_mean_bn") or result.get("did_you_mean") or []
+        query = name_script.clean_query(str(slots.get("doctor_name") or ""), "bn")  # no title, and in Bengali letters
         if result.get("ambiguous") and suggestions:
             # Doctor-side counterpart of KCD-446's test-ambiguity framing.
             return f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(suggestions)}?"
+        suggestions = name_script.drop_said(suggestions, query)  # "did you mean পাল?" for "এম পাল" says nothing new
+        slots = {**slots, "doctor_name": query}
         if suggestions:
             return f"'{slots.get('doctor_name')}' নামে ডাক্তার খুঁজে পাইনি। আপনি কি {', '.join(suggestions)} বলতে চাইছেন?"
         # KCD-lay-terms: no name matched at all -- inviting the caller to describe the PROBLEM instead composes with

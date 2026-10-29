@@ -629,9 +629,11 @@ async def _load_fast_path() -> FastPath | None:
     """Fetch the catalogue and build the fast path, or None if clinic-api is
     not reachable. Optional by design: without it every turn goes to the LLM,
     which is the behaviour that existed before this path did."""
+    global _fast_path_stamp
     try:
         payload = await _fetch_catalogue()
         fp = FastPath(Catalogue(payload))
+        _fast_path_stamp = json.dumps([payload.get("doctors"), payload.get("tests")], sort_keys=True, default=str)  # what the quick path was built from (see _maybe_reload_fast_path)
         logger.info("fast path ready over %d catalogue rows", len(fp.catalogue))
         return fp
     except Exception as e:  # noqa: BLE001 - degrade to LLM-only, never fail startup
@@ -639,13 +641,32 @@ async def _load_fast_path() -> FastPath | None:
         return None
 
 
+_fast_path_stamp: str | None = None
+
+
 async def _maybe_reload_fast_path() -> None:
     """If the fast path failed to load at boot (clinic-api was not up yet --
     it starts AFTER this service in start_all.sh), retry at most every 30 s.
     Without this a boot-order race silently costs the fast path until the
     next restart: every turn pays an LLM call and nothing says why."""
-    global _fast_path, _fast_path_retry_at
-    if _fast_path is not None or time.monotonic() < _fast_path_retry_at:
+    global _fast_path, _fast_path_retry_at, _fast_path_stamp
+    if _fast_path is not None:
+        # Owner, 2026-10-29: a doctor added after the agents started ("Dr. Ziaul Haq") was invisible to the quick path until the next restart. Every 60 seconds the clinic's list is read again
+        # (cheap: it is cached for a few seconds) and the quick path is rebuilt when the doctors or tests changed.
+        if time.monotonic() >= _fast_path_retry_at:
+            _fast_path_retry_at = time.monotonic() + 60.0
+            try:
+                payload = await _cached_catalogue()
+                stamp = json.dumps([payload.get("doctors"), payload.get("tests")], sort_keys=True, default=str)
+                if _fast_path_stamp is not None and stamp != _fast_path_stamp:
+                    fp = await asyncio.to_thread(lambda: FastPath(Catalogue(payload)))
+                    _fast_path = fp
+                    logger.info("fast path rebuilt: the clinic's doctors or tests changed")
+                _fast_path_stamp = stamp
+            except Exception as e:  # noqa: BLE001 - a refresh that fails changes nothing
+                logger.warning("fast path refresh skipped: %s", e)
+        return
+    if time.monotonic() < _fast_path_retry_at:
         return
     _fast_path_retry_at = time.monotonic() + 30.0
     _fast_path = await _load_fast_path()
@@ -2684,7 +2705,13 @@ def _confirm_surname_match(slots: dict, result: dict, reply: str, lang: str) -> 
     from agent.reply_templates import _spoken_doctor_name
 
     dept = _fast_path.catalogue.doctor_department(result.get("doctor_name")) if _fast_path is not None else None
-    name = _spoken_doctor_name(slots, result)
+    if lang == "hi":
+        name = f"डॉक्टर {result['doctor_name_hi']}" if result.get("doctor_name_hi") else "डॉक्टर"
+    elif lang == "bn":
+        name = _spoken_doctor_name(slots, result)
+    else:
+        full = result.get("doctor_name") or ""
+        name = f"Doctor {full.replace('Dr.', '').replace('Dr', '').split()[-1]}" if full.split() else "the doctor"
     full = f"{_dept_possessive(_dept_label(dept, lang), lang)} {name}" if dept else name
     pronoun = {"bn": "উনি", "hi": "वे", "en": "they"}.get(lang, "they")
     body = reply.replace(name, pronoun, 1) if name and name in reply else reply
@@ -4915,7 +4942,7 @@ def _keep_established_bengali(session: CallSession, lang: str, result, candidate
     """Owner, 2026-10-28 ("to ekta naam likhe din" was heard as the Hindi "तो आपका नाम लेकर रही हो"): in a call that is ALREADY Bengali, a turn picked as Hindi stays Bengali unless Hindi clearly beats
     Bengali's own decoder agreement (by 0.15) -- language ID is unreliable on telephone-quality Bengali and the Hindi decoders can agree 1.00 on words never said. Used on every route that can pick
     Hindi (the single-recogniser path has the same rule inline). `candidates` = [(lang, ASRResult), ...] that actually ran."""
-    if lang != "hi" or not (session.lang_locked and session.lang == "bn"):
+    if lang != "hi" or (session.lang_locked and session.lang == "hi") or session.lang_explicit:
         return lang, result
     bn = next((r for lg, r in candidates if lg == "bn"), None)
     if bn is None:
@@ -5079,7 +5106,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             # Owner, 2026-10-28 ("to ekta naam likhe din" was heard as Hindi "तो आपका नाम लेकर रही हो"): language ID is not reliable on telephone-quality Bengali, and the Hindi decoders can agree
             # 1.00 on words that were never said. In a call that is ALREADY Bengali, a single Hindi-labelled turn must show clear evidence to count: Hindi has to beat Bengali's own agreement by 0.15.
             # A call not yet settled on Bengali keeps the stricter rule (Bengali better by 0.03).
-            established = bool(session.lang_locked and session.lang == "bn")
+            established = not (session.lang_locked and session.lang == "hi")  # owner, 2026-10-29: Bengali until the call is really Hindi -- an unlocked call counts as Bengali too
             margin = -0.15 if established else 0.03
             logger.info("[%s] Hindi %.2f / Bengali %.2f decoder agreement (established Bengali call: %s)", session.call_id, agree, bn_agree, established)
             if bn_agree >= 0.75 and bn_agree >= agree + margin:
@@ -5228,7 +5255,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             session.language_mismatch_turns += 1
         _rec(session, "language", detected_lang)
         lang = _resolve_reply_language(
-            session, lang, lang_decisive, float(getattr(asr_result, "decoder_agreement", 1.0) or 0.0)
+            session, lang, lang_decisive, float(getattr(asr_result, "decoder_agreement", 1.0) or 0.0), asr_result.text
         )  # what the AGENT replies in -- sticky; see the function
         _heard = (asr_result.text or "").strip()
         _digits_said, _digit_hits, _digit_total = booking_capture.read_digits(_heard)
@@ -7779,7 +7806,16 @@ def _caller_thanked(text: str, lang: str) -> bool:
     return bool(table and table.any(_cues.normalise_cue(text), table.thanks))
 
 
-def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True, agreement: float = 1.0) -> str:
+def _wholly_hindi(text: str, agreement: float) -> bool:
+    """Owner, 2026-10-29 ("it must answer in Bengali until all words are Hindi"): a call is moved to Hindi only by a sentence that is Hindi from end to end -- at least three words, all in Devanagari
+    (digits and a Latin letter or two aside), and read with agreeing decoders. A Bengali caller whose sentence the Hindi recogniser merely wrote in Devanagari does not qualify."""
+    from agent.lang_select import script_share
+
+    words = [w for w in (text or "").split() if w.strip(".,?!।")]
+    return len(words) >= 3 and script_share(text, "hi") >= 0.95 and agreement >= 0.9
+
+
+def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True, agreement: float = 1.0, text: str = "") -> str:
     """The language to REPLY in this turn (KCD-lay-terms, a live call 2026-09-28) -- locked to the first language
     established for the call, not re-derived from this turn's own language ID. `detected_lang` is what THIS turn's
     LID/ASR-verification actually settled on (used to select the ASR engine already, by the time this runs) --
@@ -7799,6 +7835,8 @@ def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: 
     thing that decides a whole call's language: on a not-decisive first turn, this leaves the lock OPEN
     (session.lang stays at its "bn" default for just this turn) so the next turn -- decisive or not -- still
     gets a fair first shot at locking it, instead of a coin-flip from noise becoming permanent."""
+    if not session.lang_locked and decisive and detected_lang == "hi" and not session.lang_explicit and not _wholly_hindi(text, agreement):
+        decisive = False  # not Hindi from end to end: the call stays Bengali this turn and nothing is locked
     if not session.lang_locked and decisive:
         _lock_reply_language(session, detected_lang)
         session.lang_lock_weak = agreement < 0.6
