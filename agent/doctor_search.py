@@ -64,9 +64,12 @@ def wanted_sex(text: str) -> str | None:
 # Each family: the stems that must be confirmed, and the departments they could mean. `bare_ok` words are spoken in full and unambiguous (no question).
 FAMILIES: list[dict] = [
     {
-        "stems": ("neuro", "নিউরো", "নিউরোর", "नेउरो", "न्यूरो", "euro", "ইউরো", "নুরো", "ऊरो", "यूरो", "nero"),
+        "stems": ("neuro", "নিউরো", "নিউরোর", "नेउरो", "न्यूरो", "नूरो", "euro", "ইউরো", "নুরো", "ऊरो", "यूरो", "nero"),
         "mishear": ("euro", "ইউরো", "যূরো", "यूरो", "ऊरो", "nuro", "নুরো"),  # Euro / Uro read for Neuro: all three are in play
-        "bare_ok": ("neurologist", "neurology", "neurosurgeon", "neurosurgery", "neuro surgeon", "নিউরোলজিস্ট", "নিউরোলজি", "নিউরোসার্জন", "নিউরো সার্জন", "নিউরোসার্জারি", "न्यूरोलॉजिस्ट", "न्यूरोसर्जन", "urologist", "urology"),
+        # Real call, 2026-10-29: "নিউরো মেডিসিন"/"नूरो मेडिसिन" ("neuro medicine") is a real, common way of naming the non-surgical
+        # (medicine) side of neuro care -- a neurologist, not a neurosurgeon -- so it never needs the "which one?" question,
+        # same as the bare specialist titles already here. Includes the real call's own dropped-vowel misspelling ("नूरो").
+        "bare_ok": ("neurologist", "neurology", "neurosurgeon", "neurosurgery", "neuro surgeon", "neuro medicine", "neuro medicines", "neuromedicine", "nuero medicine", "nuro medicine", "newro medicine", "niuro medicine", "নিউরোলজিস্ট", "নিউরোলজি", "নিউরোসার্জন", "নিউরো সার্জন", "নিউরোসার্জারি", "নিউরো মেডিসিন", "নিউরোমেডিসিন", "নুরো মেডিসিন", "न्यूरोलॉजिस्ट", "न्यूरोसर्जन", "न्यूरो मेडिसिन", "नूरो मेडिसिन", "नुरो मेडिसिन", "न्यूरोमेडिसिन", "urologist", "urology"),
         "options": [
             {
                 "dept": "Neurology",

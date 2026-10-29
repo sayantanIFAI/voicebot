@@ -42,7 +42,7 @@ DOCTOR_SEX: dict[str, str] = {
     "Dr. S. Kundu": "M", "Dr. M. Mallick": "F", "Dr. R. Pramanik": "M", "Dr. T. Bhowmik": "F",
 }
 
-NEW_DEPARTMENTS = ["General Surgery", "Neurology", "Neurosurgery", "Urology", "Gastroenterology"]
+NEW_DEPARTMENTS = ["General Surgery", "Neurology", "Neurosurgery", "Urology", "Gastroenterology", "Psychiatry"]
 
 # (department, short name, whole name, bn, hi, qualifications, sex, fee, [bn surname aliases], [hi surname aliases], schedule)
 _MWF_NOON = {"days": [0, 2, 4], "start": "11:00", "end": "13:00"}
@@ -109,6 +109,14 @@ NEW_DOCTORS = [
         ["राजर्षि दत्ता", "राजर्षि दत्त", "राजर्षि", "राजऋषि दत्ता", "राजऋषि", "राजर्शि"],
         {"days": [0, 1, 2, 3, 4], "start": "10:00", "end": "13:00"},
     ),
+    # Real call, 2026-10-29: a caller asked about a psychiatrist and the department does not exist in the catalogue at
+    # all -- added with a real department + doctor, same pattern as General Surgery/Neurology/Urology above.
+    (
+        "Psychiatry", "Dr. A. Bhadra", "Dr. Amitava Bhadra", "অমিতাভ ভদ্র", "अमिताव भद्र", "MBBS, MD (Psychiatry), DPM", "M", 700,
+        ["ভদ্র"],
+        ["भद्र"],
+        _TTS_NOON,
+    ),
 ]
 
 # (department, keywords_bn, keywords_hi, keywords_en) -- symptoms the clinic's clinicians route to that department. Specific on purpose: a bare
@@ -151,6 +159,12 @@ NEW_ROUTES = [
         ["কিডনিতে পাথর", "কিডনির পাথর", "প্রোস্টেট", "প্রস্রাবে জ্বালা", "প্রস্রাবে রক্ত", "মূত্রথলির পাথর"],
         ["किडनी में पथरी", "किडनी की पथरी", "प्रोस्टेट", "पेशाब में जलन", "पेशाब में खून"],
         ["kidney stone", "prostate", "burning urine", "blood in urine", "bladder stone"],
+    ),
+    (
+        "Psychiatry",
+        ["ডিপ্রেশন", "ডিপ্রেসন", "বিষণ্নতা", "দুশ্চিন্তা", "অ্যাংজাইটি", "অ্যানজাইটি", "প্যানিক অ্যাটাক", "ঘুম হয় না", "ঘুমের সমস্যা", "মানসিক চাপ", "মানসিক সমস্যা", "মনের অসুখ", "মন খারাপ থাকে", "ওসিডি"],
+        ["डिप्रेशन", "अवसाद", "चिंता", "घबराहट", "पैनिक अटैक", "नींद नहीं आती", "नींद की समस्या", "मानसिक तनाव", "मानसिक समस्या", "मन अशांत रहता है", "ओसीडी"],
+        ["depression", "anxiety", "panic attack", "insomnia", "sleep problem", "sleeplessness", "mental stress", "mood swings", "ocd", "obsessive compulsive"],
     ),
 ]
 

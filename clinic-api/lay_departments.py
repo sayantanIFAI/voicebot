@@ -74,7 +74,10 @@ _RULES: list[tuple[str, bool, str, str, str]] = [
      # miss, but the Bengali SCRIPT stem never did. Safe to add bare for the same reason "হার" was: this stem
      # only ever fires immediately beside a doctor word (the _GAP + DOC_BN match below).
      r"মাথা|মাফা|নার্ভ|স্নায়ু|ব্রেন|মস্তিষ্ক|মগজ",
-     r"सिर|दिमाग|नस|नसों|नर्व|नर्वस|ब्रेन|मस्तिष्क|माइग्रेन"),
+     # Real call, 2026-10-29: bare "नस" (nerve) with no word-boundary check matched INSIDE "मानसिक" (mental, मा-नस-िक)
+     # -- "मानसिक रोग के डॉक्टर" (psychiatrist) was sent to Neurology instead of the new Psychiatry department. The
+     # negative lookahead blocks that one collision; "नस"/"नसों" (nerve/nerves) on their own still match everywhere else.
+     r"सिर|दिमाग|नस(?!िक)|नसों|नर्व|नर्वस|ब्रेन|मस्तिष्क|माइग्रेन"),
     ("Urology", False,
      r"pe?c+h*a?[bp](?:er|ar|r|e|ey)?|pechh?a[bp]\w*|pecchap\w*|pechap\w*|pesha[bp]\w*|pesa[bp]\w*|prosra[bp]\w*|prasra[bp]\w*|prosa[bp]\w*|urine|urinary|kidneys?|kidni\w*|kidnir",
      r"পেচ্ছাপ|পেছাপ|পেশাব|প্রস্রাব|প্রসাব|কিডনি|কিডনী|ইউরিন|মূত্র",

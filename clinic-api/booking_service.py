@@ -1104,6 +1104,21 @@ _DEPT_ALIASES: dict[str, str] = {
     "cardiology": "Cardiology", "dermatology": "Dermatology", "paediatrics": "Paediatrics", "dentistry": "Dentistry", "toothache": "Dentistry", "tooth doctor": "Dentistry",
     "দাঁত": "Dentistry", "दांतों": "Dentistry", "ear doctor": "ENT", "ear specialist": "ENT", "throat doctor": "ENT", "কানের": "ENT", "कान के": "ENT",
     "general physician": "General Medicine", "family doctor": "General Medicine", "gp": "General Medicine",
+    # Real call, 2026-10-29: "নিউরো মেডিসিন" ("neuro medicine") is how a lot of callers say "neurologist" (the
+    # non-surgical, medicine side of neuro care, as opposed to a neurosurgeon) -- not a department in its own right,
+    # but a real, common way of naming this one. "medicine" alone still means General Medicine (unchanged, sorted by
+    # key length above so the longer, more specific phrase always wins). Includes the real call's own dropped-vowel
+    # misspelling ("नूरो" for "न्यूरो") and the matching Bengali/romanized forms.
+    "neuro medicine": "Neurology", "neuro medicines": "Neurology", "neuromedicine": "Neurology", "nuero medicine": "Neurology",
+    "nuro medicine": "Neurology", "newro medicine": "Neurology", "niuro medicine": "Neurology",
+    "নিউরো মেডিসিন": "Neurology", "নিউরোমেডিসিন": "Neurology", "নিউরো মেডিসিনের": "Neurology", "নুরো মেডিসিন": "Neurology",
+    "न्यूरो मेडिसिन": "Neurology", "न्यूरोमेडिसिन": "Neurology", "नूरो मेडिसिन": "Neurology", "नुरो मेडिसिन": "Neurology", "न्यूरो मेडिसिन्स": "Neurology",
+    # Real call, 2026-10-29: "psychiatrist"/"psychiatry" itself is already found by resolve_department_by_name() below
+    # (it matches the department's own English name by word-stem) -- these are the Bengali/Hindi lay phrases that
+    # function never sees, since it only matches the department row's own (English) name text.
+    "psychiatrist": "Psychiatry", "psychiatric": "Psychiatry", "psychologist": "Psychiatry", "mental health doctor": "Psychiatry", "mind doctor": "Psychiatry",
+    "মানসিক রোগের ডাক্তার": "Psychiatry", "মানসিক ডাক্তার": "Psychiatry", "মনোরোগ বিশেষজ্ঞ": "Psychiatry", "মনোরোগ ডাক্তার": "Psychiatry", "সাইকিয়াট্রিস্ট": "Psychiatry",
+    "मानसिक रोग के डॉक्टर": "Psychiatry", "मानसिक डॉक्टर": "Psychiatry", "मनोचिकित्सक": "Psychiatry", "मनोरोग विशेषज्ञ": "Psychiatry", "साइकियाट्रिस्ट": "Psychiatry",
 }
 
 

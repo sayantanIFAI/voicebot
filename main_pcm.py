@@ -2949,7 +2949,12 @@ async def _catalogue_mentions(text: str, lang: str) -> tuple[bool, bool, tuple[s
         candidates = tuple(dict.fromkeys(c for e in entities if e.kind == "doctor" and e.value is None for c in e.candidates))
         return "test" in kinds, "doctor" in kinds, candidates
     except Exception:  # noqa: BLE001 - grounding is a safety net, never a reason to fail a turn
-        return True, True, ()
+        # Owner, 2026-10-29 (CLAUDE.md "Doctor Nobody"): this used to say True for both booleans on ANY error ("nothing
+        # is ever dropped on a guess") -- but that fails OPEN: a catalogue hiccup on this one turn fully disabled the
+        # doctor-name hallucination check for it, the one turn it is needed most. Failing closed (nothing confirmed)
+        # means ground_slots falls back to its literal-substring check instead -- a caller re-asked once on a rare
+        # transient error is a far smaller harm than a wrong real doctor's real schedule stated with confidence.
+        return False, False, ()
 
 
 async def _chamber_window(session: CallSession, text: str):
