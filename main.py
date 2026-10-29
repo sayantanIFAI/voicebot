@@ -4022,8 +4022,19 @@ def _text_names_a_doctor(text: str, lang: str) -> bool:
     if _fast_path is None:
         return False
     with contextlib.suppress(Exception):
-        return _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=False) is not None  # noqa: SLF001
+        return _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True) is not None  # noqa: SLF001  (strong: fuzzy noise such as "কালকে" ~ a surname is not a doctor)
     return False
+
+
+def _strict_enquiry_doctor(session: CallSession, text: str, lang: str) -> str | None:
+    """The doctor a sitting question is about, without any fuzzy guess: one NAMED in the sentence (with a doctor word, or whole), else the one just discussed, else the one in the open booking."""
+    if _fast_path is not None:
+        with contextlib.suppress(Exception):
+            doc = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True)  # noqa: SLF001
+            if doc is not None:
+                return doc[1] or doc[0]
+    ctx = session.last_doctor_enquiry or {}
+    return ctx.get("doctor_name") or (session.booking.slots.get("doctor_name") if session.booking is not None else None)
 
 
 def _enquiry_doctor(session: CallSession, text: str, lang: str) -> str | None:
@@ -5897,7 +5908,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         logger.info("[%s] %s re-read as a doctor sitting question", session.call_id, intent)
         _said_day = booking_capture.read_when(text, False, want_day=True).date
         intent = "doctor_availability"
-        slots = {"doctor_name": _enquiry_doctor(session, text, lang), "date": _said_day or (slots or {}).get("date")}  # the doctor NAMED or just discussed -- never the model's guess (it wrote the whole sentence as a name)
+        slots = {"doctor_name": _strict_enquiry_doctor(session, text, lang), "date": _said_day or (slots or {}).get("date")}  # the doctor NAMED or just discussed -- never the model's guess (it wrote the whole sentence as a name)
         data = {**data, "intent": intent, "slots": slots}
 
     # KCD-lead-1: the answer to referral_cues.referral_ask_reply's combined question -- read from THIS turn's
