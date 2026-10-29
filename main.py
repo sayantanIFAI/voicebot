@@ -257,6 +257,7 @@ from agent.speech_policy import derive_policy, effective_rate, limit_questions
 from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent import tools_client  # noqa: E402  (API_STATS: the clinic-API calls of a turn)
 from agent import human_request  # noqa: E402  (a request for a person / staff / a complaint)
+from agent import call_later  # noqa: E402  ("I will give the name / call a little later": thanks, call again later, close)
 from agent import doctor_origin  # noqa: E402  (is the doctor from Kolkata?)
 from agent import name_script  # noqa: E402
 from agent.name_script import name_skeleton  # noqa: E402
@@ -8262,6 +8263,11 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         session.person_requests += 1
         logger.info("[%s] the caller asked for a person / staff / lodged a complaint (request %d): connecting", session.call_id, session.person_requests)
         await _handoff_to_human(session, "complaint" if human_request.wants_to_complain(text, lang) else "caller_requested", (lang,))
+        return True
+    # Owner, 2026-10-29: "I will give the name / the day and time / call a little later" -- thanks, "please call again later", and the call is closed
+    if call_later.asks_to_call_later(text, lang):
+        logger.info("[%s] the caller will call / give the details later: closing politely", session.call_id)
+        await _end_call(session, lang, "call_later_final")
         return True
     if clinical_safety.is_clinical_interpretation(text):
         logger.info("[%s] a request to interpret a result: a clinician is offered", session.call_id)

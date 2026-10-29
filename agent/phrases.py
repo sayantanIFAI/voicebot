@@ -365,6 +365,10 @@ PHRASES["en"]["offtopic_final"] = "I am not able to help you with this right now
 PHRASES["bn"]["wrong_place_final"] = "এটা সোনোস্ক্যান। মনে হচ্ছে আপনি ভুল নম্বরে ফোন করেছেন। ধন্যবাদ।"
 PHRASES["hi"]["wrong_place_final"] = "यह सोनोस्कैन है। लगता है आपने गलत नंबर पर फ़ोन किया है। धन्यवाद।"
 PHRASES["en"]["wrong_place_final"] = "This is Sonoscan. It seems you have dialled the wrong number. Thank you."
+# Owner, 2026-10-29: the caller will give the name / day / time, or will call, a little later: thanks, "please call again later", and the call is closed (agent/call_later.py)
+PHRASES["bn"]["call_later_final"] = "ঠিক আছে, ধন্যবাদ। দয়া করে একটু পরে আবার ফোন করবেন।"
+PHRASES["hi"]["call_later_final"] = "ठीक है, धन्यवाद। कृपया थोड़ी देर बाद फिर से फ़ोन कीजिए।"
+PHRASES["en"]["call_later_final"] = "All right, thank you. Please call us again a little later."
 PHRASES["bn"]["result_counter_only"] = "ফোনে টেস্টের রেজাল্ট বলা যাবে না। দয়া করে কাউন্টার থেকে রিপোর্ট সংগ্রহ করে নিন।"
 PHRASES["hi"]["result_counter_only"] = "फ़ोन पर टेस्ट का रिज़ल्ट नहीं बताया जा सकता। कृपया रिपोर्ट काउंटर से ले लीजिए।"
 PHRASES["en"]["result_counter_only"] = "Test results cannot be given over the phone. Please collect your report from the counter."
