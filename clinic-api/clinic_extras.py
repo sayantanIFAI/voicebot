@@ -79,7 +79,7 @@ NEW_DOCTORS = [
     # chamber (10:00-13:00) is used until a clinician sets the real ones.
     (
         "Paediatrics", "Dr. Z. Haq", "Dr. Ziaul Haq", "জিয়াউল হক", "ज़ियाउल हक़", "MBBS, MD (Paediatrics)", "M", 600,
-        ["জিয়াউল হক", "জিয়াউল", "হক", "হোক", "জিয়াউল হোক"],
+        ["জিয়াউল হক", "জিয়াউল", "হক"],
         ["ज़ियाउल हक़", "जियाउल हक", "जियाउल", "हक", "हक़", "ज़ियाउल"],
         {"days": [0, 1, 2, 3, 4], "start": "10:00", "end": "13:00"},  # owner, 2026-10-29: from next week, weekdays only (Monday to Friday)
     ),
@@ -142,11 +142,26 @@ SITS_EVERY_DAY = ("Dr. S. Banerjee",)
 # Owner, 2026-10-29: Dr. Ziaul Haq, weekdays only (Monday to Friday), from next week. Tomorrow (Friday 2026-10-30) was already promised; the only other weekday before next Monday is today (Thursday), whose
 # 10:00-13:00 chamber has already closed when this is read, so a plain weekday schedule is exactly "from next week". Rows are only ADDED for a missing weekday.
 SITS_WEEKDAYS = {"Dr. Z. Haq": ((0, 1, 2, 3, 4), "10:00", "13:00")}
+# Spellings the recognisers write for a doctor that already exists: "জেড হাক" / "ज़ेड हाक" for Dr. Z. Haq (live replay, 2026-10-29). Added when missing; nothing is ever removed.
+EXTRA_ALIASES = {
+    "Dr. Z. Haq": (["হাক", "জেড হাক", "জেড হক", "হাক সাহেব"], ["हाक", "जेड हाक", "जेड हक", "ज़ेड हक", "हॉक"]),
+}
 
 
 def apply_extras(db: Session) -> dict:
     """Idempotent. Returns what it changed."""
     out = {"doctor_sex_set": 0, "departments": 0, "doctors": 0, "routes": 0, "relationships": 0, "weekdays_added": 0}
+    for short, (al_bn, al_hi) in EXTRA_ALIASES.items():
+        doc = db.query(Doctor).filter_by(name=short).first()
+        if doc is None:
+            continue
+        cur_bn = [a for a in (doc.aliases_bn or "").split("|") if a and a not in ("হোক", "জিয়াউল হোক")]  # "হোক" is the ordinary word "let it be": it must never name a doctor
+        cur_hi = [a for a in (doc.aliases_hi or "").split("|") if a]
+        add_bn, add_hi = [a for a in al_bn if a not in cur_bn], [a for a in al_hi if a not in cur_hi]
+        if add_bn or add_hi or ("|".join(cur_bn) != (doc.aliases_bn or "")):
+            doc.aliases_bn = "|".join(cur_bn + add_bn)
+            doc.aliases_hi = "|".join(cur_hi + add_hi)
+            out["aliases_added"] = out.get("aliases_added", 0) + len(add_bn) + len(add_hi)
     for short, (days, start, end) in SITS_WEEKDAYS.items():
         doc = db.query(Doctor).filter_by(name=short).first()
         if doc is None:

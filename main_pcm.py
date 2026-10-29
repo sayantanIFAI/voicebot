@@ -2251,7 +2251,7 @@ def _doctor_presence_hint(text: str) -> dict | None:
     }
 
 
-_WHEN_SITS = ("কবে", "কখন", "কোন দিন", "কোন কোন", "বসেন", "বসে", "কটায়", "कब", "कौन से दिन", "बैठते", "बैठती", "when", "which day", "what time", "schedule")
+_WHEN_SITS = ("কবে", "কখন", "কোন দিন", "কোন কোন", "বসেন", "বসে", "বসবে", "বসব", "বসছে", "বসছেন", "বসতেন", "কটায়", "कब", "कौन से दिन", "बैठते", "बैठती", "when", "which day", "what time", "schedule")
 
 
 def _asks_when_sits(text: str) -> bool:
@@ -5882,6 +5882,22 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     _committing = session.booking is None and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count) and booking_carryover.continues_booking(text)
     if intent in ("smalltalk", "unclear") and not _committing and await _offtopic_by_verdict(session, text, lang, data, asr_result):
         return
+    # Owner, 2026-10-29 ("কালকে বসবে" -- will he sit tomorrow? -- was answered "your confirmation number, or the number you booked from?"): a sitting question with no number or confirmation id in it is about a DOCTOR,
+    # never a lookup of a booking. The doctor is the one just discussed or in the open booking; with none, the caller is asked which doctor (the answer continues the question).
+    if (
+        intent in ("lookup_booking", "unclear", "smalltalk")
+        and session.booking is None
+        and _asks_when_sits(text)
+        and not (slots or {}).get("phone")
+        and not (slots or {}).get("confirmation_id")
+        and booking_capture.read_digits(text)[1] < 2
+        and not booking_carryover.mentions_change_or_cancel(text)
+    ):
+        logger.info("[%s] %s re-read as a doctor sitting question", session.call_id, intent)
+        _said_day = booking_capture.read_when(text, False, want_day=True).date
+        intent = "doctor_availability"
+        slots = {"doctor_name": (slots or {}).get("doctor_name") or _enquiry_doctor(session, text, lang), "date": _said_day or (slots or {}).get("date")}
+        data = {**data, "intent": intent, "slots": slots}
 
     # KCD-lead-1: the answer to referral_cues.referral_ask_reply's combined question -- read from THIS turn's
     # slots regardless of what intent the model guessed for it (the model has no "referral" intent to guess;
