@@ -3867,7 +3867,8 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                     return True
             return False
         if pend["kind"] == "confirm_one":
-            if booking_capture.confirm_answer(text, lang) == "yes" or booking_carryover.commits_to_booking(text):  # owner, 2026-10-29: "একটা নাম লেখা যাবে" IS the yes
+            _names_him = doctor_search.choose_by_name(text, [[pend["doctor"].get("name", ""), pend["doctor"].get("full_name", "")]]) == 0 and len(text.split()) <= 6  # saying the offered doctor's name IS the yes
+            if booking_capture.confirm_answer(text, lang) == "yes" or booking_carryover.commits_to_booking(text) or _names_him:  # owner, 2026-10-29: "একটা নাম লেখা যাবে" IS the yes
                 item = pend["doctor"]
                 session.last_doctor_enquiry = {
                     "doctor_name": _resolve_doctor_for_booking(item), "date": pend["date"],

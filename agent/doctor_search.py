@@ -407,6 +407,32 @@ def choose_by_name(text: str, doctors: list[list[str]]) -> int | None:
             best = max(best, n)
         scores.append(best)
     top = max(scores, default=0)
+    if top == 0:
+        return _choose_by_sound(words, doctors)
+    if scores.count(top) != 1:
+        return None
+    return scores.index(top)
+
+
+def _choose_by_sound(words: list[str], doctors: list[list[str]]) -> int | None:
+    """Owner, 2026-10-29 (offered Dr. সুতপা চ্যাটার্জী, the caller's "सुतापा चटर्जी" was written by the Hindi recogniser in Devanagari): a name word that matches no spelling letter for letter is still
+    the offered doctor when its consonant skeleton is the same (Bengali / Devanagari / spelling variants). One doctor must be named best; a skeleton shorter than three letters never counts."""
+    from agent.name_script import name_skeleton, same_given_name
+
+    said = [(w, name_skeleton(w)) for w in words if not w.isascii()]
+    said = [(w, k) for w, k in said if len(k) >= 3]
+    if not said:
+        return None
+    scores = []
+    for spellings in doctors:
+        hit: set[str] = set()
+        for spelling in spellings:
+            for part in _name_tokens(spelling or ""):
+                key = name_skeleton(part)
+                if len(key) >= 3 and any(same_given_name(w, part) for w, _ in said):
+                    hit.add(key)
+        scores.append(len(hit))
+    top = max(scores, default=0)
     if top == 0 or scores.count(top) != 1:
         return None
     return scores.index(top)
