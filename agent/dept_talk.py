@@ -102,9 +102,13 @@ def asks_when(text: str) -> bool:
     return bool(_WHEN.search(unicodedata.normalize("NFC", text or "")))
 
 
+_ADDRESS_WORDS = re.compile(r"ক্লিনিক|হাসপাতাল|ঠিকানা|ল্যাব|क्लिनिक|अस्पताल|पता|\b(?:clinic|hospital|address|lab|located|location)\b", re.I)
+
+
 def asks_origin(text: str) -> bool:
+    """A Kolkata word in a sentence about a department's doctors ("এগুলো কলকাতা ডাক্ত না এদ মাল্লার", whatever the recogniser made of the rest) is the question "are they from Kolkata?" -- unless it is about the clinic's address."""
     t = unicodedata.normalize("NFC", text or "")
-    return bool(_KOLKATA.search(t)) and (bool(_ORIGIN_Q.search(t)) or "ডাক্তার" in t or "डॉक्टर" in t or re.search(r"\bdoctors?\b", t, re.I) is not None)
+    return bool(_KOLKATA.search(t)) and not _ADDRESS_WORDS.search(t)
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------- a first name said in a garbled way
@@ -141,7 +145,7 @@ def match_doctor(text: str, infos: list[dict], floor: float = 0.62, margin: floa
     return scored[0][1]
 
 
-def close_doctors(text: str, infos: list[dict], floor: float = 0.45) -> list[dict]:
+def close_doctors(text: str, infos: list[dict], floor: float = 0.55) -> list[dict]:
     """The doctors whose given name the sentence sounds LIKE, best first (at most two): the looser tier of match_doctor, used only to ask "are you asking about Dr. X?" -- never to answer about him.
     A garble such as "শুভজিৎ" sits between "শুভদীপ" and "শুভঙ্কর"; the caller is asked, with the better one first."""
     toks = [t for t in _tokens(text) if t not in _TITLES]

@@ -8352,7 +8352,7 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     chk = getattr(session, "doctor_check", None)
     if chk and session.turn_count - chk["turn"] <= 2:
         session.doctor_check = None
-        answer = booking_capture.confirm_answer(text, lang)
+        answer = booking_capture.confirm_answer(text, lang) if len(text.split()) <= 4 else None  # a longer sentence is a new question, not a "yes"
         if answer == "yes":
             info = chk["info"]
             session.last_doctor_enquiry = {"doctor_name": info.get("name"), "date": None, "turn": session.turn_count}
@@ -8408,7 +8408,7 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
             await _speak(session, say, lang)
             return True
     # a first name said in a garbled way, among the department's own doctors  -> only that doctor's name
-    if not (asks_names or asks_good or asks_when or asks_origin) and len(text.split()) <= 8 and not mention:
+    if not (asks_names or asks_good or asks_when or asks_origin) and len(text.split()) <= 6 and not mention:
         close = dept_talk.close_doctors(text, infos)
         if close:
             # Owner, 2026-10-29: "ও দিপ শুভজিৎ দিপ" -- a name said as the caller can: the doctor it sounds like is ASKED about ("আপনি কি ডাঃ শুভদীপ মন্ডলের কথা জিজ্ঞেস করছেন?"), never answered about unasked;

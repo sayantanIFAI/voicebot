@@ -52,11 +52,11 @@ from agent.audio_quality import (
 # An utterance this much quieter than the call's near-end level, in a different
 # voice, is background (REASONED: bystanders are typically 10-25 dB down at a
 # handset microphone).
-BACKGROUND_DELTA_DB = 12.0
+BACKGROUND_DELTA_DB = 20.0  # owner, 2026-10-29: was 12 -- a clear answer in a softer or slightly different voice was thrown away
 # Two voices whose median pitch differs by more than this ratio are different
 # speakers for this purpose (REASONED: within-speaker median f0 wanders a few
 # percent between utterances; men and women differ by ~1.6-2x).
-DIFFERENT_VOICE_F0_RATIO = 1.15
+DIFFERENT_VOICE_F0_RATIO = 1.35  # was 1.15
 MIN_OVERLAP_S = 0.08
 MERGE_GAP_S = 0.10
 PROFILE_ALPHA = 0.3
