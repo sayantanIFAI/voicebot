@@ -22,6 +22,8 @@ applies to test prices and doctor schedules.
 from __future__ import annotations
 
 import datetime
+
+import clinic_clock  # the clinic's own (Kolkata) clock, not the server's
 import os
 import re
 import uuid
@@ -64,7 +66,7 @@ SMS_DEDUP_WINDOW_S = 60
 
 
 def _now() -> datetime.datetime:
-    return datetime.datetime.now()
+    return clinic_clock.now()
 
 
 def _confirmation_id(date: str) -> str:
@@ -1187,7 +1189,7 @@ def _chamber_over_today(on_date: str | None, end_time: str | None) -> bool:
     """True when `on_date` is TODAY and the chamber's end time has already passed: "today 10 to 12" is no longer a sitting at 3 pm (owner, 2026-10-24: the closed chamber was still listed)."""
     if not on_date or not end_time:
         return False
-    now = datetime.datetime.now()
+    now = clinic_clock.now()
     if on_date != now.date().isoformat():
         return False
     return _minutes(end_time) <= now.hour * 60 + now.minute
@@ -1195,8 +1197,8 @@ def _chamber_over_today(on_date: str | None, end_time: str | None) -> bool:
 
 def _department_doctors_today(db: Session, department_id: int, lang: str = "bn") -> list[str]:
     """The doctors of the department who sit on today's weekday (the clinic's day: the server runs on Asia/Kolkata time) and whose chamber has not closed yet."""
-    wd = datetime.date.today().weekday()
-    today_iso = datetime.date.today().isoformat()
+    wd = clinic_clock.today().weekday()
+    today_iso = clinic_clock.today().isoformat()
     out = []
     for d in db.query(Doctor).filter_by(department_id=department_id).order_by(Doctor.id).all():
         sched = db.query(DoctorSchedule).filter_by(doctor_id=d.id, weekday=wd).first()
@@ -1415,7 +1417,7 @@ def department_doctors(
         out.update({"filtered": True, "sex": sex, "on_date": on_date, "at_time": at_time, "sitting": matches, "doctors": [m["name"] for m in matches]})
         if sex and not on_date:
             # "doctors_today" must obey the same filter: a lady doctor asked for is never answered with today's gentlemen
-            today_iso = datetime.date.today().isoformat()
+            today_iso = clinic_clock.today().isoformat()
             out["doctors_today"] = [m["name"] for m in sitting_doctors(db, dept.id, lang, sex, today_iso)]
     return out
 

@@ -4028,6 +4028,15 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
     return True
 
 
+def _text_names_a_doctor(text: str, lang: str) -> bool:
+    """Does the sentence itself carry a doctor of the clinic's list (by name or surname)? False when the fast path is off."""
+    if _fast_path is None:
+        return False
+    with contextlib.suppress(Exception):
+        return _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=False) is not None  # noqa: SLF001
+    return False
+
+
 def _enquiry_doctor(session: CallSession, text: str, lang: str) -> str | None:
     """The doctor an enquiry is about: the one NAMED in the sentence, else the one just discussed, else the one in the open booking."""
     if _fast_path is not None:
@@ -5885,7 +5894,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     # Owner, 2026-10-29 ("কালকে বসবে" -- will he sit tomorrow? -- was answered "your confirmation number, or the number you booked from?"): a sitting question with no number or confirmation id in it is about a DOCTOR,
     # never a lookup of a booking. The doctor is the one just discussed or in the open booking; with none, the caller is asked which doctor (the answer continues the question).
     if (
-        intent in ("lookup_booking", "unclear", "smalltalk")
+        (
+            intent in ("lookup_booking", "unclear", "smalltalk")
+            or (intent == "doctor_availability" and not _text_names_a_doctor(text, lang))
+        )
         and session.booking is None
         and _asks_when_sits(text)
         and not (slots or {}).get("phone")
@@ -5896,7 +5908,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         logger.info("[%s] %s re-read as a doctor sitting question", session.call_id, intent)
         _said_day = booking_capture.read_when(text, False, want_day=True).date
         intent = "doctor_availability"
-        slots = {"doctor_name": (slots or {}).get("doctor_name") or _enquiry_doctor(session, text, lang), "date": _said_day or (slots or {}).get("date")}
+        slots = {"doctor_name": _enquiry_doctor(session, text, lang), "date": _said_day or (slots or {}).get("date")}  # the doctor NAMED or just discussed -- never the model's guess (it wrote the whole sentence as a name)
         data = {**data, "intent": intent, "slots": slots}
 
     # KCD-lead-1: the answer to referral_cues.referral_ask_reply's combined question -- read from THIS turn's

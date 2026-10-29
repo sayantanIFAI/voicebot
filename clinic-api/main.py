@@ -12,6 +12,8 @@ per catalogue and looked up, not scanned per request. A suggestion is never a re
 from __future__ import annotations
 
 import datetime
+
+import clinic_clock  # the clinic's own (Kolkata) clock, not the server's
 import difflib
 import json
 import logging
@@ -859,10 +861,10 @@ def _sched_still_open(sched: DoctorSchedule, d: datetime.date) -> bool:
     booking_service.available_slots() was already fixed for ("today at 10am" stayed offerable at 3pm), never
     applied to this endpoint. Real call 2026-10-24, evening: "Dr. X sits today, 10:00-12:00" was still said
     well after 12:00, instead of going straight to the next real day."""
-    if d != datetime.datetime.now().date():
+    if d != clinic_clock.now().date():
         return True
     h, m = sched.end_time.split(":")
-    return (int(h) * 60 + int(m)) > (datetime.datetime.now().hour * 60 + datetime.datetime.now().minute)
+    return (int(h) * 60 + int(m)) > (clinic_clock.now().hour * 60 + clinic_clock.now().minute)
 
 
 def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date, horizon_days: int = 14) -> str | None:
@@ -895,7 +897,7 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None), 
             Doctor,
         )
 
-    today = datetime.date.today()
+    today = clinic_clock.today()
 
     if date:
         try:
@@ -1101,7 +1103,7 @@ def _validate_date_not_past(date_str: str) -> dict | None:
         target = datetime.date.fromisoformat(date_str)
     except ValueError:
         return {"success": False, "reason": "invalid_date"}
-    if target < datetime.date.today():
+    if target < clinic_clock.today():
         # KCD-363: never book a past date, and never silently roll it
         # forward -- the caller is told plainly (main.py's reply template)
         # and offered the same weekday next week.
@@ -1119,7 +1121,7 @@ def _first_sitting_next_month(db: Session | None, doctor: Doctor | None) -> dict
     of next month with a schedule row and no leave. None when there is no doctor or no such day within 62 days."""
     if db is None or doctor is None:
         return None
-    today = datetime.date.today()
+    today = clinic_clock.today()
     first = (today.replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
     from models import DoctorLeave
 
@@ -1142,10 +1144,10 @@ def _validate_not_too_far_ahead(date_str: str, db: Session | None = None, doctor
         target = datetime.date.fromisoformat(date_str)
     except ValueError:
         return None
-    last = datetime.date.today() + datetime.timedelta(days=MAX_ADVANCE_DAYS)
+    last = clinic_clock.today() + datetime.timedelta(days=MAX_ADVANCE_DAYS)
     if target > last:
         out = {"success": False, "reason": "too_far_ahead", "max_advance_days": MAX_ADVANCE_DAYS, "last_bookable_date": last.isoformat()}
-        today = datetime.date.today()
+        today = clinic_clock.today()
         if (target.year, target.month) > (today.year, today.month) and (target.year * 12 + target.month) - (today.year * 12 + today.month) == 1:
             nxt = _first_sitting_next_month(db, doctor)
             if nxt:
@@ -1178,14 +1180,14 @@ def _validate_doctor_slot(db: Session, doctor: Doctor, date_str: str, time_slot:
     valid_slots = _generate_slots(sched.start_time, sched.end_time)
     if time_slot not in valid_slots:
         return {"success": False, "reason": "invalid_slot", "valid_slots": valid_slots}
-    if target == datetime.date.today():
+    if target == clinic_clock.today():
         # CodeRabbit-flagged, real bug: _validate_date_not_past is
         # DATE-level only ("target < today"), so a same-day slot earlier
         # than right now was still requestable and holdable directly
         # (available_slots() no longer OFFERS it -- see that function's
         # own fix -- but nothing stopped a caller from asking for it by
         # name anyway).
-        now = datetime.datetime.now()
+        now = clinic_clock.now()
         try:
             slot_h, slot_m = (int(x) for x in time_slot.split(":"))
         except ValueError:
@@ -1402,7 +1404,7 @@ def doctor_earliest(name: str = Query(...), db: Session = Depends(get_db)):
     doctor = _find_doctor(db, name)
     if not doctor:
         return {"found": False, "query": name}
-    result = bs.earliest_available(db, doctor.id, datetime.date.today())
+    result = bs.earliest_available(db, doctor.id, clinic_clock.today())
     if not result:
         return {"found": True, "available": False, "doctor_name": _doctor_ref(db, doctor)}
     return {
@@ -1797,7 +1799,7 @@ def booking_next_serial(name: str = Query(...), date: str | None = Query(None), 
     if not doctor:
         return {"found": False, "query": name}
     try:
-        target = datetime.date.fromisoformat(date) if date else datetime.date.today()
+        target = datetime.date.fromisoformat(date) if date else clinic_clock.today()
     except ValueError:
         return {"found": False, "query": name}
     sched = _schedule_for_weekday(db, doctor.id, target.weekday())
