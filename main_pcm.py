@@ -481,6 +481,7 @@ _tts: TTSClient | None = None
 _intent_cache: SemanticCache | None = None
 _fast_path: FastPath | None = None
 _answer_warm_task = None
+_availability_task = None
 _asr_router: ASRRouter | None = None
 _lid: SpeechBrainVoxLingua107LID | None = None
 _tts_router: TTSRouter | None = None
@@ -579,6 +580,30 @@ async def _cached_catalogue() -> dict:
 # ---- the answers every caller asks for, rendered ahead of time -------------------------------------------------
 ANSWER_WARM_INTERVAL_S = float(os.environ.get("ANSWER_WARM_INTERVAL_S", "600"))
 _answers_warm: dict = {"rounds": 0, "pinned_clips": 0, "last_round_s": None, "last_error": None}
+
+
+AVAILABILITY_PRELOAD_INTERVAL_S = float(os.environ.get("AVAILABILITY_PRELOAD_INTERVAL_S", "20"))
+
+
+async def _availability_preload_loop() -> None:
+    """Owner, 2026-10-29: no database hit in a turn for a doctor's availability today or tomorrow. Every AVAILABILITY_PRELOAD_INTERVAL_S seconds (less than the entries' life) every doctor of the catalogue is asked about
+    for today, tomorrow and "next sitting" and kept (agent/tools_client.preload_availability); the catalogue itself is re-read, so a new doctor is covered within a minute. Never lets a failure stop the loop."""
+    await asyncio.sleep(5)
+    while True:
+        try:
+            if _tools is not None:
+                cat = await _cached_catalogue()
+                names = []
+                for d in cat.get("doctors") or []:
+                    names += [n for n in (d.get("name"), d.get("full_name")) if n]
+                today = slot_proposal.clinic_now().date()
+                dates = [today.isoformat(), (today + datetime.timedelta(days=1)).isoformat(), None]
+                await _tools.preload_availability(names, dates)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - advisory: a turn simply asks the clinic API
+            logger.warning("availability preload skipped: %s", e)
+        await asyncio.sleep(AVAILABILITY_PRELOAD_INTERVAL_S)
 
 
 async def _warm_answers_once() -> int:
@@ -817,14 +842,17 @@ async def _startup():
     await _tts.prewarm({lang: lines[lang] + [thanks_for(lang)] for lang in _languages_active})
     await _warm_speech_models()
 
-    global _READY_AT, _answer_warm_task
+    global _READY_AT, _answer_warm_task, _availability_task
     _READY_AT = time.monotonic()
     _answer_warm_task = asyncio.create_task(_answer_warm_loop())  # background: startup does not wait for it
+    _availability_task = asyncio.create_task(_availability_preload_loop())  # background: every doctor's availability for today, tomorrow and "next sitting", always in memory
     logger.info("startup complete -- ready for calls (%.1fs from process start)", _READY_AT - _PROCESS_STARTED_AT)
 
 
 @app.on_event("shutdown")
 async def _shutdown():
+    if _availability_task is not None:
+        _availability_task.cancel()
     if _answer_warm_task is not None:
         _answer_warm_task.cancel()
     if _health_task:
@@ -3020,7 +3048,12 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             return None
         result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
         _note_suggestion(intent, "doctor_name", slots, result)
-        _named_surname_only = bool(result.get("found")) and _fast_path is not None and not _fast_path.catalogue.given_name_said(_turn_text.get() or "", result.get("doctor_name"))
+        _named_surname_only = (
+            bool(result.get("found"))
+            and _fast_path is not None
+            and _text_names_a_doctor(_turn_text.get() or "", lang)  # the doctor is in THIS sentence (not carried over from the last turn: that one is just answered)
+            and not _fast_path.catalogue.given_name_said(_turn_text.get() or "", result.get("doctor_name"))
+        )
         if not result.get("found") and not result.get("ambiguous"):
             # KCD-lead-A: "Orthopaedics Doctor" is a department the model put in the doctor slot -- not "no such doctor". Any department in the
             # clinic's database is found by its own name or short form; the answer is its real doctors (never invented), exactly as department_query's.

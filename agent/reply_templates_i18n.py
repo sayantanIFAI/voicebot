@@ -717,8 +717,11 @@ def department_route_reply(result: dict, symptom: str, lang: str) -> str:
                     return f"आज {dept} विभाग में {today[0]} हैं। क्या उनके साथ अपॉइंटमेंट लेना चाहेंगे?"
                 return f"Today the {dept} department has {today[0]}. Would you like to book an appointment with them?"
             if hi:
-                return f"आज {dept} विभाग में {len(today)} डॉक्टर हैं: {', '.join(today)}। आप किसे दिखाना चाहेंगे?"
-            return f"Today the {dept} department has {len(today)} doctor{'s' if len(today) != 1 else ''}: {', '.join(today)}. Which one would you like to see?"
+                _n = len(today)
+                _count = {2: "दो", 3: "तीन", 4: "चार", 5: "पाँच", 6: "छह", 7: "सात", 8: "आठ"}.get(_n, str(_n))
+                return f"आज {dept} विभाग में {_count} डॉक्टर बैठ रहे हैं: {', '.join(today)}। आप किसे दिखाना चाहेंगे?"
+            _words = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
+            return f"Today the {dept} department has {_words.get(len(today), len(today))} doctor{'s' if len(today) != 1 else ''} sitting: {', '.join(today)}. Which one would you like to see?"
         if doctors:
             if hi:
                 return f"{dept} विभाग में {', '.join(doctors)} हैं, पर आज कोई नहीं बैठ रहा। किसके बारे में जानना चाहेंगे?"

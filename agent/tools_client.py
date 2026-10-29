@@ -129,7 +129,19 @@ class ClinicToolsClient:
     #                {"found": true, ..., "available": false,
     #                 "next_available_date": "2026-08-27"}
     #   found=false: {"found": false, "query": "..."}
+    # Owner, 2026-10-29: "pre-load all the doctors' availability for today and tomorrow so that no database hit is needed". preload_availability() fills this for every doctor (by short and whole name) for
+    # today, tomorrow and "next sitting" (no date), and is repeated in the background every few seconds (main._availability_preload_loop), so a turn finds its answer here. A name or date not in it (a spoken
+    # variant, a later date) goes to the clinic API exactly as before. An entry older than AVAILABILITY_TTL_S is not used: today's answer changes as a chamber closes.
+    AVAILABILITY_TTL_S = float(os.environ.get("AVAILABILITY_TTL_S", "45"))
+
     async def get_doctor_availability(self, doctor_name: str, date: str | None) -> dict:
+        cache = self.__dict__.setdefault("_availability", {})
+        hit = cache.get((doctor_name, date))
+        if hit is not None and time.monotonic() - hit[0] <= self.AVAILABILITY_TTL_S:
+            return hit[1]
+        return await self._fetch_availability(doctor_name, date)
+
+    async def _fetch_availability(self, doctor_name: str, date: str | None) -> dict:
         params = {"name": doctor_name}
         if date:
             params["date"] = date
@@ -139,6 +151,25 @@ class ClinicToolsClient:
             return validated(DoctorAnswer, r.json(), "get_doctor_availability")
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_doctor_availability({doctor_name!r}, {date!r}): {e}") from e
+
+    async def preload_availability(self, names: list[str], dates: list[str | None], concurrency: int = 8) -> int:
+        """Fetch every (name, date) and keep it; returns how many were stored. A failed fetch keeps the older entry (it simply expires)."""
+        cache = self.__dict__.setdefault("_availability", {})
+        gate = asyncio.Semaphore(concurrency)
+        stored = 0
+
+        async def one(name: str, date: str | None) -> None:
+            nonlocal stored
+            async with gate:
+                try:
+                    value = await self._fetch_availability(name, date)
+                except ToolCallError:
+                    return
+                cache[(name, date)] = (time.monotonic(), value)
+                stored += 1
+
+        await asyncio.gather(*[one(n, d) for n in dict.fromkeys(names) for d in dates])
+        return stored
 
     async def free_slots(self, doctor_name: str, date: str) -> dict:
         """The doctor's still-free slots on a date (GET /api/v1/doctors/free-slots); the agent chooses the time from these."""

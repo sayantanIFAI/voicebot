@@ -541,7 +541,9 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
         if today:
             if len(today) == 1:  # owner, 2026-10-28: one doctor -- not "which one"
                 return f"আজ {dept} বিভাগে {today[0]} আছেন। ওনার সাথে অ্যাপয়েন্টমেন্ট করতে চান?"
-            return f"আজ {dept} বিভাগে {len(today)} জন ডাক্তার আছেন: {', '.join(today)}। কাকে দেখাতে চান?"
+            n = len(today)
+            count = {2: "দুইজন", 3: "তিনজন", 4: "চারজন", 5: "পাঁচজন", 6: "ছয়জন", 7: "সাতজন", 8: "আটজন"}.get(n, f"{n} জন")  # a count is said as a word, never a digit inside a Bengali sentence
+            return f"আজ {dept} বিভাগে {count} ডাক্তার বসছেন: {', '.join(today)}। কাকে দেখাতে চান?"
         if doctors:
             return f"{dept} বিভাগে {', '.join(doctors)} আছেন, তবে আজ কেউ বসছেন না। কার কথা জানতে চান?"
         return f"{dept} বিভাগের ডাক্তারদের তালিকা এখন আমার কাছে নেই। কাউন্টারে এসে জিজ্ঞেস করে নিতে পারেন।"

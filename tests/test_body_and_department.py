@@ -74,7 +74,7 @@ def test_department_short_forms():
 def test_the_department_answer_lists_today_and_asks_which_one_without_advice():
     res = {"matched": True, "department_name": "Cardiology", "doctors": ["ডাঃ সেন", "ডাঃ রায়", "ডাঃ দাস"], "doctors_today": ["ডাঃ সেন", "ডাঃ রায়", "ডাঃ দাস"]}
     bn = rt.department_route_reply(res, "বুকে ব্যথা", "bn")
-    assert "আজ Cardiology বিভাগে 3 জন ডাক্তার আছেন" in bn and bn.endswith("কাকে দেখাতে চান?")
+    assert "আজ Cardiology বিভাগে তিনজন ডাক্তার বসছেন" in bn and bn.endswith("কাকে দেখাতে চান?")
     for advice in ("ভালো হবে", "টেস্ট", "ওষুধ"):
         assert advice not in bn
     en = rt.department_route_reply(res, "leg pain", "en")
