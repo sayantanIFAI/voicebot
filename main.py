@@ -78,6 +78,7 @@ from pydantic import BaseModel
 from agent import abuse, action_gate, call_end, slot_grouping, topic_flow
 from agent import ws_guard  # limits and validation for what a client may send (review 2026-10-28)
 from agent import head_pain  # "mathar betha": a headache is asked about once (hurt or only a headache) before a department is named
+from agent import where_doctor_sits  # which floor / room a doctor sits in: the counter tells
 from agent import entity_confirmation as entity_text
 from agent import history_templates as history_text
 from agent import messages as agent_messages
@@ -6025,6 +6026,9 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if session.booking is None and await _answer_test_overview(session, text, lang):
             return
         if session.booking is None and await _answer_body_imaging(session, text, lang):
+            return
+        if where_doctor_sits.asks_floor(text) and not _booking_open(session):  # owner, 2026-10-29: which floor does the doctor sit on -> the counter tells
+            await _speak(session, where_doctor_sits.reply(lang), lang)
             return
         if session.booking is None and await _head_pain_turn(session, text, lang):
             return
