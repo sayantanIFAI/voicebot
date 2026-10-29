@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import difflib
 import re
 import dataclasses
 import shutil
@@ -271,6 +272,8 @@ from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent import tools_client  # noqa: E402  (API_STATS: the clinic-API calls of a turn)
 from agent import human_request  # noqa: E402  (a request for a person / staff / a complaint)
 from agent import doctor_origin  # noqa: E402  (is the doctor from Kolkata?)
+from agent import name_script  # noqa: E402
+from agent.name_script import name_skeleton  # noqa: E402
 from agent import dept_talk  # noqa: E402  (talking about a department's doctors: exists / names / good / when / origin / a garbled first name)
 from agent.tts import FIGURE_SPEECH_SPEED, TTSClient, UnspeakableTextError
 from agent.tts_router import TTSRouter
@@ -2199,6 +2202,19 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
         and not (_fast_path is not None and _fast_path.named_tests(text, text_lang))
     ):
         _qdoc = _strict_enquiry_doctor(session, text, lang)
+        _unk = None if _qdoc else dept_talk.unknown_doctor_name(text)
+        if _unk:
+            logger.info("[%s] a sitting question about a doctor not on our list (%r) -- answered by rule", session.call_id, _unk)
+            return {
+                "intent": "doctor_availability",
+                "slots": {k: (_unk if k == "doctor_name" else None) for k in (
+                    "test_name", "test_names", "doctor_name", "date", "time_slot", "new_date", "new_time_slot", "confirmation_id",
+                    "patient_name", "patient_age", "phone", "contact_phone", "relationship", "spelled_letters", "symptom_description", "faq_topic")},
+                "direct_reply_bn": None,
+                "secondary_intent": None,
+                "secondary_slots": None,
+                "unknown_doctor": _unk,
+            }
         if _qdoc:
             logger.info("[%s] sitting question read by rule -- no model call", session.call_id)
             _said = booking_capture.read_when(text, False, want_day=True).date
@@ -6052,6 +6068,15 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     slots = data["slots"]
     _turn_text.set(text)  # the caller's own wording, for answers that need it (agent replies that frame who was meant)
     _doctor_from_context.set(bool(data.get("from_context")))
+    # Owner, 2026-10-29: "আজ ডাক্তার ডন মাহমুদ চেম্বারে বসছে?" -- a name that is not one of our doctors is answered "no doctor by that name sits at Sonoscan", not "which doctor?" (checked against the clinic first)
+    if data.get("unknown_doctor") and _tools is not None:
+        try:
+            _chk = await _tools.get_doctor_availability(data["unknown_doctor"], None)
+        except ToolCallError:
+            _chk = {"found": True}  # cannot tell: leave it to the ordinary path
+        if not _chk.get("found") and not _chk.get("ambiguous"):
+            await _speak(session, dept_talk.no_such_doctor(name_script.clean_query(data["unknown_doctor"], lang), lang), lang)
+            return
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
@@ -8285,9 +8310,22 @@ def _set_dept_state(session: CallSession, dept: str, infos: list[dict], lang: st
     }
 
 
+def _close_pair(text: str, close: list[dict]) -> bool:
+    """True when the second doctor sounds almost as much like the sentence as the first (within 0.08): both are offered."""
+    toks = [t for t in dept_talk._tokens(text) if t not in dept_talk._TITLES]  # noqa: SLF001
+    windows = [name_skeleton("".join(toks[i : i + n])) for n in (1, 2, 3) for i in range(len(toks) - n + 1)]
+
+    def best(info: dict) -> float:
+        parts = [p for p in (info.get("full_name_bn") or "").split()]
+        c = name_skeleton("".join(parts[:-1])) if len(parts) >= 2 else ""
+        return max((difflib.SequenceMatcher(None, w, c).ratio() for w in windows if w), default=0.0) if c else 0.0
+
+    return len(close) > 1 and abs(best(close[0]) - best(close[1])) < 0.08
+
+
 async def _weekly_lines(infos: list[dict], lang: str) -> list[str]:
     """Each doctor's sitting days and hours, from the clinic's schedule table (the weekly pattern, never a date)."""
-    async def one(info: dict) -> str | None:
+    async def one(info: dict):
         try:
             wd = await _tools.doctor_weekdays(info.get("full_name") or info.get("name"))
         except ToolCallError:
@@ -8295,10 +8333,20 @@ async def _weekly_lines(infos: list[dict], lang: str) -> list[str]:
         if not wd.get("found") or not wd.get("weekdays"):
             return None
         hours = set((wd.get("hours") or {}).values())
-        return doctor_enquiry_cues.weekdays_reply(dept_talk.spoken_name(info, lang), list(wd["weekdays"]), next(iter(hours)) if len(hours) == 1 else None, lang)
+        return dept_talk.spoken_name(info, lang), list(wd["weekdays"]), (next(iter(hours)) if len(hours) == 1 else None)
 
-    got = await asyncio.gather(*[one(i) for i in infos])
-    return [g for g in got if g]
+    got = [g for g in await asyncio.gather(*[one(i) for i in infos]) if g]
+    # doctors who sit on the same days at the same hours are said together ("ডাঃ A এবং ডাঃ B সোম বুধ শুক্র বারে সকাল দশটা থেকে দুপুর বারোটা পর্যন্ত বসেন।")
+    groups: dict[tuple, list[str]] = {}
+    for name, days, hours in got:
+        groups.setdefault((tuple(days), hours), []).append(name)
+    lines = []
+    for (days, hours), who in groups.items():
+        line = doctor_enquiry_cues.weekdays_reply(dept_talk._join(who, lang), list(days), None, lang)  # noqa: SLF001
+        if hours:
+            line = line.rstrip("।. ") + {"bn": ", ", "hi": ", ", "en": ", "}[lang if lang in ("bn", "hi") else "en"] + dept_talk.hours_words(hours, lang) + ("।" if lang in ("bn", "hi") else ".")
+        lines.append(line)
+    return lines
 
 
 async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
@@ -8307,6 +8355,21 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     languages; the department stays the subject. Nothing here is a guess about a person: the doctors are the clinic's own rows, and a name is matched only among the department's doctors."""
     if _fast_path is None or _tools is None or _booking_open(session) or len(text.split()) > 16:
         return False
+    # the answer to "are you asking about Dr. X?" asked a moment ago
+    chk = getattr(session, "doctor_check", None)
+    if chk and session.turn_count - chk["turn"] <= 2:
+        session.doctor_check = None
+        answer = booking_capture.confirm_answer(text, lang)
+        if answer == "yes":
+            info = chk["info"]
+            session.last_doctor_enquiry = {"doctor_name": info.get("name"), "date": None, "turn": session.turn_count}
+            lines = await _weekly_lines([info], lang)
+            say = " ".join(lines + [dept_talk.ask_which(lang, 1)]) if lines else dept_talk.ask_which(lang, 1)
+            await _speak(session, say, lang)
+            return True
+        if answer == "no":
+            await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
+            return True
     mention = dept_talk.dept_in_text(text)
     if mention:
         session.dept_topic = mention  # named by the caller: this is the subject until another department is named
@@ -8329,7 +8392,11 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
         return True
     # are these doctors from Kolkata?  -> each of the department's doctors
     if asks_origin and not _text_names_a_doctor(text, lang):
-        say = dept_talk.origin_reply([(n, i.get("from_kolkata") or "") for n, i in zip(names, infos)], lang)
+        values = [(i.get("from_kolkata") or "").strip().lower() for i in infos]
+        if values and all(v == "yes" for v in values):
+            say = dept_talk.origin_all_yes(_dept_possessive(label, lang), label, lang)
+        else:
+            say = dept_talk.origin_reply([(n, i.get("from_kolkata") or "") for n, i in zip(names, infos)], lang)
         _set_dept_state(session, topic, infos, lang, say)
         await _speak(session, say, lang)
         return True
@@ -8349,11 +8416,14 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
             return True
     # a first name said in a garbled way, among the department's own doctors  -> only that doctor's name
     if not (asks_names or asks_good or asks_when or asks_origin) and len(text.split()) <= 8 and not mention:
-        hit = dept_talk.match_doctor(text, infos)
-        if hit is not None:
-            session.last_doctor_enquiry = {"doctor_name": hit.get("name"), "date": None, "turn": session.turn_count}
-            session.dept_pending = None  # a doctor is now in mind; the next question is about him
-            await _speak(session, dept_talk.spoken_name(hit, lang) + ("।" if lang in ("bn", "hi") else "."), lang)
+        close = dept_talk.close_doctors(text, infos)
+        if close:
+            # Owner, 2026-10-29: "ও দিপ শুভজিৎ দিপ" -- a name said as the caller can: the doctor it sounds like is ASKED about ("আপনি কি ডাঃ শুভদীপ মন্ডলের কথা জিজ্ঞেস করছেন?"), never answered about unasked;
+            # two that sound alike are offered as "A, or B?"
+            first = dept_talk.spoken_name(close[0], lang)
+            say = dept_talk.confirm_either(first, dept_talk.spoken_name(close[1], lang), lang) if len(close) > 1 and dept_talk.close_doctors(text, [close[0], close[1]], floor=0.45) == close and _close_pair(text, close) else dept_talk.confirm_name(first, lang)
+            session.doctor_check = {"info": close[0], "turn": session.turn_count}
+            await _speak(session, say, lang)
             return True
     return False
 

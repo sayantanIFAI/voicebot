@@ -141,6 +141,58 @@ def match_doctor(text: str, infos: list[dict], floor: float = 0.62, margin: floa
     return scored[0][1]
 
 
+def close_doctors(text: str, infos: list[dict], floor: float = 0.45) -> list[dict]:
+    """The doctors whose given name the sentence sounds LIKE, best first (at most two): the looser tier of match_doctor, used only to ask "are you asking about Dr. X?" -- never to answer about him.
+    A garble such as "শুভজিৎ" sits between "শুভদীপ" and "শুভঙ্কর"; the caller is asked, with the better one first."""
+    toks = [t for t in _tokens(text) if t not in _TITLES]
+    if not toks or not infos:
+        return []
+    windows = [name_skeleton("".join(toks[i : i + n])) for n in (1, 2, 3) for i in range(len(toks) - n + 1)]
+    scored = []
+    for info in infos:
+        cands = set()
+        for key in ("full_name_bn", "full_name_hi"):
+            parts = [p for p in (info.get(key) or "").replace(".", " ").split() if p.lower() not in _TITLES]
+            if len(parts) >= 2:
+                cands.add(name_skeleton("".join(parts[:-1])))
+        cands = {c for c in cands if len(c) >= 3 and not c.isascii()}
+        best = max((difflib.SequenceMatcher(None, w, c).ratio() for w in windows for c in cands if w and len(w) >= 3), default=0.0)
+        if best >= floor:
+            scored.append((best, info))
+    scored.sort(key=lambda x: -x[0])
+    return [i for _s, i in scored[:2]]
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------- a doctor that is not ours
+_TITLE_WORDS = frozenset("ডাক্তার ডাক্তারের ডক্টর ডাঃ ডা डॉक्टर डॉ डॉक्टर्".split()) | {"doctor", "dr", "dr."}
+_NAME_END = re.compile(r"চে[মন]্?[বদ]ার|চেম্বার|চেন্বার|বসে|বসেন|বসছ|বসবে|আসেন|আছেন|আছে|আজ|কাল|এখন|कब|आज|कल|अभी|बैठ|चेंबर|क्लिनिक|ক্লিনিক|\b(?:sits?|sitting|chamber|today|available|is|at)\b", re.I)
+_NAME_STOP = frozenset("কি কী যে এক একটা ও তো না আর এই ওই সেই কোনো हैं है क्या और ये वो a an the any".split())
+
+
+def unknown_doctor_name(text: str) -> str | None:
+    """"বলছি কি আজ ডাক্তার ধন বাবু চেম্বারে বসছে?" -> "ধন বাবু": the name-like words right after a doctor title and before the sitting / chamber / today words (at most three), or None. Used only for a
+    short sitting question whose doctor is NOT one of ours: then it is answered "no doctor by that name sits here" instead of "which doctor?"."""
+    toks = _tokens(text)
+    for i, t in enumerate(toks):
+        if t in _TITLE_WORDS:
+            name = []
+            for u in toks[i + 1 : i + 5]:
+                if _NAME_END.search(u) or u in _NAME_STOP or u in _TITLE_WORDS:
+                    break
+                name.append(u)
+            if name:
+                return " ".join(name[:3])
+    return None
+
+
+def no_such_doctor(name: str, lang: str) -> str:
+    return {
+        "bn": f"দুঃখিত, '{name}' নামে কোনো ডাক্তার সোনোস্ক্যানে বসেন না।",
+        "hi": f"माफ़ कीजिए, '{name}' नाम के कोई डॉक्टर सोनोस्कैन में नहीं बैठते।",
+        "en": f"Sorry, no doctor by the name '{name}' sits at Sonoscan.",
+    }.get(lang, "")
+
+
 # ---------------------------------------------------------------------------------------------------------------------------------------------- sentences
 _COUNT = {
     "bn": {1: "একজন", 2: "দুইজন", 3: "তিনজন", 4: "চারজন", 5: "পাঁচজন", 6: "ছয়জন", 7: "সাতজন", 8: "আটজন", 9: "নয়জন", 10: "দশজন"},
@@ -191,6 +243,70 @@ def origin_reply(rows: list[tuple[str, str]], lang: str) -> str:
         return {"bn": "এই তথ্য আমার কাছে নেই। কাউন্টারে জিজ্ঞেস করতে পারেন।", "hi": "यह जानकारी मेरे पास नहीं है। काउंटर पर पूछ सकते हैं।", "en": "I do not have that information. You can ask at the counter."}.get(lang, "")
     end = "।" if lang in ("bn", "hi") else "."
     return ", ".join(parts) + end
+
+
+_BN_NUM = ["", "এক", "দুই", "তিন", "চার", "পাঁচ", "ছয়", "সাত", "আট", "নয়", "দশ", "এগারো", "বারো"]
+_HI_NUM = ["", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ", "दस", "ग्यारह", "बारह"]
+
+
+def _clock_words(hhmm: str, lang: str) -> str:
+    """"10:00" -> "সকাল দশটা" / "सुबह दस बजे" ; "17:30" -> "বিকেল সাড়ে পাঁচটা" ; the part of the day is said, and the time is words, never digits."""
+    try:
+        h, m = (int(x) for x in hhmm.split(":")[:2])
+    except ValueError:
+        return hhmm
+    part_bn = "সকাল" if h < 12 else "দুপুর" if h < 15 else "বিকেল" if h < 18 else "সন্ধ্যা" if h < 20 else "রাত"
+    part_hi = "सुबह" if h < 12 else "दोपहर" if h < 15 else "शाम" if h < 20 else "रात"
+    h12 = h % 12 or 12
+    if lang == "bn":
+        if m == 30:
+            return f"{part_bn} সাড়ে {_BN_NUM[h12]}টা"
+        if m == 0:
+            return f"{part_bn} {_BN_NUM[h12]}টা"
+        return f"{part_bn} {_BN_NUM[h12]}টা {m} মিনিট"
+    if lang == "hi":
+        if m == 30:
+            return f"{part_hi} साढ़े {_HI_NUM[h12]} बजे"
+        if m == 0:
+            return f"{part_hi} {_HI_NUM[h12]} बजे"
+        return f"{part_hi} {_HI_NUM[h12]} बजकर {m} मिनट"
+    return f"{h12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+
+
+def hours_words(hours: str, lang: str) -> str:
+    """"10:00-12:00" -> "সকাল দশটা থেকে দুপুর বারোটা পর্যন্ত"."""
+    a, _, b = (hours or "").partition("-")
+    if not b:
+        return hours or ""
+    return {
+        "bn": f"{_clock_words(a.strip(), 'bn')} থেকে {_clock_words(b.strip(), 'bn')} পর্যন্ত",
+        "hi": f"{_clock_words(a.strip(), 'hi')} से {_clock_words(b.strip(), 'hi')} तक",
+        "en": f"{_clock_words(a.strip(), 'en')} to {_clock_words(b.strip(), 'en')}",
+    }.get(lang, hours)
+
+
+def origin_all_yes(dept_possessive: str, dept_label: str, lang: str) -> str:
+    return {
+        "bn": f"হ্যাঁ, {dept_possessive} সব ডাক্তারই কলকাতার।",
+        "hi": f"जी हाँ, {dept_label} विभाग के सभी डॉक्टर कोलकाता से हैं।",
+        "en": f"Yes, all the {dept_label} doctors are from Kolkata.",
+    }.get(lang, "")
+
+
+def confirm_name(spoken: str, lang: str) -> str:
+    return {
+        "bn": f"আপনি কি {spoken}-এর কথা জিজ্ঞেস করছেন?",
+        "hi": f"क्या आप {spoken} के बारे में पूछ रहे हैं?",
+        "en": f"Are you asking about {spoken}?",
+    }.get(lang, "")
+
+
+def confirm_either(a: str, b: str, lang: str) -> str:
+    return {
+        "bn": f"আপনি কি {a}-এর কথা বলছেন, নাকি {b}-এর?",
+        "hi": f"क्या आप {a} के बारे में पूछ रहे हैं, या {b} के?",
+        "en": f"Are you asking about {a}, or {b}?",
+    }.get(lang, "")
 
 
 def all_are_good(lang: str) -> str:

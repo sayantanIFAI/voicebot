@@ -160,6 +160,7 @@ SITS_EVERY_DAY = ("Dr. S. Banerjee",)
 # 10:00-13:00 chamber has already closed when this is read, so a plain weekday schedule is exactly "from next week". Rows are only ADDED for a missing weekday.
 SITS_WEEKDAYS = {"Dr. Z. Haq": ((0, 1, 2, 3, 4), "10:00", "13:00")}
 # Spellings the recognisers write for a doctor that already exists: "জেড হাক" / "ज़ेड हाक" for Dr. Z. Haq (live replay, 2026-10-29). Added when missing; nothing is ever removed.
+ALL_FROM_KOLKATA = ("Orthopaedics",)
 EXTRA_ALIASES = {
     "Dr. Z. Haq": (["হাক", "জেড হাক", "জেড হক", "হাক সাহেব"], ["हाक", "जेड हाक", "जेड हक", "ज़ेड हक", "हॉक"]),
     # Owner, 2026-10-29: "Majumder" and "Majumdar" are the same name, said the same
@@ -254,6 +255,11 @@ def apply_extras(db: Session) -> dict:
         pick = "yes" if _rng.random() < 0.75 else "no"  # drawn for every doctor, so a doctor's value does not depend on who else has one
         if not (getattr(d, "from_kolkata", "") or "").strip():
             d.from_kolkata = pick
+            out["from_kolkata_set"] += 1
+    # Owner, 2026-10-29: every doctor of these departments is from Kolkata (set on every start; the other departments keep their own values)
+    for d in db.query(Doctor).all():
+        if d.department is not None and d.department.name in ALL_FROM_KOLKATA and (d.from_kolkata or "") != "yes":
+            d.from_kolkata = "yes"
             out["from_kolkata_set"] += 1
     db.commit()
     return out
