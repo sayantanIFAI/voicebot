@@ -66,6 +66,7 @@ an acoustic echo canceller with the played audio as a reference signal
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import difflib
 import re
@@ -498,6 +499,7 @@ _tts_router: TTSRouter | None = None
 _admission: AdmissionController | None = None
 _health: HealthMonitor | None = None
 _health_task: asyncio.Task | None = None
+_ingress_task: asyncio.Task | None = None
 _languages_active: tuple[str, ...] = ("bn",)
 
 
@@ -824,6 +826,8 @@ async def _startup():
     _health = HealthMonitor(_admission, probes)
     _health.probe_client = probe_client
     _health_task = asyncio.create_task(_health.run_forever())
+    global _ingress_task
+    _ingress_task = asyncio.create_task(_ingress_watch())
 
     # Pull bge-m3 into VRAM before the first caller needs it. Cold-loading
     # it inside a live turn measured past the client's patience AND past
@@ -865,6 +869,10 @@ async def _shutdown():
         _availability_task.cancel()
     if _answer_warm_task is not None:
         _answer_warm_task.cancel()
+    if _ingress_task:
+        _ingress_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _ingress_task
     if _health_task:
         _health_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -902,6 +910,7 @@ async def health():
         "languages_active": list(_languages_active),
         "lid_loaded": _lid is not None,
         "admission_open": bool(_admission and _admission.snapshot()["open"]),
+        "ingress": _ingress_snapshot(),
     }
 
 
@@ -1093,6 +1102,11 @@ class CallSession:
         self.processed_until_s = 0.0
         self.utt_seq = 0
         self.last_heartbeat = time.time()
+        # Ingress (blueprint 2026-10-29, section 4): the socket reader only counts and queues; a separate consumer feeds the audio path. Counters make a backlog visible.
+        self.audio_q: asyncio.Queue | None = None
+        self.rx_bytes = 0
+        self.consumed_bytes = 0
+        self.audio_overruns = 0
         self.audio = PcmCallBuffer()
         self.declared_rate: int | None = None
         if AEC_BARGE_IN:
@@ -6891,7 +6905,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             # key, or two different callers who both declined to give
             # a number would appear to conflict with EACH OTHER.
             if effective_phone(st) != "not_provided" and not st.slots.get("_conflict_checked"):
-                conflict = await _tools.booking_conflict(effective_phone(st), st.slots["date"], st.slots["time_slot"])
+                try:
+                    conflict = await _tools.booking_conflict(effective_phone(st), st.slots["date"], st.slots["time_slot"])
+                except ToolCallError as e:
+                    # Owner, 2026-10-29: the duplicate-booking check is a courtesy; when the clinic API is too slow to answer it the booking goes on (the hold and the confirm still check the slot)
+                    logger.warning("[%s] duplicate-booking check skipped: %s", session.call_id, e)
+                    conflict = {"conflict": False}
                 st.slots["_conflict_checked"] = "1"
                 if conflict.get("conflict"):
                     await _speak(session, conflict_reply(conflict["existing"], lang), lang)
@@ -7559,7 +7578,7 @@ async def _decide_turn(session: CallSession, tail, sr: int):
     ):
         completeness = session.spec_verdict
     decision = decide_turn_end(spans, duration_s, cfg, completeness=completeness, semantic=SEMANTIC_ENDPOINTING)
-    if decision.speculate and speech_end_abs is not None and session.spec_count < MAX_SPECULATIONS_PER_TURN:
+    if decision.speculate and speech_end_abs is not None and session.spec_count < MAX_SPECULATIONS_PER_TURN and not _busy_for_speculation():
         verdict = await _speculative_completeness(session, speech_end_abs)
         if verdict is not None:
             decision = decide_turn_end(spans, duration_s, cfg, completeness=verdict, semantic=True)
@@ -8836,6 +8855,9 @@ async def _turn_poll_loop(session: CallSession):
             await _resync_after_playback(session)
             continue
 
+        if _ingress_backlog_ms(session) > INGRESS_SETTLE_MS:
+            continue  # audio that came before any possible turn end is still queued: deciding now would read the silence of a stall
+
         sr = session.audio.sample_rate
         tail = session.audio.tail_tensor(session.processed_until_s)
         if tail.numel() < int(0.2 * sr):
@@ -8916,6 +8938,92 @@ async def _handle_control(session: CallSession, raw: str):
         await _interrupt_playback(session, "manual")
 
 
+# ---- ingress: the socket reader never waits for the audio path --------------------------------------------------------------------------------------------
+# Owner/blueprint 2026-10-29: at 30 calls the receive loop was blocked behind the greeting and then behind per-chunk echo/VAD work, so speech arrived late or was missed. The reader now only
+# counts bytes and puts them on a queue; one consumer task per call feeds session.append. A backlog is measured in audio milliseconds; past INGRESS_MAX_S the call is handed to a person
+# rather than silently losing speech. A turn is never finalised while frames before its boundary are still queued (see _turn_poll_loop).
+INGRESS_MAX_S = float(os.environ.get("INGRESS_MAX_S", "10"))
+INGRESS_SETTLE_MS = float(os.environ.get("INGRESS_SETTLE_MS", "60"))
+_INGRESS: dict[str, "CallSession"] = {}  # call_id -> session, for the /api/health counters
+
+
+def _ingress_backlog_ms(session: "CallSession") -> float:
+    """Audio received but not yet consumed, in milliseconds. 0 on the browser WebM path (compressed bytes carry no duration)."""
+    if not hasattr(session, "audio"):
+        return 0.0
+    rate = getattr(session, "declared_rate", None) or 16000
+    return max(0, session.rx_bytes - session.consumed_bytes) / (2.0 * rate / 1000.0)
+
+
+def _ingress_snapshot() -> dict:
+    sessions = list(_INGRESS.values())
+    backlog = [_ingress_backlog_ms(s) for s in sessions]
+    return {
+        "calls": len(sessions),
+        "max_backlog_ms": round(max(backlog), 1) if backlog else 0.0,
+        "total_overruns": sum(s.audio_overruns for s in sessions),
+        "event_loop_lag_ms_p95": round(sorted(_loop_lag_ms)[int(0.95 * (len(_loop_lag_ms) - 1))], 1) if _loop_lag_ms else 0.0,
+        "event_loop_lag_ms_max": round(max(_loop_lag_ms), 1) if _loop_lag_ms else 0.0,
+        "rx_bytes": sum(s.rx_bytes for s in sessions),
+        "consumed_bytes": sum(s.consumed_bytes for s in sessions),
+    }
+
+
+INGRESS_SHED_MS = float(os.environ.get("INGRESS_SHED_MS", "500"))  # a backlog above this for two seconds closes the door to NEW calls
+INGRESS_SHED_LAG_MS = float(os.environ.get("INGRESS_SHED_LAG_MS", "400"))  # so does an event loop that sleeps this much longer than asked
+SPECULATE_MAX_CALLS = int(os.environ.get("SPECULATE_MAX_CALLS", "10"))  # above this many live calls the extra "has the caller finished?" transcriptions are not made
+_loop_lag_ms: collections.deque = collections.deque(maxlen=60)
+
+
+def _busy_for_speculation() -> bool:
+    return bool(_admission is not None and _admission.active_calls > SPECULATE_MAX_CALLS)
+
+
+async def _ingress_watch() -> None:
+    """Load-based shedding (blueprint 2026-10-29, sections 2 and 4): once a second, look at how far behind the audio path is and how late the event loop wakes. When either stays bad for two
+    seconds the door closes to NEW calls (they go to a person at once); calls in progress carry on. It re-opens after five calm seconds."""
+    bad = good = 0
+    while True:
+        t0 = time.monotonic()
+        await asyncio.sleep(1.0)
+        lag_ms = max(0.0, (time.monotonic() - t0 - 1.0) * 1000.0)
+        _loop_lag_ms.append(lag_ms)
+        snap = _ingress_snapshot()
+        if snap["max_backlog_ms"] > INGRESS_SHED_MS or lag_ms > INGRESS_SHED_LAG_MS:
+            bad, good = bad + 1, 0
+        else:
+            good, bad = good + 1, 0
+        if _admission is not None:
+            if bad >= 2:
+                _admission.set_backend_health("ingress", False, f"backlog {snap['max_backlog_ms']} ms, loop lag {lag_ms:.0f} ms")
+            elif good >= 5:
+                _admission.set_backend_health("ingress", True)
+
+
+async def _audio_consumer(session: "CallSession") -> None:
+    """Feeds the queued audio to session.append, in order. Its own task, so a slow echo/VAD step delays only this call's processing, never the socket read."""
+    while True:
+        chunk = await session.audio_q.get()
+        try:
+            await session.append(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - one bad chunk must not end the call
+            logger.exception("[%s] audio consumer failed on a chunk", session.call_id)
+        finally:
+            session.consumed_bytes += len(chunk)
+
+
+async def _greet(session: "CallSession") -> None:
+    """The greeting, spoken in the background so incoming audio is read from the first byte."""
+    try:
+        await _speak(session, phrase("greeting", "bn"), "bn")
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception("[%s] greeting failed", session.call_id)
+
+
 @app.websocket("/ws/audio")
 async def ws_audio(ws: WebSocket):
     await ws.accept()
@@ -8936,7 +9044,11 @@ async def ws_audio(ws: WebSocket):
     await _refresh_messages()
     session.recorder = CallRecorder(session.call_id, _write_call_event)
     _rec(session, "start", "voice", disclosure_version_label())
+    session.audio_q = asyncio.Queue()
+    _INGRESS[session.call_id] = session
+    consumer_task = asyncio.create_task(_audio_consumer(session))
     poll_task = asyncio.create_task(_turn_poll_loop(session))
+    greeting_task = None
 
     try:
         if session.duplex is not None:
@@ -8944,7 +9056,7 @@ async def ws_audio(ws: WebSocket):
             # honour stop_playback: without this it mutes capture as before and
             # the canceller simply sees silence (safe, just no barge-in).
             await session.ws.send_text(json.dumps({"type": "config", "aec": True}))
-        await _speak(session, phrase("greeting", "bn"), "bn")
+        greeting_task = asyncio.create_task(_greet(session))  # in the background: the reader below starts at once
         limits = ws_guard.CallLimits(time.monotonic())
         while True:
             message = await ws.receive()
@@ -8952,7 +9064,15 @@ async def ws_audio(ws: WebSocket):
                 break
             if message.get("bytes") is not None:
                 limits.check_audio(len(message["bytes"]), time.monotonic())
-                await session.append(message["bytes"])
+                session.rx_bytes += len(message["bytes"])
+                session.audio_q.put_nowait(message["bytes"])
+                if _ingress_backlog_ms(session) > INGRESS_MAX_S * 1000.0:
+                    # the audio path cannot keep up: say so and hand the caller to a person, never silently lose speech
+                    session.audio_overruns += 1
+                    logger.error("[%s] audio_overrun: %.1f s of audio waiting -- handing the call to a person", session.call_id, _ingress_backlog_ms(session) / 1000.0)
+                    session.outcome = "audio_overrun"
+                    await _handoff_to_human(session, "audio_overrun")
+                    break
             elif message.get("text"):
                 limits.check_time(time.monotonic())
                 await _handle_control(session, message["text"])
@@ -8966,6 +9086,12 @@ async def ws_audio(ws: WebSocket):
         logger.exception("[%s] session crashed", session.call_id)
     finally:
         _admission.release(admission)  # the slot is free the moment the caller hangs up, not after the call record is written (that took seconds, and the next burst was refused for "capacity")
+        _INGRESS.pop(session.call_id, None)
+        for _t in (greeting_task, consumer_task):
+            if _t is not None:
+                _t.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await _t
         poll_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await poll_task

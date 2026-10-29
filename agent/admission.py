@@ -49,6 +49,7 @@ DEFAULT_MAX_CALLS = 28  # ADR section 5: AI cap 28-30 for the 30-call design poi
 DEFAULT_LATENCY_WINDOW = 30  # turns considered when judging p95
 DEFAULT_MIN_LATENCY_SAMPLES = 10  # too few samples -> do not shed on noise
 DEFAULT_BYPASS_FILE = "/workspace/.ai_bypass"
+DEFAULT_LATENCY_HORIZON_S = 90.0  # only turns this recent count towards latency_shed: with no new calls there are no new turns, and old slow ones must not keep the door shut
 
 
 @dataclasses.dataclass(frozen=True)
@@ -80,6 +81,7 @@ class AdmissionController:
         latency_shed_p95_s: float | None = None,
         latency_window: int = DEFAULT_LATENCY_WINDOW,
         min_latency_samples: int = DEFAULT_MIN_LATENCY_SAMPLES,
+        latency_horizon_s: float = DEFAULT_LATENCY_HORIZON_S,
         bypass_file: str | None = DEFAULT_BYPASS_FILE,
         clock: Callable[[], float] = time.monotonic,
     ):
@@ -88,6 +90,7 @@ class AdmissionController:
         self.max_calls = max_calls
         self.latency_shed_p95_s = latency_shed_p95_s
         self.min_latency_samples = min_latency_samples
+        self.latency_horizon_s = latency_horizon_s
         self.bypass_file = bypass_file
         self._clock = clock
 
@@ -95,6 +98,7 @@ class AdmissionController:
         self._next_ticket = 1
         self._active: set[int] = set()
         self._latencies: collections.deque[float] = collections.deque(maxlen=latency_window)
+        self._latency_times: collections.deque[float] = collections.deque(maxlen=latency_window)  # when each of the above was recorded
         self._bypass = False
         self._bypass_by: str | None = None
         self._down: dict[str, str] = {}
@@ -109,12 +113,11 @@ class AdmissionController:
             return "bypass"
         if self._down:
             return f"backend_down:{sorted(self._down)[0]}"
-        if (
-            self.latency_shed_p95_s is not None
-            and len(self._latencies) >= self.min_latency_samples
-            and _percentile(self._latencies, 0.95) > self.latency_shed_p95_s
-        ):
-            return "latency_shed"
+        if self.latency_shed_p95_s is not None:
+            now = self._clock()
+            recent = [v for v, t in zip(self._latencies, self._latency_times) if now - t <= self.latency_horizon_s]
+            if len(recent) >= self.min_latency_samples and _percentile(recent, 0.95) > self.latency_shed_p95_s:
+                return "latency_shed"
         return None
 
     def try_admit(self) -> Admission:
@@ -146,6 +149,7 @@ class AdmissionController:
         Feeds latency_shed."""
         with self._lock:
             self._latencies.append(float(seconds))
+            self._latency_times.append(self._clock())
 
     def set_backend_health(self, name: str, ok: bool, detail: str = "") -> None:
         with self._lock:

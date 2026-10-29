@@ -172,7 +172,7 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_doctor_availability({doctor_name!r}, {date!r}): {e}") from e
 
-    async def preload_availability(self, names: list[str], dates: list[str | None], concurrency: int = 8) -> int:
+    async def preload_availability(self, names: list[str], dates: list[str | None], concurrency: int = 3) -> int:
         """Fetch every (name, date) and keep it; returns how many were stored. A failed fetch keeps the older entry (it simply expires)."""
         cache = self.__dict__.setdefault("_availability", {})
         gate = asyncio.Semaphore(concurrency)
@@ -413,12 +413,19 @@ class ClinicToolsClient:
 
     async def booking_conflict(self, phone: str, date: str, time_slot: str) -> dict:
         params = {"phone": phone, "date": date, "time_slot": time_slot}
-        try:
-            r = await self._client.get("/api/v1/bookings/conflict", params=params)
-            r.raise_for_status()
-            return validated(ConflictAnswer, r.json(), "booking_conflict")
-        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
-            raise ToolCallError(f"booking_conflict({params!r}): {e}") from e
+        # A read: asking again is always safe. Owner, 2026-10-29 (a booking died at the phone number, "এই মুহূর্তে দেখতে পারছি না"): one read timeout on a busy moment must not end the booking.
+        for attempt in (1, 2):
+            try:
+                r = await self._client.get("/api/v1/bookings/conflict", params=params)
+                r.raise_for_status()
+                return validated(ConflictAnswer, r.json(), "booking_conflict")
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                if attempt == 2:
+                    raise ToolCallError(f"booking_conflict({params!r}): {type(e).__name__} {e}") from e
+                await asyncio.sleep(0.3)
+            except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+                raise ToolCallError(f"booking_conflict({params!r}): {type(e).__name__} {e}") from e
+        raise ToolCallError("booking_conflict: no answer")
 
     async def book_tests(
         self,
