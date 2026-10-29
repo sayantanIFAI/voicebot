@@ -67,13 +67,27 @@ async def _api_response_hook(response) -> None:
         API_STATS["ms"] += (time.perf_counter() - t0) * 1000
 
 
+class _ReadRetryingClient(httpx.AsyncClient):
+    """Owner, 2026-10-29: a read that timed out while the clinic API was busy (many calls at once) ended a booking with "I cannot look right now". Every GET here is a read -- asking again can never do harm --
+    so a timeout / refused connection / exhausted connection pool is asked ONCE more after a short pause, before the caller of the tool sees a failure. Writes (POST) never come through this path."""
+
+    _RETRY_ON = (httpx.TimeoutException, httpx.ConnectError)
+
+    async def get(self, *args, **kwargs):  # type: ignore[override]
+        try:
+            return await super().get(*args, **kwargs)
+        except self._RETRY_ON:
+            await asyncio.sleep(0.25)
+            return await super().get(*args, **kwargs)
+
+
 class ClinicToolsClient:
     def __init__(self, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S):
         self.base_url = base_url.rstrip("/")
         # The clinic API's service token (clinic-api/main.py), read from the environment, never logged.
         token = os.environ.get("CLINIC_API_TOKEN", "")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        self._client = httpx.AsyncClient(
+        self._client = _ReadRetryingClient(
             base_url=self.base_url, timeout=timeout_s, headers=headers, event_hooks={"request": [_api_request_hook], "response": [_api_response_hook]}
         )
 
@@ -152,7 +166,7 @@ class ClinicToolsClient:
     # Owner, 2026-10-29: "pre-load all the doctors' availability for today and tomorrow so that no database hit is needed". preload_availability() fills this for every doctor (by short and whole name) for
     # today, tomorrow and "next sitting" (no date), and is repeated in the background every few seconds (main._availability_preload_loop), so a turn finds its answer here. A name or date not in it (a spoken
     # variant, a later date) goes to the clinic API exactly as before. An entry older than AVAILABILITY_TTL_S is not used: today's answer changes as a chamber closes.
-    AVAILABILITY_TTL_S = float(os.environ.get("AVAILABILITY_TTL_S", "45"))
+    AVAILABILITY_TTL_S = float(os.environ.get("AVAILABILITY_TTL_S", "120"))  # 2026-10-29: was 45 s with a refresh every 20 s = ~27 clinic-API requests a second all day, the whole capacity of the API; see main.AVAILABILITY_PRELOAD_INTERVAL_S
 
     async def get_doctor_availability(self, doctor_name: str, date: str | None) -> dict:
         cache = self.__dict__.setdefault("_availability", {})
@@ -172,7 +186,7 @@ class ClinicToolsClient:
         except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
             raise ToolCallError(f"get_doctor_availability({doctor_name!r}, {date!r}): {e}") from e
 
-    async def preload_availability(self, names: list[str], dates: list[str | None], concurrency: int = 3) -> int:
+    async def preload_availability(self, names: list[str], dates: list[str | None], concurrency: int = 2) -> int:
         """Fetch every (name, date) and keep it; returns how many were stored. A failed fetch keeps the older entry (it simply expires)."""
         cache = self.__dict__.setdefault("_availability", {})
         gate = asyncio.Semaphore(concurrency)
@@ -188,6 +202,7 @@ class ClinicToolsClient:
                     return
                 cache[(name, date)] = (time.monotonic(), value)
                 stored += 1
+                await asyncio.sleep(0.03)  # background work leaves room for the callers' own lookups
 
         await asyncio.gather(*[one(n, d) for n in dict.fromkeys(names) for d in dates])
         return stored
@@ -413,19 +428,12 @@ class ClinicToolsClient:
 
     async def booking_conflict(self, phone: str, date: str, time_slot: str) -> dict:
         params = {"phone": phone, "date": date, "time_slot": time_slot}
-        # A read: asking again is always safe. Owner, 2026-10-29 (a booking died at the phone number, "এই মুহূর্তে দেখতে পারছি না"): one read timeout on a busy moment must not end the booking.
-        for attempt in (1, 2):
-            try:
-                r = await self._client.get("/api/v1/bookings/conflict", params=params)
-                r.raise_for_status()
-                return validated(ConflictAnswer, r.json(), "booking_conflict")
-            except (httpx.TimeoutException, httpx.ConnectError) as e:
-                if attempt == 2:
-                    raise ToolCallError(f"booking_conflict({params!r}): {type(e).__name__} {e}") from e
-                await asyncio.sleep(0.3)
-            except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
-                raise ToolCallError(f"booking_conflict({params!r}): {type(e).__name__} {e}") from e
-        raise ToolCallError("booking_conflict: no answer")
+        try:
+            r = await self._client.get("/api/v1/bookings/conflict", params=params)  # a timed-out read is asked once more by _ReadRetryingClient
+            r.raise_for_status()
+            return validated(ConflictAnswer, r.json(), "booking_conflict")
+        except (httpx.HTTPError, ValueError) as e:  # ValueError: not JSON, or not the expected shape
+            raise ToolCallError(f"booking_conflict({params!r}): {type(e).__name__} {e}") from e
 
     async def book_tests(
         self,

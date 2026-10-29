@@ -594,7 +594,7 @@ ANSWER_WARM_INTERVAL_S = float(os.environ.get("ANSWER_WARM_INTERVAL_S", "600"))
 _answers_warm: dict = {"rounds": 0, "pinned_clips": 0, "last_round_s": None, "last_error": None}
 
 
-AVAILABILITY_PRELOAD_INTERVAL_S = float(os.environ.get("AVAILABILITY_PRELOAD_INTERVAL_S", "20"))
+AVAILABILITY_PRELOAD_INTERVAL_S = float(os.environ.get("AVAILABILITY_PRELOAD_INTERVAL_S", "60"))
 
 
 async def _availability_preload_loop() -> None:
@@ -605,12 +605,18 @@ async def _availability_preload_loop() -> None:
         try:
             if _tools is not None:
                 cat = await _cached_catalogue()
-                names = []
+                shorts, fulls = [], []
                 for d in cat.get("doctors") or []:
-                    names += [n for n in (d.get("name"), d.get("full_name")) if n]
+                    if d.get("name"):
+                        shorts.append(d["name"])
+                    if d.get("full_name"):
+                        fulls.append(d["full_name"])
                 today = slot_proposal.clinic_now().date()
-                dates = [today.isoformat(), (today + datetime.timedelta(days=1)).isoformat(), None]
-                await _tools.preload_availability(names, dates)
+                two_days = [today.isoformat(), (today + datetime.timedelta(days=1)).isoformat()]
+                # Owner, 2026-10-29: the first version asked ~550 lookups every 20 s (27 a second: the clinic API's whole capacity) and starved the callers' own lookups. Now ~250 a minute:
+                # the whole name for today, tomorrow and "next sitting", the short name for today and tomorrow only.
+                await _tools.preload_availability(fulls, two_days + [None])
+                await _tools.preload_availability(shorts, two_days)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - advisory: a turn simply asks the clinic API
