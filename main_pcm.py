@@ -271,6 +271,7 @@ from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent import tools_client  # noqa: E402  (API_STATS: the clinic-API calls of a turn)
 from agent import human_request  # noqa: E402  (a request for a person / staff / a complaint)
 from agent import doctor_origin  # noqa: E402  (is the doctor from Kolkata?)
+from agent import dept_talk  # noqa: E402  (talking about a department's doctors: exists / names / good / when / origin / a garbled first name)
 from agent.tts import FIGURE_SPEECH_SPEED, TTSClient, UnspeakableTextError
 from agent.tts_router import TTSRouter
 from agent.turn_ack import AckTracker, thanks_for
@@ -5596,7 +5597,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # Real call 2026-10-14: "Would you like me to continue in English?" -- the caller said a clear "yes" and it
             # was logged "jumbled transcript (fragment)" and thrown away before the offer handler ever saw it. A bare
             # yes/no is the whole point of that question.
-            or session.awaiting_language_switch_offer,
+            or session.awaiting_language_switch_offer
+            # Owner, 2026-10-29: "ও দিপ শুভজিৎ দিপ" (a doctor's first name, said as the caller can) was thrown away as "repetitive"; while a department's doctors are the subject, a name is an answer
+            or getattr(session, "last_route", None) is not None
+            or getattr(session, "dept_pending", None) is not None,
         )  # KCD-104; "anything else?" -> a bare no: a bare yes or no to "shall I go back to it" is an answer
         if problem:
             logger.info("[%s] jumbled transcript (%s)", session.call_id, problem)
@@ -8208,6 +8212,9 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         logger.info("[%s] lost and found: routing to a person", session.call_id)
         await _handoff_to_human(session, "lost_and_found", (lang,))
         return True
+    # Owner, 2026-10-29: the department being discussed (exists? names? good? when? from Kolkata? a garbled first name) -- see _dept_talk_turn
+    if await _dept_talk_turn(session, text, lang):
+        return True
     # Owner, 2026-10-27: questions about the doctors JUST offered ("who is better among them, who sits in the morning") keep the offered doctors as the subject
     if await _answer_about_offered_doctors(session, text, lang):
         return True
@@ -8252,6 +8259,100 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
         logger.info("[%s] wrong number: one more chance", session.call_id)
         await _speak(session, phrase("unrelated_first", lang), lang)
     return True
+
+
+def _dept_infos(dept: str) -> list[dict]:
+    """The catalogue rows of a department's doctors, once each, in the clinic's order."""
+    if _fast_path is None:
+        return []
+    seen, out = set(), []
+    for info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
+        if info.get("department") == dept and id(info) not in seen:
+            seen.add(id(info))
+            out.append(info)
+    return out
+
+
+def _set_dept_state(session: CallSession, dept: str, infos: list[dict], lang: str, say: str = "") -> None:
+    """The department and its doctors stay the subject of the next sentences (names, good, when, origin, a first name, a choice) until another department or a doctor is named."""
+    names = [dept_talk.spoken_name(i, lang) for i in infos]
+    session.last_route = {"dept": dept, "names": names, "turn": session.turn_count}
+    session.dept_pending = {
+        "kind": "pick",
+        "doctors": [{"name": n, "full_name": i.get("full_name") or i.get("name"), "start": None, "end": None} for n, i in zip(names, infos)],
+        "date": None, "time": None, "turn": session.turn_count, "say": say,
+    }
+
+
+async def _weekly_lines(infos: list[dict], lang: str) -> list[str]:
+    """Each doctor's sitting days and hours, from the clinic's schedule table (the weekly pattern, never a date)."""
+    async def one(info: dict) -> str | None:
+        try:
+            wd = await _tools.doctor_weekdays(info.get("full_name") or info.get("name"))
+        except ToolCallError:
+            return None
+        if not wd.get("found") or not wd.get("weekdays"):
+            return None
+        hours = set((wd.get("hours") or {}).values())
+        return doctor_enquiry_cues.weekdays_reply(dept_talk.spoken_name(info, lang), list(wd["weekdays"]), next(iter(hours)) if len(hours) == 1 else None, lang)
+
+    got = await asyncio.gather(*[one(i) for i in infos])
+    return [g for g in got if g]
+
+
+async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29 (live call): "অর্থপেটি ডাক্তার ... কেন বসে" -> "হ্যাঁ, বসেন।"; "ডাক্তারের নাম কি আছে" -> the count and all the department's doctors; "কলকাতা ডাক্তার এদিকের মালদারে" -> each doctor's yes / no;
+    "ও ভালো কোনটা হবে কখন বসবে" -> all are good, every doctor's days and hours, who to book; a first name said as the caller can ("শুভজিৎ দিপ") -> the one doctor it sounds like. Every department, all three
+    languages; the department stays the subject. Nothing here is a guess about a person: the doctors are the clinic's own rows, and a name is matched only among the department's doctors."""
+    if _fast_path is None or _tools is None or _booking_open(session) or len(text.split()) > 16:
+        return False
+    mention = dept_talk.dept_in_text(text)
+    topic = mention or (getattr(session, "last_route", None) or {}).get("dept")
+    if not topic:
+        return False
+    infos = _dept_infos(topic)
+    if not infos:
+        return False
+    label = _dept_label(topic, lang)
+    names = [dept_talk.spoken_name(i, lang) for i in infos]
+    asks_names, asks_good, asks_when, asks_origin = dept_talk.asks_names(text), dept_talk.asks_good(text), dept_talk.asks_when(text), dept_talk.asks_origin(text)
+    doctor_in_mind = booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)
+
+    # does a <department> doctor sit here?  -> "yes, they sit." and nothing else
+    if mention and dept_talk.yes_no_existence(text) and not asks_names:
+        say = dept_talk.yes_sits(lang)
+        _set_dept_state(session, topic, infos, lang, say)
+        await _speak(session, say, lang)
+        return True
+    # are these doctors from Kolkata?  -> each of the department's doctors
+    if asks_origin and not _text_names_a_doctor(text, lang):
+        say = dept_talk.origin_reply([(n, i.get("from_kolkata") or "") for n, i in zip(names, infos)], lang)
+        _set_dept_state(session, topic, infos, lang, say)
+        await _speak(session, say, lang)
+        return True
+    # what are the doctors' names?  -> the count first, then every name
+    if asks_names and not asks_when and not asks_good:
+        say = dept_talk.names_reply(label, _dept_possessive(label, lang), names, lang)
+        _set_dept_state(session, topic, infos, lang, say)
+        await _speak(session, say, lang)
+        return True
+    # who is good / when do they sit  -> all are good; every doctor's days and hours; who to book
+    if (asks_good and asks_when) or (asks_when and not doctor_in_mind and not _text_names_a_doctor(text, lang) and len(text.split()) <= 8 and (mention is None)):
+        lines = await _weekly_lines(infos, lang)
+        if lines:
+            say = " ".join(([dept_talk.all_are_good(lang)] if asks_good else []) + lines + [dept_talk.ask_which(lang, len(lines))])
+            _set_dept_state(session, topic, infos, lang, say)
+            await _speak(session, say, lang)
+            return True
+    # a first name said in a garbled way, among the department's own doctors  -> only that doctor's name
+    if not (asks_names or asks_good or asks_when or asks_origin) and len(text.split()) <= 8 and not mention:
+        hit = dept_talk.match_doctor(text, infos)
+        if hit is not None:
+            session.last_doctor_enquiry = {"doctor_name": hit.get("name"), "date": None, "turn": session.turn_count}
+            session.dept_pending = None  # a doctor is now in mind; the next question is about him
+            await _speak(session, dept_talk.spoken_name(hit, lang) + ("।" if lang in ("bn", "hi") else "."), lang)
+            return True
+    return False
 
 
 async def _answer_about_offered_doctors(session: CallSession, text: str, lang: str) -> bool:
