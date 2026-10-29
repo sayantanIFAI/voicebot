@@ -86,7 +86,7 @@ _ORIGIN_Q = re.compile(r"মালদা|বাইরের|বাইরে|অ�
 def yes_no_existence(text: str) -> bool:
     """"Does a <department> doctor sit here?" -- a sitting / being-there word, a question particle, and none of who / when / which / name."""
     t = unicodedata.normalize("NFC", text or "")
-    return len(t.split()) <= 12 and bool(_SIT.search(t)) and bool(_YESNO.search(t)) and not _WHO_WHEN_NAME.search(t)
+    return len(t.split()) <= 30 and bool(_SIT.search(t)) and bool(_YESNO.search(t)) and not _WHO_WHEN_NAME.search(t)
 
 
 def asks_names(text: str) -> bool:

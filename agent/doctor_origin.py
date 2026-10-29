@@ -21,7 +21,7 @@ _DOCTOR_WORD = re.compile(r"ডাক্তার|ডক্টর|ডাঃ|উ�
 def asks_doctor_origin(text: str, has_context: bool = False) -> bool:
     """`has_context`: a doctor (or a department's doctors) is the subject of the conversation -- then a Kolkata word alone is the question, whatever else the recogniser made of the sentence."""
     t = unicodedata.normalize("NFC", text or "").strip()
-    if not t or len(t.split()) > 14 or _NOT_ABOUT_DOCTOR.search(t):
+    if not t or len(t.split()) > 30 or _NOT_ABOUT_DOCTOR.search(t):
         return False
     hit = _BN_Q.search(t) or _HI_Q.search(t) or _EN_Q.search(t)
     if not hit:
