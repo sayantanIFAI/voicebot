@@ -169,7 +169,7 @@ def close_doctors(text: str, infos: list[dict], floor: float = 0.55) -> list[dic
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------- a doctor that is not ours
 _TITLE_WORDS = frozenset("ডাক্তার ডাক্তারের ডক্টর ডাঃ ডা डॉक्टर डॉ डॉक्टर्".split()) | {"doctor", "dr", "dr."}
-_NAME_END = re.compile(r"চে[মন]্?[বদ]ার|চেম্বার|চেন্বার|বসে|বসেন|বসছ|বসবে|আসেন|আছেন|আছে|আজ|কাল|এখন|कब|आज|कल|अभी|बैठ|चेंबर|क्लिनिक|ক্লিনিক|\b(?:sits?|sitting|chamber|today|available|is|at)\b", re.I)
+_NAME_END = re.compile(r"কখন|কবে|চে[মন]্?[বদ]ার|চেম্বার|চেন্বার|বসে|বসেন|বসছ|বসবে|আসেন|আছেন|আছে|আজ|কাল|এখন|कब|आज|कल|अभी|बैठ|चेंबर|क्लिनिक|ক্লিনিক|\b(?:sits?|sitting|chamber|today|available|is|at)\b", re.I)
 _NAME_STOP = frozenset("কি কী যে এক একটা ও তো না আর এই ওই সেই কোনো हैं है क्या और ये वो a an the any".split())
 
 
@@ -180,9 +180,13 @@ def unknown_doctor_name(text: str) -> str | None:
     for i, t in enumerate(toks):
         if t in _TITLE_WORDS:
             name = []
-            for u in toks[i + 1 : i + 5]:
-                if _NAME_END.search(u) or u in _NAME_STOP or u in _TITLE_WORDS:
+            for u in toks[i + 1 : i + 6]:
+                if _NAME_END.search(u) or u in _TITLE_WORDS:
                     break
+                if u in _NAME_STOP:
+                    if name:
+                        break
+                    continue  # a filler right after the title ("ডাক্তার যে ঠাকুর") is skipped, not the end of the name
                 name.append(u)
             if name:
                 return " ".join(name[:3])
