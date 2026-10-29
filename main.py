@@ -3856,7 +3856,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                     return True
             return False
         if pend["kind"] == "confirm_one":
-            if booking_capture.confirm_answer(text, lang) == "yes":
+            if booking_capture.confirm_answer(text, lang) == "yes" or booking_carryover.commits_to_booking(text):  # owner, 2026-10-29: "একটা নাম লেখা যাবে" IS the yes
                 item = pend["doctor"]
                 session.last_doctor_enquiry = {
                     "doctor_name": _resolve_doctor_for_booking(item), "date": pend["date"],
@@ -4491,6 +4491,9 @@ async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool
     if _names_a_test(text, lang):
         return False
     booking = session.booking
+    _offer = getattr(session, "dept_pending", None)
+    if booking is None and _offer and _offer.get("kind") == "confirm_one" and session.turn_count - _offer.get("turn", -99) <= 3:
+        return False  # the doctor and the day were JUST offered: "write my name" is the yes (see _dept_search_turn), not a new question
     # Owner, 2026-10-27: "দাঁতে ব্যথা করছে একটা ডাক্তার দেখাবো নাম লেখান" -- a symptom beside the request to write a name. The doctors of that department (and who sits next) are the answer; "which doctor?"
     # makes the caller say the symptom again.
     if booking is None and _tools is not None and off_topic.has_health_word(text):
