@@ -6223,6 +6223,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _speak(session, where_doctor_sits.reply(lang), lang)
             return
         _update_doctor_subject(session, text, lang)
+        if session.booking is None and await _doctor_check_turn(session, text, lang):
+            return
         if session.booking is None and await _doctor_facts_turn(session, text, lang):
             return
         if session.booking is None and await _doctor_when_turn(session, text, lang):
@@ -8706,6 +8708,34 @@ async def _doctor_when_turn(session: CallSession, text: str, lang: str) -> bool:
     session.dept_pending = None  # the department's open "which of them?" question is no longer the point
     session.doctor_q_date = when
     await _speak(session, _with_resume(session, reply, lang), lang)
+    return True
+
+
+async def _doctor_check_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-30. The agent asked "আপনি কি ডাঃ শুভঙ্কর নন্দী-এর কথা জিজ্ঞেস করছেন?" and the caller answers with a yes AND the question itself: "হ্যাঁ হ্যাঁ ও কাল বসবে". The yes confirms the doctor,
+    the rest is the question about HIM (does he sit tomorrow?) -- answered from his schedule, never sent to the model (which took it for a lab-test price question). A bare yes / no is still read
+    by _dept_talk_turn, and a "no" is left to it."""
+    chk = getattr(session, "doctor_check", None)
+    if not chk or session.turn_count - chk["turn"] > 2 or _fast_path is None:
+        return False
+    words = [w.strip(".,?!।") for w in (text or "").split() if w.strip(".,?!।")]
+    if len(words) < 3:
+        return False
+    lead = 2 if booking_capture.confirm_answer(" ".join(words[:2]), lang) == "yes" else (1 if booking_capture.confirm_answer(words[0], lang) == "yes" else 0)
+    if not lead:
+        return False
+    info = chk["info"]
+    session.doctor_check = None
+    session.subject_doctor = info.get("name")
+    session.last_doctor_enquiry = {"doctor_name": info.get("name"), "date": None, "turn": session.turn_count}
+    rest = " ".join(words[lead:])
+    if rest and await _doctor_when_turn(session, rest, lang):
+        return True
+    if rest and (doctor_facts.asks_speciality(rest) or doctor_facts.mentions_fee(rest)):
+        return await _doctor_facts_turn(session, rest, lang)
+    lines = await _weekly_lines([info], lang)
+    say = " ".join(lines + [dept_talk.ask_which(lang, 1)]) if lines else dept_talk.ask_which(lang, 1)
+    await _speak(session, _with_resume(session, say, lang), lang)
     return True
 
 
