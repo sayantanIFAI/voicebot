@@ -4371,15 +4371,24 @@ async def _check_address_answer(session: CallSession, text: str) -> None:
     except ToolCallError as e:
         logger.warning("[%s] address lookup failed (%s)", session.call_id, e)
         return
-    if not found.get("matched") or found.get("exact"):
+    if not found.get("matched"):
         return
-    # only a district or a police station is suggested for a sound-alike: a house-level place name sounds like half the words in the language, and a wrong "did you say ...?" is noise
+    # only a district or a police station is suggested/accepted here: a house-level place name sounds like half the words in the language, and a wrong "did you say ...?" (or a
+    # wrong auto-accept) is noise. A smaller, unmatched place still falls through to the ordinary police-station question below, unchanged.
     top = next((c for c in found.get("candidates") or [] if c.get("kind") in ("district", "police_station") and c.get("score", 0) >= 0.55), None)
     if top is None:
         return
     spoken = top.get(f"name_{session.lang}") or ""
     if not re.search(r"[ঀ-৿ऀ-ॿ]", spoken):
         return  # a Bengali / Hindi voice cannot say Latin letters: no suggestion rather than a blocked reply
+    if found.get("exact"):
+        # Real call, 2026-10-29: a caller naming a real district or police station BY ITS WRITTEN FORM had the ordinary
+        # "which police station?" question asked of them anyway (agent/booking_capture._lacks_police_station has no
+        # idea the geo tables already confirmed a real place) -- stalled a real booking for several turns. An exact,
+        # written-form match is address enough on its own, same discipline CLAUDE.md already applies to a doctor name.
+        # Read and cleared by agent/booking_capture._detail_turn, same hint-handoff pattern as `_addr_suggest` below.
+        st.slots["_addr_exact"] = spoken
+        return
     st.slots["_addr_suggest"] = spoken
 
 

@@ -1155,6 +1155,14 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
     after asking the police station when the caller did not give one. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
     pend_key, done_key = f"_{tag}_pending", f"_{tag}_done"
     if tag == "address":
+        # Real call, 2026-10-29: a written-form (exact) match against the geo tables is address enough on its own --
+        # see main.py._check_address_answer's own comment. Checked before the sound-alike/police-station logic below
+        # so an exact district or station name is never also walked into the "which police station?" question.
+        exact = st.slots.pop("_addr_exact", None)
+        if exact and field in st.asked_fields and not st.slots.get(field) and not st.slots.get(done_key) and not st.slots.get("_ps_pending"):
+            st.slots[done_key] = "1"
+            plan.slots, plan.skip_model = {field: exact}, True
+            return True
         # Owner, 2026-10-27: "বালদা" for "মালদা". main.py looked the short answer up in the West Bengal place tables (hint `_addr_suggest`): when it is only a sound-alike of a known place, the
         # caller is asked "did you say <place>?" and the yes / no decides. A written-form (exact) match asks nothing.
         confirm = st.slots.get("_addr_confirm")
@@ -1164,7 +1172,13 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
             st.slots.pop("_addr_confirm", None)
             answer = confirm_answer(text, lang)
             if answer == "yes":
-                text = suggested
+                # Real call, 2026-10-29: a caller who confirms "did you say Paschim Medinipur?" has given a complete,
+                # recognised district -- demanding a specific police station on top of that (the branch below always
+                # did, for ANY address lacking a station word) stalled a real booking for several turns until the
+                # caller gave up. A district or station the geo tables already confirmed is address enough on its own.
+                st.slots[done_key] = "1"
+                plan.slots, plan.skip_model = {field: suggested}, True
+                return True
             elif answer == "no":
                 text = orig
         elif suggestion and field in st.asked_fields and not st.slots.get(field) and not st.slots.get(done_key) and not st.slots.get("_ps_pending"):
