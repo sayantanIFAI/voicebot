@@ -37,6 +37,9 @@ def main(argv=None) -> int:
         print("the target is not PostgreSQL")
         return 2
     if args.replace:
+        with dst.begin() as d:  # a view (booking_log) that reads the tables stops PostgreSQL dropping them; the API recreates it at start-up
+            for (view,) in d.execute(text("select viewname from pg_views where schemaname = 'public'")).fetchall():
+                d.execute(text(f'DROP VIEW IF EXISTS "{view}" CASCADE'))
         Base.metadata.drop_all(dst)
     Base.metadata.create_all(dst)
 
