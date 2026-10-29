@@ -4618,7 +4618,7 @@ async def _speak_next_serial(session: CallSession, name: str, day: str, lang: st
     doctor = _bare_doctor_name(r.get(key) or r.get("doctor_name") or name)
     session.last_doctor_enquiry = {"doctor_name": r.get("doctor_name") or name, "date": r.get("date"), "turn": session.turn_count}
     if r.get("available") and r.get("next_serial") is not None:
-        spoken = visit_cues.next_serial_reply(doctor, int(r["next_serial"]), day, lang)
+        spoken = visit_cues.next_serial_reply(doctor, int(r["next_serial"]), day, lang, chamber_hours=r.get("chamber_hours"))
     else:
         nxt = r.get("next_available_date")
         spoken = visit_cues.next_serial_not_sitting_reply(doctor, day, slot_proposal.when_phrase(nxt, lang) if nxt else None, lang)

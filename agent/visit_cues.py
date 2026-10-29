@@ -238,12 +238,14 @@ def visit_age_answer(text: str, yes_no: str | None) -> str | None:
 
 
 # ======================================================================================================================= 3. next serial
-_SERIAL_WORDS = ("serial", "sirial", "seriyal", "sireal", "siriyal", "serail", "sirial", "token", "টোকেন", "সিরিয়াল", "সিরিয়েল", "সিরিয়াল", "सीरियल", "सिरियल", "सीरीयल", "टोकन", "टोकेन", "number", "নম্বর", "नंबर", "নাম্বার", "नम्बर", "no.")
+_SERIAL_WORDS = ("serial", "sirial", "seriyal", "sireal", "siriyal", "serail", "sirial", "token", "tokhen", "tokan", "turn", "tern", "টোকেন", "সিরিয়াল", "সিরিয়েল", "সিরিয়াল", "টার্ন", "सीरियल", "सिरियल", "सीरीयल", "टोकन", "टोकेन", "टर्न", "number", "নম্বর", "नंबर", "নাম্বার", "नम्बर", "no.")
 _REAL_SERIAL_WORDS = _SERIAL_WORDS[:-6]  # "number" alone is not a serial
 _BOOK_LATIN = ("book", "booking", "buk", "bukking", "register", "naam", "nam lekh", "likhi", "likhale", "likhaye", "likhwa", "korle", "kore", "korbo", "korley", "karun", "karu", "karoon", "karun to", "karwa", "karaun", "karaoon", "karte", "karne", "nile", "nei", "nebo", "nibo", "dile", "dilei", "dilam", "karenge", "karoge", "karun")  # fmt: skip
 _BOOK_SCRIPT = ("বুক", "বুকিং", "করলে", "করি", "নিলে", "নাম লেখ", "লেখালে", "করব", "করবো", "করালে", "बुक", "बुकिंग", "कराऊं", "कराऊँ", "करूं", "करूँ", "करवाऊं", "करवाऊँ", "कराएं", "करेंगे", "करूंगा", "नाम लिखा", "कराने", "कराओ", "करो")  # fmt: skip
-_WHAT_WILL_LATIN = ("koto", "kto", "kotto", "konta", "kon ", "kotoh", "kitna", "kitne", "kaunsa", "kaun sa", "kya", "kya milega", "milega", "milegi", "hoga", "hogi", "hobe", "pabo", "pabe", "pai", "will be", "would be", "will i get", "would i get", "what will", "which number", "what number", "what would", "what is the serial if", "how many", "number kya", "kon number", "konnumber")  # fmt: skip
-_WHAT_WILL_SCRIPT = ("কত", "কতো", "কত নম্বর", "কোন নম্বর", "কোনটা", "হবে", "পাব", "পাবো", "পাই", "कितना", "कितने", "कौन सा", "कौनसा", "क्या", "क्या मिलेगा", "मिलेगा", "मिलेगी", "होगा", "होगी", "कौन सा नंबर")  # fmt: skip
+# "when" words added alongside the existing "how much/which" ones (owner, 2026-10-29): a less-educated caller asks "akhun book korle KOKHUN pabo"
+# (WHEN will I get it), "mera number KAB aayega" (WHEN will my number come) -- not just "how many/which" -- and the old lists had no "when" word at all.
+_WHAT_WILL_LATIN = ("koto", "kto", "kotto", "konta", "kon ", "kotoh", "kitna", "kitne", "kaunsa", "kaun sa", "kya", "kya milega", "milega", "milegi", "hoga", "hogi", "hobe", "pabo", "pabe", "pai", "paoa", "ashbe", "asbe", "aye", "aschhe", "cholche", "cholse", "aayega", "aayegi", "aaega", "aaegi", "aa jayega", "milna", "milega kab", "will be", "would be", "will i get", "would i get", "when will", "when will i get", "when will my", "when will my number", "when will my turn", "when is my turn", "what will", "which number", "what number", "what time", "what would", "what is the serial if", "how many", "how long", "how much wait", "number kya", "kon number", "konnumber", "kokhun", "kokhon", "kobe", "kobay", "kab", "kabtak", "kab tak")  # fmt: skip
+_WHAT_WILL_SCRIPT = ("কত", "কতো", "কত নম্বর", "কোন নম্বর", "কোনটা", "হবে", "পাব", "পাবো", "পাই", "আসবে", "আসছে", "চলছে", "কখন", "কখন পাব", "কবে", "কবে পাব", "कितना", "कितने", "कौन सा", "कौनसा", "क्या", "क्या मिलेगा", "मिलेगा", "मिलेगी", "होगा", "होगी", "आएगा", "आएगी", "कौन सा नंबर", "कब", "कब मिलेगा", "कब आएगा")  # fmt: skip
 _TODAY = ("aj", "aaj", "ajke", "ajkei", "ajkei", "ekhon", "ekhuni", "abhi", "abhi ke abhi", "today", "now", "right now", "this moment", "aajj", "আজ", "আজকে", "আজই", "এখন", "এখনই", "आज", "आजही", "अभी", "अभी के अभी")  # fmt: skip
 _TOMORROW = ("kal", "kalke", "kaal", "tomorrow", "agamikal", "কাল", "কালকে", "আগামীকাল", "कल", "कल को", "आने वाले कल")  # fmt: skip
 _COMPLAINT = ("paini", "pai ni", "pacchi na", "aseni", "ashe ni", "ase ni", "didn't", "did not", "not get", "not received", "nahi aaya", "nahi mila", "nahin aaya", "पाইনি".replace("ই", "ই"), "পাইনি", "আসেনি", "নহী", "नहीं आया", "नहीं मिला", "नही आया", "नही मिला")  # fmt: skip
@@ -270,8 +272,10 @@ def asks_next_serial(text: str) -> bool:
     return any(tok in _TODAY or tok in _TOMORROW for tok in toks) or any(c in t for c in _IF_WORDS)
 
 
-# "which number will I get" with no serial word at all ("ami ekhon book korle kon number pabo")
-_NUMBER_QUESTION = ("kon number", "kon nombor", "koto number", "kototam", "kon nambar", "which number", "what number", "kaun sa number", "kaunsa number", "kitna number", "kitne number", "কোন নম্বর", "কত নম্বর", "কোন নাম্বার", "কত নাম্বার", "कौन सा नंबर", "कौनसा नंबर", "कितना नंबर", "कितने नंबर", "कौन सा नम्बर")  # fmt: skip
+# "which number will I get" with no serial word at all ("ami ekhon book korle kon number pabo"), and (owner, 2026-10-29) "WHEN will I get it" with
+# no number word named either ("akhun book korle kokhun pabo", "mera number kab aayega") -- in a booking call "pabo"/"aayega" has nothing else it
+# could mean except the serial/turn, so these whole phrases are trusted on their own, same as the "which number" ones already here.
+_NUMBER_QUESTION = ("kon number", "kon nombor", "koto number", "kototam", "kon nambar", "which number", "what number", "kaun sa number", "kaunsa number", "kitna number", "kitne number", "number kab", "number kabe", "number kabhi", "number kokhon", "number kokhun", "number kya", "number ki", "ki number", "number hobe", "amar number", "mera number", "nombor kobe", "nombor kokhon", "kokhun pabo", "kokhon pabo", "kobe pabo", "kobay pabo", "kab milega number", "কোন নম্বর", "কত নম্বর", "কোন নাম্বার", "কত নাম্বার", "নম্বর কখন", "নম্বর কবে", "কখন পাব", "কবে পাব", "কী নম্বর", "নম্বর হবে", "আমার নম্বর", "कौन सा नंबर", "कौनसा नंबर", "कितना नंबर", "कितने नंबर", "कौन सा नम्बर", "नंबर कब", "नंबर कब आएगा", "मेरा नंबर कब", "नंबर क्या", "मेरा नंबर")  # fmt: skip
 _IF_WORDS = ("korle", "korley", "nile", "jodi", "if ", "agar", "karun", "karoon", "karein", "karne par", "karoge", "karenge", "kar lun", "করলে", "নিলে", "যদি", "अगर", "यदि", "करूं", "करूँ", "करने पर", "करवाऊं", "कराऊं", "करें", "कर लूं", "korbo to")  # fmt: skip
 
 
@@ -286,7 +290,25 @@ def serial_day(text: str) -> str:
     return "today"
 
 
-def next_serial_reply(doctor: str, serial: int, day: str, lang: str) -> str:
+# Owner, 2026-10-29: the caller explicitly asking "akhun book korle kokhun pabo" (WHEN will I get it) wants more than the bare number -- how many are
+# already booked ("akhun aye eto no cholche") AND roughly when to come. The arrival estimate is deterministic arithmetic on the clinic's own data
+# (chamber start time + AVG_MINUTES_PER_PATIENT per patient ahead), never a model guess -- same discipline as every other spoken fact in this file.
+AVG_MINUTES_PER_PATIENT = 15
+
+
+def _estimated_arrival(chamber_hours: str | None, serial: int) -> str | None:
+    if not chamber_hours or "-" not in chamber_hours:
+        return None
+    start = chamber_hours.split("-", 1)[0].strip()
+    try:
+        h, m = (int(x) for x in start.split(":"))
+    except ValueError:
+        return None
+    total = h * 60 + m + max(serial - 1, 0) * AVG_MINUTES_PER_PATIENT
+    return f"{(total // 60) % 24:02d}:{total % 60:02d}"
+
+
+def next_serial_reply(doctor: str, serial: int, day: str, lang: str, chamber_hours: str | None = None) -> str:
     doctor = (
         (doctor or "")
         .replace("Dr. ", "", 1)
@@ -298,11 +320,27 @@ def next_serial_reply(doctor: str, serial: int, day: str, lang: str) -> str:
     )
     when = {"today": {"bn": "আজ", "hi": "आज", "en": "today"}, "tomorrow": {"bn": "কাল", "hi": "कल", "en": "tomorrow"}}[day]
     lg = lang if lang in ("bn", "hi") else "en"
-    return {
-        "bn": f"{when[lg]} ডাক্তার {doctor}-এর কাছে বুক করলে আপনার সিরিয়াল নম্বর হবে {serial}।",
-        "hi": f"{when[lg]} डॉक्टर {doctor} के पास बुक करने पर आपका सीरियल नंबर {serial} होगा।",
-        "en": f"If you book {when[lg]} with Doctor {doctor}, your serial number will be {serial}.",
-    }[lg]
+    current = serial - 1
+    if current <= 0:
+        base = {
+            "bn": f"{when[lg]} ডাক্তার {doctor}-এর কাছে এখনও কেউ বুক করেননি। আপনি বুক করলে আপনার সিরিয়াল নম্বর হবে {serial}।",
+            "hi": f"{when[lg]} डॉक्टर {doctor} के पास अभी तक किसी ने बुक नहीं किया है। आप बुक करें तो आपका सीरियल नंबर {serial} होगा।",
+            "en": f"No one has booked with Doctor {doctor} {when[lg]} yet. If you book, your serial number will be {serial}.",
+        }[lg]
+    else:
+        base = {
+            "bn": f"{when[lg]} ডাক্তার {doctor}-এর এখন {current} নম্বর চলছে। আপনি বুক করলে আপনার সিরিয়াল নম্বর হবে {serial}।",
+            "hi": f"{when[lg]} डॉक्टर {doctor} का अभी {current} नंबर चल रहा है। आप बुक करें तो आपका सीरियल नंबर {serial} होगा।",
+            "en": f"Right now Doctor {doctor}'s number {current} is running {when[lg]}. If you book, your serial number will be {serial}.",
+        }[lg]
+    eta = _estimated_arrival(chamber_hours, serial)
+    if eta:
+        base += {
+            "bn": f" আনুমানিক {eta}-এর মধ্যে এলে হবে।",
+            "hi": f" आप अनुमानित {eta} तक आ सकते हैं।",
+            "en": f" You can come by approximately {eta}.",
+        }[lg]
+    return base
 
 
 def next_serial_not_sitting_reply(doctor: str, day: str, next_date_phrase: str | None, lang: str) -> str:
