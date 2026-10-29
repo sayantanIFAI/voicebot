@@ -24,6 +24,15 @@ else
 fi
 
 echo
+echo "== postgresql (only when the clinic API is switched to it: /workspace/.use_postgres) =="
+if [ -f /workspace/.use_postgres ]; then
+    bash "$REPO/deploy/postgres/restore_postgres.sh"   # rebuilds the local cluster from /workspace/pg_base + /workspace/pg_archive when the pod's disk was wiped
+    bash "$REPO/deploy/postgres/setup_postgres.sh"
+else
+    echo "  not switched on (the clinic API uses the SQLite file)"
+fi
+
+echo
 echo "== bringing up services =="
 bash "$REPO/deploy/start_all.sh"
 

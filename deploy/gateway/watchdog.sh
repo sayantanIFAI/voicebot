@@ -30,7 +30,14 @@ while true; do
         bash /workspace/gateway/gateway.sh start >> $L/watchdog.log 2>&1
     fi
     now=$(date +%s)
-    if [ $((now - last_backup)) -ge 21600 ]; then bash /workspace/gateway/backup_db.sh >> $L/watchdog.log 2>&1; last_backup=$now; fi
+    if [ -f /workspace/.use_postgres ]; then
+        pg_lsclusters 2>/dev/null | grep -q online || { echo "$(date -Is) watchdog: postgresql is not running -- starting" >> $L/watchdog.log; pg_ctlcluster "$(ls /usr/lib/postgresql | sort -V | tail -1)" main start >> $L/watchdog.log 2>&1; }
+    fi
+    if [ $((now - last_backup)) -ge 21600 ]; then
+        bash /workspace/gateway/backup_db.sh >> $L/watchdog.log 2>&1
+        [ -f /workspace/.use_postgres ] && bash /workspace/kolkata-care-voice-agent/deploy/postgres/backup_postgres.sh >> $L/watchdog.log 2>&1
+        last_backup=$now
+    fi
     # 01:00 clinic time, once a day: load yesterday's call journals into the database, write the CSV, compress and purge (tools/call_log_archiver.py; one process, one call at a time)
     day=$(TZ=Asia/Kolkata date +%F); hour=$(TZ=Asia/Kolkata date +%H)
     if [ "$hour" = "01" ] && [ "$last_archive" != "$day" ]; then

@@ -69,6 +69,10 @@ EOF
 cat > /workspace/bin/_run_clinic.sh <<'EOF'
 #!/bin/bash
 source /workspace/kolkata-care-voice-agent/deploy/env.sh
+# PostgreSQL instead of the SQLite file when /workspace/.use_postgres exists (deploy/postgres/); remove that file and restart the clinic API to go back to SQLite (the file is not touched)
+if [ -f /workspace/.use_postgres ] && [ -s /workspace/.pg_clinic_password ]; then
+    export DATABASE_URL="postgresql+psycopg2://clinic:$(cat /workspace/.pg_clinic_password)@127.0.0.1:5432/clinic"
+fi
 cd /workspace/kolkata-care-voice-agent/clinic-api
 # several worker processes (2026-10-29): one process served ~45 requests a second, and every database query costs ~24 ms on the network volume, so the workers' waits overlap.
 # Start-up seeding is done by ONE worker (a file lock, see clinic-api/main.py _run_startup_once_per_launch); an Idempotency-Key claim is visible to every worker (clinic-api/idempotency.py).
