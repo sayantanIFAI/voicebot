@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import random
 
 from models import (
     Appointment,
@@ -153,12 +154,21 @@ SITS_WEEKDAYS = {"Dr. Z. Haq": ((0, 1, 2, 3, 4), "10:00", "13:00")}
 # Spellings the recognisers write for a doctor that already exists: "জেড হাক" / "ज़ेड हाक" for Dr. Z. Haq (live replay, 2026-10-29). Added when missing; nothing is ever removed.
 EXTRA_ALIASES = {
     "Dr. Z. Haq": (["হাক", "জেড হাক", "জেড হক", "হাক সাহেব"], ["हाक", "जेड हाक", "जेड हक", "ज़ेड हक", "हॉक"]),
+    # Owner, 2026-10-29: "Majumder" and "Majumdar" are the same name, said the same
+    "Dr. R. Majumder": (["majumdar", "mazumdar", "mozumdar", "majumder"], ["majumdar", "mazumdar", "मजूमदार", "मजुमदार"]),
 }
 
 
 def apply_extras(db: Session) -> dict:
     """Idempotent. Returns what it changed."""
-    out = {"doctor_sex_set": 0, "departments": 0, "doctors": 0, "routes": 0, "relationships": 0, "weekdays_added": 0}
+    out = {"doctor_sex_set": 0, "departments": 0, "doctors": 0, "routes": 0, "relationships": 0, "weekdays_added": 0, "from_kolkata_set": 0}
+    # Owner, 2026-10-29: the "From Kolkata?" column is filled AT RANDOM (about three in four "yes") for every doctor that has no value yet -- sample data, once; a value anyone has set is never changed.
+    _rng = random.Random(20261029)
+    for d in db.query(Doctor).order_by(Doctor.id).all():
+        pick = "yes" if _rng.random() < 0.75 else "no"  # drawn for every doctor, so a doctor's value does not depend on who else has one
+        if not (getattr(d, "from_kolkata", "") or "").strip():
+            d.from_kolkata = pick
+            out["from_kolkata_set"] += 1
     for short, (al_bn, al_hi) in EXTRA_ALIASES.items():
         doc = db.query(Doctor).filter_by(name=short).first()
         if doc is None:

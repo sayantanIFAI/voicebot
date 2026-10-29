@@ -63,6 +63,8 @@ class Doctor(Base):
     consultation_fee_inr = Column(Integer, nullable=False, default=500)  # the doctor's VISIT fee ("ভিজিট"): what a caller means by "how much is the visit?"
     # Owner, 2026-10-18: "F" | "M" | "" (not recorded). A caller can ask for a lady / female doctor and the search is filtered by this.
     sex = Column(String, nullable=False, default="", server_default="")
+    # Owner, 2026-10-29: "From Kolkata?" -- "yes" | "no" | "" (not recorded). Answered when a caller asks whether the doctor is from Kolkata (agent/doctor_origin.py).
+    from_kolkata = Column(String, nullable=False, default="", server_default="")
 
     department = relationship("Department", back_populates="doctors")
     schedule = relationship("DoctorSchedule", back_populates="doctor")

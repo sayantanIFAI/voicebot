@@ -248,6 +248,7 @@ def catalogue(db: Session = Depends(get_db)):
                 "full_name_hi": d.full_name_hi,
                 "surname": d.name.split()[-1],
                 "department": d.department.name if d.department is not None else None,
+                "from_kolkata": getattr(d, "from_kolkata", "") or "",
                 "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
                 "aliases_hi": [a for a in (d.aliases_hi or "").split("|") if a],
             }
@@ -639,6 +640,9 @@ def _strip_honorifics(name: str) -> str:
     return " ".join(kept) if kept else (name or "")
 
 
+# Owner, 2026-10-29: two spellings of one surname, said the same ("Majumder" / "Majumdar"): the second is read as the first wherever a doctor's name is looked up.
+_LATIN_SPELLING = {"majumdar": "majumder", "mazumdar": "majumder", "mozumdar": "majumder", "mojumdar": "majumder"}
+
 # A name fragment shorter than this is not matched as a substring of a doctor's name (REASONED).
 MIN_SUBSTRING_CHARS = 3
 
@@ -672,7 +676,7 @@ def _doctor_exact_matches(db: Session, name: str) -> list[Doctor]:
     """Doctors whose WRITTEN name or alias contains what the caller said ("Sen", "Dr Sen", a Bengali
     or Hindi alias). Several matches are returned as several: choosing among them is the caller's job."""
     name = _strip_honorifics(name)
-    needle_tokens = [w for w in (x.strip(".,") for x in (name or "").lower().split()) if w and w not in _TITLE_WORDS]
+    needle_tokens = [_LATIN_SPELLING.get(w, w) for w in (x.strip(".,") for x in (name or "").lower().split()) if w and w not in _TITLE_WORDS]
     needle = " ".join(needle_tokens)
     if not needle:
         return []

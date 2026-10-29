@@ -224,6 +224,7 @@ class Catalogue:
         self._doctor_words: dict[str, set[str]] = {}
         self._doctor_dept: dict[str, str] = {}  # short name AND whole name -> department (English name, as the clinic keeps it)
         self._doctor_initials: dict[str, set[str]] = {}
+        self._doctor_info: dict[str, dict] = {}  # short name AND whole name -> the catalogue row (names in every script, from_kolkata ...)
         self._doctor_given: dict[str, set[str]] = {}  # the given-name words only (every word of the whole names but the last), for "was a first name said?"
         for d in payload.get("doctors", []):
             if d.get("department"):
@@ -235,6 +236,9 @@ class Catalogue:
                 parts = [w.strip(".,").lower() for w in (f or "").split() if w.strip(".,")]
                 parts = [w for w in parts if w not in ("dr", "ডাঃ", "ডা", "डॉ", "डॉक्टर")]
                 given |= set(parts[:-1])
+            self._doctor_info[d["name"]] = d
+            if d.get("full_name"):
+                self._doctor_info[d["full_name"]] = d
             self._doctor_given[d["name"]] = given
             if d.get("full_name"):
                 self._doctor_given[d["full_name"]] = given
@@ -338,6 +342,9 @@ class Catalogue:
         if not prev or prev.lower() in self._NOT_A_GIVEN_NAME or any(ch.isdigit() for ch in prev):
             return True
         return any(same_given_name(prev, w) for w in words)
+
+    def doctor_info(self, doctor_name: str | None) -> dict | None:
+        return self._doctor_info.get(doctor_name or "")
 
     def doctor_department(self, doctor_name: str | None) -> str | None:
         return self._doctor_dept.get(doctor_name or "")

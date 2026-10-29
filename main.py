@@ -254,6 +254,7 @@ from agent.speech_policy import derive_policy, effective_rate, limit_questions
 from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent import tools_client  # noqa: E402  (API_STATS: the clinic-API calls of a turn)
 from agent import human_request  # noqa: E402  (a request for a person / staff / a complaint)
+from agent import doctor_origin  # noqa: E402  (is the doctor from Kolkata?)
 from agent.tts import FIGURE_SPEECH_SPEED, TTSClient, UnspeakableTextError
 from agent.tts_router import TTSRouter
 from agent.turn_ack import AckTracker, thanks_for
@@ -4114,6 +4115,39 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
     return True
 
 
+async def _answer_doctor_origin(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-29: "is the doctor from Kolkata?" -- answered from the doctor table's "From Kolkata?" column, one fixed sentence, about the doctor named in the sentence or just discussed.
+    With no doctor to speak of, the caller is asked which one. False (nothing said) when the catalogue is not loaded."""
+    if _fast_path is None:
+        return False
+    cat = _fast_path.catalogue
+    named, canonical = False, None
+    with contextlib.suppress(Exception):
+        doc = _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True)  # noqa: SLF001
+        if doc is not None:
+            named, canonical = True, doc[0]
+    if canonical is None:
+        ctx = session.last_doctor_enquiry or {}
+        said = ctx.get("doctor_name") or (session.booking.slots.get("doctor_name") if session.booking is not None else None)
+        if said:
+            if cat.doctor_info(said) is not None:
+                canonical = said
+            else:
+                with contextlib.suppress(Exception):
+                    hit = cat.match(fast_path_normalize(str(said)), "doctor", language_of_script(str(said), lang), 0.9)
+                    canonical = hit[0] if hit and hit[0] else None
+    info = cat.doctor_info(canonical) if canonical else None
+    if info is None:
+        await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
+        return True
+    if named:
+        who = {"bn": f"ডাঃ {info.get('full_name_bn') or ''}".strip(), "hi": f"डॉक्टर {info.get('full_name_hi') or ''}".strip(), "en": "the doctor"}.get(lang, "the doctor")
+    else:
+        who = {"bn": "উনি", "hi": "वे", "en": "they"}.get(lang, "they")
+    await _speak(session, _with_resume(session, doctor_origin.reply(info.get("from_kolkata"), who, lang), lang), lang)
+    return True
+
+
 def _text_names_a_doctor(text: str, lang: str) -> bool:
     """Does the sentence itself carry a doctor of the clinic's list (by name or surname)? False when the fast path is off."""
     if _fast_path is None:
@@ -5685,6 +5719,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         if _nothing_is_open(session) and visit_cues.says_will_come_in_the_afternoon(text) and early_routing.classify(text, lang) is None:
             await _speak(session, visit_cues.afternoon_reply(lang), lang)
+            return
+        if _tools is not None and doctor_origin.asks_doctor_origin(text) and await _answer_doctor_origin(session, text, lang):
             return
         early = early_routing.classify(text, lang)
         if early == early_routing.SITTING_HOURS and not await _answer_sitting_hours(session, text, lang):
