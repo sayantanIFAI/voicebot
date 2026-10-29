@@ -75,6 +75,9 @@ _RESPELL: dict[str, str] = {
     "ডায়াবেটিস": "ডায়া বেটিস",
     "ডায়াবিটিস": "ডায়া বেটিস",
     "জয়দীপ": "জয় দীপ",
+    # Owner, 2026-10-30: the clinic's Dr. Amit Kar. The listener chose, from 11 renderings of the current female voice (tools output "amit_2_long_i"), the spelling with the long ী: অমীত.
+    # Applied to the name as a whole word and with the name endings below (অমীতের, অমীতকে, অমীতবাবু ...); a longer name that merely starts the same (অমিতাভ) is left alone.
+    "অমিত": "অমীত",
     # the same name as the recogniser and the clinic data may spell it (owner, 2026-10-28: "cover all and similar words with similar spellings of names")
     "জয়দিপ": "জয় দীপ",
     "জয়দীপ্": "জয় দীপ",
@@ -161,7 +164,7 @@ _FAMILY_BASES = ("নেওয়া", "যাওয়া", "কয়েক", 
 
 # A person's name with the endings it takes in speech: "জয়দীপের" (of), "জয়দীপকে" (to), "জয়দীপবাবু" (Mr), "জয়দীপদা" (elder brother) ... The chosen spelling of the name is kept and the ending
 # appended, the same way _FAMILY_BASES works for ordinary words.
-_NAME_BASES = tuple(unicodedata.normalize("NFC", b) for b in ("জয়দীপ", "জয়দিপ", "জয়দীপ্", "জয়দিপ্", "জয়দ্বীপ", "জয়দ্বিপ", "জোয়দীপ", "জইদীপ", "যয়দীপ", "নির্মল", "নিরমল", "নির্মোল", "নীর্মল"))
+_NAME_BASES = tuple(unicodedata.normalize("NFC", b) for b in ("অমিত", "জয়দীপ", "জয়দিপ", "জয়দীপ্", "জয়দিপ্", "জয়দ্বীপ", "জয়দ্বিপ", "জোয়দীপ", "জইদীপ", "যয়দীপ", "নির্মল", "নিরমল", "নির্মোল", "নীর্মল"))
 _NAME_ENDINGS = frozenset(
     ("র", "ের", "কে", "ও", "ই", "ে", "েরও", "কেও", "বাবু", "বাবুর", "বাবুকে", "বাবুও", "দা", "দার", "দাকে", "দাও", "টা", "টির", "স্যার", "স্যারের", "স্যারকে", "ডাক্তার")
 )
