@@ -38,6 +38,7 @@ PHRASES: dict[str, dict[str, str]] = {
         # more (one question), and say that the call ends if not. If still silent, idle_close ends the call.
         "silence_prompt": "আর কিছু জানতে চান? না চাইলে আমি কল শেষ করে দেব।",
         "silence_go_on": "হ্যাঁ, বলুন।",
+        "say_again": "আরেকবার বলবেন প্লিজ?",
         "silence_goodbye": "ঠিক আছে, ধন্যবাদ। ভালো থাকবেন।",
         # Abuse from the caller (agent/abuse.py): calm, no imitation, no lecture; the third time the call is closed.
         "abuse_first": "আমি আপনাকে সাহায্য করতে এখানে আছি। ভদ্রভাবে বললে আমি আরও ভালো সাহায্য করতে পারব। বলুন, কী জানতে চান?",
@@ -79,6 +80,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "please_wait": "अच्छा, बताती हूँ।",
         "silence_prompt": "क्या आप कुछ और जानना चाहते हैं? नहीं तो मैं कॉल समाप्त कर दूँगी।",
         "silence_go_on": "जी, बताइए।",
+        "say_again": "एक बार फिर बोलेंगे, प्लीज़?",
         "silence_goodbye": "ठीक है, धन्यवाद। अपना ख़याल रखिए।",
         "abuse_first": "मैं आपकी मदद के लिए यहाँ हूँ। सम्मान से बात करेंगे तो मैं और अच्छी मदद कर पाऊँगी। बताइए, आप क्या जानना चाहते हैं?",
         "abuse_second": "सम्मान से बात करने पर ही मैं मदद कर पाऊँगी। क्या आप कोई जानकारी चाहते हैं?",
@@ -107,6 +109,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "please_wait": "Alright, let me tell you.",
         "silence_prompt": "Is there anything else you would like to know? If not, I will end the call.",
         "silence_go_on": "Yes, please go ahead.",
+        "say_again": "Could you please say that once more?",
         "silence_goodbye": "Alright, thank you. Take care.",
         "abuse_first": "I am here to help you. I can help you better if we speak politely. What would you like to know?",
         "abuse_second": "I can only help if we speak politely. Is there some information you need?",

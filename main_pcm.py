@@ -1253,6 +1253,7 @@ class CallSession:
         self.location_pending = None  # turn number: "tell me the WhatsApp number and we send the location" was just said
         self.caller_numbers: list[str] = []  # numbers the caller has SAID in this call, newest last (used to call back an unresolved call)
         self.unclear_streak = 0  # consecutive turns the agent could not answer
+        self.low_score_reasks = 0  # consecutive turns asked to be said again because the recognisers barely agreed (not garbled)
         self.senior_evidence = SeniorEvidence()
         self.acknowledged_state: str | None = None
         self.distress = DistressEvidence()
@@ -2425,6 +2426,9 @@ def _restore_said_given_name(data, text: str):
         ):
             return {**data, "slots": {**slots, "doctor_name": f"{prev} {name}"}}
     return data
+
+
+LOW_SCORE_REASK = float(os.environ.get("LOW_SCORE_REASK", "0.45"))  # decoder agreement below this (and at least 0.25, the garbled line) is asked to be said again, once
 
 
 _PRESENCE_WORDS = frozenset("আছে আছেন আছো बैठते बैठती है हैं available".split())
@@ -5825,6 +5829,20 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 session, session.reask.decide(transcript_issue=problem, audio_issues=audio_issues), lang
             )
             return
+        # Owner, 2026-10-30 ("এই শুভম করছেন আছে" for "শুভঙ্কর স্যার আছে", recognisers agreed 0.29 -- above the 0.25 garbled line -- and the call went on with "yes, go on"): when the recognisers
+        # barely agree but the turn is not flagged as garbled, the doctor-name rescue is tried and otherwise the caller is simply asked to say it again, once. Not in a booking's slot answers,
+        # a yes/no or a one-word reply, and never twice in a row (the second try is used as heard).
+        _agr = float(asr_result.decoder_agreement or 0.0)
+        _slot_ctx = in_booking_flow or session.pending_entity is not None or session.awaiting_handoff_offer or session.history_state is not None or session.awaiting_draft_answer or session.awaiting_pref_answer or session.awaiting_resume or session.awaiting_close_answer or session.awaiting_language_switch_offer
+        if 0.25 <= _agr < LOW_SCORE_REASK and not _slot_ctx and len(text.split()) >= 2 and session.low_score_reasks < 1 and classify_yes_no(text, lang) is None and not any(ch.isdigit() for ch in text):
+            session.low_score_reasks += 1
+            logger.info("[%s] recognisers barely agree (%.2f) and the turn is not garbled: asking to say it again", session.call_id, _agr)
+            lang = _keep_language(session, prior_lang)
+            if await _name_rescue(session, text, lang):
+                return
+            await _speak(session, phrase("say_again", lang), lang)
+            return
+        session.low_score_reasks = 0
         session.reask.note_success()
         session.signals.turns += 1
         # The CALLER's language history (for the flip-detection signal below and call_score.py's language_flips) --
