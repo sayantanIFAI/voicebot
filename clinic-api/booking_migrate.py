@@ -231,6 +231,7 @@ CALL_RECORD_COLUMNS: dict[str, str] = {
     "satisfaction_score": "INTEGER",
     "satisfaction_band": "VARCHAR NOT NULL DEFAULT ''",
     "satisfaction_json": "TEXT NOT NULL DEFAULT '{}'",
+    "reask_json": "TEXT NOT NULL DEFAULT '[]'",
 }
 
 

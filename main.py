@@ -1453,6 +1453,7 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
     session.tts_output_language = lang
     if fallback_reason in ("llm_failure", "tool_failure"):
         _note(session, "system_failures")
+        _rec(session, "reask", {"kind": "system_failure", "reason": fallback_reason, "lang": lang})
     session.agent_spoke_since_commit = True
     if session.speak_epoch != session.turn_epoch:
         # The caller interrupted the turn this reply belongs to: it is stale, and
@@ -1765,6 +1766,7 @@ async def _reask_or_handoff(
         return
     reask_outcomes.record(decision.reason or "unclear", decision.action, lang)
     _note(session, "reasks")
+    _rec(session, "reask", {"kind": "reask", "reason": decision.reason or "unclear", "action": decision.action, "lang": lang})
     if decision.action == "reask" and decision.reason == "noisy" and NOISE_SUPPRESS_AFTER_ASKS > 0:
         session.noisy_asks += 1
         if session.noisy_asks >= NOISE_SUPPRESS_AFTER_ASKS and not session.noise_suppress:

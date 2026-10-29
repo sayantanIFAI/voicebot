@@ -105,6 +105,12 @@ class CallRecorder:
     def escalation(self, reason: str) -> None:
         self.add("escalation", {"reason": reason})
 
+    def reask(self, payload: dict) -> None:
+        """A re-ask or a tool/LLM failure ("sorry, didn't catch that") -- WHICH reason, per call, not just the
+        running count already in satisfaction_json (agent/outcome_metrics.py's process-wide counters reset on
+        restart and are not tied to a call_id)."""
+        self.add("reask", dict(payload))
+
     # -- delivery --------------------------------------------------------
     @property
     def pending(self) -> int:

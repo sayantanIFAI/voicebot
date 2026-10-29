@@ -133,6 +133,7 @@ def _load(row: CallRecord) -> dict:
         "confirmed": json.loads(row.confirmed_json),
         "history_statements": json.loads(row.history_statements_json),
         "escalation_reason": row.escalation_reason,
+        "reasks": json.loads(row.reask_json),
         "outcome": row.outcome,
         "disclosure_version": row.disclosure_version,
         "last_seq": row.last_seq,
@@ -240,6 +241,10 @@ def record_call_event(
     elif kind == "escalation":
         row.escalation_reason = payload.get("reason")
         reg.audit(db, "escalation", "ok", call_id=call_id, patient_id=row.patient_id, reason=payload.get("reason"))
+    elif kind == "reask":
+        reasks = json.loads(row.reask_json)
+        reasks.append({**payload, "at": _iso(_now())})
+        row.reask_json = json.dumps(reasks, ensure_ascii=False)
     elif kind == "satisfaction":
         cleaned = clean_satisfaction(payload)
         row.satisfaction_score, row.satisfaction_band = cleaned["score"], cleaned["band"]

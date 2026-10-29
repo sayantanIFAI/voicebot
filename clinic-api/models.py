@@ -683,6 +683,9 @@ class CallRecord(Base):
     satisfaction_score = Column(Integer, nullable=True, index=True)
     satisfaction_band = Column(String, nullable=False, default="", server_default="")
     satisfaction_json = Column(Text, nullable=False, default="{}", server_default="{}")  # reasons and counts, no text
+    # Every re-ask ("didn't catch that") and tool/LLM failure, WHICH reason each time -- [{"kind", "reason", "action", "lang", "at"}, ...].
+    # satisfaction_json above only has the running COUNT; this is the per-occurrence detail a report needs to say what the caller actually hit.
+    reask_json = Column(Text, nullable=False, default="[]", server_default="[]")
 
 
 class HistoryAudit(Base):
