@@ -75,6 +75,14 @@ NEW_DOCTORS = [
         ["अरुण कुमार साहा", "अरुण साहा", "अरुण कुमार", "अरुण कुमार शाह", "अरुण शाह"],
         {"days": [0, 2, 4], "start": "22:00", "end": "23:45"},
     ),
+    # Owner, 2026-10-29: sample data -- Dr. Ziaul Haq, paediatrician, sitting tomorrow (Friday 2026-10-30). The table is by weekday, so he sits on Fridays; hours were not given, so a morning
+    # chamber (10:00-13:00) is used until a clinician sets the real ones.
+    (
+        "Paediatrics", "Dr. Z. Haq", "Dr. Ziaul Haq", "জিয়াউল হক", "ज़ियाउल हक़", "MBBS, MD (Paediatrics)", "M", 600,
+        ["জিয়াউল হক", "জিয়াউল", "হক", "হোক", "জিয়াউল হোক"],
+        ["ज़ियाउल हक़", "जियाउल हक", "जियाउल", "हक", "हक़", "ज़ियाउल"],
+        {"days": [4], "start": "10:00", "end": "13:00"},
+    ),
 ]
 
 # (department, keywords_bn, keywords_hi, keywords_en) -- symptoms the clinic's clinicians route to that department. Specific on purpose: a bare
