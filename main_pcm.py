@@ -3890,6 +3890,8 @@ def _when_phrase(date_iso: str | None, time_hhmm: str | None, lang: str) -> str:
             parts.append(_WHEN_WORDS["today"][lang])
         elif d == today + datetime.timedelta(days=1):
             parts.append(_WHEN_WORDS["tomorrow"][lang])
+        elif 0 < (d - today).days <= 7:
+            parts.append(_WEEKDAY_NAMES.get(lang, _WEEKDAY_NAMES["en"])[d.weekday()])  # "রবিবার", spoken as the day's name, not as a date in digits
         else:
             parts.append(d.isoformat())
     if time_hhmm:
@@ -9094,11 +9096,15 @@ async def _dept_sitting_turn(session: CallSession, text: str, lang: str, topic: 
         await _speak(session, pend["say"], lang)
         return True
     count = _count_in(text)
-    if not sit or not (dept_talk.asks_names(text) or count):
+    today = slot_proposal.clinic_now().date()
+    # a weekday NAMED in the sentence ("সামনের রবিবার বসবে কেউ?") is the day asked about -- the coming one (agent/weekday_cues.py) -- even when "today" is also said ("আজকে তো পারবো না")
+    wd_iso = weekday_cues.resolve_date(text, today) if weekday_cues.weekday_of(text) is not None else None
+    anyone = any(w in low for w in ("কেউ", "কেও", "anyone", "anybody", "कोई"))
+    if not sit or not (dept_talk.asks_names(text) or count or anyone or wd_iso):
         return False
     if _text_names_a_doctor(text, lang) and not count:
         return False  # a particular doctor: the doctor steps answer
-    iso = booking_capture.read_when(text, False, want_day=True).date or slot_proposal.clinic_now().date().isoformat()
+    iso = wd_iso or booking_capture.read_when(text, False, want_day=True).date or today.isoformat()
     try:
         r = await _tools.department_doctors(topic, lang, on_date=iso)
     except ToolCallError:
