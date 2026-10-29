@@ -32,7 +32,7 @@ log = logging.getLogger("clinic-api")
 # short name -> "F" | "M". The given names are the fictional placeholders in seed.DOCTOR_FULL_NAMES.
 DOCTOR_SEX: dict[str, str] = {
     "Dr. S. Mukherjee": "M", "Dr. A. Sen": "M", "Dr. B. Sen": "M", "Dr. P. Ghosh": "M", "Dr. R. Chowdhury": "M",
-    "Dr. K. Bhattacharya": "M", "Dr. N. Roy": "M", "Dr. S. Banerjee": "M", "Dr. M. Dutta": "M",
+    "Dr. K. Bhattacharya": "M", "Dr. N. Roy": "M", "Dr. S. Banerjee": "M", "Dr. M. Dutta": "M", "Dr. R. Dutta": "M",
     "Dr. S. Chatterjee": "F", "Dr. A. Basu": "F", "Dr. R. Mitra": "F", "Dr. P. Sengupta": "F",
     "Dr. D. Das": "M", "Dr. T. Bose": "M", "Dr. A. Kar": "M", "Dr. S. Nandi": "M",
     "Dr. R. Pal": "M", "Dr. K. Halder": "M", "Dr. S. Guha": "M", "Dr. B. Chanda": "M",
@@ -100,6 +100,14 @@ NEW_DOCTORS = [
         ["শুভদীপ মন্ডল", "শুভদীপ মণ্ডল", "শুভদীপ", "সুভদীপ মন্ডল", "সুভদীপ", "শুভদীপা মণ্ডল", "শুভদীপ মোণ্ডল", "মন্ডল", "মণ্ডল"],
         ["शुभदीप मंडल", "शुभदीप मण्डल", "शुभदीप", "सुभदीप मंडल", "सुभदीप", "मंडल", "मण्डल"],
         {"days": [1, 3, 5], "start": "12:00", "end": "14:00"},
+    ),
+    # Owner, 2026-10-29: Dr. Rajarshi Dutta, General Medicine. Hours were not given: Monday to Friday 10:00-13:00 until a clinician sets the real ones. "দত্ত" is shared with Dr. Manas Dutta (Cardiology), so the
+    # surname alone asks "which one?"; the first name picks him (Bengali spellings: রাজর্ষি / রাজর্শি, Hindi: राजर्षि / राजऋषि).
+    (
+        "General Medicine", "Dr. R. Dutta", "Dr. Rajarshi Dutta", "রাজর্ষি দত্ত", "राजर्षि दत्ता", "MBBS, MD (Gen. Med.)", "M", 600,
+        ["রাজর্ষি দত্ত", "রাজর্ষি", "রাজর্শি দত্ত", "রাজর্শি", "রাজর্ষী দত্ত", "রাজর্ষী"],
+        ["राजर्षि दत्ता", "राजर्षि दत्त", "राजर्षि", "राजऋषि दत्ता", "राजऋषि", "राजर्शि"],
+        {"days": [0, 1, 2, 3, 4], "start": "10:00", "end": "13:00"},
     ),
 ]
 
