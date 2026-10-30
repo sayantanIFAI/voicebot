@@ -105,6 +105,7 @@ AVAILABLE_TODAY_CASES = [
     ("who is available in general medicine", "en"),
     ("who is available today in general medicine", "en"),
 ]
+HR1_CASES = [("বলছিলাম কালকে কি কোনো হাইড্রাস্ট এ বুঝবে", "bn")]  # the recogniser's miss of "বলছিলাম কি কালকে কোনো হাড়ের ডাক্তার বসবে" (hr1.wav, 2026-10-30)
 ROUND5_CASES = [
     ("usg of thyroid gland", "en"),
     ("tb test in ear", "en"),
@@ -147,7 +148,7 @@ WINDOW_CASES = [
 @pytest.fixture(scope="module")
 def turns():
     payload = json.dumps(
-        [{"text": t, "lang": lg} for t, lg in CASES + ROUND4_CASES + AVAILABLE_TODAY_CASES + ROUND5_CASES + ROUND6_CASES + ROUND7_CASES]
+        [{"text": t, "lang": lg} for t, lg in CASES + ROUND4_CASES + AVAILABLE_TODAY_CASES + HR1_CASES + ROUND5_CASES + ROUND6_CASES + ROUND7_CASES]
         + [{"text": t, "lang": lg, "answering": True} for t, lg in ROUND6_OPEN_CASES]
         + [{"text": t, "lang": lg, "window": WINDOW} for t, lg in WINDOW_CASES + ROUND4_WINDOW_CASES + ROUND5_WINDOW_CASES + ROUND7_WINDOW_CASES],
         ensure_ascii=False,
@@ -468,3 +469,11 @@ def test_who_is_available_today_lists_only_doctors_with_a_free_slot_today(turns,
     assert not r["model_called"], said
     assert "10:00-12:00" in said and "18:00-20:00" in said, said
     assert not any(w in said for w in ("বিশ্বজিৎ", "बिस्वजीत", "Biswajit")), said
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_hr1_a_misheard_bone_doctor_question_still_lists_tomorrows_orthopaedic_doctors(turns, entry):
+    """Owner, 2026-10-30: the recogniser heard "হাড়ের ডাক্তার বসবে" as "হাইড্রাস্ট এ বুঝবে"; on the pod that became a lab-test guess ("PSA?"). It is the orthopaedic doctors of tomorrow."""
+    r = _run(turns, entry, HR1_CASES[0][0])
+    said = _one_reply(r)
+    assert not r["model_called"] and "তপন বসু" in said and "শুভঙ্কর নন্দী" in said and "আগামীকাল" in said, said

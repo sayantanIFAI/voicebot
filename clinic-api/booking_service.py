@@ -1072,7 +1072,8 @@ _DEPT_ALIASES: dict[str, str] = {
     "cardio": "Cardiology", "cardiac": "Cardiology", "cardiologist": "Cardiology", "heart": "Cardiology",
     "কার্ডিও": "Cardiology", "হার্ট": "Cardiology", "হৃদরোগ": "Cardiology", "कार्डियो": "Cardiology", "हार्ट": "Cardiology", "दिल": "Cardiology",
     "ortho": "Orthopaedics", "orthopedic": "Orthopaedics", "orthopedics": "Orthopaedics", "orthopaedic": "Orthopaedics", "bone": "Orthopaedics",
-    "অর্থো": "Orthopaedics", "হাড়ের": "Orthopaedics", "हड्डी": "Orthopaedics", "ऑर्थो": "Orthopaedics",
+    "অর্থো": "Orthopaedics", "হাড়ের": "Orthopaedics", "হাইড্রাস্ট": "Orthopaedics",  # owner, 2026-10-30: the recogniser's real miss of "হাড়ের ডাক্তার" (hr1.wav: "কালকে কি কোনো হাড়ের ডাক্তার বসবে" heard as "কালকে কি কোনো হাইড্রাস্ট এ বুঝবে")
+     "हड्डी": "Orthopaedics", "ऑर्थो": "Orthopaedics",
     "gynae": "Gynaecology & Obstetrics", "gyne": "Gynaecology & Obstetrics", "gynec": "Gynaecology & Obstetrics", "gynaec": "Gynaecology & Obstetrics",
     "gynecology": "Gynaecology & Obstetrics", "gynaecology": "Gynaecology & Obstetrics", "gyn": "Gynaecology & Obstetrics", "obs": "Gynaecology & Obstetrics",
     "obstetrics": "Gynaecology & Obstetrics", "গাইনি": "Gynaecology & Obstetrics", "स्त्री रोग": "Gynaecology & Obstetrics", "गायनी": "Gynaecology & Obstetrics",
