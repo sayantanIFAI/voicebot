@@ -5528,9 +5528,12 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             hi_agree = float(getattr(r_hi, "decoder_agreement", 0.0) or 0.0)
             wholly = language_of_script(getattr(r_hi, "text", ""), "?") == "hi" and len((r_hi.text or "").split()) >= 2
             logger.info("[%s] Hindi words in the Bengali reading %r: Hindi reading %r (agreement %.2f against %.2f, Devanagari: %s)", session.call_id, result.text, getattr(r_hi, "text", ""), hi_agree, bn_agree, wholly)
-            if wholly and hi_agree >= bn_agree - 0.15:
-                session.clear_winner_lang = "hi"
+            # Hindi-only words are written in the sentence: it IS Hindi, whatever language ID said. The Hindi reading is used when it is wholly Devanagari and not a mess (agreement >= 0.5); when it is, the Bengali
+            # reading's words (a department, a doctor) still carry the meaning and the turn is answered in Hindi all the same.
+            session.clear_winner_lang = "hi"
+            if wholly and hi_agree >= 0.5:
                 return "hi", r_hi, decisive
+            return "hi", result, decisive
     except Exception as e:  # noqa: BLE001 - an advisory second reading must never take a turn down
         logger.warning("[%s] Hindi-words check skipped: %s", session.call_id, e)
     return lang, result, decisive
