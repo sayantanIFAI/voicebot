@@ -160,7 +160,7 @@ from agent import slot_proposal  # the machine picks the appointment time and sa
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
 from agent import clinical_safety, lost_found, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
-from agent import eye_words, hindi_in_bengali, repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import english_in_bengali, eye_words, hindi_in_bengali, repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -5545,6 +5545,17 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             if wholly and hi_agree >= 0.5:
                 return "hi", r_hi, decisive
             return "hi", result, decisive
+        # Owner, 2026-10-31 ("ইস থিয়ার পার্কিং" = "is there parking", every sentence of a call said in English and answered in Bengali): English function words written in Bengali letters (agent/english_in_bengali.py) make
+        # the turn English. The English reading is used when it is a real sentence (ASCII, >= 3 words, agreement >= 0.6); otherwise the Bengali-letter reading still carries the words (parking, orthopaedics) and the reply is English.
+        if lang == "bn" and result is not None and not session.lang_explicit and "en" in _languages_active and english_in_bengali.looks_english(getattr(result, "text", "")) and not (session.lang_locked and session.lang == "en"):
+            r_en = await _asr_router.transcribe("en", utterance_wav)
+            en_text = (getattr(r_en, "text", "") or "").strip()
+            en_agree = float(getattr(r_en, "decoder_agreement", 0.0) or 0.0)
+            logger.info("[%s] English words in the Bengali reading %r: English reading %r (agreement %.2f)", session.call_id, result.text, en_text, en_agree)
+            session.clear_winner_lang = "en"
+            if en_text.isascii() and len(en_text.split()) >= 3 and en_agree >= 0.6:
+                return "en", r_en, decisive
+            return "en", result, decisive
     except Exception as e:  # noqa: BLE001 - an advisory second reading must never take a turn down
         logger.warning("[%s] Hindi-words check skipped: %s", session.call_id, e)
     return lang, result, decisive
