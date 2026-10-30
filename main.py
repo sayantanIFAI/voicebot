@@ -2472,6 +2472,27 @@ def _asks_when_sits(text: str) -> bool:
     return any(w in text.lower() for w in _WHEN_SITS)
 
 
+# Owner, 2026-10-30 (hr1.wav, "কালকে কি কোনো হাড়ের ডাক্তার বসবে" heard as "কালকে কি কোনো হাইড্রাস্ট এ বুঝবে" and answered "আপনি কি পিএসএ বলতে চাইছেন?"): a lab-test question is never asked with a
+# future verb of this kind ("বসবে", the recogniser's "বুঝবে"); tests are asked with হবে / করা যাবে / হচ্ছে / লাগবে. A sentence like that is about a DOCTOR, so a test guess made for it is never spoken:
+# the caller is asked which doctor (or the department's doctors are told, when the department was heard).
+_SITS_FUTURE_VERB = re.compile(r"(?:বস|বুঝ|বুজ|বুস|বোস|বশ)(?:বে|বেন)(?![া-ৌ])|বসছে|বসছেন")
+
+
+def _sitting_verb_said(text: str) -> bool:
+    return _SITS_FUTURE_VERB.search(text or "") is not None
+
+
+def _test_guess_on_a_sitting_sentence(intent: str | None, text: str, lang: str) -> bool:
+    """The model (or a suggestion) took a sentence with a sitting-type verb for a lab-test question, and no lab test of the clinic is actually named in it."""
+    if intent not in ("test_rate", "test_prep", "test_availability", "book_test") or not _sitting_verb_said(text):
+        return False
+    if _fast_path is not None:
+        with contextlib.suppress(Exception):
+            if _fast_path.named_tests(text, language_of_script(text, lang)):
+                return False
+    return True
+
+
 _NO_BOOKING_FOR_NUMBER = {
     "bn": "{n} নম্বরে কোনো বুকিং পেলাম না। নম্বরটা আরেকবার বলবেন, বা কনফার্মেশন নম্বরটা?",
     "hi": "{n} नंबर पर कोई बुकिंग नहीं मिली। नंबर दोबारा बताइए, या कन्फ़र्मेशन नंबर?",
@@ -6366,9 +6387,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         (
             intent in ("lookup_booking", "unclear", "smalltalk", "reschedule_appointment", "cancel_appointment")  # (a reschedule / cancel reading is kept only when the words themselves say change or cancel -- see below)
             or (intent == "doctor_availability" and not _text_names_a_doctor(text, lang))
+            or _test_guess_on_a_sitting_sentence(intent, text, lang)
         )
         and session.booking is None
-        and _asks_when_sits(text)
+        and (_asks_when_sits(text) or _sitting_verb_said(text))
         and not (slots or {}).get("phone")
         and not (slots or {}).get("confirmation_id")
         and booking_capture.read_digits(text)[1] < 2

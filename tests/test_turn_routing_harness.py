@@ -105,7 +105,7 @@ AVAILABLE_TODAY_CASES = [
     ("who is available in general medicine", "en"),
     ("who is available today in general medicine", "en"),
 ]
-HR1_CASES = [("বলছিলাম কালকে কি কোনো হাইড্রাস্ট এ বুঝবে", "bn")]  # the recogniser's miss of "বলছিলাম কি কালকে কোনো হাড়ের ডাক্তার বসবে" (hr1.wav, 2026-10-30)
+HR1_CASES = [("বলছিলাম কালকে কি কোনো হাইড্রাস্ট এ বুঝবে", "bn"), ("বলছিলাম কালকে কি কোনো হাইডুস্ট এ বুঝবে", "bn")]  # the recogniser's miss of "বলছিলাম কি কালকে কোনো হাড়ের ডাক্তার বসবে" (hr1.wav, 2026-10-30)
 ROUND5_CASES = [
     ("usg of thyroid gland", "en"),
     ("tb test in ear", "en"),
@@ -477,3 +477,12 @@ def test_hr1_a_misheard_bone_doctor_question_still_lists_tomorrows_orthopaedic_d
     r = _run(turns, entry, HR1_CASES[0][0])
     said = _one_reply(r)
     assert not r["model_called"] and "তপন বসু" in said and "শুভঙ্কর নন্দী" in said and "আগামীকাল" in said, said
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+def test_a_sitting_type_verb_is_never_a_test_question_so_the_doctor_is_asked_for(turns, entry):
+    """Owner, 2026-10-30: nobody asks a lab-test question with "বসবে" / the recogniser's "বুঝবে" (tests are হবে / করা যাবে / হচ্ছে). Whatever the recogniser made of the specialty, the answer is
+    "which doctor are you asking about?", never a test guess ("PSA?")."""
+    r = _run(turns, entry, HR1_CASES[1][0])
+    said = _one_reply(r)
+    assert "কোন ডাক্তারের কথা" in said and "টেস্ট" not in said and "পিএসএ" not in said, said
