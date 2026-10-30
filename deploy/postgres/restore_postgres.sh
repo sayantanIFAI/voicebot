@@ -3,9 +3,20 @@
 # Does nothing when a cluster with data already exists (so it is safe to call at every boot). deploy/bootstrap_pod.sh calls it before setup_postgres.sh.
 set -euo pipefail
 BASE=/workspace/pg_base; ARCH=/workspace/pg_archive
-command -v pg_ctlcluster >/dev/null 2>&1 || { echo "postgresql is not installed: run setup_postgres.sh"; exit 0; }
+# A fresh pod has no PostgreSQL at all (the local disk is wiped). Install it HERE, drop the empty cluster the package creates, and restore into that place: if setup_postgres.sh ran first it would
+# create an empty database and the backups would never be used.
+FRESH_INSTALL=0
+if ! command -v pg_ctlcluster >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >/dev/null
+    apt-get install -y postgresql postgresql-client >/dev/null
+    FRESH_INSTALL=1
+fi
 VER=$(ls /usr/lib/postgresql | sort -V | tail -1)
 DATA=/var/lib/postgresql/$VER/main
+if [ "$FRESH_INSTALL" = 1 ] && [ -d /workspace/pg_base ] && ls -1d /workspace/pg_base/base-* >/dev/null 2>&1; then
+    if pg_lsclusters | grep -q "^$VER *main"; then pg_dropcluster --stop "$VER" main; fi
+fi
 if [ -s "$DATA/PG_VERSION" ]; then echo "a cluster already exists in $DATA: nothing to restore"; exit 0; fi
 LATEST=$(ls -1dt "$BASE"/base-* 2>/dev/null | head -1 || true)
 [ -n "$LATEST" ] || { echo "no base backup in $BASE: setup_postgres.sh will create an empty cluster"; exit 0; }
