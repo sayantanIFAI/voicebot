@@ -4005,6 +4005,21 @@ async def _unclear_problem_reply(session: CallSession, lang: str) -> str:
     return say
 
 
+async def _general_medicine_today_suffix(dept: str, lang: str) -> str:
+    """Owner, 2026-10-30 (urology, nobody today): the specialist's next sitting is told, and for a caller who needs a doctor TODAY the General Medicine doctors who sit today and still have a free slot are added -- by part of
+    the day, never one named doctor. Empty when the department is General Medicine itself or none is available."""
+    if dept == "General Medicine":
+        return ""
+    with contextlib.suppress(Exception):
+        today_iso = slot_proposal.clinic_now().date().isoformat()
+        sit = (await _tools.department_doctors("General Medicine", lang, on_date=today_iso)).get("sitting") or []
+        avail = await _available_sitting(sit, today_iso, None) if sit else []
+        g = doctor_search.grouped_by_part(avail, lang) if avail else None
+        if g:
+            return {"bn": f" আজই দেখাতে চাইলে জেনারেল মেডিসিন বিভাগে আজ {g}।", "hi": f" आज ही दिखाना हो तो जनरल मेडिसिन विभाग में आज {g}।", "en": f" If you need a doctor today, in General Medicine today: {g}."}[lang if lang in ("bn", "hi") else "en"]
+    return ""
+
+
 async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: str) -> str:
     """department_route_reply, except that when nobody of the department sits today the next sitting is told and offered (see _next_sitting_offer) and kept as the open question."""
     if routed.get("matched"):
@@ -4015,7 +4030,7 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
         offer = await _next_sitting_offer(routed["department_name"], _dept_label(routed["department_name"], lang), lang)
         if offer is not None:
             session.dept_pending = {**offer["pending"], "turn": session.turn_count, "say": offer["say"]}
-            return offer["say"]
+            return offer["say"] + await _general_medicine_today_suffix(routed["department_name"], lang)
     reply = department_route_reply(_dept_labelled(routed, lang), symptom, lang)
     if routed.get("matched") and len(routed.get("doctors_today") or []) >= 1:
         with contextlib.suppress(ToolCallError):
@@ -6387,6 +6402,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _speak(session, where_doctor_sits.reply(lang), lang)
             return
         _update_doctor_subject(session, text, lang)
+        if await _which_doctor_turn(session, text, lang):
+            return
         if session.booking is None and await _doctor_check_turn(session, text, lang):
             return
         if session.booking is None and await _doctor_facts_turn(session, text, lang):
@@ -7542,6 +7559,27 @@ async def _default_to_general_medicine(session: CallSession, st, lang: str) -> N
         logger.warning("[%s] department_doctors failed (%s)", session.call_id, e)
         gp = {}
     gp_doctors = gp.get("doctors") or []
+    # Owner, 2026-10-30 ("Dr. Sourav sits next month; Dr. Arun sits today"): the first doctor of the list is not "the" General Medicine doctor. The doctors who sit on the day the caller wants (today when no day was
+    # said) and still have a free slot are told, by part of the day; one doctor -> he is the booking's doctor; several -> the caller chooses (the booking asks which next).
+    with contextlib.suppress(Exception):
+        _day = st.slots.get("date") or slot_proposal.clinic_now().date().isoformat()
+        _sit = (await _tools.department_doctors("General Medicine", lang, on_date=_day)).get("sitting") or []
+        _avail = await _available_sitting(_sit, _day, None) if _sit else []
+        _grouped = doctor_search.grouped_by_part(_avail, lang) if _avail else None
+        if _avail:
+            _lg = lang if lang in ("bn", "hi") else "en"
+            _lead = booking_general_checkup_first_reply([], lang)
+            _g = _grouped or dept_talk._join([a_["name"] for a_ in _avail], _lg)  # noqa: SLF001
+            _when = _when_phrase(_day, None, lang)
+            _tail = {"bn": f" {_when} জেনারেল মেডিসিন বিভাগে {_g}।", "hi": f" {_when} जनरल मेडिसिन विभाग में {_g}।", "en": f" {_when} in General Medicine: {_g}."}[_lg]
+            if len(_avail) == 1:
+                st.slots["doctor_name"] = _resolve_doctor_for_booking(_avail[0])
+            else:
+                st.slots.pop("doctor_name", None)
+                session.dept_pending = {"kind": "pick", "doctors": _avail, "date": _day, "time": None, "turn": session.turn_count, "say": _lead + _tail}
+            session.dept_topic = "General Medicine"
+            await _speak(session, _lead + _tail, lang)
+            return
     if gp_doctors:
         # booking_confirmation_readback's own English template prepends "Dr." itself (the same convention as
         # a caller-given name: slots["doctor_name"] is always the BARE name clinic-api's fuzzy matching
@@ -8796,6 +8834,36 @@ def _update_doctor_subject(session: CallSession, text: str, lang: str) -> None:
 def _text_has_surname_of(text: str, info: dict) -> bool:
     toks = name_groups._tokens(text)  # noqa: SLF001
     return any(name_groups._same(t, s) for t in toks for s in name_groups._own_names(info)[1])  # noqa: SLF001
+
+
+async def _which_doctor_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-30: "কোন ডাক্তার এটা" / "who is he" about the doctor just spoken of: his name and department, from the open booking, else the doctor just offered, else the doctor being talked about --
+    never asked back ("which doctor do you mean?"). False when no doctor is the subject."""
+    if _fast_path is None or not doctor_facts.asks_which_doctor(text):
+        return False
+    info = None
+    with contextlib.suppress(Exception):
+        names = []
+        b = session.booking
+        if b is not None and b.slots.get("doctor_name"):
+            names.append(b.slots["doctor_name"])
+        pd = getattr(session, "dept_pending", None)
+        if pd and pd.get("kind") == "confirm_one" and pd.get("doctor") and session.turn_count - pd.get("turn", -99) <= 4:
+            names.append(pd["doctor"].get("name"))
+        ctx = _context_doctor_info(session)
+        for n in names:
+            info = _fast_path.catalogue.doctor_info(n) if n else None
+            if info is not None:
+                break
+        if info is None:
+            info = ctx
+    if info is None:
+        return False
+    session.subject_doctor = info.get("name")
+    dept = _dept_label(info.get("department") or "", lang)
+    say = doctor_facts.speciality_reply(dept_talk.spoken_name(info, lang), dept, lang) if dept else dept_talk.spoken_name(info, lang)
+    await _speak(session, _with_resume(session, say, lang), lang)
+    return True
 
 
 async def _doctor_facts_turn(session: CallSession, text: str, lang: str) -> bool:

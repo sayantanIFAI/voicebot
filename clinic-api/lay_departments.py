@@ -80,7 +80,7 @@ _RULES: list[tuple[str, bool, str, str, str]] = [
      r"सिर|दिमाग|नस(?!िक)|नसों|नर्व|नर्वस|ब्रेन|मस्तिष्क|माइग्रेन"),
     ("Urology", False,
      r"pe?c+h*a?[bp](?:er|ar|r|e|ey)?|pechh?a[bp]\w*|pecchap\w*|pechap\w*|pesha[bp]\w*|pesa[bp]\w*|prosra[bp]\w*|prasra[bp]\w*|prosa[bp]\w*|urine|urinary|kidneys?|kidni\w*|kidnir",
-     r"পেচ্ছাপ|পেছাপ|পেশাব|প্রস্রাব|প্রসাব|কিডনি|কিডনী|ইউরিন|মূত্র",
+     r"পেচ্ছাপ|পেছাপ|পেটছাপ|পেট\s*ছাপ|পেট\s*চাপ|পেটচ্ছাপ|পেশাব|প্রস্রাব|প্রসাব|কিডনি|কিডনী|ইউরিন|মূত্র",  # owner, 2026-10-30: "পেট ছাপ করতে গেলে ব্যথা হয়" is the recogniser's pechhap (urine)
      r"पेशाब|पेसाब|मूत्र|किडनी|यूरिन|पेशाब"),
     ("General Surgery", False,
      r"op[ea]r[ae]?sh[ao]n(?:er|r|ar|ke|ki|e)?|operation(?:er|r)?|kata[\s-]*ch+h?e+n?r(?:a|ar|er|r)?|katachh?e+r\w*|cut[\s-]*(?:and|n|o)?[\s-]*tear\w*|hernia|appendix|piles|surgery|surgeon",

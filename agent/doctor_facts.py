@@ -29,6 +29,21 @@ MENU = {
 }
 
 
+# Owner, 2026-10-30 ("কোন ডাক্তার এটা" right after "উনি সামনের মাসের দুই তারিখে বসবেন" was answered "কোন ডাক্তারের কথা জিজ্ঞেস করছেন?"): "which doctor is this / who is he / what is his name" about the doctor JUST
+# spoken of is answered with that doctor's name, never asked back.
+_WHICH_DOCTOR = re.compile(
+    r"কোন\s*ডাক্তার\s*(?:এটা|ওটা|এটি|এই|ওই|উনি|ওনি|এনি|এনার|ওনার|সেটা|সে)(?![ঀ-৿])|(?:এটা|ওটা|উনি|ওনি|এনি|সে)\s*কোন\s*ডাক্তার|(?:উনি|ওনি|এনি|ইনি)\s*কে(?![ঀ-৿])|(?:ডাক্তারের|ওনার|এনার|ওনারা)\s*নাম|কার\s*কথা\s*বলছ|"
+    r"कौन\s*(?:सा\s*)?डॉक्टर\s*(?:है|हैं|ये|यह|वो)|इनका\s*नाम|उनका\s*नाम|ये\s*कौन|वो\s*कौन|"
+    r"\bwhich\s+doctor\s+(?:is\s+)?(?:this|that|he|she|it)\b|\bwho\s+(?:is|are)\s+(?:he|she|this|that)\b|\bdoctor'?s\s+name\b|\bwhat'?s\s+(?:his|her)\s+name\b",
+    re.I,
+)
+
+
+def asks_which_doctor(text: str) -> bool:
+    t = text or ""
+    return len(t.split()) <= 8 and _WHICH_DOCTOR.search(t) is not None
+
+
 def asks_speciality(text: str) -> bool:
     return bool(_SPECIALITY.search(text or ""))
 
