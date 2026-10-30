@@ -144,7 +144,7 @@ from agent import slot_proposal  # the machine picks the appointment time and sa
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
 from agent import clinical_safety, lost_found, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
-from agent import eye_words, repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import eye_words, hindi_in_bengali, repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -5479,24 +5479,64 @@ async def _with_spelled_tests(session: CallSession, lang: str, result, english_t
         return result
 
 
-def _keep_established_bengali(session: CallSession, lang: str, result, candidates) -> tuple[str, object]:
-    """Owner, 2026-10-28 ("to ekta naam likhe din" was heard as the Hindi "तो आपका नाम लेकर रही हो"): in a call that is ALREADY Bengali, a turn picked as Hindi stays Bengali unless Hindi clearly beats
-    Bengali's own decoder agreement (by 0.15) -- language ID is unreliable on telephone-quality Bengali and the Hindi decoders can agree 1.00 on words never said. Used on every route that can pick
-    Hindi (the single-recogniser path has the same rule inline). `candidates` = [(lang, ASRResult), ...] that actually ran."""
-    if lang != "hi" or (session.lang_locked and session.lang == "hi") or session.lang_explicit:
+def _keep_established_bengali(session: CallSession, lang: str, result, candidates, lid_scores: dict | None = None) -> tuple[str, object]:
+    """Which of the recognisers that ran speaks for THIS turn, in a call whose language is already established (Bengali or Hindi); the same rule both ways.
+
+    Owner, 2026-10-30: when the other language's recogniser CLEARLY wins this turn, that language is the turn's language and the agent answers in it -- for this turn only, the call is not locked to it. "Clearly" =
+    its decoders agree with themselves better than the call's language's do (by 0.05 or more), its text is written wholly in its own script and is at least two words, and language ID does not favour the call's
+    language over it. Otherwise the call's own language stands (owner, 2026-10-28: language ID is unreliable on telephone-quality Bengali, and the Hindi decoders can agree 1.00 on words never said -- the
+    language-ID condition is what keeps that case Bengali). English is decided elsewhere."""
+    session.clear_winner_lang = None
+    est = session.lang if session.lang_locked else ("bn" if lang == "hi" else None)
+    if session.lang_explicit or est not in ("bn", "hi") or lang not in ("bn", "hi"):
         return lang, result
-    bn = next((r for lg, r in candidates if lg == "bn"), None)
-    if bn is None:
+    by = {lg: r for lg, r in candidates}
+
+    def agree(lg: str) -> float:
+        r = by.get(lg)
+        return float(getattr(r, "decoder_agreement", 0.0) or 0.0) if r is not None else -1.0
+
+    other = "hi" if est == "bn" else "bn"
+    r_other, r_est = by.get(other), by.get(est)
+    if r_other is not None and r_est is not None and (getattr(r_other, "text", "") or "").strip():
+        wholly = language_of_script(r_other.text, "?") == other and len(r_other.text.split()) >= 2
+        lid_ok = not lid_scores or lid_scores.get(other, 0.0) >= lid_scores.get(est, 0.0) - 0.05
+        logger.info("[%s] %s %.2f / %s %.2f decoder agreement (language ID %s); written in its own script: %s", session.call_id, other, agree(other), est, agree(est), {k: round(v, 2) for k, v in (lid_scores or {}).items()}, wholly)
+        if wholly and lid_ok and agree(other) - agree(est) >= 0.05:
+            logger.info("[%s] %s clearly wins this turn: answered in %s (the call stays %s)", session.call_id, other, other, est)
+            session.clear_winner_lang = other
+            return other, r_other
+    if lang == est:
         return lang, result
-    bn_agree, hi_agree = float(bn.decoder_agreement or 0.0), float(getattr(result, "decoder_agreement", 0.0) or 0.0)
-    logger.info("[%s] Hindi picked in a Bengali call: Hindi %.2f / Bengali %.2f decoder agreement", session.call_id, hi_agree, bn_agree)
-    if bn_agree >= 0.75 and bn_agree >= hi_agree - 0.15 and getattr(bn, "text", "").strip():
-        logger.info("[%s] the call is Bengali and Bengali's reading stands: Bengali", session.call_id)
-        return "bn", bn
+    # the other language was picked, but not clearly: the call's own reading stands when it is a real one
+    if r_est is not None and agree(est) >= 0.75 and agree(est) >= agree(lang) - 0.15 and (getattr(r_est, "text", "") or "").strip():
+        logger.info("[%s] the call is %s and its reading stands: %s", session.call_id, est, est)
+        return est, r_est
     return lang, result
 
 
 async def _route_and_transcribe(session: CallSession, utterance_wav: str):
+    """The turn's language and reading (see _route_and_transcribe_inner), plus -- owner, 2026-10-30 -- the Hindi-words evidence: a Bengali reading that carries Hindi-only words written in Bengali letters
+    ("উধার", "মুঝে", "চাহিয়ে": agent/hindi_in_bengali.py) gets the Hindi recogniser's reading too, and where that one is written wholly in Devanagari and its decoders agree with each other nearly as well
+    (within 0.15), the turn is Hindi: answered in Hindi for this turn, the call not locked."""
+    session.clear_winner_lang = None
+    lang, result, decisive = await _route_and_transcribe_inner(session, utterance_wav)
+    try:
+        if lang == "bn" and result is not None and not session.lang_explicit and "hi" in _languages_active and hindi_in_bengali.looks_hindi(getattr(result, "text", "")) and not (session.lang_locked and session.lang == "hi"):
+            r_hi = await _asr_router.transcribe("hi", utterance_wav)
+            bn_agree = float(getattr(result, "decoder_agreement", 0.0) or 0.0)
+            hi_agree = float(getattr(r_hi, "decoder_agreement", 0.0) or 0.0)
+            wholly = language_of_script(getattr(r_hi, "text", ""), "?") == "hi" and len((r_hi.text or "").split()) >= 2
+            logger.info("[%s] Hindi words in the Bengali reading %r: Hindi reading %r (agreement %.2f against %.2f, Devanagari: %s)", session.call_id, result.text, getattr(r_hi, "text", ""), hi_agree, bn_agree, wholly)
+            if wholly and hi_agree >= bn_agree - 0.15:
+                session.clear_winner_lang = "hi"
+                return "hi", r_hi, decisive
+    except Exception as e:  # noqa: BLE001 - an advisory second reading must never take a turn down
+        logger.warning("[%s] Hindi-words check skipped: %s", session.call_id, e)
+    return lang, result, decisive
+
+
+async def _route_and_transcribe_inner(session: CallSession, utterance_wav: str):
     """LID -> routing decision -> ASR. Returns (language, ASRResult, decisive), or
     (None, None, True) when the router says a human should take the call.
 
@@ -5566,7 +5606,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         need = engines_needed(lid.language, lid.scores, _languages_active, prior)
         outcomes = await outcomes_for(need)
         lang, result = pick_candidate(outcomes, lid.scores, session.lang_router.previous_language)
-        lang, result = _keep_established_bengali(session, lang, result, outcomes)
+        lang, result = _keep_established_bengali(session, lang, result, outcomes, lid.scores)
         logger.info(
             "[%s] LID %s %s not decisive -> ran %s, chose %s (%s)",
             session.call_id,
@@ -5607,7 +5647,7 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
         both = await outcomes_for([primary, secondary])
         if len(both) == 2:
             lang, result = pick_candidate(both, lid.scores, session.lang_router.previous_language)
-            lang, result = _keep_established_bengali(session, lang, result, both)
+            lang, result = _keep_established_bengali(session, lang, result, both, lid.scores)
         else:
             lang, result = both[0]
         # the same spelled-code rescue as the single-language path below: the English recogniser keeps "C B C" apart
@@ -5837,6 +5877,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # the reply language jumped to Hindi for the rest of the call. Digit words say nothing about the language: it stays what it was.
             lang = _keep_language(session, prior_lang)
             detected_lang = lang
+        # Owner, 2026-10-30 ("two times asked in Hindi, both times answered in Bengali"): when the other language's recogniser CLEARLY won this turn (see _keep_established_bengali, and the Hindi-words check in
+        # _route_and_transcribe) the agent answers THIS turn in that language -- not locked: the next turn is judged afresh, and the two-turns-in-a-row offer to move the call still applies as before.
+        _cw = getattr(session, "clear_winner_lang", None)
+        if _cw and detected_lang == _cw and lang != _cw and not _short_booking_answer and not (len(_digits_said) >= 3 and _digit_hits * 2 >= _digit_total):
+            logger.info("[%s] this turn is answered in %s (clear winner); the call's language stays %s", session.call_id, _cw, session.lang)
+            lang = _cw
         # Owner, 2026-10-27: removed the "one confident, clear, 4+ word sentence in the other script instantly
         # relocks the call" shortcut that used to live here. Only two things may ever move the reply language once
         # a call is running: two turns in a row in the other language (asked, then switched on the caller's yes --
