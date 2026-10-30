@@ -115,7 +115,8 @@ def _mentions_sonoscan(t: str) -> bool:
                 break
             if width > 1 and any(len(_sound(w)) > 3 for w in tokens[i : i + width]):
                 continue  # a long word in the middle is a different word, not a piece of the name
-            snd = _sound("".join(tokens[i : i + width]))
+            # ল and ন are folded together: "শোনো স্কাল" for "সোনোস্ক্যান" (owner, 2026-10-30, "ha eta Sonoscan") is the same name heard with a final l
+            snd = _sound("".join(tokens[i : i + width])).replace("L", "N")
             if 4 <= len(snd) <= 6 and difflib.SequenceMatcher(None, snd, _SONOSCAN_SOUND).ratio() >= 0.85:
                 return True
     return False

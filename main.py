@@ -5840,7 +5840,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.signals.turns += 1
         # The CALLER's language history (for the flip-detection signal below and call_score.py's language_flips) --
         # what was actually SAID each turn, not the (now sticky) reply language, which barely varies by design.
-        session.lang_history.append(detected_lang)
+        if not _bare_greeting(text):  # "hello" is every language's word: it must not count as the caller switching to English
+            session.lang_history.append(detected_lang)
         if (
             len(session.lang_history) >= 3
             and session.lang_history[-1] == session.lang_history[-3] != session.lang_history[-2]
@@ -5881,6 +5882,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # _continue_language_switch_offer on the turn after. Checked before anything else can consume this turn.
         if (
             not session.awaiting_language_switch_offer
+            and not _bare_greeting(text)
             and not _readback_pending(session)  # a name/number read-back is waiting for its yes/no: a garbled short answer is not a language change
             and not _short_booking_answer  # nor the short answers of a booking in progress (real call 2026-10-24: "english rajah" for English Bazar, then a garbled yes)
             and not switch_target  # Real call 2026-10-17: an EXPLICIT "speak Bengali" said in Hindi was answered with "shall I speak Hindi?" (the offer fired on top of the request)
@@ -6578,6 +6580,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             )
             else phrase("smalltalk_default", lang)
         )
+        if chosen == phrase("smalltalk_default", lang) and _bare_greeting(text):
+            # Owner, 2026-10-30 ("hello ah", "hello" after the opening greeting): the agent has already said "সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?" when the call began. A hello from the caller
+            # now is answered "হ্যাঁ, বলুন।" -- never the whole greeting again.
+            chosen = phrase("silence_go_on", lang)
         if chosen == phrase("smalltalk_default", lang) and not greeting_words.is_greeting(text):
             if off_topic.how_are_you(text) and not unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in):
                 chosen = phrase("how_are_you_reply", lang)  # owner, 2026-10-28: "আপনি ভালো আছেন?" got "হ্যাঁ, বলুন" (yes, go on)
@@ -8724,6 +8730,11 @@ async def _doctor_when_turn(session: CallSession, text: str, lang: str) -> bool:
     session.doctor_q_date = when
     await _speak(session, _with_resume(session, reply, lang), lang)
     return True
+
+
+def _bare_greeting(text: str) -> bool:
+    """A short hello ("hello", "hello ah", "হ্যালো হ্যালো") and nothing else: a long sentence that merely starts with hello is a sentence."""
+    return len((text or "").split()) <= 3 and greeting_words.is_greeting(text)
 
 
 def _consume_leading_answer(session: CallSession, text: str, lang: str) -> str:
