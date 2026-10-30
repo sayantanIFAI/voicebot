@@ -3531,6 +3531,10 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     st.slots["time_slot"] = slot
     sits = await _sits_start(st, new_date or st.slots["date"], info)
     if new_date:
+        # Owner, 2026-10-30 ("আজকে বিকালে কাগে পাব" with Dr. Rajarshi Dutta's morning session over): TODAY is asked and the doctor has nothing left today -- the other doctors of his department who sit today
+        # with a free slot (the evening and night ones) are named first; his own next sitting is not the answer to "today".
+        if st.slots.get("date") == slot_proposal.clinic_now().date().isoformat() and st.slots.get("doctor_name") and await _offer_department_alternatives(session, st, lang, st.slots["date"], st.slots["doctor_name"]):
+            return True
         # the day had to move (nothing left on the asked day): that IS a question for the caller
         st.slots["_time_ok"] = "pending"
         st.slots["_sits_told"] = "1"
@@ -4124,6 +4128,9 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
         return False
     label = _dept_label(result["department_name"], lang)
     if on_date or at_time:
+        session.dept_topic = result["department_name"]
+        if on_date:
+            session.dept_ask = {"dept": result["department_name"], "date": on_date, "part": doctor_search.asked_part_of_day(text), "turn": session.turn_count}
         sitting = result.get("sitting") or []
         _part = doctor_search.asked_part_of_day(text)
         if _part:
@@ -5030,6 +5037,9 @@ async def _answer_department_doctors(session: CallSession, text: str, lang: str)
         return False
     if not result.get("matched"):
         return False
+    session.dept_topic = result["department_name"]  # the department stays the subject; a bare "কে আছে" next asks the same again
+    if on_date:
+        session.dept_ask = {"dept": result["department_name"], "date": on_date, "part": doctor_search.asked_part_of_day(text), "turn": session.turn_count}
     if on_date or at_time:
         sitting = result.get("sitting") or []
         if sitting and on_date:
@@ -7598,7 +7608,7 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                 session.booking = None
                 await _handle_unverified_write(session, lang)
                 return
-            await _speak(session, booking_reply(st.slots, result, lang), lang)
+            _thanks_s = await _speak(session, booking_reply(st.slots, result, lang), lang)
             if result.get("success"):
                 _record_action(session, "booking_confirmed", result, st.slots)
                 await _persist_senior(session, phone)
@@ -7621,7 +7631,12 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
                     with contextlib.suppress(ToolCallError):
                         await _tools.send_booking_confirmation_whatsapp(confirmation_id)
                 session.suspended = None  # nothing is offered back after the socket closes below
-                await _end_call(session, lang, "payment_link_sent")
+                # Owner, 2026-10-30: the caller said yes to the payment-link question (which already told the link, the fifteen minutes and the serial number): the call ends after the short "ধন্যবাদ।" just spoken --
+                # the long closing line is not repeated.
+                session.turn_epoch = session.speak_epoch
+                await asyncio.sleep(min(_thanks_s or 0.0, 8.0) + 0.3)
+                with contextlib.suppress(Exception):
+                    await session.ws.close()
                 return
             if result.get("reason") != "hold_expired":
                 session.booking = None
@@ -9060,16 +9075,15 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     if not topic:
         return False
     infos = _dept_infos(topic)
+    # who SITS (today / tomorrow / a day / a part of the day), "say again", "will all five sit?", a bare "কে আছে" -> the doctors sitting then who still have a free slot, never the department's whole list
+    if await _dept_sitting_turn(session, text, lang, topic):
+        return True
     if not infos:
         return False
     label = _dept_label(topic, lang)
     names = [dept_talk.spoken_name(i, lang) for i in infos]
     asks_names, asks_good, asks_when, asks_origin = dept_talk.asks_names(text), dept_talk.asks_good(text), dept_talk.asks_when(text), dept_talk.asks_origin(text)
     doctor_in_mind = booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)
-
-    # who SITS (today / tomorrow / a day), "say again", "will all five sit?" -> the doctors sitting that day, never the department's whole list
-    if await _dept_sitting_turn(session, text, lang, topic):
-        return True
 
     # does a <department> doctor sit here?  -> "yes, they sit." and nothing else
     if mention and dept_talk.yes_no_existence(text) and not asks_names:
@@ -9124,6 +9138,7 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     return False
 
 
+_WHO_IS_THERE = re.compile(r"(?:(?:ওখানে|এখানে|তাহলে|তো)\s+)?(?:কে|কারা|কে কে|কারা কারা)\s+(?:আছে|আছেন|আছে কে|আছেন কারা)|(?:कौन|कौन कौन)\s+(?:है|हैं)|\bwho(?:'s| is| are)?\s+(?:there|available|in)\b")
 _SIT_CUES = ("বসছে", "বসছেন", "বসবে", "বসবেন", "বসেন", "বসে", "bosche", "bosben", "bosbe", "sit", "बैठ")
 _REPEAT_CUES = ("আবার", "আরেকবার", "আরেক বার", "repeat", "say again", "once more", "फिर से", "दोबारा", "एक बार और")
 _COUNT_BN = {"এক": 1, "দুই": 2, "দু": 2, "তিন": 3, "চার": 4, "পাঁচ": 5, "ছয়": 6, "ছ": 6, "সাত": 7, "আট": 8, "নয়": 9, "দশ": 10}
@@ -9158,6 +9173,13 @@ async def _dept_sitting_turn(session: CallSession, text: str, lang: str, topic: 
     The doctors come from the clinic's schedule for that date; the department's full list is told only when the caller asks for the names of all of them."""
     low = (text or "").lower()
     sit = any(c in low for c in _SIT_CUES)
+    if _WHO_IS_THERE.fullmatch(" ".join(low.replace("?", " ").replace("।", " ").split())):
+        # Owner, 2026-10-30: right after the department's sitting doctors were asked about ("আজকে জেনারেল মেডিসিনের কেউ আছে বিকালে"), a bare "কে আছে" (who is there?) is the SAME question: the day and the part of the day
+        # asked, the doctors who sit then and still have a free slot -- not "sorry, say that again".
+        last = getattr(session, "dept_ask", None)
+        if last and last.get("dept") == topic and session.turn_count - last.get("turn", -99) <= 6:
+            return await _day_part_sitting_reply(session, text, lang, topic, iso_default=last["date"], part_default=last.get("part"))
+        return await _day_part_sitting_reply(session, text, lang, topic, iso_default=slot_proposal.clinic_now().date().isoformat())
     pend = getattr(session, "dept_pending", None)
     if any(c in low for c in _REPEAT_CUES) and pend and pend.get("say") and pend.get("kind") in ("pick", "confirm_one") and (sit or dept_talk.asks_names(text)):
         pend["turn"] = session.turn_count
@@ -9168,11 +9190,17 @@ async def _dept_sitting_turn(session: CallSession, text: str, lang: str, topic: 
     # a weekday NAMED in the sentence ("সামনের রবিবার বসবে কেউ?") is the day asked about -- the coming one (agent/weekday_cues.py) -- even when "today" is also said ("আজকে তো পারবো না")
     wd_iso = weekday_cues.resolve_date(text, today) if weekday_cues.weekday_of(text) is not None else None
     anyone = any(w in low for w in ("কেউ", "কেও", "anyone", "anybody", "कोई"))
+    # Owner, 2026-10-30: "আজকে জেনারেল মেডিসিন এর কে কে ডাক্তার আছে" -- a DAY said beside "which doctors are there" is a sitting question even with no sitting verb: today's doctors with a free slot, not the whole roster
+    if not sit and (wd_iso or booking_capture.read_when(text, False, want_day=True).date) and (dept_talk.asks_names(text) or anyone):
+        sit = True
     if not sit or not (dept_talk.asks_names(text) or count or anyone or wd_iso):
         return False
     if _text_names_a_doctor(text, lang) and not count:
         return False  # a particular doctor: the doctor steps answer
     iso = wd_iso or booking_capture.read_when(text, False, want_day=True).date or today.isoformat()
+    if not count:
+        # who sits (that day, that part of the day): only the doctors with a free slot then; none -> no free time, and who sits next (owner, 2026-10-30)
+        return await _day_part_sitting_reply(session, text, lang, topic, iso_default=iso)
     try:
         r = await _tools.department_doctors(topic, lang, on_date=iso)
     except ToolCallError:
@@ -9280,16 +9308,18 @@ async def _available_sitting(sitting: list[dict], iso: str, part: str | None) ->
     return [g for g in got if g is not None]
 
 
-async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, dept_name: str) -> bool:
+async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, dept_name: str, iso_default: str | None = None, part_default: str | None = None) -> bool:
     """Owner, 2026-10-30 ("আজকে বিকালের দিকে কে বসবে" after "my mother has chest pain": the answer was every cardiologist's weekly timetable). When the caller names a DAY (today, tomorrow, a weekday)
     or a PART OF THE DAY, the answer is only the doctors who sit then AND still have a free slot then -- "Dr. Subrata Banerjee, 18:00-20:00" -- and if nobody has, who sits next."""
     today = slot_proposal.clinic_now().date()
     wd = weekday_cues.resolve_date(text, today) if weekday_cues.weekday_of(text) is not None else None
     when = booking_capture.read_when(text, False, want_day=True)
-    part = doctor_search.asked_part_of_day(text)
-    iso = wd or when.date or (today.isoformat() if part else None)
+    part = doctor_search.asked_part_of_day(text) or part_default
+    iso = wd or when.date or (today.isoformat() if part and not iso_default else None) or iso_default
     if not iso:
         return False
+    session.dept_ask = {"dept": dept_name, "date": iso, "part": part, "turn": session.turn_count}  # a bare "কে আছে" next is the same question again (see _dept_sitting_turn)
+    session.dept_topic = dept_name
     try:
         r = await _tools.department_doctors(dept_name, lang, on_date=iso)
     except ToolCallError:

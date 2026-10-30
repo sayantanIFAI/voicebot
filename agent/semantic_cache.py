@@ -146,7 +146,9 @@ class EmbeddingUnavailable(Exception):
 
 
 def embed(text: str, timeout_s: int = EMBED_TIMEOUT_S) -> list[float]:
-    payload = json.dumps({"model": EMBED_MODEL, "input": text}).encode("utf-8")
+    # Owner, 2026-10-30 ("this has taken much time to answer"): with Qwen loaded the GPU is full (31.1 of 32.6 GB), so a bge-m3 request that wanted VRAM made Ollama UNLOAD Qwen, and the next caller's
+    # intent waited 25 s for it to load again. The embedding model is small: it runs on the CPU (num_gpu 0, 0.25 s) and stays resident beside Qwen, which is never evicted for it.
+    payload = json.dumps({"model": EMBED_MODEL, "input": text, "keep_alive": -1, "options": {"num_gpu": 0}}).encode("utf-8")
     req = urllib.request.Request(
         OLLAMA_EMBED_URL,
         data=payload,

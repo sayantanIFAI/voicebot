@@ -327,6 +327,9 @@ async def run_entry(mod, utterances: list[tuple[str, str]], with_fast_path: bool
     with tempfile.TemporaryDirectory() as tmp:
         for i, item in enumerate(utterances):
             text, lang = item[0], item[1]
+            follow_ups = []
+            if isinstance(text, list):  # several sentences of ONE call, in order: the report is the last one's, `earlier` holds what the agent said before
+                text, follow_ups = text[0], text[1:]
             window = item[2] if len(item) > 2 else None
             question_open = len(item) > 3 and bool(item[3])  # the agent's last words were a question: "thik ache" is then a yes
             ws = _Recorder()
@@ -361,8 +364,19 @@ async def run_entry(mod, utterances: list[tuple[str, str]], with_fast_path: bool
             model_calls.clear()
             handoffs.clear()
             err = None
+            earlier = []
             try:
                 await mod._dispatch_turn(session, path)
+                for k, nxt in enumerate(follow_ups):
+                    earlier.append(list(ws.said))
+                    ws.said.clear()
+                    heard["text"] = nxt
+                    p2 = os.path.join(tmp, f"u{i}_{k}.wav")
+                    with open(p2, "wb") as f:
+                        f.write(_silence_wav(max(1.0, 0.7 * len(nxt.split()))))
+                    tools.calls.clear()
+                    await mod._dispatch_turn(session, p2)
+                    text = nxt
             except Exception as e:  # noqa: BLE001 - reported to the test, never swallowed
                 err = f"{type(e).__name__}: {e}"
             out.append(
@@ -370,6 +384,7 @@ async def run_entry(mod, utterances: list[tuple[str, str]], with_fast_path: bool
                     "text": text,
                     "lang": lang,
                     "said": list(ws.said),
+                    "earlier": earlier,
                     "handoffs": list(handoffs),
                     "closed": ws.closed,
                     "model_called": bool(model_calls),

@@ -205,3 +205,16 @@ def test_name_in_another_script_is_grounded_by_sound_but_an_invented_name_is_not
     assert bc.name_is_grounded("Amit Roy", "कल दस बजे अपॉइंटमेंट अमित रॉय के नाम")
     assert bc.name_is_grounded("Amit Roy", "কাল দশটায় অ্যাপয়েন্টমেন্ট অমিত রায় ফোন")
     assert not bc.name_is_grounded("Rahul Sharma", "कल दस बजे अपॉइंटमेंट अमित रॉय के नाम")
+
+
+def test_a_garbled_age_is_asked_once_more_before_it_is_let_go():
+    """Owner, 2026-10-30: the age said as "poytallish" was heard as "by the least by the least" and the booking went on to the address with no age. The age is asked ONE more time."""
+    st = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
+    st.asked_fields.add("patient_age")
+    first = bc.before_model(st, "by the least by the least", "bn")
+    assert first.speak == bc.prompt("age_again", "bn")
+    second = bc.before_model(st, "by the least", "bn")
+    assert second.speak != bc.prompt("age_again", "bn")  # let go the second time: the booking is never held up
+    st2 = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
+    st2.asked_fields.add("patient_age")
+    assert bc.before_model(st2, "পঁয়তাল্লিশ", "bn").speak is None or "45" in (bc.before_model(st2, "পঁয়তাল্লিশ", "bn").speak or "")

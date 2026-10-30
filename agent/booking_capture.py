@@ -1152,7 +1152,7 @@ def says_english_bazar(text: str) -> bool:
 def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, tag: str) -> bool:
     """One of the details asked after the name and the number (the age, then the address). Owner, 2026-10-18: each is asked alone; the AGE is read back with the next
     question in the same breath ("the patient is 45. What is the address?"), the answer to which also counts as its yes; the ADDRESS goes straight on to the closing question,
-    after asking the police station when the caller did not give one. An answer that holds no value is let go once -- never asked twice. True when this sentence was that answer."""
+    after asking the police station when the caller did not give one. An answer that holds no value is let go once -- except the AGE, which is asked one more time (owner, 2026-10-30). True when this sentence was that answer."""
     pend_key, done_key = f"_{tag}_pending", f"_{tag}_done"
     if tag == "address":
         # Real call, 2026-10-29: a written-form (exact) match against the geo tables is address enough on its own --
@@ -1254,6 +1254,11 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
             if len(candidates) >= 2:  # a number-sounding word that fits two ages (7 or 60): ask, never pick
                 plan.speak = prompt("age_which", lang, a=candidates[0], b=candidates[1])
                 return True
+        if not value and tag == "age" and not st.slots.get("_age_reasked"):
+            # Owner, 2026-10-30 ("by the least by the least" for পঁয়তাল্লিশ, and the age was never asked again): an age the recogniser garbled is asked ONE more time before it is let go.
+            st.slots["_age_reasked"] = "1"
+            plan.speak = prompt("age_again", lang)
+            return True
         if not value:
             st.slots[done_key] = "1"  # no value in this answer: let it go
             plan.slots, plan.skip_model = {}, True
