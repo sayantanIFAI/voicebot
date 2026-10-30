@@ -160,7 +160,7 @@ from agent import slot_proposal  # the machine picks the appointment time and sa
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
 from agent import clinical_safety, lost_found, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
-from agent import clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -3993,7 +3993,7 @@ async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex:
         say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
         session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start"), "turn": session.turn_count, "say": say}
     else:
-        say = f"{lead} {doctor_search.sitting_pick_question([x['name'] for x in sit], _when_phrase(iso, None, lang), lang)}"
+        say = f"{lead} {doctor_search.sitting_pick_question([x['name'] for x in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
         session.dept_pending = {"kind": "pick", "doctors": sit, "date": iso, "time": None, "turn": session.turn_count, "say": say}
     await _speak(session, say, lang)
     return True
@@ -4016,7 +4016,7 @@ async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
         item = sit[0]
         say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
         return {"say": say, "pending": {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start")}}
-    say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang)}"
+    say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
     return {"say": say, "pending": {"kind": "pick", "doctors": sit, "date": iso, "time": None}}
 
 
@@ -4153,7 +4153,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
             await _speak(session, say, lang)
             return True
         if len(sitting) > 1:
-            say = doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang)
+            say = doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang, items=sitting)
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
             await _speak(session, say, lang)
             return True
@@ -4173,7 +4173,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                     say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
                     session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start"), "turn": session.turn_count, "say": say}
                 else:
-                    say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang)}"
+                    say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
                     session.dept_pending = {"kind": "pick", "doctors": sit, "date": iso, "time": None, "turn": session.turn_count, "say": say}
                 await _speak(session, say, lang)
                 return True
@@ -5800,6 +5800,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if text:
             text = imaging_words.normalise(text)  # "উসগ" is USG, "থাইরাইড গ্লিন্ট" is the thyroid gland: one spelling for the whole pipeline (real call 2026-10-19)
             text = await _normalise_spelled(text)  # letters said one by one ("টি এস এইচ") are the code they spell ("TSH") for the whole turn
+            _repaired = symptom_repair.repair(text)  # owner, 2026-10-30: "আমার খুব জাত" is "আমার খুব জ্বর" (agent/symptom_repair.py)
+            if _repaired != text:
+                logger.info("[%s] symptom word repaired: %r -> %r", session.call_id, text, _repaired)
+                text = _repaired
         if not text:
             logger.info("[%s] ASR returned empty text", session.call_id)
             lang = _keep_language(session, prior_lang)

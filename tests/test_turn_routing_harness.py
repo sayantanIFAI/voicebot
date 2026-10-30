@@ -463,11 +463,13 @@ def test_a_caller_who_is_quiet_while_a_booking_question_is_open_is_told_to_take_
 @pytest.mark.parametrize("text", [c[0] for c in AVAILABLE_TODAY_CASES])
 def test_who_is_available_today_lists_only_doctors_with_a_free_slot_today(turns, entry, text):
     """Owner, 2026-10-30: "আজকে কে কে অ্যাভেইলেবল আছে জেনারেল মেডিসিনে" was answered with every doctor of the department. Dr. Biswajit Sen sits today but is fully booked (the
-    harness's free_slots says so): only the two doctors with a free slot are named, with their hours; no model."""
+    harness's free_slots says so): only the doctors with a free slot are named, by part of the day; no model."""
     r = _run(turns, entry, text)
     said = _one_reply(r)
     assert not r["model_called"], said
-    assert "10:00-12:00" in said and "18:00-20:00" in said, said
+    assert "10:00" not in said and "18:00" not in said, said  # by part of the day, no hours (the time is told in the booking)
+    # (which parts appear depends on the clock: a session that is over is no longer listed; the 18:00 one is there until it ends)
+    assert any(w in said for w in ("সকালে", "দুপুরে", "বিকালে", "রাতে", "सुबह", "दोपहर में", "शाम को", "रात में", "in the morning", "around noon", "in the afternoon", "at night")), said
     assert not any(w in said for w in ("বিশ্বজিৎ", "बिस्वजीत", "Biswajit")), said
 
 
@@ -486,3 +488,20 @@ def test_a_sitting_type_verb_is_never_a_test_question_so_the_doctor_is_asked_for
     r = _run(turns, entry, HR1_CASES[1][0])
     said = _one_reply(r)
     assert "কোন ডাক্তারের কথা" in said and "টেস্ট" not in said and "পিএসএ" not in said, said
+
+
+def test_sitting_lists_are_told_by_part_of_the_day_without_hours():
+    """Owner, 2026-10-30: "আজ জেনারেল মেডিসিন বিভাগে সকালে বসছেন A, B আর C, দুপুরে বসছেন D, বিকালে বসছেন E, রাতে বসছেন F" -- the doctor chosen is then told his time in the booking."""
+    from agent import doctor_search
+
+    items = [{"name": "A", "start": "10:00"}, {"name": "B", "start": "10:00"}, {"name": "C", "start": "13:00"}, {"name": "D", "start": "18:00"}, {"name": "E", "start": "22:00"}]
+    say = doctor_search.sitting_list_reply(items, "আজ", "জেনারেল মেডিসিন", "bn")
+    assert say == "আজ জেনারেল মেডিসিন বিভাগে সকালে বসছেন A আর B, দুপুরে বসছেন C, বিকালে বসছেন D, রাতে বসছেন E। কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?"
+    assert "सुबह" in doctor_search.sitting_list_reply(items, "आज", "जनरल मेडिसिन", "hi") and "in the morning" in doctor_search.sitting_list_reply(items, "today", "General Medicine", "en")
+
+
+def test_a_garbled_fever_word_is_put_back():
+    from agent import symptom_repair
+
+    assert symptom_repair.repair("আমার খুব জাত") == "আমার খুব জ্বর"
+    assert symptom_repair.repair("জাত") == "জাত" and symptom_repair.repair("আমার খুব জ্বর") == "আমার খুব জ্বর"

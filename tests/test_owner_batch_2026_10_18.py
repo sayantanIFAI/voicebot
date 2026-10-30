@@ -283,10 +283,11 @@ def test_who_sits_tomorrow_in_a_department_is_a_list_question_with_or_without_th
     assert not dept_list.asks_doctor_list("কার্ডিওলজির ডাক্তার কেমন")
 
 
-def test_the_list_for_a_day_names_the_doctors_and_their_hours_never_todays_list():
+def test_the_list_for_a_day_names_the_doctors_by_part_of_the_day_never_todays_list():
     sitting = [{"name": "কৌশিক ভট্টাচার্য", "start": "10:00", "end": "12:00"}, {"name": "নির্মল রায়", "start": "10:00", "end": "12:00"}]
     text = doctor_search.sitting_list_reply(sitting, "আগামীকাল", "কার্ডিওলজি", "bn")
-    assert "আগামীকাল" in text and "কৌশিক ভট্টাচার্য (10:00-12:00)" in text and "আজ" not in text
+    # owner, 2026-10-30: told by part of the day, no hours (the doctor chosen is told his time in the booking)
+    assert "আগামীকাল" in text and "সকালে বসছেন কৌশিক ভট্টাচার্য আর নির্মল রায়" in text and "10:00" not in text and "আজ" not in text
     assert "Nobody" in doctor_search.sitting_list_reply([], "tomorrow", "Cardiology", "en")
 
 

@@ -184,8 +184,52 @@ def filtered_reply(result: dict, sex: str, lang: str, dept_label: str) -> str:
     }[lang]
 
 
-def sitting_pick_question(names: list[str], when_phrase: str, lang: str) -> str:
-    """Several doctors sit at the asked time: name them and ask which, with a confirmation, never choosing one for the caller."""
+# Owner, 2026-10-30: a list of the doctors who sit is told by the part of the day they START in, with no hours ("সকালে বসছেন A, B আর C, দুপুরে বসছেন D, বিকালে বসছেন E, রাতে বসছেন F"); the time of
+# the doctor the caller chooses is told in the booking. Starts before 12:00 are morning, 12:00-15:00 noon, 15:00 until NIGHT_FROM afternoon ("বিকাল": the owner's example puts a doctor who starts at 18:00 under
+# বিকালে and one who starts at 22:00 under রাতে), NIGHT_FROM onward night. (The caller's own "বিকালের দিকে" filter, part_of_day_of, is unchanged.)
+NIGHT_FROM = 20
+_SPOKEN_PARTS = ("morning", "noon", "afternoon", "night")
+_SPOKEN_PART_WORD = {
+    "morning": {"bn": "সকালে", "hi": "सुबह", "en": "in the morning"},
+    "noon": {"bn": "দুপুরে", "hi": "दोपहर में", "en": "around noon"},
+    "afternoon": {"bn": "বিকালে", "hi": "शाम को", "en": "in the afternoon"},
+    "night": {"bn": "রাতে", "hi": "रात में", "en": "at night"},
+}
+
+
+def spoken_part_of(start: str | None) -> str | None:
+    try:
+        h = int((start or "").split(":")[0])
+    except ValueError:
+        return None
+    return "morning" if h < 12 else "noon" if h < 15 else "afternoon" if h < NIGHT_FROM else "night"
+
+
+def grouped_by_part(items: list[dict], lang: str) -> str | None:
+    """"সকালে বসছেন A, B আর C, দুপুরে বসছেন D, রাতে বসছেন F" -- None when a doctor has no start time (the caller then names them plainly)."""
+    if not items or any(spoken_part_of(i.get("start")) is None for i in items):
+        return None
+    lg = lang if lang in ("bn", "hi") else "en"
+    groups = []
+    for part in _SPOKEN_PARTS:
+        names = [i["name"] for i in items if spoken_part_of(i.get("start")) == part]
+        if not names:
+            continue
+        w = _SPOKEN_PART_WORD[part][lg]
+        groups.append({"bn": f"{w} বসছেন {_join(names, lg)}", "hi": f"{w} {_join(names, lg)} बैठ रहे हैं", "en": f"{w}: {_join(names, lg)}"}[lg])
+    return ", ".join(groups)
+
+
+def sitting_pick_question(names: list[str], when_phrase: str, lang: str, items: list[dict] | None = None) -> str:
+    """Several doctors sit at the asked time: name them and ask which, with a confirmation, never choosing one for the caller. With `items` (the doctors' rows, with their start times) the names
+    are told by part of the day."""
+    grouped = grouped_by_part(items or [], lang)
+    if grouped:
+        return {
+            "bn": f"{when_phrase} {grouped}। কার কাছে অ্যাপয়েন্টমেন্ট করব?",
+            "hi": f"{when_phrase} {grouped}। किसके पास अपॉइंटमेंट करूँ?",
+            "en": f"{when_phrase} {grouped}. Whom shall I book?",
+        }[lang]
     return {
         "bn": f"{when_phrase} এই ডাক্তাররা বসেন: {_join(names, lang)}। কার কাছে অ্যাপয়েন্টমেন্ট করব?",
         "hi": f"{when_phrase} ये डॉक्टर बैठते हैं: {_join(names, lang)}। किसके पास अपॉइंटमेंट करूँ?",
@@ -194,25 +238,24 @@ def sitting_pick_question(names: list[str], when_phrase: str, lang: str) -> str:
 
 
 def sitting_list_reply(sitting: list[dict], when_phrase: str, dept_label: str, lang: str) -> str:
-    """"Who sits in cardiology tomorrow": each doctor with the hours, from the real schedule. Never today's list for a question about tomorrow."""
-    def one(s: dict) -> str:
-        hours = f" ({s['start']}-{s['end']})" if s.get("start") and s.get("end") else ""
-        return f"{s['name']}{hours}"
-
-    names = [one(s) for s in sitting]
+    """"Who sits in cardiology tomorrow": the doctors by part of the day (no hours -- the time is told in the booking), from the real schedule. Never today's list for a question about tomorrow."""
+    names = [s["name"] for s in sitting]
     if not names:
         return nobody_sits(when_phrase, [], lang)
+    grouped = grouped_by_part(sitting, lang)
     if len(names) == 1:
-        # Owner, 2026-10-27: with ONE doctor there is nobody to choose between -- "whom?" is the wrong question; ask whether to book.
+        # Owner, 2026-10-27: with ONE doctor there is nobody to choose between -- "whom?" is the wrong question; ask whether to book him.
+        g = grouped or names[0]
         return {
-            "bn": f"{when_phrase} {dept_label} বিভাগে বসছেন {names[0]}। অ্যাপয়েন্টমেন্ট করতে চান?",
-            "hi": f"{when_phrase} {dept_label} विभाग में बैठ रहे हैं {names[0]}। अपॉइंटमेंट करना चाहेंगे?",
-            "en": f"{when_phrase} in {dept_label}: {names[0]}. Would you like an appointment?",
+            "bn": f"{when_phrase} {dept_label} বিভাগে {g}। অ্যাপয়েন্টমেন্ট করতে চান?",
+            "hi": f"{when_phrase} {dept_label} विभाग में {g}। अपॉइंटमेंट करना चाहेंगे?",
+            "en": f"{when_phrase} in {dept_label}, {g}. Would you like an appointment?",
         }[lang]
+    g = grouped or _join(names, lang)
     return {
-        "bn": f"{when_phrase} {dept_label} বিভাগে বসছেন {_join(names, lang)}। কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
-        "hi": f"{when_phrase} {dept_label} विभाग में बैठ रहे हैं {_join(names, lang)}। किसके पास अपॉइंटमेंट चाहिए?",
-        "en": f"{when_phrase} in {dept_label}: {_join(names, lang)}. Whom would you like an appointment with?",
+        "bn": f"{when_phrase} {dept_label} বিভাগে {g}। কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
+        "hi": f"{when_phrase} {dept_label} विभाग में {g}। किसके पास अपॉइंटमेंट चाहिए?",
+        "en": f"{when_phrase} in {dept_label}, {g}. Whom would you like an appointment with?",
     }[lang]
 
 

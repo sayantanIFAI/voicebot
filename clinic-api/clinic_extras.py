@@ -155,10 +155,17 @@ NEW_ROUTES = [
         ["brain tumour", "brain tumor", "spine surgery", "slip disc surgery", "head surgery"],
     ),
     (
+        # Owner, 2026-10-30: "আমার ডেঙ্গু হয়েছে" (I have dengue) was answered "tell me what the problem is": a fever illness named as the illness is General Medicine's, with today's doctors.
+        "General Medicine",
+        ["ডেঙ্গু", "ডেঙ্গি", "ডেংগু", "ম্যালেরিয়া", "ম্যালেরিয়ায়", "টাইফয়েড", "চিকুনগুনিয়া", "ভাইরাল জ্বর", "ভাইরাল ফিভার"],
+        ["डेंगू", "डेंगी", "मलेरिया", "टाइफाइड", "चिकनगुनिया", "वायरल बुखार"],
+        ["dengue", "malaria", "typhoid", "chikungunya", "viral fever"],
+    ),
+    (
         "Urology",
-        ["কিডনিতে পাথর", "কিডনির পাথর", "প্রোস্টেট", "প্রস্রাবে জ্বালা", "প্রস্রাবে রক্ত", "মূত্রথলির পাথর"],
-        ["किडनी में पथरी", "किडनी की पथरी", "प्रोस्टेट", "पेशाब में जलन", "पेशाब में खून"],
-        ["kidney stone", "prostate", "burning urine", "blood in urine", "bladder stone"],
+        ["কিডনিতে পাথর", "কিডনির পাথর", "প্রোস্টেট", "প্রস্রাবে জ্বালা", "প্রস্রাবে রক্ত", "মূত্রথলির পাথর", "ইউটিআই", "ইউ টি আই", "ইউটি", "ইউরিন ইনফেকশন", "প্রস্রাবের ইনফেকশন"],  # owner, 2026-10-30: UTI
+        ["किडनी में पथरी", "किडनी की पथरी", "प्रोस्टेट", "पेशाब में जलन", "पेशाब में खून", "यूटीआई", "यू टी आई", "यूरिन इन्फेक्शन", "पेशाब का इन्फेक्शन"],
+        ["kidney stone", "prostate", "burning urine", "blood in urine", "bladder stone", "u t i", "uti problem", "uti infection", "urine infection", "urinary infection", "urinary tract"]  # (a bare "uti" would match inside "utility": keywords are substrings),
     ),
     (
         "Psychiatry",
