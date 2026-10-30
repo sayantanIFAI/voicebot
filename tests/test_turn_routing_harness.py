@@ -93,8 +93,18 @@ ROUND4_CASES = [
     ("can I come and book at the clinic", "en"),
     ("bolchi ekta naam lekhanor chhilo", "en"),
     ("নাম লেখানোর ছিল", "bn"),
+    ("নাম লেখানো যাবে আজকে", "bn"),
+    ("ওই যেটা নাম লেখাবো আজকে", "bn"),
+    ("কালকে নাম লেখাতে চাই", "bn"),
 ]
 ROUND4_WINDOW_CASES = [("kota theke kota bose", "en"), ("কটা থেকে কটা বসেন", "bn"), ("कितने बजे से कितने बजे तक बैठते हैं", "hi")]
+AVAILABLE_TODAY_CASES = [
+    ("বলছি আজকে আজকে কে কে অবৈলাবল আছে জেনারেল মেডিসিন এ", "bn"),
+    ("জেনারেল মেডিসিনে কে কে অ্যাভেইলেবল আছে", "bn"),
+    ("जनरल मेडिसिन में कौन कौन उपलब्ध है", "hi"),
+    ("who is available in general medicine", "en"),
+    ("who is available today in general medicine", "en"),
+]
 ROUND5_CASES = [
     ("usg of thyroid gland", "en"),
     ("tb test in ear", "en"),
@@ -137,7 +147,7 @@ WINDOW_CASES = [
 @pytest.fixture(scope="module")
 def turns():
     payload = json.dumps(
-        [{"text": t, "lang": lg} for t, lg in CASES + ROUND4_CASES + ROUND5_CASES + ROUND6_CASES + ROUND7_CASES]
+        [{"text": t, "lang": lg} for t, lg in CASES + ROUND4_CASES + AVAILABLE_TODAY_CASES + ROUND5_CASES + ROUND6_CASES + ROUND7_CASES]
         + [{"text": t, "lang": lg, "answering": True} for t, lg in ROUND6_OPEN_CASES]
         + [{"text": t, "lang": lg, "window": WINDOW} for t, lg in WINDOW_CASES + ROUND4_WINDOW_CASES + ROUND5_WINDOW_CASES + ROUND7_WINDOW_CASES],
         ensure_ascii=False,
@@ -374,7 +384,7 @@ def test_item_16_kota_theke_kota_tells_the_hours_from_and_to(turns, entry, text,
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)
-@pytest.mark.parametrize("text", ["bolchi ekta naam lekhanor chhilo", "নাম লেখানোর ছিল"])
+@pytest.mark.parametrize("text", ["bolchi ekta naam lekhanor chhilo", "নাম লেখানোর ছিল", "নাম লেখানো যাবে আজকে", "ওই যেটা নাম লেখাবো আজকে", "কালকে নাম লেখাতে চাই"])
 def test_item_22_a_name_to_write_with_no_doctor_asks_which_doctor(turns, entry, text):
     r = _run(turns, entry, text)
     said = _one_reply(r)
@@ -446,3 +456,15 @@ def test_a_caller_who_is_quiet_while_a_booking_question_is_open_is_told_to_take_
     first = next(r for r in rounds if r["said"])
     assert first["said"] == [phrase("booking_wait", "en")] and not first["ended"], rounds
     assert all(phrase("silence_prompt", "en") not in r["said"] for r in rounds), rounds  # "anything else?" is never asked: a later "no" would end the call and lose the booking
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text", [c[0] for c in AVAILABLE_TODAY_CASES])
+def test_who_is_available_today_lists_only_doctors_with_a_free_slot_today(turns, entry, text):
+    """Owner, 2026-10-30: "আজকে কে কে অ্যাভেইলেবল আছে জেনারেল মেডিসিনে" was answered with every doctor of the department. Dr. Biswajit Sen sits today but is fully booked (the
+    harness's free_slots says so): only the two doctors with a free slot are named, with their hours; no model."""
+    r = _run(turns, entry, text)
+    said = _one_reply(r)
+    assert not r["model_called"], said
+    assert "10:00-12:00" in said and "18:00-20:00" in said, said
+    assert not any(w in said for w in ("বিশ্বজিৎ", "बिस्वजीत", "Biswajit")), said

@@ -152,6 +152,13 @@ class FakeTools:
         self.calls.append(("department_doctors", name))
         return bs.department_doctors(_DBSESSION, name, lang, sex=sex, on_date=on_date, at_time=at_time)
 
+    async def free_slots(self, doctor_name, date):
+        """Every doctor has free slots, except Dr. Biswajit Sen: fully booked (so "who is available today" must leave him out)."""
+        self.calls.append(("free_slots", doctor_name))
+        if "biswajit" in (doctor_name or "").lower() or "b. sen" in (doctor_name or "").lower():
+            return {"found": True, "free_slots": []}
+        return {"found": True, "free_slots": ["10:00", "10:15"]}
+
     async def route_department(self, text, lang="bn"):
         self.calls.append(("route_department", text))
         return bs.route_department(_DBSESSION, text, lang)

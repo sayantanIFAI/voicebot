@@ -1351,6 +1351,7 @@ class CallSession:
         self.suspended = None
         self.awaiting_resume = False
         self.pending_enquiry = None  # (intent, turn) when we just asked "which test / which doctor"
+        self.write_name_date = None  # (date, turn): the day said in "নাম লেখাবো আজকে" while the doctor is still asked for (see _answer_write_name)
         # KCD-lead-1: the turn we asked "patient's name, number, which doctor/department" after an inter-
         # center referral call (agent/referral_cues.py); the ANSWER is read on the next turn regardless of
         # what intent the model guesses for it, same discipline as pending_enquiry above.
@@ -3322,7 +3323,7 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             if result.get("available") is False and result.get("next_available_date"):
                 _de_date = result["next_available_date"]
             _doctor_enquiry_found.set({"doctor_name": slots["doctor_name"], "date": _de_date, "window": result.get("chamber_hours")})
-        if not result.get("found") and not result.get("ambiguous") and _fast_path is not None:
+        if not result.get("found") and (not result.get("ambiguous") or _first_and_surname_of_two_doctors(str(slots.get("doctor_name") or ""))) and _fast_path is not None:
             # Owner, 2026-10-29 ("অনীর্বাণ দত্ত"): a name that is nobody's -> "no doctor named X", then the doctors with that surname, with that first name, and the closest names (agent/name_groups.py)
             with contextlib.suppress(Exception):
                 _said = str(slots.get("doctor_name") or "")
@@ -4117,6 +4118,12 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
         _part = doctor_search.asked_part_of_day(text)
         if _part:
             sitting = [s for s in sitting if doctor_search.part_of_day_of(s.get("start")) == _part]  # owner, 2026-10-28: "আজকে কে বসছে বিকালের দিকে"
+        if sitting and on_date and not at_time:
+            # Owner, 2026-10-30: "who is available today in General Medicine" -- only the doctors who sit AND still have a free slot, never the whole timetable; if none has: no free time, then who sits next
+            _avail = await _available_sitting(sitting, on_date, _part)
+            if not _avail:
+                return await _day_part_sitting_reply(session, text, lang, result["department_name"])
+            sitting = _avail
         phrase_when = _when_phrase(on_date, at_time, lang)
         if len(sitting) == 1:
             item = sitting[0]
@@ -4677,6 +4684,24 @@ async def _answer_come_to_clinic(session: CallSession, text: str, lang: str) -> 
     return True
 
 
+def _first_and_surname_of_two_doctors(said: str) -> bool:
+    """Owner, 2026-10-30 ("ডক্টর অভিজিৎ সেন" -> "অভিজিৎ সরকার নাকি বিশ্বজিৎ সেন?"): the clinic API calls a name "ambiguous" when one word fits one doctor and the other word another. That is not a choice
+    between two doctors, it is a full name that is NOBODY's: the caller gets "no doctor named X", then the doctors with that first name (see agent/name_groups.py). True only when the sentence has a
+    first name and a surname and no single doctor carries both. An initial ("A. Sen" for two A. Sens) is a real ambiguity and stays one."""
+    if _fast_path is None:
+        return False
+    with contextlib.suppress(Exception):
+        toks = name_groups._tokens(said)  # noqa: SLF001
+        if len(toks) < 2 or len(name_script.name_skeleton(toks[0])) < 2:
+            return False
+        for info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
+            given, sur = name_groups._own_names(info)  # noqa: SLF001
+            if any(name_groups._same(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
+                return False
+        return True
+    return False
+
+
 async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool:
     """"bolchi ekta naam lekhanor chhilo" (owner, 2026-10-23): a name to be written = a serial to be taken, with no doctor said: asked back which doctor. The
     answer is read as a booking's doctor (session.pending_enquiry). A doctor / test / day already in the sentence, or a booking already open, is the booking
@@ -4700,8 +4725,13 @@ async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool
     if booking is not None and booking.stage in ("confirming", "awaiting_charge_confirm"):
         return False  # a yes / no to the read-back is being waited for
     when = booking_capture.read_when(text, False, want_day=True)
+    _day_to_keep = None
     if when.date or when.time:
-        return False
+        # Owner, 2026-10-30: "নাম লেখাবো আজকে" / "নাম লেখানো যাবে আজকে" -- a day beside the request to write a name and NO doctor said: the booking path asks which doctor and keeps the day. (A doctor named, or a
+        # booking already open, stays the booking flow's business.) Before this the sentence fell through to the intent model, which guessed a lab-test price question.
+        if booking is not None or _text_names_a_doctor(text, lang):
+            return False
+        _day_to_keep = when.date
     if booking is not None and booking.stage == "collecting":
         # a booking is under way: "I will give a name" is the answer to its next question, whichever that is -- asked, not dropped to the model (which finds nothing in it)
         missing = missing_required(booking)
@@ -4716,6 +4746,7 @@ async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool
         return False
     # no booking yet and no doctor in the air -- the doctor is asked for (the answer starts the booking)
     session.pending_enquiry = ("book_appointment", session.turn_count)
+    session.write_name_date = (_day_to_keep, session.turn_count) if _day_to_keep else None
     ask = missing_slot_prompt("book_appointment", "doctor_name", lang)
     if doctor_enquiry_cues.asks_can_book_name(text, lang):
         # sourav, 2026-10-24: "naam ta booking kora jabe?" is a yes/no question -- answered "Yes, ..." first; the doctor's name comes next, then the date questions.
@@ -4981,6 +5012,8 @@ async def _answer_department_doctors(session: CallSession, text: str, lang: str)
     # question is the day / hour asked about: the doctors who really sit then, with their hours.
     when = booking_capture.read_when(text, False, want_day=True)
     on_date, at_time = (when.date or None), (when.time or None)
+    if not on_date and not at_time and dept_list.asks_available(text) and lists_doctors:
+        on_date = slot_proposal.clinic_now().date().isoformat()  # owner, 2026-10-30: "who is available" with no day said is TODAY: the doctors who sit today and still have a free slot
     try:
         result = await _tools.department_doctors(text, lang, on_date=on_date, at_time=at_time)
     except ToolCallError:
@@ -6330,6 +6363,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
+    _kept_day, session.write_name_date = session.write_name_date, None
+    if _kept_day and pending is not None and pending[0] == "book_appointment" and intent == "book_appointment" and session.turn_count - _kept_day[1] <= 1 and not (slots or {}).get("date"):
+        slots = {**(slots or {}), "date": _kept_day[0]}  # the day said with "write my name": the doctor's name is the answer, the day is already known
+        data = {**data, "slots": slots}
     # Owner, 2026-10-29: a commitment ("তো একটা নাম লিখে দিন") right after a doctor was discussed is the booking of that doctor, never "off topic" (the gate is loose and state-aware).
     _committing = session.booking is None and booking_carryover.recent(session.last_doctor_enquiry, session.turn_count) and booking_carryover.continues_booking(text)
     if intent in ("smalltalk", "unclear") and not _committing and await _offtopic_by_verdict(session, text, lang, data, asr_result):

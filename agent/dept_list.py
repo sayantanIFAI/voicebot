@@ -17,7 +17,7 @@ _LIST = (
     "कौन कौन", "कौन-कौन", "कौन से", "कितने", "कौन हैं", "लिस्ट", "सूची",
     # English
     "who are", "who is there", "which doctors", "what doctors", "list of doctors", "doctors in", "doctors for", "doctors are there", "doctors available",
-    "how many doctors", "doctors do you have", "doctors you have",
+    "how many doctors", "doctors do you have", "doctors you have", "who is available", "who's available", "who all", "who is free",
 )
 
 
@@ -38,11 +38,24 @@ _SITS = (
 )
 
 
+# Owner, 2026-10-30 ("আজকে কে কে অবৈলাবল আছে জেনারেল মেডিসিন এ"): "available" is how callers ask who is there NOW. The recogniser writes it many ways; with no other day said it means TODAY, and the answer is
+# only the doctors who sit today and still have a free slot -- never the department's whole list.
+_AVAILABLE = (
+    "অ্যাভেইলেবল", "অ্যাভেলেবল", "অ্যাভেইলেবেল", "এভেইলেবল", "এভেলেবল", "অবৈলাবল", "অবেলেবল", "অ্যাভাইলেবল", "অ্যাভেলাবল", "এভেলাবল", "উপলব্ধ", "খালি আছেন", "ফ্রি আছেন",
+    "उपलब्ध", "अवेलेबल", "अवेलबल", "अवैलेबल", "एवेलेबल", "available", "avaliable", "availble", "avilable", "availabel",
+)
+
+
+def asks_available(text: str) -> bool:
+    """The caller asks who is "available" (any spelling the recogniser made of it)."""
+    return _has(_norm(text), _AVAILABLE)
+
+
 def asks_who_sits(text: str) -> bool:
     """"কালকে কে কে বসছে কার্ডিওলজি" -- who sits (in a department) on a day. There is no doctor word in it, and "কে কে" ("who, who") is a question about people, never a
     doctor named "কে কে" (real call 2026-10-18)."""
     t = _norm(text)
-    return bool(t) and len(t.split()) <= 16 and _has(t, _LIST) and _has(t, _SITS)
+    return bool(t) and len(t.split()) <= 16 and _has(t, _LIST) and (_has(t, _SITS) or _has(t, _AVAILABLE))
 
 
 def asks_doctor_list(text: str) -> bool:

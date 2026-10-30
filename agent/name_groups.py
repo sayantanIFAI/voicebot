@@ -70,7 +70,11 @@ def build(said: str, infos: list[dict], api_suggestions: list[str]) -> dict | No
             if s in (i.get("name"), i.get("full_name")) and i not in sugg:
                 sugg.append(i)
     closer = [i for i in sugg if i not in by_sur and i not in by_given]
-    best_same_surname = [i for i in sugg if i in by_sur]
+    # Owner, 2026-10-30 ("ডক্টর অভিজিৎ সেন" was answered "Abhijit Sarkar or Biswajit Sen?"): the order of closeness is the first name (exact, then sounding the same), then the whole name sounding similar; a
+    # doctor who shares ONLY the surname is offered when no first name matches at all, never beside a doctor whose first name the caller did say.
+    if by_given:
+        by_sur = []
+    best_same_surname = [i for i in sugg if i in by_sur]  # (empty when a first name matched)
     short = best_same_surname[0] if (not by_given and len(best_same_surname) == 1 and not closer) else None
     if not (by_sur or by_given or closer):
         return None
@@ -109,10 +113,10 @@ def reply(groups: dict, said_text: str, lang: str) -> str:
     names = lambda key: _join([spoken_name(i, lang) for i in groups[key]], lang)  # noqa: E731
     said = name_script.clean_query(said_text, lang) if lang in ("bn", "hi") else said_text
     parts = {
-        "bn": [f"'{said}' নামে কোনো ডাক্তার নেই।"],
-        "hi": [f"'{said}' नाम के कोई डॉक्टर नहीं हैं।"],
-        "en": [f"There is no doctor named '{said}'."],
-    }.get(lang, [f"There is no doctor named '{said}'."])
+        "bn": [f"'{said}' নামে কেউ বসেন না।"],  # owner, 2026-10-30: "Abhijit Sen bole keu bosen na" -- said first, before anyone is offered
+        "hi": [f"'{said}' नाम के कोई डॉक्टर नहीं बैठते।"],
+        "en": [f"No doctor named '{said}' sits here."],
+    }.get(lang, [f"No doctor named '{said}' sits here."])
     if groups["surname"]:
         w = groups["surname_word"]
         parts.append({"bn": f"{w} নামে আছেন {names('surname')}।", "hi": f"{w} नाम के डॉक्टर हैं {names('surname')}।", "en": f"With the surname {w}: {names('surname')}."}.get(lang, ""))
@@ -121,5 +125,8 @@ def reply(groups: dict, said_text: str, lang: str) -> str:
         parts.append({"bn": f"{w} নামে আছেন {names('given')}।", "hi": f"{w} नाम के डॉक्टर हैं {names('given')}।", "en": f"With the first name {w}: {names('given')}."}.get(lang, ""))
     if groups["closer"]:
         parts.append({"bn": f"কাছাকাছি নাম: {names('closer')}।", "hi": f"मिलते-जुलते नाम: {names('closer')}।", "en": f"Closest names: {names('closer')}."}.get(lang, ""))
-    parts.append({"bn": "কার কথা বলছেন?", "hi": "आप किसकी बात कर रहे हैं?", "en": "Which one do you mean?"}.get(lang, ""))
+    if len(offered(groups)) == 1:
+        parts.append({"bn": "ওনার কথা বলছেন?", "hi": "क्या आप इनकी बात कर रहे हैं?", "en": "Do you mean this doctor?"}.get(lang, ""))
+    else:
+        parts.append({"bn": "কার কথা বলছেন?", "hi": "आप किसकी बात कर रहे हैं?", "en": "Which one do you mean?"}.get(lang, ""))
     return " ".join(p for p in parts if p)
