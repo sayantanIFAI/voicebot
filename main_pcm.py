@@ -160,7 +160,7 @@ from agent import slot_proposal  # the machine picks the appointment time and sa
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
 from agent import clinical_safety, lost_found, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
-from agent import symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -5878,6 +5878,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             analysis["audio"].duration_s if analysis else None,
             asr_result.decoder_agreement,
             slot_answer=in_booking_flow
+            or (bool(getattr(session, "last_spoken", "")) and repeat_request.asks_repeat(text))  # a request to hear the last line again is never "jumbled" (owner, 2026-10-30)
             or session.pending_entity is not None
             or session.awaiting_handoff_offer
             or session.history_state is not None
@@ -6303,6 +6304,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if await _answer_prescription(session, text, lang):
             return
         if await _answer_route_pushback(session, text, lang):
+            return
+        if getattr(session, "last_spoken", "") and repeat_request.asks_repeat(text):
+            # Owner, 2026-10-30: "sunte pelam na" / "bujhlam na" / "ki bolchen?" / "ar ekbar bolben please" ... -> the LAST LINE again, exactly as it was said
+            logger.info("[%s] the caller asked for the last line again", session.call_id)
+            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang)
             return
         if await _answer_named_total(session, text, lang):
             return

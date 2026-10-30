@@ -110,6 +110,7 @@ WHO_IS_THERE_CASES = [
     (["আজকে জেনারেল মেডিসিনের কেউ বসছেন বিকালের দিকে", "তাহলে কে আছে"], "bn"),  # one call: the second sentence is the same question again
     ("আজকে জেনারেল মেডিসিন এর কে কে ডাক্তার আছে", "bn"),
 ]
+REPEAT_CASES = [(["জেনারেল মেডিসিনের ডাক্তার কারা", t], "bn") for t in ("ar ekbar bolben please", "bujhlam na", "সুনতে পেলাম না")]
 ROUND5_CASES = [
     ("usg of thyroid gland", "en"),
     ("tb test in ear", "en"),
@@ -152,7 +153,7 @@ WINDOW_CASES = [
 @pytest.fixture(scope="module")
 def turns():
     payload = json.dumps(
-        [{"text": t, "lang": lg} for t, lg in CASES + ROUND4_CASES + AVAILABLE_TODAY_CASES + HR1_CASES + WHO_IS_THERE_CASES + ROUND5_CASES + ROUND6_CASES + ROUND7_CASES]
+        [{"text": t, "lang": lg} for t, lg in CASES + ROUND4_CASES + AVAILABLE_TODAY_CASES + HR1_CASES + WHO_IS_THERE_CASES + REPEAT_CASES + ROUND5_CASES + ROUND6_CASES + ROUND7_CASES]
         + [{"text": t, "lang": lg, "answering": True} for t, lg in ROUND6_OPEN_CASES]
         + [{"text": t, "lang": lg, "window": WINDOW} for t, lg in WINDOW_CASES + ROUND4_WINDOW_CASES + ROUND5_WINDOW_CASES + ROUND7_WINDOW_CASES],
         ensure_ascii=False,
@@ -521,3 +522,10 @@ def test_a_bare_who_is_there_repeats_the_day_and_part_of_day_just_asked_and_toda
         assert not r["model_called"] and "জেনারেল মেডিসিন" in said, said
         assert "আটজন" not in said and "দুঃখিত। আমি বুঝতে" not in said, said
 
+
+
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+@pytest.mark.parametrize("text", ["ar ekbar bolben please", "bujhlam na", "সুনতে পেলাম না"])
+def test_a_request_to_hear_it_again_repeats_the_last_line_exactly(turns, entry, text):
+    r = _run(turns, entry, text)
+    assert r["earlier"] and r["said"] == r["earlier"][-1] and not r["model_called"], r
