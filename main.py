@@ -4055,6 +4055,17 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
             return False
         if pend["kind"] == "confirm_one":
             _names_him = doctor_search.choose_by_name(text, [[pend["doctor"].get("name", ""), pend["doctor"].get("full_name", "")]]) == 0 and len(text.split()) <= 6  # saying the offered doctor's name IS the yes
+            if _asks_when(text) and booking_capture.confirm_answer(text, lang) is None and not booking_carryover.commits_to_booking(text):
+                # Owner, 2026-10-30 ("কখন আছে কখন বসে সুব্রত ব্যানার্জি" right after "ওনার সাথে অ্যাপয়েন্টমেন্ট করতে চান?" started the booking and asked the name): a question about WHEN he sits, with his name in it, is
+                # not the yes -- only his time is told (from the clinic's schedule), and the question to book stays open.
+                _it = pend["doctor"]
+                _win = f"{_it['start']}-{_it['end']}" if _it.get("start") and _it.get("end") else (_it.get("start") or "")
+                if _win and (_names_him or not _text_names_a_doctor(text, lang)):
+                    _day = pend.get("date") or slot_proposal.clinic_now().date().isoformat()
+                    _say = slot_proposal.sits_statement(_it.get("name") or "", _day, _win, lang)
+                    session.dept_pending = {**pend, "turn": session.turn_count, "say": _say}
+                    await _speak(session, _say, lang)
+                    return True
             if booking_capture.confirm_answer(text, lang) == "yes" or booking_carryover.commits_to_booking(text) or _names_him:  # owner, 2026-10-29: "একটা নাম লেখা যাবে" IS the yes
                 item = pend["doctor"]
                 session.last_doctor_enquiry = {
