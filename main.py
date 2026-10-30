@@ -3947,14 +3947,14 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
     return reply
 
 
-async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex: str | None, on_date: str, when_phrase: str, label: str) -> bool:
+async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex: str | None, on_date: str, when_phrase: str, label: str, lead: str | None = None) -> bool:
     """"Nobody from <department> sits <day>. Dr X sits <next day> at <time>. Shall I book that day?" -- or, for several, which of them; the open question is kept (dept_pending). False when
     nobody sits in the following week (the caller then hears the plain 'nobody sits')."""
     nxt = await _next_dept_sitting(text, lang, sex, on_date)
     if not nxt:
         return False
     iso, sit = nxt
-    lead = _nobody_lead(lang, when_phrase, label)
+    lead = lead or _nobody_lead(lang, when_phrase, label)
     if len(sit) == 1:
         item = sit[0]
         say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
@@ -4978,6 +4978,8 @@ async def _answer_department_doctors(session: CallSession, text: str, lang: str)
         return False
     if on_date or at_time:
         sitting = result.get("sitting") or []
+        if sitting and on_date:
+            sitting = await _available_sitting(sitting, on_date, doctor_search.asked_part_of_day(text)) or ([] if len(sitting) else sitting)  # only doctors with a free slot then
         label = _dept_label(result["department_name"], lang)
         if not sitting and on_date:
             # Owner, 2026-10-25: "is there a neurologist today?" with nobody sitting -- the FIRST sentence says who sits next, when, and asks to book. Never "tell me another day".
@@ -9185,6 +9187,70 @@ async def _department_week_reply(route: dict, lang: str) -> tuple[str, list] | N
     return f"{intro} {' '.join(lines)} {ask}", items
 
 
+async def _available_sitting(sitting: list[dict], iso: str, part: str | None) -> list[dict]:
+    """Owner, 2026-10-30: of the doctors who sit on `iso`, only those who still have a FREE slot (and, when a part of the day was asked, a free slot in it). A lookup that fails keeps the doctor in:
+    never hide someone because the check could not be made."""
+    async def one(item: dict):
+        try:
+            fs = await _tools.free_slots(_resolve_doctor_for_booking(item), iso)
+        except ToolCallError:
+            return item
+        if not fs.get("found") or fs.get("ambiguous"):
+            return item
+        slots = fs.get("free_slots") or []
+        if part:
+            slots = [t for t in slots if doctor_search.part_of_day_of(t) == part]
+        return item if slots else None
+
+    got = await asyncio.gather(*[one(i) for i in sitting])
+    return [g for g in got if g is not None]
+
+
+async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, dept_name: str) -> bool:
+    """Owner, 2026-10-30 ("আজকে বিকালের দিকে কে বসবে" after "my mother has chest pain": the answer was every cardiologist's weekly timetable). When the caller names a DAY (today, tomorrow, a weekday)
+    or a PART OF THE DAY, the answer is only the doctors who sit then AND still have a free slot then -- "Dr. Subrata Banerjee, 18:00-20:00" -- and if nobody has, who sits next."""
+    today = slot_proposal.clinic_now().date()
+    wd = weekday_cues.resolve_date(text, today) if weekday_cues.weekday_of(text) is not None else None
+    when = booking_capture.read_when(text, False, want_day=True)
+    part = doctor_search.asked_part_of_day(text)
+    iso = wd or when.date or (today.isoformat() if part else None)
+    if not iso:
+        return False
+    try:
+        r = await _tools.department_doctors(dept_name, lang, on_date=iso)
+    except ToolCallError:
+        return False
+    if not r.get("matched"):
+        return False
+    label = _dept_label(dept_name, lang)
+    lg = lang if lang in ("bn", "hi") else "en"
+    when_words = _when_phrase(iso, None, lang) + (f" {doctor_search._PART_WORD[part][lg]}" if part else "")  # noqa: SLF001
+    sitting = r.get("sitting") or []
+    if not sitting:
+        return await _say_nobody_then_next(session, dept_name, lang, None, iso, when_words, label)
+    fits = [s for s in sitting if not part or doctor_search.part_of_day_of(s.get("start")) == part]
+    avail = await _available_sitting(fits, iso, part) if fits else []
+    if not avail:
+        full = {
+            "bn": f"{when_words} {label} বিভাগে আর কোনো খালি সময় নেই।",
+            "hi": f"{when_words} {label} विभाग में अब कोई खाली समय नहीं है।",
+            "en": f"No free time is left {when_words} in {label}.",
+        }[lg]
+        if await _say_nobody_then_next(session, dept_name, lang, None, iso, when_words, label, lead=full):
+            return True
+        await _speak(session, full, lang)
+        return True
+    say = doctor_search.sitting_list_reply(avail, when_words, label, lang)
+    if len(avail) == 1:
+        session.dept_pending = {"kind": "confirm_one", "doctor": avail[0], "date": iso, "time": avail[0].get("start"), "turn": session.turn_count, "say": say}
+    else:
+        session.dept_pending = {"kind": "pick", "doctors": avail, "date": iso, "time": None, "turn": session.turn_count, "say": say}
+    session.dept_topic = dept_name
+    session.last_route = {"dept": dept_name, "names": [a["name"] for a in avail], "turn": session.turn_count}
+    await _speak(session, _with_resume(session, say, lang), lang)
+    return True
+
+
 async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> bool:
     """"Which doctors do you have?" / "কোন কোন ডাক্তার বসে" / "क्या क्या डॉक्टर हैं" (owner, 2026-10-27): every department has doctors -- a few REAL ones from the clinic's own tables as examples, then
     the question of whom to book. Never a name the tables do not hold; if the lookup fails the answer simply has no examples."""
@@ -9196,6 +9262,8 @@ async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> b
     except ToolCallError:
         route = {}
     if route.get("matched") and route.get("doctors"):
+        if await _day_part_sitting_reply(session, text, lang, route["department_name"]):
+            return True  # a day or a part of the day was named: only who sits THEN and has a free slot, not the weekly timetable
         weekly = await _department_week_reply(route, lang)
         if weekly:
             reply, items = weekly
