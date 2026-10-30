@@ -5849,6 +5849,16 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             await _handoff_to_human(session, "emergency", (lang,))
             session.outcome = "emergency"
             return
+        # Owner, 2026-10-30 ("শুনতে পেলাম না" was answered "আপনি কি ডাঃ সুব্রত ব্যানার্জী-এর কথা বলছেন, নাকি ডাঃ মানস দত্ত-এর?"): a request to hear the last line again is settled HERE, before the garbled-transcript gate, the low-confidence
+        # re-ask, the doctor-name guesses and the department steps -- every one of which would take the words for a garbled name. The last line is said again exactly.
+        if getattr(session, "last_spoken", "") and repeat_request.asks_repeat(text):
+            logger.info("[%s] the caller asked for the last line again", session.call_id)
+            session.silence_prompts = 0
+            session.low_score_reasks = 0
+            await session.send_json("User", text)
+            session.turn_count += 1
+            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang)
+            return
         # Swearing at the agent: a calm fixed boundary in the caller's own language, never the model (agent/abuse.py);
         # the third time in one call, a courteous close.
         if abuse.is_abusive(text):
