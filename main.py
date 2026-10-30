@@ -3965,9 +3965,9 @@ _UNCLEAR_AGAIN = {
     "en": "Sorry, I still could not tell. You can also ask at the counter.",
 }
 _UNCLEAR_GM = {
-    "bn": " চাইলে জেনারেল মেডিসিন বিভাগে আজ {g}। কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
-    "hi": " चाहें तो जनरल मेडिसिन विभाग में आज {g}। किसके पास अपॉइंटमेंट चाहिए?",
-    "en": " If you like, in General Medicine today: {g}. Whom would you like an appointment with?",
+    "bn": " চাইলে {g} কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
+    "hi": " चाहें तो {g} किसके पास अपॉइंटमेंट चाहिए?",
+    "en": " If you like: {g} Whom would you like an appointment with?",
 }
 
 
@@ -3979,19 +3979,39 @@ async def _unclear_problem_reply(session: CallSession, lang: str) -> str:
     lg = lang if lang in ("bn", "hi") else "en"
     say = _UNCLEAR_ASK[lg] if n == 0 else _UNCLEAR_AGAIN[lg] + " " + _UNCLEAR_ASK[lg]
     with contextlib.suppress(Exception):
-        today_iso = slot_proposal.clinic_now().date().isoformat()
-        sitting = (await _tools.department_doctors("General Medicine", lang, on_date=today_iso)).get("sitting") or []
-        avail = await _available_sitting(sitting, today_iso, None) if sitting else []
-        grouped = doctor_search.grouped_by_part(avail, lang) if avail else None
-        if grouped or avail:
-            g = grouped or dept_talk._join([a["name"] for a in avail], lg)  # noqa: SLF001
-            say = say + _UNCLEAR_GM[lg].format(g=g)
+        day, avail, skipped = await _gm_options(lang)
+        if avail:
+            say = say + _UNCLEAR_GM[lg].format(g=_gm_sentence(day, avail, skipped, lang))
             session.dept_topic = "General Medicine"
             if len(avail) == 1:
-                session.dept_pending = {"kind": "confirm_one", "doctor": avail[0], "date": today_iso, "time": avail[0].get("start"), "turn": session.turn_count, "say": say}
+                session.dept_pending = {"kind": "confirm_one", "doctor": avail[0], "date": day, "time": avail[0].get("start"), "turn": session.turn_count, "say": say}
             else:
-                session.dept_pending = {"kind": "pick", "doctors": avail, "date": today_iso, "time": None, "turn": session.turn_count, "say": say}
+                session.dept_pending = {"kind": "pick", "doctors": avail, "date": day, "time": None, "turn": session.turn_count, "say": say}
     return say
+
+
+async def _gm_options(lang: str) -> tuple[str | None, list, bool]:
+    """Owner, 2026-10-30: the General Medicine doctors who sit TODAY and still have a free slot; when there are none, TOMORROW's -- told proactively. (iso day, the doctors, whether today was skipped); (None, [], False) when neither day has one."""
+    base = slot_proposal.clinic_now().date()
+    for k in (0, 1):
+        iso = (base + datetime.timedelta(days=k)).isoformat()
+        sit = (await _tools.department_doctors("General Medicine", lang, on_date=iso)).get("sitting") or []
+        avail = await _available_sitting(sit, iso, None) if sit else []
+        if avail:
+            return iso, avail, k > 0
+    return None, [], False
+
+
+def _gm_sentence(iso: str, avail: list, skipped_today: bool, lang: str) -> str:
+    """"আজ জেনারেল মেডিসিন বিভাগে সকালে বসছেন A, রাতে বসছেন B।" -- or, when today has nobody left, "আজ জেনারেল মেডিসিনে আর খালি সময় নেই। আগামীকাল জেনারেল মেডিসিন বিভাগে ..."."""
+    lg = lang if lang in ("bn", "hi") else "en"
+    g = doctor_search.grouped_by_part(avail, lang) or dept_talk._join([a["name"] for a in avail], lg)  # noqa: SLF001
+    when = _when_phrase(iso, None, lang)
+    line = {"bn": f"{when} জেনারেল মেডিসিন বিভাগে {g}।", "hi": f"{when} जनरल मेडिसिन विभाग में {g}।", "en": f"{when} in General Medicine: {g}."}[lg]
+    if skipped_today:
+        none_today = {"bn": "আজ জেনারেল মেডিসিনে আর খালি সময় নেই।", "hi": "आज जनरल मेडिसिन में अब कोई खाली समय नहीं है।", "en": "There is no free time left today in General Medicine."}[lg]
+        return f"{none_today} {line}"
+    return line
 
 
 async def _general_medicine_today_suffix(dept: str, lang: str) -> str:
@@ -4000,12 +4020,10 @@ async def _general_medicine_today_suffix(dept: str, lang: str) -> str:
     if dept == "General Medicine":
         return ""
     with contextlib.suppress(Exception):
-        today_iso = slot_proposal.clinic_now().date().isoformat()
-        sit = (await _tools.department_doctors("General Medicine", lang, on_date=today_iso)).get("sitting") or []
-        avail = await _available_sitting(sit, today_iso, None) if sit else []
-        g = doctor_search.grouped_by_part(avail, lang) if avail else None
-        if g:
-            return {"bn": f" আজই দেখাতে চাইলে জেনারেল মেডিসিন বিভাগে আজ {g}।", "hi": f" आज ही दिखाना हो तो जनरल मेडिसिन विभाग में आज {g}।", "en": f" If you need a doctor today, in General Medicine today: {g}."}[lang if lang in ("bn", "hi") else "en"]
+        iso, avail, skipped = await _gm_options(lang)
+        if avail:
+            lead = {"bn": " তাড়াতাড়ি দেখাতে চাইলে", "hi": " जल्दी दिखाना हो तो", "en": " If you need to be seen soon:"}[lang if lang in ("bn", "hi") else "en"]
+            return f"{lead} {_gm_sentence(iso, avail, skipped, lang)}"
     return ""
 
 
@@ -7551,16 +7569,15 @@ async def _default_to_general_medicine(session: CallSession, st, lang: str) -> N
     # Owner, 2026-10-30 ("Dr. Sourav sits next month; Dr. Arun sits today"): the first doctor of the list is not "the" General Medicine doctor. The doctors who sit on the day the caller wants (today when no day was
     # said) and still have a free slot are told, by part of the day; one doctor -> he is the booking's doctor; several -> the caller chooses (the booking asks which next).
     with contextlib.suppress(Exception):
-        _day = st.slots.get("date") or slot_proposal.clinic_now().date().isoformat()
-        _sit = (await _tools.department_doctors("General Medicine", lang, on_date=_day)).get("sitting") or []
-        _avail = await _available_sitting(_sit, _day, None) if _sit else []
-        _grouped = doctor_search.grouped_by_part(_avail, lang) if _avail else None
+        if st.slots.get("date"):  # a day was asked: that day's doctors
+            _day = st.slots["date"]
+            _sit = (await _tools.department_doctors("General Medicine", lang, on_date=_day)).get("sitting") or []
+            _avail, _skipped = (await _available_sitting(_sit, _day, None) if _sit else []), False
+        else:  # none said: today's, and tomorrow's when today has nobody left
+            _day, _avail, _skipped = await _gm_options(lang)
         if _avail:
-            _lg = lang if lang in ("bn", "hi") else "en"
             _lead = booking_general_checkup_first_reply([], lang)
-            _g = _grouped or dept_talk._join([a_["name"] for a_ in _avail], _lg)  # noqa: SLF001
-            _when = _when_phrase(_day, None, lang)
-            _tail = {"bn": f" {_when} জেনারেল মেডিসিন বিভাগে {_g}।", "hi": f" {_when} जनरल मेडिसिन विभाग में {_g}।", "en": f" {_when} in General Medicine: {_g}."}[_lg]
+            _tail = " " + _gm_sentence(_day, _avail, _skipped, lang)
             if len(_avail) == 1:
                 st.slots["doctor_name"] = _resolve_doctor_for_booking(_avail[0])
             else:
