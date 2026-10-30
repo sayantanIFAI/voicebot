@@ -52,13 +52,32 @@ for _word, _forms in _FORMS.items():
 _WEAK = frozenset({"the", "are", "can", "any", "at", "not", "for", "is"})
 
 
+# "is parking" run together by the recogniser: "ইস্পার্কিং", "স্পারকিং", "ইসপারকিং" (the English "is" fused to the next word). A fused "is" + a clinic word counts as the word "is".
+_FUSED_IS = re.compile(r"^(?:ইস|ইজ|ই)?স?্?(?:পার্?কিং|পাকিং|পারকিং|পার্কিং)$")
+
+
+def _word_of(tok: str) -> str | None:
+    tok = unicodedata.normalize("NFC", tok)
+    w = _BY_FORM.get(tok)
+    if w:
+        return w
+    if _FUSED_IS.match(tok) and tok not in ("পার্কিং", "পারকিং", "পাকিং"):
+        return "is"
+    return None
+
+
+# two English words said as one ("is there")
+_FUSED_TWO = {"ইসবেয়ার": {"is", "there"}, "ইসদেয়ার": {"is", "there"}, "ইসথিয়ার": {"is", "there"}, "ইজদেয়ার": {"is", "there"}, "হুআর": {"who", "are"}}
+
+
 def english_words(text: str) -> set[str]:
     """The distinct English function words a Bengali-script sentence contains."""
     out = set()
     for tok in re.findall(r"[ঀ-৿]+", unicodedata.normalize("NFC", text or "")):
-        w = _BY_FORM.get(tok)
+        w = _word_of(tok)
         if w:
             out.add(w)
+        out |= _FUSED_TWO.get(unicodedata.normalize("NFC", tok), set())
     return out
 
 
@@ -68,5 +87,5 @@ def looks_english(text: str) -> bool:
     if not toks:
         return False
     found = english_words(text)
-    hits = sum(1 for t in toks if unicodedata.normalize("NFC", t) in _BY_FORM)
+    hits = sum(1 for t in toks if _word_of(t) or unicodedata.normalize("NFC", t) in _FUSED_TWO)
     return len(found) >= 2 and bool(found - _WEAK) and hits * 4 >= len(toks)
