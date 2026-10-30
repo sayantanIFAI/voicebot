@@ -3990,27 +3990,31 @@ async def _unclear_problem_reply(session: CallSession, lang: str) -> str:
     return say
 
 
-async def _gm_options(lang: str) -> tuple[str | None, list, bool]:
-    """Owner, 2026-10-30: the General Medicine doctors who sit TODAY and still have a free slot; when there are none, TOMORROW's -- told proactively. (iso day, the doctors, whether today was skipped); (None, [], False) when neither day has one."""
+async def _gm_options(lang: str) -> tuple[str | None, list, int]:
+    """Owner, 2026-10-30: the General Medicine doctors who sit TODAY and still have a free slot; when there are none, TOMORROW's, and so on up to a week ahead -- the next day that has anybody is told proactively.
+    (iso day, the doctors, how many days were skipped); (None, [], 0) when nothing is free in the coming week."""
     base = slot_proposal.clinic_now().date()
-    for k in (0, 1):
+    for k in range(0, 7):
         iso = (base + datetime.timedelta(days=k)).isoformat()
         sit = (await _tools.department_doctors("General Medicine", lang, on_date=iso)).get("sitting") or []
         avail = await _available_sitting(sit, iso, None) if sit else []
         if avail:
-            return iso, avail, k > 0
-    return None, [], False
+            return iso, avail, k
+    return None, [], 0
 
 
-def _gm_sentence(iso: str, avail: list, skipped_today: bool, lang: str) -> str:
+def _gm_sentence(iso: str, avail: list, skipped_days: int, lang: str) -> str:
     """"আজ জেনারেল মেডিসিন বিভাগে সকালে বসছেন A, রাতে বসছেন B।" -- or, when today has nobody left, "আজ জেনারেল মেডিসিনে আর খালি সময় নেই। আগামীকাল জেনারেল মেডিসিন বিভাগে ..."."""
     lg = lang if lang in ("bn", "hi") else "en"
     g = doctor_search.grouped_by_part(avail, lang) or dept_talk._join([a["name"] for a in avail], lg)  # noqa: SLF001
     when = _when_phrase(iso, None, lang)
     line = {"bn": f"{when} জেনারেল মেডিসিন বিভাগে {g}।", "hi": f"{when} जनरल मेडिसिन विभाग में {g}।", "en": f"{when} in General Medicine: {g}."}[lg]
-    if skipped_today:
+    if skipped_days == 1:
         none_today = {"bn": "আজ জেনারেল মেডিসিনে আর খালি সময় নেই।", "hi": "आज जनरल मेडिसिन में अब कोई खाली समय नहीं है।", "en": "There is no free time left today in General Medicine."}[lg]
         return f"{none_today} {line}"
+    if skipped_days >= 2:  # today and the days after have nobody: the NEXT day that has somebody is told, with its date
+        none_soon = {"bn": "আজ আর আগামীকাল জেনারেল মেডিসিনে খালি সময় নেই।", "hi": "आज और कल जनरल मेडिसिन में खाली समय नहीं है।", "en": "There is no free time in General Medicine today or tomorrow."}[lg]
+        return f"{none_soon} {line}"
     return line
 
 
@@ -7572,7 +7576,7 @@ async def _default_to_general_medicine(session: CallSession, st, lang: str) -> N
         if st.slots.get("date"):  # a day was asked: that day's doctors
             _day = st.slots["date"]
             _sit = (await _tools.department_doctors("General Medicine", lang, on_date=_day)).get("sitting") or []
-            _avail, _skipped = (await _available_sitting(_sit, _day, None) if _sit else []), False
+            _avail, _skipped = (await _available_sitting(_sit, _day, None) if _sit else []), 0
         else:  # none said: today's, and tomorrow's when today has nobody left
             _day, _avail, _skipped = await _gm_options(lang)
         if _avail:
