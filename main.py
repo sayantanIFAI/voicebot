@@ -144,7 +144,7 @@ from agent import slot_proposal  # the machine picks the appointment time and sa
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
 from agent import clinical_safety, lost_found, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
-from agent import repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import eye_words, repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -3954,8 +3954,52 @@ async def _next_dept_sitting(text: str, lang: str, sex: str | None, after_iso: s
     return None
 
 
+_UNCLEAR_ASK = {
+    "bn": "ঠিক কোন বিভাগ বুঝতে পারলাম না। কোন ডাক্তারের কথা বলছেন, বা ঠিক কী সমস্যা হচ্ছে, আরেকবার বলবেন?",
+    "hi": "मैं ठीक से नहीं समझ पाई कि कौन सा विभाग। आप किस डॉक्टर की बात कर रहे हैं, या ठीक क्या तकलीफ़ है, एक बार फिर बताइए?",
+    "en": "I could not tell which department. Which doctor do you mean, or what exactly is the problem? Please say it once more.",
+}
+_UNCLEAR_AGAIN = {
+    "bn": "দুঃখিত, এখনও ঠিক বুঝতে পারলাম না। কাউন্টারে এসে জিজ্ঞেস করে নিতে পারেন।",
+    "hi": "माफ़ कीजिए, अब भी ठीक से नहीं समझ पाई। आप काउंटर पर आकर पूछ सकते हैं।",
+    "en": "Sorry, I still could not tell. You can also ask at the counter.",
+}
+_UNCLEAR_GM = {
+    "bn": " চাইলে জেনারেল মেডিসিন বিভাগে আজ {g}। কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?",
+    "hi": " चाहें तो जनरल मेडिसिन विभाग में आज {g}। किसके पास अपॉइंटमेंट चाहिए?",
+    "en": " If you like, in General Medicine today: {g}. Whom would you like an appointment with?",
+}
+
+
+async def _unclear_problem_reply(session: CallSession, lang: str) -> str:
+    """Owner, 2026-10-30: when the department cannot be told, the caller is asked AGAIN which doctor or exactly what the problem is -- and in the same answer told that General Medicine doctors are available today (those who sit
+    today and still have a free slot, by part of the day), if any. The second time in a row the counter is named as well. Never a bare dead end."""
+    n = getattr(session, "unclear_problem_asks", 0)
+    session.unclear_problem_asks = n + 1
+    lg = lang if lang in ("bn", "hi") else "en"
+    say = _UNCLEAR_ASK[lg] if n == 0 else _UNCLEAR_AGAIN[lg] + " " + _UNCLEAR_ASK[lg]
+    with contextlib.suppress(Exception):
+        today_iso = slot_proposal.clinic_now().date().isoformat()
+        sitting = (await _tools.department_doctors("General Medicine", lang, on_date=today_iso)).get("sitting") or []
+        avail = await _available_sitting(sitting, today_iso, None) if sitting else []
+        grouped = doctor_search.grouped_by_part(avail, lang) if avail else None
+        if grouped or avail:
+            g = grouped or dept_talk._join([a["name"] for a in avail], lg)  # noqa: SLF001
+            say = say + _UNCLEAR_GM[lg].format(g=g)
+            session.dept_topic = "General Medicine"
+            if len(avail) == 1:
+                session.dept_pending = {"kind": "confirm_one", "doctor": avail[0], "date": today_iso, "time": avail[0].get("start"), "turn": session.turn_count, "say": say}
+            else:
+                session.dept_pending = {"kind": "pick", "doctors": avail, "date": today_iso, "time": None, "turn": session.turn_count, "say": say}
+    return say
+
+
 async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: str) -> str:
     """department_route_reply, except that when nobody of the department sits today the next sitting is told and offered (see _next_sitting_offer) and kept as the open question."""
+    if routed.get("matched"):
+        session.unclear_problem_asks = 0
+    elif not routed.get("ambiguous") and not eye_words.mentions_eye(symptom):
+        return await _unclear_problem_reply(session, lang)
     if routed.get("matched") and not routed.get("doctors_today") and routed.get("doctors"):
         offer = await _next_sitting_offer(routed["department_name"], _dept_label(routed["department_name"], lang), lang)
         if offer is not None:
