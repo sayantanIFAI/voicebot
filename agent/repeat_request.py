@@ -56,7 +56,10 @@ _FILL = (
     "please", "pls", "plz", "sorry", "hello", "hi", "yes", "ok", "okay", "sir", "madam", "ji", "ha", "haan", "han", "dada", "didi", "ekto", "ektu",
     "जी", "हाँ", "हां", "प्लीज़", "प्लीज", "ज़रा", "जरा", "सर", "मैडम", "भैया",
 )
-_CORE_RE = re.compile("|".join(f"(?:{c})" for c in _CORE), re.I)
+_ONE = "(?:" + "|".join(f"(?:{c})" for c in _CORE) + ")"
+# Owner, 2026-10-30 ("শুনতে পেলাম না আর একবার বলবেন"): callers join two requests in one breath -- up to three of them in a row are still one request to hear it again
+_SEP = r"(?:\s+(?:একটু|প্লিজ|দয়া|করে|তো|ও|আর|ektu|ekto|please|plz|pls|to|ज़रा|जरा|प्लीज़))*\s+"
+_CORE_RE = re.compile(_ONE + "(?:" + _SEP + _ONE + "){0,2}", re.I)
 
 
 def _norm(text: str) -> str:
