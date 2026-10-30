@@ -9562,6 +9562,13 @@ async def _answer_which_doctors(session: CallSession, text: str, lang: str) -> b
         route = await _route_dept(text, lang, session)
     except ToolCallError:
         route = {}
+    if not route.get("matched"):
+        # Owner, 2026-10-30 ("কে কে ডাক্তার বসে জেনারেল সার্জন" was answered with one doctor from each of three departments): a department named by NAME or short form ("জেনারেল সার্জন", "ortho", "cardio") is found by the
+        # clinic's department lookup; the symptom router above does not know those names. Only when neither knows it does the overview come.
+        with contextlib.suppress(ToolCallError):
+            named = await _tools.department_doctors(text, lang)
+            if named.get("matched"):
+                route = named
     if route.get("matched") and route.get("doctors"):
         if await _day_part_sitting_reply(session, text, lang, route["department_name"]):
             return True  # a day or a part of the day was named: only who sits THEN and has a free slot, not the weekly timetable
