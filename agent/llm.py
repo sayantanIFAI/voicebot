@@ -85,6 +85,7 @@ INTENTS (exactly one):
   * "contact_number" = a phone/helpline number
   * "home_collection" = sample collection at home
   Only use "unclear" when the question genuinely does not fit any topic above, including by the hints -- not merely because it lacks the topic's own keyword.
+- "repeat_last": the caller says they did not hear, could not understand or want the assistant's LAST sentence again -- in any words or mix of words and languages ("say that again", "I could not hear you", "what?", "আরেকবার বলুন", "শুনতে পাচ্ছি না", "ki bolchen?", "समझ नहीं आया"). Only when the utterance is JUST that request; if it also asks something else, use the intent of that other question.
 - "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself for this case only, in {language_name}, in that language's own script.
 - "unclear": you cannot confidently tell what the caller wants, or the utterance is empty/garbled ASR noise.
 
@@ -120,7 +121,7 @@ SLOT RULES:
 
 Output ONLY a single valid JSON object, no other text, in exactly this shape:
 {{
-  "intent": "test_rate" | "doctor_availability" | "book_appointment" | "book_test" | "reschedule_appointment" | "cancel_appointment" | "lookup_booking" | "add_test_booking" | "resend_confirmation" | "department_query" | "test_prep" | "clinic_faq" | "smalltalk" | "unclear",
+  "intent": "test_rate" | "doctor_availability" | "book_appointment" | "book_test" | "reschedule_appointment" | "cancel_appointment" | "lookup_booking" | "add_test_booking" | "resend_confirmation" | "department_query" | "test_prep" | "clinic_faq" | "smalltalk" | "repeat_last" | "unclear",
   "slots": {{
     "test_name": string or null,
     "test_names": array of strings or null,

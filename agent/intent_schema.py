@@ -39,6 +39,7 @@ Intent = Literal[
     "add_test_booking",
     "resend_confirmation",
     "department_query",
+    "repeat_last",  # owner, 2026-10-30: the caller did not hear / follow the last line and wants it again, in ANY wording
 ]
 VALID_INTENTS: frozenset[str] = frozenset(get_args(Intent))
 

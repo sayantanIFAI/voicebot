@@ -6401,6 +6401,13 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     return
             await _speak(session, dept_talk.no_such_doctor(name_script.clean_query(data["unknown_doctor"], lang), lang), lang)
             return
+    if intent == "repeat_last":
+        # Owner, 2026-10-30: the model, not a word list, recognised a request to hear the last line again (any wording): it is said again exactly. Without a last line, or for a long sentence, it was not that.
+        if getattr(session, "last_spoken", "") and len(text.split()) <= 10:
+            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang)
+            return
+        intent = "unclear"
+        data = {**data, "intent": intent}
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
