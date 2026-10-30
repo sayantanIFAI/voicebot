@@ -9005,6 +9005,18 @@ def _names_offered_doctor(session: CallSession, text: str) -> bool:
     return bool(docs) and doctor_search.choose_by_name(text, [[d.get("name", ""), d.get("full_name", "")] for d in docs]) is not None
 
 
+_NAME_FILLER = frozenset(
+    "ডাঃ ডা ডাক্তার ডক্টর ডাক্তর ডঃ dr doctor আছে আছেন আছো আছি বসেন বসবেন বসবে বসছে বসছেন বসে বুঝলেন বুঝবে বুঝবেন বুজবে বলুন বলছি বলছিলাম বলছেন বলেন বলো আজ আজকে কাল কালকে পরশু আগামীকাল হ্যাঁ হ্যা জি ও ওই তো কি কী কবে কখন কেউ কোনো কোন একটা এটা সেটা তাহলে আচ্ছা প্লিজ হ্যালো আর এখন এখানে ওখানে সকালে বিকালে বিকেলে রাতে দুপুরে সন্ধ্যায় আমি আমার আপনি".split()
+)
+
+
+def _spoken_person_name(text: str) -> str:
+    """The words of a short sentence that are left once the title, the verbs and the day words are taken out ("জয়শ্রী চৌধুরী আছে বুঝলেন" -> "জয়শ্রী চৌধুরী"); "" unless two or three words remain."""
+    toks = [t.strip(".,?!।") for t in (text or "").split()]
+    left = [t for t in toks if t and t.lower() not in _NAME_FILLER]
+    return " ".join(left) if 2 <= len(left) <= 3 and len(toks) <= 8 else ""
+
+
 async def _name_rescue(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-29 ("it is fine to ask again, but if you hear a name, check the table and ask"): a turn that would be dropped or re-asked in general words ("someone else is talking", "say that again") but
     whose words sound like one of OUR doctors is answered with "আপনি কি ডাঃ X-এর কথা জিজ্ঞেস করছেন?". The department being discussed is searched first (looser), then every doctor (stricter). Never an answer
@@ -9020,6 +9032,16 @@ async def _name_rescue(session: CallSession, text: str, lang: str) -> bool:
         if id(info) not in seen:
             seen.add(id(info))
             everyone.append(info)
+    # Owner, 2026-10-30 ("জয়শ্রী চৌধুরী আছে বুঝলেন" was answered "আপনি কি ডাঃ সঞ্জয় সাহা?"): a first name AND a surname clearly said that no single doctor carries is a name that is NOBODY's, whatever the verb
+    # after it was heard as ("বুঝলেন" for "বসবেন") and however low the confidence. The answer is "nobody of that name sits here" and then the doctors who really share the surname / the first name (agent/name_groups.py) -- never
+    # a guess at some other doctor whose name merely sounds a little like one of the words.
+    _said_name = _spoken_person_name(text)
+    if _said_name and _first_and_surname_of_two_doctors(_said_name):
+        _g = name_groups.build(_said_name, everyone, [])
+        if _g:
+            session.name_pick = {"infos": name_groups.offered(_g), "turn": session.turn_count}
+            await _speak(session, name_groups.reply(_g, _said_name, lang), lang)
+            return True
     pools.append((everyone, 0.62))
     for infos, floor in pools:
         close = dept_talk.close_doctors(text, infos, floor=floor)
