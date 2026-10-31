@@ -6271,10 +6271,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # language. The actual "okay, switching" acknowledgement is spoken further down (KCD-438, unchanged
         # position), once it is clear nothing else already consumed this turn.
         switch_target = detect_language_switch_request(text, detected_lang)
-        if switch_target and session.booking is not None and session.booking.slots.get("_ps_pending") and booking_capture.says_english_bazar(text):
-            switch_target = None  # Owner, 2026-10-27: asked "which police station?", "english was a" is English Bazar, not a request to switch to English
-        elif switch_target and session.booking is not None and "patient_address" in session.booking.asked_fields and not session.booking.slots.get("patient_address") and booking_capture.english_bazar_not_a_request(text):
-            switch_target = None  # Owner, 2026-10-31: asked for the ADDRESS, "english moor" / "english bajar" is the place (English Bazar), not a request to switch to English
+        if switch_target and session.booking is not None and session.booking.slots.get("_ps_pending"):
+            switch_target = None  # Owner, 2026-10-27: asked "which police station?", "english was a" is English Bazar, not a request to switch to English (2026-10-31: any language word, see below)
+        elif switch_target and session.booking is not None and "patient_address" in session.booking.asked_fields and not session.booking.slots.get("patient_address"):
+            # Owner, 2026-10-31, a HARD RULE: while the booking asks for the ADDRESS (or the police station), a language word in the answer is part of a place name -- English Bazar, Bangla More, English Chawk,
+            # British More, Hindi Banglo, Hindi Sweets -- and never a request to change the language.
+            switch_target = None
         if switch_target:
             session.lang_explicit = True  # set only once the request is accepted (review 2026-10-28: it used to be set before a place-name false positive was rejected)
         if switch_target:
@@ -6996,6 +6998,22 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     ):
         intent = "book_appointment"
 
+    # Owner, 2026-10-31 (the lookup asked "your confirmation number, or the number you booked from?" TWICE, although the number had been said clearly): the booking flow reads spoken digits by code, but the
+    # lookup / cancel / reschedule / resend flows took the number only from the model, which returns nothing for Bengali digit words with "ডবল". The caller's digits are read by code here, and a number said right
+    # after the agent asked for one is the answer whatever intent the model guessed for it.
+    _lookup_intents = ("lookup_booking", "reschedule_appointment", "cancel_appointment", "resend_confirmation", "add_test_booking")
+    if session.booking is None or session.booking.action in _lookup_intents:
+        _asked_for = None
+        with contextlib.suppress(Exception):
+            _asked_for = next((i for i in _lookup_intents[:4] for lg in ("bn", "hi", "en") if (getattr(session, "last_spoken", "") or "").strip() == missing_slot_prompt(i, "phone", lg).strip()), None)
+        if intent in _lookup_intents or (_asked_for and intent in ("unclear", "smalltalk", "book_appointment", "doctor_availability")):
+            if not (slots or {}).get("phone") and not (slots or {}).get("confirmation_id"):
+                _n = booking_capture.normalise_phone(text)
+                if _n:
+                    slots = {**(slots or {}), "phone": _n}
+                    if intent not in _lookup_intents and _asked_for:
+                        intent = _asked_for
+                    data = {**data, "intent": intent, "slots": slots}
     if intent == "smalltalk":
         reply = data.get("direct_reply_bn")
         # The ONLY model-composed text a caller ever hears, so it passes the persona
@@ -8763,7 +8781,9 @@ def _wholly_hindi(text: str, agreement: float) -> bool:
     from agent.lang_select import script_share
 
     words = [w for w in (text or "").split() if w.strip(".,?!।")]
-    return len(words) >= 3 and script_share(text, "hi") >= 0.95 and agreement >= 0.9
+    # Owner, 2026-10-31: "if the user started in Hindi, continue in Hindi until the user specifically asks to change" -- the first sentence of a call, Hindi from end to end, is enough to open the call in Hindi
+    # (two words, decoders agreeing at 0.75): "मैं हिंदी कहना चाहता हूं" used to fall short and the call went back to Bengali on the next turn.
+    return len(words) >= 2 and script_share(text, "hi") >= 0.95 and agreement >= 0.75
 
 
 def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True, agreement: float = 1.0, text: str = "") -> str:

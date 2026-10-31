@@ -61,6 +61,17 @@ _SWITCH_PHRASES: dict[str, dict[str, str]] = {
     "hi": {
         "हिंदी में बोल": "hi",
         "हिंदी में बात": "hi",
+        # Owner, 2026-10-31 (real call: "मैं हिंदी कहना चाहता हूं", "मुझे हिंदी समझ में आती है" -- both said and the call went on in Bengali): a caller who says they WANT to speak Hindi, or understand
+        # Hindi, is asking for Hindi.
+        "हिंदी कहना चाहत": "hi",
+        "हिंदी बोलना चाहत": "hi",
+        "हिन्दी कहना चाहत": "hi",
+        "हिन्दी बोलना चाहत": "hi",
+        "हिंदी समझ": "hi",
+        "हिन्दी समझ": "hi",
+        "हिंदी ही": "hi",
+        "हिंदी चाहिए": "hi",
+        "मुझे हिंदी": "hi",
         "अंग्रेज़ी में बोल": "en",
         "इंग्लिश में बोल": "en",
         "अंग्रेजी में बात": "en",
