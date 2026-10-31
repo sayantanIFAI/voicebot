@@ -95,8 +95,17 @@ _RULES: list[tuple[str, bool, str, str, str]] = [
     ("ENT", False,
      r"naa?k(?:er|e)?|kaan?(?:er|e)?|gol[ae]y?(?:r|er)?|throats?|noses?|ears?|\bent\b|\bint\b",
      # owner, 2026-10-26: "ইন্ট ডাক্তার আছে" -- the recogniser's spelling of "ENT doctor"
-     r"নাক|কান|গলা|গলার|ইন্ট|ইনটি|ইএনটি|ই\s*এন\s*টি",
+     r"নাক|নাখ|কান|গলা|গলার|ইন্ট|ইনটি|ইএনটি|ই\s*এন\s*টি",  # owner, 2026-10-31: "নাখের ডাক্তার" is the nose doctor
      r"नाक|कान|गला|गले|गले\s*का|इंट|इन्ट|इनटी|ईएनटी|ई\s*एन\s*टी"),
+    # Owner, 2026-10-31: "লিভার এ ডাক্তার", "লান্সের ডাক্তার" (lungs) were answered "no doctor of that name". The liver is Gastroenterology's; the clinic has no lungs department, so the lungs go to General Medicine's physicians.
+    ("Gastroenterology", False,
+     r"live?r|libar|gastro",
+     r"লিভার|লিবার|যকৃৎ|গ্যাস্ট্রো|পিত্তথলি",
+     r"लिवर|लीवर|जिगर|गैस्ट्रो"),
+    (GENERAL_MEDICINE, False,
+     r"lungs?|laans|lans\b|chest\s*physician",
+     r"ফুসফুস|লাংস|লান্স|লাং|শ্বাসকষ্ট|হাঁপানি",
+     r"फेफड़े|फेफड़ा|लंग्स|साँस|सांस|दमा"),
     (GENERAL_MEDICINE, True,
      r"pain(?:er|r|e)?|plain|plane|byath[ae]?r?|byatha\w*|dard(?:ka|ke|ki)?|normal|emni|emnei|erokom|ordinary|common|simple|sadha?ron\w*|sadharan|samany\w*|general|jwor\w*|jor(?:er)?|fever",
      r"ব্যথার|ব্যাথার|প্লেন|প্লেইন|এমনি|এমনই|সাধারণ|সাধারন|নরমাল|সাধারণ|জ্বরের",

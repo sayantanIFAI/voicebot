@@ -285,6 +285,8 @@ _NOT_A_NAME = frozenset(
         "হ্যাঁ", "না", "নয়", "ডাক্তার", "কাল", "আজ", "হ্যালো", "আবার", "কী", "কি", "কখন", "কেন",
         "हाँ", "हां", "नहीं", "नही", "डॉक्टर", "कल", "आज", "परसों", "हैलो", "क्या", "कब", "কैসे", "फिर", "दोबारा",
         # Real call 2026-10-18: "আজকে পাওয়া যাবে" ("will it be available today?") was read back as the PATIENT'S NAME. Day words, "available / will be / please do" are never a name.
+        # Owner, 2026-10-31 (real Hindi call): "आज गई अप्पाइंटमेन्ट कौन" was taken for the patient's NAME and the booking went on. Appointment words in every spelling and little day words are never a name.
+        "अप्पाइंटमेंट", "अप्पाइंटमेन्ट", "अपॉइंटमेंट", "अपॉइन्टमेंट", "अपोइंटमेंट", "अपाइंटमेंट", "अपॉइंटमेन्ट", "गई", "गया", "गये", "दिन", "কোন", "দিন", "দিনের",
         "আজকে", "আজই", "আজকেই", "কালকে", "কালকেই", "কালই", "পরশু", "পরশুদিন", "আগামীকাল", "পাওয়া", "যাবে", "যাবেন", "যায়", "হবে", "হবেন", "হয়", "করুন", "করবেন", "করে", "দিন",
         "দিতে", "চাই", "আছে", "বসেন", "বসবেন", "বসছেন", "বুক", "অ্যাপয়েন্টমেন্ট", "অযাপ্ফোন্টমেন্ট", "সময়", "টাইম", "তারিখ", "দিনের", "আগামী", "পাবো", "পাব", "পারবো", "পারব",
         "available", "availability", "available?", "will", "can", "could", "please", "possible", "get", "want",
@@ -977,6 +979,7 @@ def readback(st, lang: str, kind: str, value) -> str:
     return f"{heard} {nxt}" if nxt else f"{heard} {prompt('is_right', lang)}"
 
 
+_NOT_YES_OR_NO = frozenset({"how", "who", "what", "when", "where", "why", "which", "name", "number", "nine", "nineteen", "ninety", "next", "now", "night", "নাম", "নম্বর", "নাইন", "নাইট", "নাম্বার", "नाम", "नंबर", "नाइन", "हालदार", "হালদার", "হাজরা", "হোসেন"})  # words that begin with h / n but are neither (a name, a question word, a digit)
 _HUMS = frozenset({"hmm", "hm", "hmmm", "mhm", "mm", "হুম", "হুঁ", "হু", "হম", "हम्म", "हूँ", "हूं", "हम", "ह", "हं", "हँ", "হ", "হঁ"})  # "ह" / "হ": the recogniser clips "हाँ" / "হ্যাঁ" to its first letter
 
 
@@ -988,6 +991,16 @@ def confirm_answer(text: str, lang: str) -> str | None:
     answer = classify_yes_no(text, lang)
     if answer is None and any(w in _HUMS for w in _words(text)):
         return "yes"
+    if answer is None:
+        # Owner, 2026-10-31 ("hi" -- the recogniser's হ্যাঁ -- after "shall I book?" was not a yes and the offer lapsed): a ONE-word answer to a yes/no question that starts with an h-sound (h, হ, ह) is a yes,
+        # one that starts with an n-sound (n, ন, न) is a no. Only used where a question is open (this function is only asked then), and only for a single word.
+        ws = _words(text)
+        if len(ws) == 1 and ws[0] and len(ws[0]) <= 4 and ws[0].lower() not in _NOT_YES_OR_NO:  # (a short sound: a longer word is a name being corrected)
+            first = ws[0][0].lower()
+            if first in ("h", "হ", "ह"):
+                return "yes"
+            if first in ("n", "ন", "न"):
+                return "no"
     return answer
 
 
@@ -1814,7 +1827,7 @@ def _after_model(st, text: str, lang: str, slots: dict, plan: TurnPlan, window=N
                     return slots, prompt("phone_invalid", lang) if not plan.digits else None
     name = slots.get("patient_name")
     if isinstance(name, str) and name.strip():
-        if st.name_confirmed == name or name_is_grounded(name, text):
+        if st.name_confirmed == name or (name_is_grounded(name, text) and not any(w.strip(".,").lower() in _NOT_A_NAME or w.strip(".,").lower() in _HEDGES for w in name.split())):
             return slots, None
         # The model's name is not in the caller's words (invented, or translated from another script). It is NEVER the patient. What the
         # caller actually said, read as a name, is read back for a yes; if the sentence holds no name at all, the name is asked again.

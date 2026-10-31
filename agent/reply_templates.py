@@ -228,7 +228,7 @@ def booking_doctor_sitting_hint(result: dict, lang: str = "bn") -> str:
         return "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?"
     return (
         f"{name} {slot_proposal.when_phrase(result.get('date'), 'bn')} বসবেন, সময় {result.get('chamber_hours', '')}-এর মধ্যে। "
-        "ওই দিনে অ্যাপয়েন্টমেন্ট করব?"
+        "অ্যাপয়েন্টমেন্ট করব?"
     )
 
 

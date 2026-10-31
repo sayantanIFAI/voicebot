@@ -191,7 +191,7 @@ def conclusion(doctor: str, date_iso: str, time: str, lang: str, now: datetime.d
 
 
 _SITS_ASK = {
-    "bn": "ডাক্তার {doc} {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
+    "bn": "ডাক্তার {doc} {when} {time}-এ বসবেন। অ্যাপয়েন্টমেন্ট করব?",
     "hi": "डॉक्टर {doc} {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
     "en": "Doctor {doc} sits {when} at {time}. Shall I book that day?",
 }

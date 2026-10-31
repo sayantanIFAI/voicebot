@@ -4186,6 +4186,8 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
             session.dept_pending = {**offer["pending"], "turn": session.turn_count, "say": offer["say"]}
             return offer["say"] + await _general_medicine_today_suffix(routed["department_name"], lang)
     reply = department_route_reply(_dept_labelled(routed, lang), symptom, lang)
+    if routed.get("matched") and _is_existence_question(symptom):
+        reply = f"{_exists_lead(_dept_label(routed['department_name'], lang), lang)} {reply}"
     if routed.get("matched") and len(routed.get("doctors_today") or []) >= 1:
         with contextlib.suppress(ToolCallError):
             today_iso = slot_proposal.clinic_now().date().isoformat()
@@ -6055,10 +6057,12 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             detected_lang = lang
         # Owner, 2026-10-30 ("two times asked in Hindi, both times answered in Bengali"): when the other language's recogniser CLEARLY won this turn (see _keep_established_bengali, and the Hindi-words check in
         # _route_and_transcribe) the agent answers THIS turn in that language -- not locked: the next turn is judged afresh, and the two-turns-in-a-row offer to move the call still applies as before.
+        # Owner, 2026-10-31, a HARD RULE for every language: the call's language changes only when the caller ASKS for it (an explicit request, or a yes to the agent's own offer). A turn that merely LOOKS like another
+        # language -- Bengali speech written in Devanagari by the Hindi recogniser ("कोई दिन ही आज गई ...") -- is understood, but answered in the call's language. (The clear-winner / Hindi-words / English-words checks
+        # still pick the better READING of the clip; they no longer change the language of the reply.)
         _cw = getattr(session, "clear_winner_lang", None)
-        if _cw and detected_lang == _cw and lang != _cw and not _short_booking_answer and not (len(_digits_said) >= 3 and _digit_hits * 2 >= _digit_total):
-            logger.info("[%s] this turn is answered in %s (clear winner); the call's language stays %s", session.call_id, _cw, session.lang)
-            lang = _cw
+        if _cw and detected_lang == _cw and lang != _cw:
+            logger.info("[%s] this turn reads as %s, but the call stays in %s (the caller has not asked for another language)", session.call_id, _cw, lang)
         # Owner, 2026-10-27: removed the "one confident, clear, 4+ word sentence in the other script instantly
         # relocks the call" shortcut that used to live here. Only two things may ever move the reply language once
         # a call is running: two turns in a row in the other language (asked, then switched on the caller's yes --
@@ -6650,6 +6654,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if await _which_doctor_turn(session, text, lang):
             return
         if await _unknown_full_name_turn(session, text, lang):
+            return
+        if await _dept_named_availability_turn(session, text, lang):
             return
         if session.booking is None and await _doctor_check_turn(session, text, lang):
             return
@@ -7485,8 +7491,17 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 field_name = missing[0]
                 # Real call 2026-10-18: a number given in pieces (nine digits, one short) counted as a second miss and the phone was GIVEN UP on -- the booking went on
                 # to the age without a number. A turn that carried digits is progress, not a refusal: only turns with no digits count.
-                if field_name == "phone" and not capture_plan.digits and st.note_retry("phone") >= 2:
-                    # KCD-370: a caller who won't give a number still
+                if field_name == "phone" and not capture_plan.digits and re.search(r"নাম|नाम|\bnaam\b|\bname\b", text or "", re.I) and st.slots.get("patient_name"):
+                    # Owner, 2026-10-31 ("নাম জিজ্ঞেস করলেন না আমার" -- "you did not ask my name" -- counted as refusing to give the number, and the booking went on to the age): a caller who talks about her NAME
+                    # while the number is asked is telling us the name is wrong or missing; the name is asked again, and the number is not given up on.
+                    st.slots.pop("patient_name", None)
+                    st.name_confirmed = None
+                    st.pending_name = None
+                    st.asked_fields.add("patient_name")
+                    await _speak(session, missing_slot_prompt("book_appointment", "patient_name", lang), lang)
+                    return
+                if field_name == "phone" and not capture_plan.digits and st.note_retry("phone") >= 3:
+                    # (2026-10-31: three turns without a digit, not two) KCD-370: a caller who won't give a number still
                     # gets the booking, told plainly what that costs
                     # them, instead of being blocked here forever.
                     st.phone_declined = True
@@ -9636,6 +9651,12 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     if not (asks_names or asks_good or asks_when or asks_origin) and len(text.split()) <= 14 and not mention:
         close = dept_talk.close_doctors(text, infos)
         if close:
+            # Owner, 2026-10-31 ("কানের ডাক্তার আছে" -> "are you asking about Dr. Kalyan Haldar?", "নাখের" -> Dr. Nirmal Roy): a body-part / lay department word is a DEPARTMENT, not a half-heard name.
+            try:
+                if (await _route_dept(text, lang, session)).get("matched"):
+                    return False
+            except ToolCallError:
+                pass
             # Owner, 2026-10-29: "ও দিপ শুভজিৎ দিপ" -- a name said as the caller can: the doctor it sounds like is ASKED about ("আপনি কি ডাঃ শুভদীপ মন্ডলের কথা জিজ্ঞেস করছেন?"), never answered about unasked;
             # two that sound alike are offered as "A, or B?"
             _today = slot_proposal.clinic_now().date()
@@ -9813,7 +9834,7 @@ async def _department_week_reply(route: dict, lang: str) -> tuple[str, list] | N
     return f"{intro} {' '.join(lines)} {ask}", items
 
 
-async def _available_sitting(sitting: list[dict], iso: str, part: str | None) -> list[dict]:
+async def _available_sitting(sitting: list[dict], iso: str, part: str | None, after: str | None = None) -> list[dict]:
     """Owner, 2026-10-30: of the doctors who sit on `iso`, only those who still have a FREE slot (and, when a part of the day was asked, a free slot in it). A lookup that fails keeps the doctor in:
     never hide someone because the check could not be made."""
     async def one(item: dict):
@@ -9826,10 +9847,68 @@ async def _available_sitting(sitting: list[dict], iso: str, part: str | None) ->
         slots = fs.get("free_slots") or []
         if part:
             slots = [t for t in slots if doctor_search.part_of_day_of(t) == part]
+        if after:
+            slots = [t for t in slots if t >= after]  # "after twelve": a free slot at or after that time ("HH:MM" compares as text)
         return item if slots else None
 
     got = await asyncio.gather(*[one(i) for i in sitting])
     return [g for g in got if g is not None]
+
+
+_EXIST_LAST = frozenset("আছে আছেন আছো আছ है हैं hai ache achhe achen available".split())
+_LIST_WORDS = re.compile(r"কে কে|কারা|কোন কোন|কতজন|কত জন|নাম|names|who are|कौन कौन|कितने")
+_AFTER_WORD = re.compile(r"পরে|পর\b|বাদে|বাদ\b|after|baad|\bbad\b|बाद")
+
+
+def _is_existence_question(text: str) -> bool:
+    """"আপনাদের ওখানে কানের ডাক্তার আছে" / "is there a heart doctor" -- a yes/no about whether such a doctor exists (not "who are the doctors")."""
+    t = (text or "").strip()
+    if not t or _LIST_WORDS.search(t):
+        return False
+    toks = [w.strip(".,?!।") for w in t.split() if w.strip(".,?!।")]
+    return bool(toks) and (toks[-1].lower() in _EXIST_LAST or bool(re.search(r"আছে\s*(?:কি|কী)|है\s*क्या|হ্যাঁ\s*আছে|\bis there\b|\bare there\b|\bdo you have\b", t, re.I)))
+
+
+def _exists_lead(label: str, lang: str) -> str:
+    return {"bn": f"হ্যাঁ, {label} বিভাগের ডাক্তার আছেন।", "hi": f"जी हाँ, {label} विभाग के डॉक्टर हैं।", "en": f"Yes, we have {label} doctors."}.get(lang, f"Yes, we have {label} doctors.")
+
+
+def _asked_after_time(text: str) -> str | None:
+    """"দুপুর বারোটার পর" / "after 12" / "12 बजे के बाद": the time the caller wants a doctor AFTER ("HH:MM"), else None. Needs an after-word and a marked hour in the sentence."""
+    if not _AFTER_WORD.search(text or ""):
+        return None
+    with contextlib.suppress(Exception):
+        t = booking_capture.read_when(text, False, want_day=False).time
+        if t:
+            return t
+    m = re.search(r"after\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", text or "", re.I)  # "after 12" / "after 3 pm"
+    if m:
+        h, mi, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
+        if ap == "pm" and h < 12:
+            h += 12
+        elif not ap and 1 <= h <= 7:
+            h += 12  # a clinic day: "after 3" is the afternoon
+        if 0 <= h <= 23:
+            return f"{h:02d}:{mi:02d}"
+    return None
+
+
+async def _dept_named_availability_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-31 ("... আপনি বলতে পারবেন এই দুপুর বারোটার পর জেনারেল মেডিসিন এর কোন ডাক্তার আছে" -- a long sentence that NAMES the department and asks for a time "after twelve" was answered "what is the problem?"): a
+    department named in the sentence, with an existence / sitting word, and either a time to be after or a long run-up, is the question "who of that department sits (after that time) with a free slot?"."""
+    if _fast_path is None or _tools is None or session.booking is not None or len(text.split()) > 60:
+        return False
+    mention = dept_talk.dept_in_text(text)
+    if not mention or _text_names_a_doctor(text, lang):
+        return False
+    low = text.lower()
+    if not any(w in low for w in ("আছে", "আছেন", "বসে", "বসেন", "বসবে", "বসছে", "है", "हैं", "बैठ", "available", "sit", "ache", "achhe")):
+        return False
+    after = _asked_after_time(text)
+    if not after and len(text.split()) <= 16:
+        return False  # a short one is answered by the department steps as before
+    session.dept_topic = mention
+    return await _day_part_sitting_reply(session, text, lang, mention, iso_default=slot_proposal.clinic_now().date().isoformat())
 
 
 async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, dept_name: str, iso_default: str | None = None, part_default: str | None = None) -> bool:
@@ -9839,7 +9918,8 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
     wd = weekday_cues.resolve_date(text, today) if weekday_cues.weekday_of(text) is not None else None
     when = booking_capture.read_when(text, False, want_day=True)
     part = doctor_search.asked_part_of_day(text) or part_default
-    iso = wd or when.date or (today.isoformat() if part and not iso_default else None) or iso_default
+    after = _asked_after_time(text)
+    iso = wd or when.date or (today.isoformat() if (part or after) and not iso_default else None) or iso_default
     if not iso:
         return False
     session.dept_ask = {"dept": dept_name, "date": iso, "part": part, "turn": session.turn_count}  # a bare "কে আছে" next is the same question again (see _dept_sitting_turn)
@@ -9853,11 +9933,13 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
     label = _dept_label(dept_name, lang)
     lg = lang if lang in ("bn", "hi") else "en"
     when_words = _when_phrase(iso, None, lang) + (f" {doctor_search._PART_WORD[part][lg]}" if part else "")  # noqa: SLF001
+    if after:
+        when_words += {"bn": f" {after}-এর পর", "hi": f" {after} के बाद", "en": f" after {after}"}[lg]
     sitting = r.get("sitting") or []
     if not sitting:
         return await _say_nobody_then_next(session, dept_name, lang, None, iso, when_words, label)
-    fits = [s for s in sitting if not part or doctor_search.part_of_day_of(s.get("start")) == part]
-    avail = await _available_sitting(fits, iso, part) if fits else []
+    fits = [s for s in sitting if (not part or doctor_search.part_of_day_of(s.get("start")) == part) and (not after or (s.get("end") or "99:99") > after)]
+    avail = await _available_sitting(fits, iso, part, after) if fits else []
     if not avail:
         full = {
             "bn": f"{when_words} {label} বিভাগে আর কোনো খালি সময় নেই।",
@@ -9869,6 +9951,8 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
         await _speak(session, full, lang)
         return True
     say = doctor_search.sitting_list_reply(avail, when_words, label, lang)
+    if _is_existence_question(text):
+        say = f"{_exists_lead(label, lang)} {say}"  # owner, 2026-10-31: "is there a <department> doctor?" is answered "হ্যাঁ, <department> বিভাগের ডাক্তার আছেন।" first
     if len(avail) == 1:
         session.dept_pending = {"kind": "confirm_one", "doctor": avail[0], "date": iso, "time": avail[0].get("start"), "turn": session.turn_count, "say": say}
     else:
