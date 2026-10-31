@@ -6347,7 +6347,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if session.serial_flow is not None:
             await _serial_flow_turn(session, text, lang, answer_hint=classify_yes_no(text, lang))
             return
-        if serial_lookup.reports_serial_not_received(text, lang) and _tools is not None:
+        if (serial_lookup.reports_serial_not_received(text, lang) or serial_lookup.asks_own_serial(text, lang)) and _tools is not None:
             session.serial_flow = serial_lookup.new_flow(session.turn_count)
             await _speak(session, serial_lookup.ask_number(lang), lang)
             return
@@ -6360,7 +6360,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             session.report_visit_asked = {"turn": session.turn_count, "tries": 0}
             await _speak(session, visit_cues.ask_visit_reply(lang), lang)
             return
-        if _tools is not None and visit_cues.asks_next_serial(text) and await _answer_next_serial(session, text, lang):
+        if _tools is not None and (visit_cues.asks_next_serial(text) or visit_cues.asks_running_serial(text)) and await _answer_next_serial(session, text, lang):
             return
         if visit_cues.asks_booking_window(text) and not _booking_is_open(session) and early_routing.classify(text, lang) is None:
             await _speak(session, visit_cues.booking_window_reply(lang), lang)  # sourav, 2026-10-24: 'how many days ahead can I book?' -- the same 3-day rule the clinic API enforces

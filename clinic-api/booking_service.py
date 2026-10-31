@@ -918,6 +918,17 @@ def send_payment_link(db: Session, confirmation_id: str) -> dict:
     out = {"success": result["queued"], "amount_inr": fee, "expires_in_minutes": minutes, "payment_link": link, "confirmation_id": confirmation_id, "channels": ["sms", "whatsapp"]}
     if not result["queued"]:
         out["reason"] = result.get("reason", "unknown")
+    elif os.environ.get("SIMULATE_PAYMENT_ON_LINK", "on").strip().lower() != "off":
+        # Owner, 2026-10-31 (the serial-number simulator): no payment gateway is wired, so the moment the payment link is sent the fee counts as paid -- the booking is stamped paid and its token number
+        # (already in appointments.token_number, one above the last booked that day) becomes the serial the caller can be told when they call again with their mobile number. Set
+        # SIMULATE_PAYMENT_ON_LINK=off when a real gateway's "paid" callback calls mark_paid instead.
+        try:
+            paid = mark_paid(db, confirmation_id)
+            if paid.get("success"):
+                out["serial_number"] = paid.get("serial_number")
+                out["payment_simulated"] = True
+        except Exception:  # noqa: BLE001 - the link was sent; a failed simulation must never undo that
+            db.rollback()
     return out
 
 

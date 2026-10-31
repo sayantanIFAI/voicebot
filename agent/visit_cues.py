@@ -238,10 +238,10 @@ def visit_age_answer(text: str, yes_no: str | None) -> str | None:
 
 
 # ======================================================================================================================= 3. next serial
-_SERIAL_WORDS = ("serial", "sirial", "seriyal", "sireal", "siriyal", "serail", "sirial", "token", "tokhen", "tokan", "turn", "tern", "টোকেন", "সিরিয়াল", "সিরিয়েল", "সিরিয়াল", "টার্ন", "सीरियल", "सिरियल", "सीरीयल", "टोकन", "टोकेन", "टर्न", "number", "নম্বর", "नंबर", "নাম্বার", "नम्बर", "no.")
+_SERIAL_WORDS = ("serial", "sirial", "seriyal", "sireal", "siriyal", "serail", "sirial", "token", "tokhen", "tokan", "turn", "tern", "টোকেন", "সিরিয়াল", "সিরিয়েল", "সিরিয়াল", "টার্ন", "सीरियल", "सिरियल", "सीरीयल", "टोकन", "टोकेन", "टर्न", "সেরিয়াল", "সেরিয়েল", "সীরিয়াল", "সেরিয়ার", "सेरियल", "number", "নম্বর", "नंबर", "নাম্বার", "नम्बर", "no.")
 _REAL_SERIAL_WORDS = _SERIAL_WORDS[:-6]  # "number" alone is not a serial
 _BOOK_LATIN = ("book", "booking", "buk", "bukking", "register", "naam", "nam lekh", "likhi", "likhale", "likhaye", "likhwa", "korle", "kore", "korbo", "korley", "karun", "karu", "karoon", "karun to", "karwa", "karaun", "karaoon", "karte", "karne", "nile", "nei", "nebo", "nibo", "dile", "dilei", "dilam", "karenge", "karoge", "karun")  # fmt: skip
-_BOOK_SCRIPT = ("বুক", "বুকিং", "করলে", "করি", "নিলে", "নাম লেখ", "লেখালে", "করব", "করবো", "করালে", "बुक", "बुकिंग", "कराऊं", "कराऊँ", "करूं", "करूँ", "करवाऊं", "करवाऊँ", "कराएं", "करेंगे", "करूंगा", "नाम लिखा", "कराने", "कराओ", "करो")  # fmt: skip
+_BOOK_SCRIPT = ("লিখালে", "লিখাইলে", "লিখলে", "লেখাইলে", "লিখাতে", "লিখিয়ে", "নাম লিখ", "বুক", "বুকিং", "করলে", "করি", "নিলে", "নাম লেখ", "লেখালে", "করব", "করবো", "করালে", "बुक", "बुकिंग", "कराऊं", "कराऊँ", "करूं", "करूँ", "करवाऊं", "करवाऊँ", "कराएं", "करेंगे", "करूंगा", "नाम लिखा", "कराने", "कराओ", "करो")  # fmt: skip
 # "when" words added alongside the existing "how much/which" ones (owner, 2026-10-29): a less-educated caller asks "akhun book korle KOKHUN pabo"
 # (WHEN will I get it), "mera number KAB aayega" (WHEN will my number come) -- not just "how many/which" -- and the old lists had no "when" word at all.
 _WHAT_WILL_LATIN = ("koto", "kto", "kotto", "konta", "kon ", "kotoh", "kitna", "kitne", "kaunsa", "kaun sa", "kya", "kya milega", "milega", "milegi", "hoga", "hogi", "hobe", "pabo", "pabe", "pai", "paoa", "ashbe", "asbe", "aye", "aschhe", "cholche", "cholse", "aayega", "aayegi", "aaega", "aaegi", "aa jayega", "milna", "milega kab", "will be", "would be", "will i get", "would i get", "when will", "when will i get", "when will my", "when will my number", "when will my turn", "when is my turn", "what will", "which number", "what number", "what time", "what would", "what is the serial if", "how many", "how long", "how much wait", "number kya", "kon number", "konnumber", "kokhun", "kokhon", "kobe", "kobay", "kab", "kabtak", "kab tak")  # fmt: skip
@@ -277,6 +277,29 @@ def asks_next_serial(text: str) -> bool:
 # could mean except the serial/turn, so these whole phrases are trusted on their own, same as the "which number" ones already here.
 _NUMBER_QUESTION = ("kon number", "kon nombor", "koto number", "kototam", "kon nambar", "which number", "what number", "kaun sa number", "kaunsa number", "kitna number", "kitne number", "number kab", "number kabe", "number kabhi", "number kokhon", "number kokhun", "number kya", "number ki", "ki number", "number hobe", "amar number", "mera number", "nombor kobe", "nombor kokhon", "kokhun pabo", "kokhon pabo", "kobe pabo", "kobay pabo", "kab milega number", "কোন নম্বর", "কত নম্বর", "কোন নাম্বার", "কত নাম্বার", "নম্বর কখন", "নম্বর কবে", "কখন পাব", "কবে পাব", "কী নম্বর", "নম্বর হবে", "আমার নম্বর", "कौन सा नंबर", "कौनसा नंबर", "कितना नंबर", "कितने नंबर", "कौन सा नम्बर", "नंबर कब", "नंबर कब आएगा", "मेरा नंबर कब", "नंबर क्या", "मेरा नंबर")  # fmt: skip
 _IF_WORDS = ("korle", "korley", "nile", "jodi", "if ", "agar", "karun", "karoon", "karein", "karne par", "karoge", "karenge", "kar lun", "করলে", "নিলে", "যদি", "अगर", "यदि", "करूं", "करूँ", "करने पर", "करवाऊं", "कराऊं", "करें", "कर लूं", "korbo to")  # fmt: skip
+
+
+# Owner, 2026-10-31 ("কোন সিরিয়াল চলছে" -- which serial is going on now): the number being served is, in this simulation, the serial last booked for the doctor that day. A serial word and a "running" word are
+# enough -- no booking word is needed (a sentence like this has no "if I book" in it). A complaint ("it did not come") is the serial-lookup flow's.
+_RUNNING = (
+    "চলছে", "চলতেছে", "চলতেসে", "চলতেছে", "চলতেসে", "চলছেন", "চলেছে", "চলে", "চলবে", "ডাকছে", "ডাকা হচ্ছে", "ডাকতেছে", "দেখছেন", "দেখছে",
+    "cholche", "cholchhe", "cholchey", "cholteche", "cholteseh", "chalche", "chalchhe", "chalu", "running", "is going", "going on", "now serving", "currently", "calling",
+    "चल रहा", "चल रही", "चलरहा", "चल रहे", "चालू", "बुला रहे",
+)
+_BOOKED_PAST = ("করেছি", "করেছিলাম", "করা আছে", "করে নিয়েছি", "বুক ছিল", "korechi", "korechilam", "kore rekhechi", "booked", "have booked", "ho gaya", "kar liya", "करवाया", "कराया")
+
+
+def asks_running_serial(text: str) -> bool:
+    """"কোন সিরিয়াল চলছে", "এখন কত নম্বর চলছে", "which serial is going on", "kon serial cholche", "अभी कौन सा नंबर चल रहा है": the serial being served now."""
+    t = _nfc(text)
+    toks = _tokens(t)
+    if not toks or len(toks) > 30:
+        return False
+    if any(c in t for c in _COMPLAINT):
+        return False
+    if not (any(w in t for w in _REAL_SERIAL_WORDS) or any(w in t for w in _NUMBER_QUESTION) or any(w in t for w in ("নম্বর", "নাম্বার", "नंबर", "नम्बर", "number", "nombor"))):
+        return False
+    return any(w in t for w in _RUNNING)
 
 
 def serial_day(text: str) -> str:

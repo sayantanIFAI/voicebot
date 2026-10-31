@@ -47,6 +47,25 @@ def reports_serial_not_received(text: str, lang: str = "en") -> bool:
     return any(w in t for w in _SERIAL_WORDS) and bool(_NOT_RECEIVED.search(t))
 
 
+# Owner, 2026-10-31 ("the same user calls again, gives the mobile number, and the AI tells him his token number"): a caller asking for HIS OWN serial -- "আমার সিরিয়াল নম্বর কত", "আমি গতকাল বুক করেছিলাম, সিরিয়াল কত",
+# "what is my token number", "mera serial kitna hai" -- is the same lookup: the mobile number is asked, then the booking's serial is read from the table.
+_FIRST_PERSON = ("আমার", "আমি", "আমাকে", "amar", "ami ", "my ", "mera", "meri", "main ", "mujhe", "मेरा", "मेरी", "मैं", "मुझे", "i ")
+_SERIAL_ASK = ("কত", "কি", "কী", "কোন", "বলুন", "বলেন", "বলো", "জানতে", "জানাবেন", "koto", "kto", "ki ", "bolun", "bolen", "jante", "what", "tell", "know", "kya", "kitna", "kitne", "batao", "bataiye", "बताइए", "बताओ", "कितना", "क्या")
+_NOT_OWN = ("চলছে", "চলতেছে", "চলতেসে", "cholche", "chalche", "running", "going on", "चल रहा", "চলে", "if i book", "book korle", "বুক করলে", "agar book", "করলে", "লিখালে", "লিখলে", "লিখাইলে", "লেখালে", "নিলে", "korle", "likhale", "if i ", "agar ", "यदि", "अगर", "জানি না কত হবে")
+
+
+def asks_own_serial(text: str, lang: str = "en") -> bool:
+    """True for a caller asking what HIS serial / token number is (a booking he already made); the "what will mine be if I book now" and "which is running now" questions are not this."""
+    t = " ".join((text or "").lower().split())
+    if not t or len(t.split()) > 30:
+        return False
+    if not any(w in t for w in _SERIAL_WORDS):
+        return False
+    if any(w in t for w in _NOT_OWN):
+        return False
+    return any(w in t for w in _FIRST_PERSON) and any(w in t for w in _SERIAL_ASK)
+
+
 # -------------------------------------------------------------------------------------------------------------------- the state machine
 def new_flow(turn: int) -> dict:
     """sourav, 2026-10-24: the state of one "find my serial" conversation. stage: "ask" (waiting for the number) or "confirm" (number read back, waiting for yes / no)."""
