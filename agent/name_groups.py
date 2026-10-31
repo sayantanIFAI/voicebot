@@ -105,12 +105,20 @@ def which_offered(text: str, infos: list[dict]) -> list[dict]:
     return hits if best >= 2 else []
 
 
-def reply(groups: dict, said_text: str, lang: str) -> str:
+def reply(groups: dict, said_text: str, lang: str, label=None) -> str:
     """The spoken answer for `groups` (see build)."""
+    def _named(i: dict) -> str:
+        """The doctor's spoken name with his department beside it ("অর্থোপেডিক্স বিভাগের ডাঃ অভিজিৎ সরকার") when the caller of this function can say the department in the call's language (`label`)."""
+        n = spoken_name(i, lang)
+        dept = label(i.get("department") or "") if label and i.get("department") else ""
+        if not dept:
+            return n
+        return {"bn": f"{dept} বিভাগের {n}", "hi": f"{dept} विभाग के {n}", "en": f"{n} ({dept})"}.get(lang, n)
+
     if groups.get("short") is not None:
-        name = spoken_name(groups["short"], lang)
+        name = _named(groups["short"])
         return {"bn": f"আপনি কি {name} বলতে চাইছেন?", "hi": f"क्या आप {name} कहना चाह रहे हैं?"}.get(lang, f"Did you mean {name}?")
-    names = lambda key: _join([spoken_name(i, lang) for i in groups[key]], lang)  # noqa: E731
+    names = lambda key: _join([_named(i) for i in groups[key]], lang)  # noqa: E731
     said = name_script.clean_query(said_text, lang) if lang in ("bn", "hi") else said_text
     parts = {
         "bn": [f"'{said}' নামে কেউ বসেন না।"],  # owner, 2026-10-30: "Abhijit Sen bole keu bosen na" -- said first, before anyone is offered

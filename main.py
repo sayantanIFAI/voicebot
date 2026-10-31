@@ -3458,7 +3458,7 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
                 _said = str(slots.get("doctor_name") or "")
                 _groups = name_groups.build(_said, list(_fast_path.catalogue._doctor_info.values()), result.get("did_you_mean") or [])  # noqa: SLF001
                 if _groups:
-                    result = {**result, "name_groups_reply": name_groups.reply(_groups, _said, lang)}
+                    result = {**result, "name_groups_reply": name_groups.reply(_groups, _said, lang, lambda d: _dept_label(d, lang))}
                     _name_pick_found.set(name_groups.offered(_groups))
         _reply = doctor_availability_reply(slots, result, lang)
         if result.get("found") and _named_surname_only:
@@ -6614,6 +6614,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             return
         if session.booking is None and await _answer_body_imaging(session, text, lang):
             return
+        if where_doctor_sits.states_a_floor(text) and not _booking_open(session):
+            # Owner, 2026-10-31: "পাঁচতলা" / "দোতালাতে" are about the building, not a request for the address: the caller is asked how the assistant can help with a doctor's appointment
+            await _speak(session, where_doctor_sits.help_reply(lang), lang)
+            return
         if where_doctor_sits.asks_floor(text) and not _booking_open(session):  # owner, 2026-10-29: which floor does the doctor sit on -> the counter tells
             await _speak(session, where_doctor_sits.reply(lang), lang)
             return
@@ -6623,6 +6627,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _speak(session, _with_resume(session, doctor_enquiry_cues.good_doctor_reply([], None, lang), lang), lang)
             return
         if await _which_doctor_turn(session, text, lang):
+            return
+        if await _unknown_full_name_turn(session, text, lang):
             return
         if session.booking is None and await _doctor_check_turn(session, text, lang):
             return
@@ -6699,7 +6705,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 _close = dept_talk.close_doctors(data["unknown_doctor"], _everyone, floor=0.45)
                 if _close:
                     session.doctor_check = {"info": _close[0], "turn": session.turn_count, "date": booking_capture.read_when(text, False, want_day=True).date}
-                    await _speak(session, dept_talk.confirm_name(dept_talk.spoken_name(_close[0], lang), lang), lang)
+                    await _speak(session, dept_talk.confirm_name(_spoken_with_dept(_close[0], lang), lang), lang)
                     return
             await _speak(session, dept_talk.no_such_doctor(name_script.clean_query(data["unknown_doctor"], lang), lang), lang)
             return
@@ -9058,6 +9064,47 @@ def _text_has_surname_of(text: str, info: dict) -> bool:
     return any(name_groups._same(t, s) for t in toks for s in name_groups._own_names(info)[1])  # noqa: SLF001
 
 
+_DOCTOR_CUE = re.compile(r"ডাক্তার|ডাঃ|ডক্টর|ডা\.|বসেন|বসে|বসছেন|আছেন|\bdr\b|\bdoctor\b|डॉक्टर|डाक्टर|बैठ", re.I)
+
+
+def _strip_genitive(tok: str) -> str:
+    for suf in ("ের", "এর", "কে", "র"):
+        if tok.endswith(suf) and len(tok) - len(suf) >= 2:
+            return tok[: -len(suf)]
+    return tok
+
+
+async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-10-31 ("না না অভিজিৎ নন্দীর কথা বলছি বাচ্চাদের ডাক্তার" was answered "which problem?"): a first name and a surname that no doctor of the clinic carries together, said about a doctor, are answered
+    "'অভিজিৎ নন্দী' নামে কেউ বসেন না" and then the doctors who really share the first name (or, with no such first name, the surname), each with his department (agent/name_groups.py). Needs a doctor cue in
+    the sentence, so an ordinary pair of words is never taken for a name."""
+    if _fast_path is None or session.booking is not None or len(text.split()) > 14 or _DOCTOR_CUE.search(text) is None:
+        return False
+    infos = list({id(i): i for i in _fast_path.catalogue._doctor_info.values()}.values())  # noqa: SLF001
+    if not infos:
+        return False
+    toks = [t.strip(".,?!।") for t in text.split() if t.strip(".,?!।")]
+    surnames = [x for i in infos for x in name_groups._own_names(i)[1]]  # noqa: SLF001
+    said = None
+    for a, b in zip(toks, toks[1:]):
+        if a in _NAME_FILLER or b in _NAME_FILLER or len(name_script.name_skeleton(a)) < 2:
+            continue
+        for cand in (_strip_genitive(b), b):  # the name without the "of" ending is what is said back
+            if any(name_groups._same(cand, s_) for s_ in surnames):  # noqa: SLF001
+                said = f"{a} {cand}"
+                break
+        if said:
+            break
+    if not said or not _first_and_surname_of_two_doctors(said):
+        return False
+    groups = name_groups.build(said, infos, [])
+    if not groups:
+        return False
+    session.name_pick = {"infos": name_groups.offered(groups), "turn": session.turn_count}
+    await _speak(session, name_groups.reply(groups, said, lang, lambda d: _dept_label(d, lang)), lang)
+    return True
+
+
 async def _which_doctor_turn(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-30: "কোন ডাক্তার এটা" / "who is he" about the doctor just spoken of: his name and department, from the open booking, else the doctor just offered, else the doctor being talked about --
     never asked back ("which doctor do you mean?"). False when no doctor is the subject."""
@@ -9402,13 +9449,13 @@ async def _name_rescue(session: CallSession, text: str, lang: str) -> bool:
         _g = name_groups.build(_said_name, everyone, [])
         if _g:
             session.name_pick = {"infos": name_groups.offered(_g), "turn": session.turn_count}
-            await _speak(session, name_groups.reply(_g, _said_name, lang), lang)
+            await _speak(session, name_groups.reply(_g, _said_name, lang, lambda d: _dept_label(d, lang)), lang)
             return True
     pools.append((everyone, 0.62))
     for infos, floor in pools:
         close = dept_talk.close_doctors(text, infos, floor=floor)
         if close:
-            first = dept_talk.spoken_name(close[0], lang)
+            first = _spoken_with_dept(close[0], lang)
             say = dept_talk.confirm_name(first, lang)
             session.doctor_check = {"info": close[0], "turn": session.turn_count}
             await _speak(session, say, lang)
@@ -9440,6 +9487,15 @@ async def _weekly_lines(infos: list[dict], lang: str) -> list[str]:
             line = line.rstrip("।. ") + {"bn": ", ", "hi": ", ", "en": ", "}[lang if lang in ("bn", "hi") else "en"] + dept_talk.hours_words(hours, lang) + ("।" if lang in ("bn", "hi") else ".")
         lines.append(line)
     return lines
+
+
+def _spoken_with_dept(info: dict, lang: str) -> str:
+    """"অর্থোপেডিক্স বিভাগের ডাঃ অভিজিৎ সরকার" -- a doctor named for a "are you asking about ...?" always carries his department (owner, 2026-10-31)."""
+    n = dept_talk.spoken_name(info, lang)
+    dept = _dept_label(info.get("department") or "", lang) if info.get("department") else ""
+    if not dept:
+        return n
+    return {"bn": f"{dept} বিভাগের {n}", "hi": f"{dept} विभाग के {n}", "en": f"{n} ({dept})"}.get(lang, n)
 
 
 async def _confirmed_doctor_answer(session: CallSession, info: dict, date_iso: str | None, lang: str) -> None:
@@ -9551,8 +9607,8 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
                 # Owner, 2026-10-31: the call has been about THIS doctor from the start and the caller names him again (a spelling or ending that only sounds a little different): no "are you asking about Dr. X?"
                 await _confirmed_doctor_answer(session, _same, _day, lang)
                 return True
-            first = dept_talk.spoken_name(close[0], lang)
-            say = dept_talk.confirm_either(first, dept_talk.spoken_name(close[1], lang), lang) if len(close) > 1 and dept_talk.close_doctors(text, [close[0], close[1]], floor=0.45) == close and _close_pair(text, close) else dept_talk.confirm_name(first, lang)
+            first = _spoken_with_dept(close[0], lang)
+            say = dept_talk.confirm_either(first, _spoken_with_dept(close[1], lang), lang) if len(close) > 1 and dept_talk.close_doctors(text, [close[0], close[1]], floor=0.45) == close and _close_pair(text, close) else dept_talk.confirm_name(first, lang)
             session.doctor_check = {"info": close[0], "turn": session.turn_count, "date": _day}
             await _speak(session, say, lang)
             return True

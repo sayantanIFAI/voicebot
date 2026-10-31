@@ -36,6 +36,31 @@ REPLY = {
 }
 
 
+# Owner, 2026-10-31 ("সেন্টারটা কি পাঁচতলা", "ডাক্তাররা কোথায় বসে দোতালাতে" were answered with the clinic's ADDRESS): a floor COUNT or a named floor -- পাঁচতলা, দোতালা, তেতলা, "second floor", दूसरी मंज़िल --
+# is talk about the building, which the assistant knows nothing about. It is not answered with the address; the caller is asked what they need, which is a doctor's appointment.
+_STATED_FLOOR = re.compile(
+    r"(?:এক|দু|দো|তিন|তে|চার|পাঁচ|পাচ|ছয়|সাত|আট|নয়|দশ|[০-৯0-9]+)\s*(?:তলা|তালা|তলায়|তালায়|তলাতে|তালাতে|তলার|তালার)|দোতলা|দোতালা|তেতলা|তেতালা|তিনতলা|চারতলা|পাঁচতলা|ছয়তলা|সাততলা|আটতলা|নয়তলা|দশতলা|"
+    r"(?:ground|first|second|third|fourth|fifth|top)\s+floor|\b(?:two|three|four|five|six|seven|eight|nine|ten)[\s-]*stor(?:e)?y(?:ed)?\b|"
+    r"(?:पहली|दूसरी|तीसरी|चौथी|पांचवीं|पाँचवीं)\s*मंज़िल|(?:दो|तीन|चार|पांच|पाँच|छह|सात|आठ)\s*मंज़िला|(?:दो|तीन|चार|पांच|पाँच|छह|सात|आठ)\s*मंजिला",
+    re.I,
+)
+HELP = {
+    "bn": "বলুন, ডাক্তারের অ্যাপয়েন্টমেন্টের ব্যাপারে আমি আপনাকে কীভাবে সাহায্য করতে পারি?",
+    "hi": "बताइए, डॉक्टर के अपॉइंटमेंट के बारे में मैं आपकी कैसे मदद कर सकती हूँ?",
+    "en": "Please tell me how I can help you with a doctor's appointment.",
+}
+
+
+def states_a_floor(text: str) -> bool:
+    """A numbered / named floor in a short sentence ("পাঁচতলা", "দোতালাতে", "on the second floor")."""
+    t = text or ""
+    return len(t.split()) <= 25 and _STATED_FLOOR.search(t) is not None
+
+
+def help_reply(lang: str) -> str:
+    return HELP.get(lang, HELP["en"])
+
+
 def asks_floor(text: str) -> bool:
     t = text or ""
     if len(t.split()) > 25:
