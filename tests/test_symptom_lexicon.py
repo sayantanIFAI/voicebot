@@ -46,7 +46,7 @@ def test_symptom_goes_to_its_department(text, dept):
     assert lex.departments_for(text) == [dept]
 
 
-@pytest.mark.parametrize("text", ["আমার ছেলেকে কাকে দেখাবো", "আমার ছেলে কিছু খায় না", "ডাক্তার সেন কখন বসে", "the canada trip", "আমার ছেলে কেমন আছে"])
+@pytest.mark.parametrize("text", ["আমার ছেলেকে কাকে দেখাবো", "আমার ছেলে কিছু খায় না", "ডাক্তার সেন কখন বসে", "the canada trip", "আমার ছেলে কেমন আছে", "valo doctor ke ache", "I have a problem"])
 def test_a_sentence_without_a_symptom_word_finds_nothing(text):
     assert lex.departments_for(text) == []
 

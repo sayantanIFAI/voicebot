@@ -156,7 +156,8 @@ LEXICON: dict[str, dict[float, list[str]]] = {
             "fever", "cold", "cough", "weakness", "vomiting", "diarrhoea", "diarrhea", "loose motion", "breathless", "asthma", "body ache", "checkup", "check-up", "unwell", "sick", "allergy",
             "infection", "swelling", "stomach pain", "jor", "jwor", "sardi", "kashi",
         ],
-        0.5: ["ব্যথা", "ব্যাথা", "যন্ত্রণা", "দর্দ", "दर्द", "तकलीफ", "pain", "ache", "problem", "সমস্যা", "সমস্যা"],
+        # (no "ache" -- in romanised Bengali it means "is" ("doctor ke ache?") -- and no bare "problem" / "সমস্যা": "what is the problem?" is a question the agent must still ask)
+        0.5: ["ব্যথা", "ব্যাথা", "যন্ত্রণা", "দর্দ", "दर्द", "तकलीफ", "pain"],
     },
     "Ophthalmology": {
         2: [
