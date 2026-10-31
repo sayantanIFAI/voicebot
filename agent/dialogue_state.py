@@ -50,8 +50,8 @@ def signature(snap: dict) -> str:
 
 
 def open_question_line(snap: dict, lang: str) -> str:
-    """"I had asked: <the open question>" in the caller's language -- for a clarification that names what is still waiting for an answer. Empty when no question is open."""
+    """The question still waiting for an answer, as it was last asked -- for a clarification that puts it again right after "sorry, I did not quite understand". Empty when no question is open."""
     q = (snap or {}).get("open_question_spoken") or ""
     if not q:
         return ""
-    return {"bn": f"আমি জানতে চেয়েছিলাম: {q}", "hi": f"मैंने पूछा था: {q}", "en": f"I had asked: {q}"}.get(lang, f"I had asked: {q}")
+    return q  # owner, 2026-10-31: the question itself ("বলুন, কীভাবে সাহায্য করতে পারি?"), not "I had asked: <the whole greeting>"

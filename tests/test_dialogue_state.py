@@ -21,7 +21,7 @@ def test_the_cache_key_changes_with_the_open_question():
     assert a and b and a != b
 
 
-def test_the_open_question_is_asked_again_by_name():
+def test_the_open_question_is_asked_again_as_it_was_asked():
     snap = {"open_question_spoken": "কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?"}
-    assert dialogue_state.open_question_line(snap, "bn") == "আমি জানতে চেয়েছিলাম: কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?"
+    assert dialogue_state.open_question_line(snap, "bn") == "কার কাছে অ্যাপয়েন্টমেন্ট করতে চান?"
     assert dialogue_state.open_question_line({}, "bn") == ""

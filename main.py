@@ -2244,7 +2244,7 @@ def _dialogue_snapshot_raw(session: CallSession, lang: str = "bn") -> dict:
     last = (getattr(session, "last_spoken", "") or "").strip()
     if last:
         snap["last_ai"] = last
-        qs = [q.strip() for q in re.split(r"(?<=[?])", last) if q.strip().endswith("?")]
+        qs = [q.strip() for q in re.split(r"(?<=[?।.!])\s*", last) if q.strip().endswith("?")]  # (the last QUESTION, not the whole line: "সোনোস্ক্যান বাণী। বলুন, কীভাবে সাহায্য করতে পারি?" -> the second sentence)
         if qs:
             snap["open_question_spoken"] = qs[-1]
     oq = None
@@ -9674,6 +9674,14 @@ async def _dept_sitting_turn(session: CallSession, text: str, lang: str, topic: 
         if last and last.get("dept") == topic and session.turn_count - last.get("turn", -99) <= 6:
             return await _day_part_sitting_reply(session, text, lang, topic, iso_default=last["date"], part_default=last.get("part"))
         return await _day_part_sitting_reply(session, text, lang, topic, iso_default=slot_proposal.clinic_now().date().isoformat())
+    # Owner, 2026-10-31 ("আপনাকে তো বললাম কালকে চাই" right after the orthopaedic doctors were listed for TODAY was answered "are you asking about Dr. Tapan Basu?"): while a department's sitting doctors
+    # are the subject, a sentence that names a DAY (and no doctor) is the same question for that day, with the part of the day asked before.
+    _last = getattr(session, "dept_ask", None)
+    if _last and _last.get("dept") == topic and session.turn_count - _last.get("turn", -99) <= 6 and not _text_names_a_doctor(text, lang) and not booking_carryover.commits_to_booking(text) and not booking_carryover.asks_to_book(text):
+        _today = slot_proposal.clinic_now().date()
+        _dsaid = (weekday_cues.resolve_date(text, _today) if weekday_cues.weekday_of(text) is not None else None) or booking_capture.read_when(text, False, want_day=True).date
+        if _dsaid:
+            return await _day_part_sitting_reply(session, text, lang, topic, iso_default=_dsaid, part_default=_last.get("part"))
     pend = getattr(session, "dept_pending", None)
     if any(c in low for c in _REPEAT_CUES) and pend and pend.get("say") and pend.get("kind") in ("pick", "confirm_one") and (sit or dept_talk.asks_names(text)):
         pend["turn"] = session.turn_count

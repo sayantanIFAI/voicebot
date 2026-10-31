@@ -611,20 +611,31 @@ def after_date(text: str, today) -> str | None:
     return d.isoformat()
 
 
+_REFUSAL = frozenset({"না", "নয়", "নেই", "নাই", "not", "no", "dont", "don't", "नहीं", "नही", "ना"})
+
+
 def day_from_words(words: list[str], today) -> tuple[str | None, set[int]]:
     """"tomorrow" / "কাল" / "कल" (also "day after tomorrow", "today") -> ISO date relative to `today`. In a booking, a bare
     কাল / कल always means tomorrow (the words also mean 'yesterday', but nobody books yesterday)."""
     import datetime
 
+    # Owner, 2026-10-31 ("আজকে না কালকে কালকে ... আজকে লাগবে না কালকে বলুন" was answered for TODAY): a caller who corrects herself means the LAST day she said, and a day followed by a "no" ("আজকে লাগবে না",
+    # "আজকে না") is the day she does NOT want. Every day word is collected; refused ones are set aside; the last of the rest is the day.
+    found = []  # (index, days ahead, indexes used)
     for i, w in enumerate(words):
         if w in _DAY_AFTER:
-            return (today + datetime.timedelta(days=2)).isoformat(), {i}
-        if w in _TOMORROW:
+            found.append((i, 2, {i}))
+        elif w in _TOMORROW:
             if i >= 2 and words[i - 2 : i] == ["day", "after"]:
-                return (today + datetime.timedelta(days=2)).isoformat(), {i, i - 1, i - 2}
-            return (today + datetime.timedelta(days=1)).isoformat(), {i}
-        if w in _TODAY:
-            return today.isoformat(), {i}
+                found.append((i, 2, {i, i - 1, i - 2}))
+            else:
+                found.append((i, 1, {i}))
+        elif w in _TODAY:
+            found.append((i, 0, {i}))
+    if found:
+        wanted = [f for f in found if not any(x in _REFUSAL for x in words[f[0] + 1 : f[0] + 4])]
+        _i, ahead, used = (wanted or found)[-1]
+        return (today + datetime.timedelta(days=ahead)).isoformat(), used
     return day_of_month(words, today)
 
 
