@@ -103,7 +103,7 @@ def asks_when(text: str) -> bool:
     return bool(_WHEN.search(unicodedata.normalize("NFC", text or "")))
 
 
-_ADDRESS_WORDS = re.compile(r"ক্লিনিক|হাসপাতাল|ঠিকানা|ল্যাব|क्लिनिक|अस्पताल|पता|\b(?:clinic|hospital|address|lab|located|location)\b", re.I)
+_ADDRESS_WORDS = re.compile(r"ক্লিনিক|হাসপাতাল|ঠিকানা|ল্যাব|রোড|স্ট্রিট|লেন|সরণি|পাড়া|ফ্ল্যাট|বিল্ডিং|पिन|रोड|गली|फ्लैट|क्लिनिक|अस्पताल|पता|\b(?:clinic|hospital|address|lab|located|location)\b", re.I)
 
 
 def asks_origin(text: str) -> bool:

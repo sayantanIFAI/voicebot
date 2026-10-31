@@ -4594,6 +4594,23 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
     return True
 
 
+_ADDRESS_LIKE = re.compile(
+    r"রোড|রোডে|স্ট্রিট|লেন|সরণি|পাড়া|পল্লী|নগর|বাজার|বাড়ি|ফ্ল্যাট|অ্যাপার্টমেন্ট|বিল্ডিং|পিন|পোস্ট|থানা|সেক্টর|ব্লক|নম্বর|"
+    r"रोड|स्ट्रीट|गली|नगर|फ्लैट|बिल्डिंग|पिन|"
+    r"\b(?:road|rd|street|st|lane|nagar|para|sarani|flat|apartment|building|sector|block|pin|pincode|post|thana)\b|\d{3,}",
+    re.I,
+)
+
+
+def _is_an_address_answer(session: CallSession, text: str) -> bool:
+    """Owner, 2026-10-31 ("দশ কে গড়িয়াহাট রোড কলকাতা", said as the patient's ADDRESS, was answered "হ্যাঁ, উনি কলকাতার।"): a Kolkata word is a question about the doctor only when it is not an address. While a booking is waiting
+    for the patient's address, or when the sentence is written like an address (a road, a lane, a flat, a pin code), it is never the "is he from Kolkata?" question. Many patients live in Kolkata."""
+    b = session.booking
+    if b is not None and b.stage == "collecting" and "patient_address" in b.asked_fields and not b.slots.get("patient_address"):
+        return True
+    return _ADDRESS_LIKE.search(text or "") is not None
+
+
 async def _answer_doctor_origin(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-29: "is the doctor from Kolkata?" -- answered from the doctor table's "From Kolkata?" column, one fixed sentence, about the doctor named in the sentence or just discussed.
     With no doctor to speak of, the caller is asked which one. False (nothing said) when the catalogue is not loaded."""
@@ -6352,7 +6369,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         if _nothing_is_open(session) and visit_cues.says_will_come_in_the_afternoon(text) and early_routing.classify(text, lang) is None:
             await _speak(session, visit_cues.afternoon_reply(lang), lang)
             return
-        if _tools is not None and doctor_origin.asks_doctor_origin(text, has_context=booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)) and await _answer_doctor_origin(session, text, lang):
+        if _tools is not None and not _is_an_address_answer(session, text) and doctor_origin.asks_doctor_origin(text, has_context=booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)) and await _answer_doctor_origin(session, text, lang):
             return
         early = early_routing.classify(text, lang)
         if early == early_routing.SITTING_HOURS and not await _answer_sitting_hours(session, text, lang):
