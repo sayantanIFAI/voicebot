@@ -184,13 +184,15 @@ def _fast_static_prompt() -> str:
 _FAST_STATIC = _fast_static_prompt()
 
 
-def build_prompt(transcript: str, lang: str, now: datetime.datetime, variant: str = "classic") -> str:
-    """The prompt for one caller utterance. `classic` is the original text, byte for byte."""
+def build_prompt(transcript: str, lang: str, now: datetime.datetime, variant: str = "classic", context: str = "") -> str:
+    """The prompt for one caller utterance. `classic` is the original text, byte for byte. `context` (agent/dialogue_state.render) is the conversation so far; it goes AFTER the fixed instructions, so the
+    model's cached prefix is untouched, and it is empty on the first turn."""
     language = _LANGUAGE_NAMES.get(lang, "Bengali")
+    ctx = f"\n\n{context}" if context else ""
     if variant == "fast":
         return (
             f"{_FAST_STATIC}\n\nCALLER LANGUAGE: {language}. Today's date is {now.strftime('%Y-%m-%d')} "
-            f"({now.strftime('%A')}), Asia/Kolkata.\n\nCALLER UTTERANCE (ASR output):\n{transcript}\n\nJSON:"
+            f"({now.strftime('%A')}), Asia/Kolkata.{ctx}\n\nCALLER UTTERANCE (ASR output):\n{transcript}\n\nJSON:"
         )
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         today_iso=now.strftime("%Y-%m-%d"),
@@ -198,7 +200,7 @@ def build_prompt(transcript: str, lang: str, now: datetime.datetime, variant: st
         faq_topics=", ".join(FAQ_TOPICS),
         language_name=language,
     )
-    return f"{system_prompt}\n\nCALLER UTTERANCE ({language}, ASR output):\n{transcript}\n\nJSON:"
+    return f"{system_prompt}{ctx}\n\nCALLER UTTERANCE ({language}, ASR output):\n{transcript}\n\nJSON:"
 
 
 class ExtractionError(Exception):
@@ -294,7 +296,7 @@ _MAX_ATTEMPTS_BACKSTOP = 5  # defence in depth only -- see extract_intent's docs
 
 
 def extract_intent(
-    transcript_bn: str, max_retries: int = 2, lang: str = "bn", deadline_s: float = DEFAULT_DEADLINE_S
+    transcript_bn: str, max_retries: int = 2, lang: str = "bn", deadline_s: float = DEFAULT_DEADLINE_S, context: str = ""
 ) -> tuple[dict, dict]:
     """Returns (parsed JSON dict, diagnostics dict).
 
@@ -311,7 +313,7 @@ def extract_intent(
     deadline remains, so one slow attempt cannot by itself consume the
     whole budget meant to cover retries too."""
     variant = INTENT_PROMPT_VARIANT
-    prompt = build_prompt(transcript_bn, lang, datetime.datetime.now(), variant)
+    prompt = build_prompt(transcript_bn, lang, datetime.datetime.now(), variant, context)
 
     diagnostics: dict[str, Any] = {"attempts": 0, "total_time_s": 0.0, "errors": [], "deadline_s": deadline_s}
     last_error: Exception | ExtractionError = ExtractionError("no attempt was made")

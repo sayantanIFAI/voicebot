@@ -70,6 +70,7 @@ import collections
 import contextlib
 import difflib
 import re
+import unicodedata
 import dataclasses
 import shutil
 import contextvars
@@ -160,7 +161,7 @@ from agent import slot_proposal  # the machine picks the appointment time and sa
 from agent import date_phrase  # sourav, 2026-10-24: ISO dates are spoken as 'আঠারো তারিখ' / 'সামনের মাসের দুই তারিখ' (same month / next month ...)
 from agent import age_cues  # sourav, 2026-10-24: the patient's age in the caller's words; 13 and above is not sent to the paediatrician
 from agent import clinical_safety, lost_found, off_topic, result_request, unrelated_caller  # ported 2026-10-27: a result's meaning goes to a clinician by rule; a wrong number is closed politely
-from agent import english_in_bengali, eye_words, hindi_in_bengali, repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
+from agent import dialogue_state, english_in_bengali, humanize, eye_words, hindi_in_bengali, repeat_request, symptom_repair, clinical_terms, doctor_search, lay_terms, echo_check, imaging_words, multi_question, nato_letters, owner_answers  # owner 2026-10-18: lady-doctor filter, neuro/euro, letters said with words, fixed answers
 from agent.catalogue_forms import TITLES as _DOCTOR_TITLES
 from agent import body_imaging  # 'buker chhobi korbo': which imaging test for that body part, from the catalogue
 from agent import dept_list  # 'who are the doctors in cardio'
@@ -1511,7 +1512,58 @@ async def _synthesize_one_clause(session: CallSession, clause: str, lang: str, f
         return _tts.fallback_audio(fallback_reason or "tts_failure", lang)
 
 
-async def _speak(session: CallSession, text: str, lang: str | None = None, fallback_reason: str | None = None) -> float:
+_VOCAB_CACHE: dict = {}
+
+
+def _clinic_vocab() -> set[str]:
+    """The words that are the clinic's own names -- doctors' name words in all three scripts -- so a rewrite can be refused if it drops or invents one (agent/humanize.py). Built once per catalogue."""
+    fp = _fast_path
+    if fp is None:
+        return set()
+    cached = _VOCAB_CACHE.get(id(fp))
+    if cached is not None:
+        return cached
+    words: set[str] = set()
+    with contextlib.suppress(Exception):
+        for info in fp.catalogue._doctor_info.values():  # noqa: SLF001
+            for k in ("name", "full_name", "full_name_bn", "full_name_hi"):
+                for w in re.split(r"[\s.,]+", unicodedata.normalize("NFC", info.get(k) or "")):
+                    if len(w) >= 3 and w.lower() not in ("dr", "doctor"):
+                        words.add(w)
+    _VOCAB_CACHE.clear()
+    _VOCAB_CACHE[id(fp)] = words
+    return words
+
+
+def _same_line_key(text: str) -> str:
+    return re.sub(r"[\s.,;:!?।]+", " ", unicodedata.normalize("NFC", text or "")).strip().lower()
+
+
+async def _never_the_same_question_twice(session: CallSession, text: str, lang: str, repeat_ok: bool) -> str:
+    """Owner, 2026-10-31 ("not telling back the same thing"): when the agent is about to ask the very QUESTION it asked a turn ago, after the caller has said something in between, saying it again gets the same
+    answer or none. It changes tactic: ask again in a different way (which doctor, or exactly what problem, with General Medicine options -- _unclear_problem_reply), and the time after that offer a person. Not applied
+    to a deliberate repeat (repeat_ok), to a statement (no question mark), to a booking's own questions, or to a reply spoken in the same turn."""
+    if repeat_ok or session.speaking_filler or session.booking is not None or len(text) < 25 or not text.rstrip().endswith(("?", "？")):
+        return text
+    key = _same_line_key(text)
+    earlier = [t for k, t in (getattr(session, "recent_spoken", None) or [])[-3:] if k == key]
+    if not earlier or earlier[-1] >= session.turn_count:  # not said before, or said in this same turn
+        return text
+    session.same_question_repeats = getattr(session, "same_question_repeats", 0) + 1
+    logger.info("[%s] the same question again (%d): changing tactic", session.call_id, session.same_question_repeats)
+    if session.same_question_repeats >= 2:
+        return {
+            "bn": "মনে হচ্ছে আমি আপনাকে ঠিকমতো সাহায্য করতে পারছি না। চাইলে আমি আপনাকে আমাদের কাউন্টারের কারও সাথে কথা বলিয়ে দিতে পারি। দেব?",
+            "hi": "लगता है मैं आपकी ठीक से मदद नहीं कर पा रही। चाहें तो मैं आपको हमारे काउंटर पर किसी से बात करा सकती हूँ। करा दूँ?",
+            "en": "It seems I am not helping you properly. If you like, I can put you through to someone at our counter. Shall I?",
+        }.get(lang, "Shall I put you through to someone at our counter?")
+    try:
+        return await _unclear_problem_reply(session, lang)
+    except Exception:  # noqa: BLE001 - a change of tactic must never take the reply down
+        return text
+
+
+async def _speak(session: CallSession, text: str, lang: str | None = None, fallback_reason: str | None = None, repeat_ok: bool = False) -> float:
     """Speak `text` in `lang` (default: the call's current language).
     Returns the total audio duration in seconds.
 
@@ -1563,6 +1615,10 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
         logger.error("[%s] reply language mismatch (expected %s): %r", session.call_id, lang, text[:60])
     # KCD-514: at most one apology per reply. Templates are written to that rule; this catches
     # the ones assembled at run time (a secondary answer appended to a primary one).
+    text = await _never_the_same_question_twice(session, text, lang, repeat_ok)
+    if humanize.ENABLED and not repeat_ok and not session.speaking_filler and humanize.worth_rewriting(text):
+        # Owner, 2026-10-31 (off unless HUMANIZE_REPLIES=on): the model may only rephrase a finished sentence; agent/humanize.py throws the rewrite away unless every fact is still there
+        text = await asyncio.to_thread(humanize.rewrite, text, lang, _clinic_vocab())
     text, stacked = enforce_single_apology(text, lang)
     if stacked:
         apology_events.record("stacked_removed", "reply", lang)
@@ -1572,6 +1628,11 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
     await session.send_json("AI", text)
     if not session.speaking_filler:
         session.last_spoken = text  # the caller may ask about a word of it ("চুয়াল্লিশ বললেন?")
+        _rs = getattr(session, "recent_spoken", None)
+        if _rs is None:
+            _rs = session.recent_spoken = []
+        _rs.append((_same_line_key(text), session.turn_count))
+        del _rs[:-4]
     clauses = split_into_clauses(text) or [text]
 
     total_duration = 0.0
@@ -2178,6 +2239,60 @@ CACHE_LOOKUP_MAX_S = float(os.environ.get("INTENT_CACHE_MAX_S", "1.5"))
 MIN_MODEL_BUDGET_S = 0.5
 
 
+def _dialogue_snapshot(session: CallSession, lang: str = "bn") -> dict:
+    """The conversation state as one dict (see _dialogue_snapshot_raw); an error in building it means no context, never a failed turn."""
+    try:
+        return _dialogue_snapshot_raw(session, lang)
+    except Exception:  # noqa: BLE001 - advisory
+        logger.warning("dialogue snapshot failed", exc_info=True)
+        return {}
+
+
+def _dialogue_snapshot_raw(session: CallSession, lang: str = "bn") -> dict:
+    """Owner, 2026-10-31: the call's conversational state in one dict (agent/dialogue_state.py): what the assistant just said, which question is waiting for an answer, which doctor / department is being talked
+    about, what the booking is asking next. Read-only; built from the session's fields, never from the model."""
+    snap: dict = {}
+    last = (getattr(session, "last_spoken", "") or "").strip()
+    if last:
+        snap["last_ai"] = last
+        qs = [q.strip() for q in re.split(r"(?<=[?])", last) if q.strip().endswith("?")]
+        if qs:
+            snap["open_question_spoken"] = qs[-1]
+    oq = None
+    pend = getattr(session, "dept_pending", None)
+    if pend and session.turn_count - pend.get("turn", -99) <= 3:
+        if pend.get("kind") == "confirm_one" and pend.get("doctor"):
+            oq = f"yes or no: shall I book {pend['doctor'].get('name', 'this doctor')} (the doctor just offered) on {pend.get('date') or 'that day'}?"
+        elif pend.get("kind") == "pick":
+            oq = "which of the doctors just offered (" + ", ".join(d.get("name", "") for d in pend.get("doctors", [])[:6]) + ") the caller wants"
+        elif pend.get("kind") == "confirm":
+            oq = "which of the departments just offered the caller means"
+    chk = getattr(session, "doctor_check", None)
+    if oq is None and chk and session.turn_count - chk.get("turn", -99) <= 2:
+        oq = f"yes or no: is the caller asking about {chk['info'].get('name', 'this doctor')}?"
+    pe = getattr(session, "pending_enquiry", None)
+    if oq is None and pe and session.turn_count - pe[1] <= 1:
+        oq = f"the name of the {'doctor' if 'book' in pe[0] or 'doctor' in pe[0] else 'test'} for the caller's last question ({pe[0]})"
+    b = session.booking
+    if b is not None:
+        try:
+            miss = missing_required(b)
+        except Exception:  # noqa: BLE001 - a snapshot is advisory
+            miss = []
+        snap["booking"] = f"{b.action}, stage {b.stage}" + (f", still needs: {miss[0]}" if miss else "")
+        if oq is None and miss and b.stage == "collecting":
+            oq = f"the booking's {miss[0].replace('_', ' ')}"
+    if oq:
+        snap["open_question"] = oq
+    subj = getattr(session, "subject_doctor", None)
+    if subj:
+        snap["doctor"] = subj
+    topic = getattr(session, "dept_topic", None) or (getattr(session, "last_route", None) or {}).get("dept")
+    if topic:
+        snap["department"] = topic
+    return snap
+
+
 async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, key: str) -> dict:
     """Tier 2 (semantic cache) + tier 3 (LLM), run AFTER fast_path already
     abstained. Split out from _resolve_intent so the filler race below can
@@ -2223,8 +2338,9 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
     if budget_left < MIN_MODEL_BUDGET_S:
         raise ExtractionError(f"intent budget of {INTENT_BUDGET_S}s used up before the model was asked")
     # the extractor bounds itself by `budget_left`; the wait_for is the backstop for a thread that does not
+    _ctx = dialogue_state.render(_dialogue_snapshot(session, lang))  # what was just said / asked: so a short follow-up is understood in context
     model = asyncio.ensure_future(
-        asyncio.wait_for(asyncio.to_thread(extract_intent, text, 2, lang, budget_left), timeout=budget_left + 1.0)
+        asyncio.wait_for(asyncio.to_thread(extract_intent, text, 2, lang, budget_left, _ctx), timeout=budget_left + 1.0)
     )
     model.add_done_callback(lambda f: f.cancelled() or f.exception())
     if not lookup.done():
@@ -2359,6 +2475,9 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     # The cache stores the whole intent object (smalltalk carries reply
     # text in the caller's language), so the language is part of the key.
     key = text if text_lang == "bn" else f"[{text_lang}] {text}"
+    _sig = dialogue_state.signature(_dialogue_snapshot(session, lang))
+    if _sig:  # the same words mean something else under a different open question ("yes" to a booking / to a doctor check): a saved answer is only reused under the same one
+        key = f"{key} [[{_sig}]]"
 
     # KCD-459: the filler race used to wrap ONLY the LLM call, so a slow
     # embedding lookup (agent/semantic_cache.py's L2 tier, a live call to
@@ -2691,7 +2810,7 @@ async def _answer_when_repeat(session: CallSession, text: str, lang: str) -> boo
         with contextlib.suppress(Exception):
             if _fast_path._named_doctor(fast_path_normalize(text), language_of_script(text, lang), strong=True) is not None:  # noqa: SLF001
                 return False
-    await _speak(session, last, lang)
+    await _speak(session, last, lang, repeat_ok=True)
     return True
 
 
@@ -3982,6 +4101,30 @@ _UNCLEAR_GM = {
 }
 
 
+_WHAT_DO_YOU_NEED = {
+    "bn": "দুঃখিত, ঠিক বুঝতে পারিনি। আপনি কী জানতে চান -- কোনো ডাক্তার কবে বসেন, টেস্টের রেট, নাকি অ্যাপয়েন্টমেন্ট নিতে চান?",
+    "hi": "माफ़ कीजिए, ठीक से नहीं समझ पाई। आप क्या जानना चाहते हैं -- कोई डॉक्टर कब बैठते हैं, टेस्ट का रेट, या अपॉइंटमेंट लेना है?",
+    "en": "Sorry, I did not quite understand. What would you like -- when a doctor sits, the rate of a test, or an appointment?",
+}
+_SORRY_SHORT = {"bn": "দুঃখিত, ঠিক বুঝতে পারিনি।", "hi": "माफ़ कीजिए, ठीक से नहीं समझ पाई।", "en": "Sorry, I did not quite understand."}
+
+
+async def _specific_clarification(session: CallSession, lang: str) -> str:
+    """Owner, 2026-10-31: the bare "sorry, I did not understand, say it again" gives the caller nothing to work with. What is said instead depends on what is going on: with a question still open, that question is
+    asked again by name ("I had asked: ..."); with nothing open, the caller is offered what the assistant can do; the second time in a row, the which-doctor-or-what-problem question with General Medicine's
+    doctors (the third time in a row is handed to a person by the caller of this function)."""
+    lg = lang if lang in ("bn", "hi") else "en"
+    line = dialogue_state.open_question_line(_dialogue_snapshot(session, lang), lg)
+    if line:
+        return f"{_SORRY_SHORT[lg]} {line}"
+    if getattr(session, "unclear_streak", 0) >= 2:
+        try:
+            return await _unclear_problem_reply(session, lang)
+        except Exception:  # noqa: BLE001 - a better question must never cost the reply
+            pass
+    return _WHAT_DO_YOU_NEED[lg]
+
+
 async def _unclear_problem_reply(session: CallSession, lang: str) -> str:
     """Owner, 2026-10-30: when the department cannot be told, the caller is asked AGAIN which doctor or exactly what the problem is -- and in the same answer told that General Medicine doctors are available today (those who sit
     today and still have a free slot, by part of the day), if any. The second time in a row the counter is named as well. Never a bare dead end."""
@@ -4130,7 +4273,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                 return {"intent": "doctor_availability", "slots": {"doctor_name": _resolve_doctor_for_booking(pend["doctor"]), "date": _other}}
         # "কবে আছে, নেক্স্ট কবে পাব, পরে কবে বসছে" after the next sitting was just told: that IS the answer to "when" -- said again, and the question stays open (owner, 2026-10-24)
         pend["turn"] = session.turn_count
-        await _speak(session, pend["say"], lang)
+        await _speak(session, pend["say"], lang, repeat_ok=True)
         return True
     if pend and session.turn_count - pend["turn"] <= (_PICK_MEMORY_TURNS if pend["kind"] == "pick" else 3):
         session.dept_pending = None
@@ -5998,7 +6141,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             session.low_score_reasks = 0
             await session.send_json("User", text)
             session.turn_count += 1
-            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang)
+            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang, repeat_ok=True)
             return
         # Swearing at the agent: a calm fixed boundary in the caller's own language, never the model (agent/abuse.py);
         # the third time in one call, a courteous close.
@@ -6470,7 +6613,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if getattr(session, "last_spoken", "") and repeat_request.asks_repeat(text):
             # Owner, 2026-10-30: "sunte pelam na" / "bujhlam na" / "ki bolchen?" / "ar ekbar bolben please" ... -> the LAST LINE again, exactly as it was said
             logger.info("[%s] the caller asked for the last line again", session.call_id)
-            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang)
+            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang, repeat_ok=True)
             return
         if await _answer_named_total(session, text, lang):
             return
@@ -6568,7 +6711,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     if intent == "repeat_last":
         # Owner, 2026-10-30: the model, not a word list, recognised a request to hear the last line again (any wording): it is said again exactly. Without a last line, or for a long sentence, it was not that.
         if getattr(session, "last_spoken", "") and len(text.split()) <= 10:
-            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang)
+            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang, repeat_ok=True)
             return
         intent = "unclear"
         data = {**data, "intent": intent}
@@ -6908,7 +7051,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 # Owner, 2026-10-29: while a doctor is the subject, a sentence that is not understood is asked about again in his terms, never with the bare "sorry, I did not understand"
                 await _speak(session, doctor_facts.menu(dept_talk.spoken_name(_ctx_doc, lang), lang), lang)
                 return
-            await _speak(session, phrase("unclear", lang), lang)
+            await _speak(session, await _specific_clarification(session, lang), lang)
             return
 
     # KCD-442/KCD-447: a turn the two ASR decoders disagreed on is not
@@ -9440,7 +9583,7 @@ async def _dept_sitting_turn(session: CallSession, text: str, lang: str, topic: 
     pend = getattr(session, "dept_pending", None)
     if any(c in low for c in _REPEAT_CUES) and pend and pend.get("say") and pend.get("kind") in ("pick", "confirm_one") and (sit or dept_talk.asks_names(text)):
         pend["turn"] = session.turn_count
-        await _speak(session, pend["say"], lang)
+        await _speak(session, pend["say"], lang, repeat_ok=True)
         return True
     count = _count_in(text)
     today = slot_proposal.clinic_now().date()
