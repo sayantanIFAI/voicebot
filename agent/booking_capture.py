@@ -1160,6 +1160,15 @@ def says_english_bazar(text: str) -> bool:
     return 0 < len(t.split()) <= 3 and re.match(r"(?:ইংলিশ|ইংরেজ|ইংরাজ|ইংলীশ|english|इंग्लिश|अंग्रेज)", t, re.I) is not None
 
 
+_ASKS_FOR_ENGLISH = re.compile(r"please|plz|pls|speak|language|only|\bin\b|ইংরেজিতে|ইংরাজিতে|ইংলিশে|ভাষায়|বলুন|বলো|বলেন|বলবেন|bolun|bolo|boliye|bolen|अंग्रेज़ी में|अंग्रेजी में|इंग्लिश में|बोलिए|बोलो|\bme\b|\bmein\b", re.I)
+
+
+def english_bazar_not_a_request(text: str) -> bool:
+    """Owner, 2026-10-31 ("english moor", "english bajar" -- the recogniser's English Bazar -- switched the whole call to English while the booking waited for the ADDRESS): a short answer that begins with
+    "English" and carries no word of asking for the language ("please", "speak", "in", "বলুন", "में") is the place."""
+    return says_english_bazar(text) and _ASKS_FOR_ENGLISH.search(text or "") is None
+
+
 def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, tag: str) -> bool:
     """One of the details asked after the name and the number (the age, then the address). Owner, 2026-10-18: each is asked alone; the AGE is read back with the next
     question in the same breath ("the patient is 45. What is the address?"), the answer to which also counts as its yes; the ADDRESS goes straight on to the closing question,

@@ -6273,6 +6273,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         switch_target = detect_language_switch_request(text, detected_lang)
         if switch_target and session.booking is not None and session.booking.slots.get("_ps_pending") and booking_capture.says_english_bazar(text):
             switch_target = None  # Owner, 2026-10-27: asked "which police station?", "english was a" is English Bazar, not a request to switch to English
+        elif switch_target and session.booking is not None and "patient_address" in session.booking.asked_fields and not session.booking.slots.get("patient_address") and booking_capture.english_bazar_not_a_request(text):
+            switch_target = None  # Owner, 2026-10-31: asked for the ADDRESS, "english moor" / "english bajar" is the place (English Bazar), not a request to switch to English
         if switch_target:
             session.lang_explicit = True  # set only once the request is accepted (review 2026-10-28: it used to be set before a place-name false positive was rejected)
         if switch_target:

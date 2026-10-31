@@ -56,7 +56,7 @@ _RULES: list[tuple[str, bool, str, str, str]] = [
      # to a plain doctor-name lookup and fuzzy-matched the surname "হালদার" instead. Safe to add bare despite "হার"
      # also meaning "necklace"/"defeat" in isolation: this stem only ever fires immediately beside a doctor word
      # (the _GAP + DOC_BN match below), and nobody asks for "the necklace's doctor".
-     r"হাড়|হাড|হাঁড়|হাড্ডি|হার(?!্)|জয়েন্ট|গাঁট|গাট",
+     r"হাড়|হাড|হাঁড়|হাড্ডি|হার(?!্)|হার্ডি|হার্ডী|হাডি|হাডডি|হার্ড|জয়েন্ট|গাঁট|গাট",  # owner, 2026-10-31: "হার্ডির ডাক্তার" is the patient's haddir daktar (bone doctor), written so by the recogniser
      r"हड्डी|हड्डियों|हड्डि|जोड़ों|जोड़|बोन"),
     ("Cardiology", False,
      r"bu+k(?:er|ar|r|ke|ki|e|ey)?|boo?k(?:er|ar)|heart(?:er|r)?|hart(?:er)?|hridoy\w*|hriday\w*|hridpindo\w*|dil(?:ka|ke|ki)?|chest|sine(?:ke|ka|ki)?",
