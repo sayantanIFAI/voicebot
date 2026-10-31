@@ -4744,7 +4744,7 @@ async def _answer_good_doctor(session: CallSession, text: str, lang: str) -> Non
             lead = {"bn": "কোন ডাক্তার ভালো সেটা আমি বলতে পারি না, আমাদের সব ডাক্তারই ভালো। ", "hi": "कौन सा डॉक्टर बेहतर है, यह मैं नहीं बता सकती; हमारे सभी डॉक्टर अच्छे हैं। ", "en": "I cannot say which doctor is better; all our doctors are good. "}[lang if lang in ("bn", "hi") else "en"]
             spoken = lead + department_route_reply(_dept_labelled(sticky, lang), "", lang)
         else:
-            spoken = doctor_enquiry_cues.good_doctor_reply(await _general_medicine_today(lang), None, lang)
+            spoken = doctor_enquiry_cues.good_doctor_reply([], None, lang)  # owner, 2026-10-31: no list of General Medicine's doctors here -- nothing in the conversation is about General Medicine
     await _speak(session, _with_resume(session, spoken, lang), lang)
 
 
@@ -4859,7 +4859,7 @@ async def _check_police_station_answer(session: CallSession, text: str) -> None:
         st.slots["_ps_place"] = speakable(home)
 
 
-async def _speak_day_availability(session: CallSession, name: str, date_iso: str, lang: str) -> None:
+async def _speak_day_availability(session: CallSession, name: str, date_iso: str, lang: str, ask_book: bool = False) -> None:
     """The doctor on one real date (the weekday the caller named, resolved on the clinic's calendar): sitting then, or off with his next sitting day -- the
     schedule table's own answer, the same wording as any availability question."""
     try:
@@ -4872,6 +4872,8 @@ async def _speak_day_availability(session: CallSession, name: str, date_iso: str
     slots = {"doctor_name": name, "date": date_iso}
     # a yes to "does he sit on <weekday>?" is just that (weekday, date, doctor); his hours and, when he does not sit, his next sitting come from the ordinary reply
     reply = doctor_weekday_yes_reply(slots, info, lang, date_iso) or doctor_availability_reply(slots, info, lang)
+    if ask_book and info.get("found") and not reply.rstrip().endswith("?"):
+        reply = f"{reply} {slot_proposal.book_that_day_question(date_iso, lang)}"
     await _speak(session, _with_resume(session, reply, lang), lang)
 
 
@@ -6627,6 +6629,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _speak(session, where_doctor_sits.reply(lang), lang)
             return
         _update_doctor_subject(session, text, lang)
+        if (_context_doctor_info(session) is not None or getattr(session, "dept_topic", None)) and doctor_facts.asks_quality_bare(text):
+            # Owner, 2026-10-31: "তো কি ভালো" (is he good?) was answered "হ্যাঁ, বলুন।": no doctor is ever called better than another, and the caller is asked for the problem or the department
+            await _speak(session, _with_resume(session, doctor_enquiry_cues.good_doctor_reply([], None, lang), lang), lang)
+            return
         if await _which_doctor_turn(session, text, lang):
             return
         if session.booking is None and await _doctor_check_turn(session, text, lang):
@@ -9444,6 +9450,24 @@ async def _weekly_lines(infos: list[dict], lang: str) -> list[str]:
     return lines
 
 
+async def _confirmed_doctor_answer(session: CallSession, info: dict, date_iso: str | None, lang: str) -> None:
+    """The doctor is settled (the caller said yes to "are you asking about Dr. X?", or the call has been about this very doctor from the start). Owner, 2026-10-31: the answer is for the DAY the caller named
+    ("সোমবার") -- sits or not, with the question "shall I book that day?" -- never his whole week when a day was said; and the question stays OPEN, so the caller's "yes" books it (it used to be answered
+    "হ্যাঁ, বলুন।")."""
+    name = info.get("name")
+    session.last_doctor_enquiry = {"doctor_name": name, "date": date_iso, "turn": session.turn_count}
+    session.subject_doctor = name
+    item = {"name": name, "full_name": info.get("full_name")}
+    if date_iso:
+        await _speak_day_availability(session, name, date_iso, lang, ask_book=True)
+        session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": date_iso, "time": None, "turn": session.turn_count, "say": getattr(session, "last_spoken", "")}
+        return
+    lines = await _weekly_lines([info], lang)
+    say = " ".join(lines + [dept_talk.ask_which(lang, 1)]) if lines else dept_talk.ask_which(lang, 1)
+    await _speak(session, _with_resume(session, say, lang), lang)
+    session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": None, "time": None, "turn": session.turn_count, "say": say}
+
+
 async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-29 (live call): "অর্থপেটি ডাক্তার ... কেন বসে" -> "হ্যাঁ, বসেন।"; "ডাক্তারের নাম কি আছে" -> the count and all the department's doctors; "কলকাতা ডাক্তার এদিকের মালদারে" -> each doctor's yes / no;
     "ও ভালো কোনটা হবে কখন বসবে" -> all are good, every doctor's days and hours, who to book; a first name said as the caller can ("শুভজিৎ দিপ") -> the one doctor it sounds like. Every department, all three
@@ -9456,14 +9480,7 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
         session.doctor_check = None
         answer = booking_capture.confirm_answer(text, lang) if len(text.split()) <= 4 else None  # a longer sentence is a new question, not a "yes"
         if answer == "yes":
-            info = chk["info"]
-            session.last_doctor_enquiry = {"doctor_name": info.get("name"), "date": None, "turn": session.turn_count}
-            if chk.get("date"):  # the day asked about ("…বসবে আজকে") is answered for that day
-                await _speak_day_availability(session, info.get("name"), chk["date"], lang)
-                return True
-            lines = await _weekly_lines([info], lang)
-            say = " ".join(lines + [dept_talk.ask_which(lang, 1)]) if lines else dept_talk.ask_which(lang, 1)
-            await _speak(session, say, lang)
+            await _confirmed_doctor_answer(session, chk["info"], chk.get("date"), lang)  # the day asked about ("…বসবে আজকে") is answered for that day
             return True
         if answer == "no":
             await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
@@ -9515,6 +9532,10 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
             _set_dept_state(session, topic, infos, lang, say)
             await _speak(session, say, lang)
             return True
+    # Owner, 2026-10-31 ("কৌশিক ভট্টাচার্য কি কলকাতায়" was answered "yes, you got it right ... saying again: ..."): a doctor NAMED beside a Kolkata word is the question "is he from Kolkata?"
+    if asks_origin and _text_names_a_doctor(text, lang):
+        if await _answer_doctor_origin(session, text, lang):
+            return True
     # the caller checks one or two of the doctors just told ("শুভদীপ আর তপন কি?"): the SAME names again
     told = getattr(session, "last_route", None) or {}
     if told.get("names") and not (asks_names or asks_good or asks_when or asks_origin) and len(text.split()) <= 20 and not mention and not booking_carryover.asks_to_book(text) and not booking_carryover.commits_to_booking(text):
@@ -9530,9 +9551,17 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
         if close:
             # Owner, 2026-10-29: "ও দিপ শুভজিৎ দিপ" -- a name said as the caller can: the doctor it sounds like is ASKED about ("আপনি কি ডাঃ শুভদীপ মন্ডলের কথা জিজ্ঞেস করছেন?"), never answered about unasked;
             # two that sound alike are offered as "A, or B?"
+            _today = slot_proposal.clinic_now().date()
+            _day = (weekday_cues.resolve_date(text, _today) if weekday_cues.weekday_of(text) is not None else None) or booking_capture.read_when(text, False, want_day=True).date
+            _ctx = _context_doctor_info(session)
+            _same = next((c for c in close if _ctx is not None and c.get("name") == _ctx.get("name")), None)
+            if _same is not None:
+                # Owner, 2026-10-31: the call has been about THIS doctor from the start and the caller names him again (a spelling or ending that only sounds a little different): no "are you asking about Dr. X?"
+                await _confirmed_doctor_answer(session, _same, _day, lang)
+                return True
             first = dept_talk.spoken_name(close[0], lang)
             say = dept_talk.confirm_either(first, dept_talk.spoken_name(close[1], lang), lang) if len(close) > 1 and dept_talk.close_doctors(text, [close[0], close[1]], floor=0.45) == close and _close_pair(text, close) else dept_talk.confirm_name(first, lang)
-            session.doctor_check = {"info": close[0], "turn": session.turn_count}
+            session.doctor_check = {"info": close[0], "turn": session.turn_count, "date": _day}
             await _speak(session, say, lang)
             return True
     return False

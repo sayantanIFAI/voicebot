@@ -39,6 +39,20 @@ _WHICH_DOCTOR = re.compile(
 )
 
 
+_QUALITY_WORDS = frozenset("ভালো ভাল ভালই ভাল্লো good best अच्छा अच्छे अच्छी बढ़िया".split())
+_QUALITY_FILLER = frozenset(
+    "তো কি কী উনি ওনি ইনি ওনারা এনারা ওরা ও এই ওই এ সে ডাক্তার ডাক্তারবাবু সব সবাই হ্যাঁ আচ্ছা আর তাহলে ক্যামন কেমন "
+    "is he she it they are the doctor doctors so then ok okay really "
+    "तो क्या ये वो वह डॉक्टर सब है हैं और फिर".split()
+)
+
+
+def asks_quality_bare(text: str) -> bool:
+    """"তো কি ভালো", "ডাক্তার কি ভালো", "is he good" -- a short question about how good the doctor being spoken of is, made only of a quality word and little words (owner, 2026-10-31)."""
+    toks = [w.strip(".,?!।").lower() for w in (text or "").split() if w.strip(".,?!।")]
+    return 1 <= len(toks) <= 4 and any(t in _QUALITY_WORDS for t in toks) and all(t in _QUALITY_WORDS or t in _QUALITY_FILLER for t in toks)
+
+
 def asks_which_doctor(text: str) -> bool:
     t = text or ""
     return len(t.split()) <= 8 and _WHICH_DOCTOR.search(t) is not None
