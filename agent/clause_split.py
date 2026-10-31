@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import re
 
+from agent.speech_norm import contains_critical_figure
+
 _RE_CLAUSE_BOUNDARY = re.compile(r"([।.!?])")
 
 # Below this length, splitting only adds TTS round-trip overhead for no
@@ -32,7 +34,10 @@ def split_into_clauses(text: str) -> list[str]:
     MIN_CHARS_TO_SPLIT -- comes back as a single-item list, so callers
     do not need to special-case "not worth splitting"."""
     text = text.strip()
-    if not text or len(text) < MIN_CHARS_TO_SPLIT:
+    # Owner, 2026-10-31 ("আমি নম্বরটা শুনেছি 9 6 3 5 5 , 8 8 2 0 1। রোগীর বয়স কত?" was spoken slowly all the way through): a reply that carries a phone number / price / reference is slowed
+    # clause by clause (main.py: contains_critical_figure), and a short reply used to be ONE clause, so the question after the number was slowed too. With a figure in it the reply is always split, so only the
+    # sentence that holds the figure is slow.
+    if not text or (len(text) < MIN_CHARS_TO_SPLIT and not contains_critical_figure(text)):
         return [text] if text else []
 
     parts = _RE_CLAUSE_BOUNDARY.split(text)

@@ -177,6 +177,7 @@ from agent.slot_grounding import ground_slots, has_test_context, is_plausible_te
 from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a sentence actually names
 from agent import booking_capture  # sourav 2026-10-16: deterministic phone / name / ordinal-slot capture + safe confirm recovery for the doctor booking
 from agent.digit_speech import spoken_digit_groups  # owner, 2026-10-26: a phone/confirmation number spoken with a pause between groups of five, not one flat run
+from agent import reschedule_request  # owner, 2026-10-31: 'move my booking' (bring forward / push back / I cannot come) recognised by its parts
 from agent import booking_carryover  # sourav 2026-10-14: 'book him / that day' after a doctor-availability answer
 from agent.fast_path import Catalogue, FastPath
 from agent.fast_path import _normalize as fast_path_normalize
@@ -1234,6 +1235,7 @@ class CallSession:
         # sourav, 2026-10-14: the doctor (and date) the last FOUND doctor-availability answer was about, so "book him / that day" has
         # something to point at (agent/booking_carryover.py). {"doctor_name", "date", "turn"} or None.
         self.last_doctor_enquiry: dict | None = None
+        self.reschedule_wish: dict | None = None  # owner, 2026-10-31: how far / from which date a caller wants a booking moved (agent/reschedule_request.py)
 
         # KCD-061: the single, versioned carrier of caller signals
         # (Blueprint 4.5) -- language and confirmation_required are kept
@@ -6754,6 +6756,25 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             return
         intent = "unclear"
         data = {**data, "intent": intent}
+    if (
+        session.booking is None
+        and intent in ("book_appointment", "doctor_availability", "lookup_booking", "unclear", "smalltalk", "clinic_faq", "department_query", "book_test", "reschedule_appointment")
+        and reschedule_request.asks_reschedule(text)
+    ):
+        # Owner, 2026-10-31 (real call: "আমার একটা অ্যাপয়েন্টমেন্ট আছে দু তারিখে, সেদিন আসতে পারব না, ওটা একদিন আগানো যাবে" was answered "which doctor would you like an appointment with?" twice): a caller who
+        # already HAS a booking and asks to move it (earlier, later, another day, "I cannot come") is changing that booking, never making a new one. The booking is found by the caller's number next; how far
+        # it moves ("একদিন আগে") and the date they named for the OLD booking ("দু তারিখে") are kept to pick the booking and work out the new date.
+        logger.info("[%s] %s re-read as a request to move an existing booking", session.call_id, intent)
+        intent = "reschedule_appointment"
+        _number = booking_capture.normalise_phone(booking_capture.read_digits(text)[0])
+        slots = {k: v for k, v in (slots or {}).items() if k in ("phone", "confirmation_id") and v}
+        if _number:
+            slots["phone"] = _number
+        data = {**data, "intent": intent, "slots": slots}
+        _old_day = None
+        with contextlib.suppress(Exception):
+            _old_day = booking_capture.read_when(text, False, want_day=True).date
+        session.reschedule_wish = {"shift": reschedule_request.shift_days(text), "old_date": _old_day, "turn": session.turn_count}
     pending, session.pending_enquiry = session.pending_enquiry, None
     if intent == "unclear" and pending is not None and session.turn_count - pending[1] <= 1:
         intent = pending[0]  # "the same test", a bare name: the answer to the question we just asked
@@ -7601,6 +7622,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             if not st.slots.get("confirmation_id") and slots.get("phone"):
                 found = await _tools.lookup_bookings(phone=slots["phone"])
                 bookings = found.get("bookings") or []
+                _wish = getattr(session, "reschedule_wish", None)
+                if _wish and session.turn_count - _wish.get("turn", 0) > 6:
+                    _wish = session.reschedule_wish = None
+                if len(bookings) > 1 and _wish and _wish.get("old_date"):
+                    # "আমার অ্যাপয়েন্টমেন্ট আছে দু তারিখে": the date the caller named picks the booking, when exactly one is on it
+                    _on_day = [b for b in bookings if b.get("date") == _wish["old_date"]]
+                    if len(_on_day) == 1:
+                        bookings = _on_day
                 if len(bookings) > 1:
                     # CodeRabbit-flagged: never silently act on
                     # bookings[0] -- a caller with several bookings
@@ -7609,6 +7638,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     return
                 if bookings:
                     st.slots["confirmation_id"] = bookings[0]["confirmation_id"]
+                    if _wish and _wish.get("shift") and not st.slots.get("new_date") and bookings[0].get("date"):
+                        # "একদিন আগে" / "এক সপ্তাহ পরে": the new date is the booking's date moved by that many days (never into the past)
+                        with contextlib.suppress(Exception):
+                            _new = datetime.date.fromisoformat(bookings[0]["date"]) + datetime.timedelta(days=int(_wish["shift"]))
+                            if _new >= slot_proposal.clinic_now().date():
+                                st.slots["new_date"] = _new.isoformat()
                 else:
                     st.slots.pop("phone", None)  # a number with no booking is not kept; the next one is read fresh
                     await _speak(session, _NO_BOOKING_FOR_NUMBER.get(lang, _NO_BOOKING_FOR_NUMBER["en"]).format(n=spoken_digit_groups(slots["phone"])), lang)

@@ -97,6 +97,21 @@ POLICE_STATIONS = [
     ("PS_0704", "DIST_07", "Jangipur PS", "Jongipur", "জঙ্গিপুর", "जंगीपुर"),
     ("PS_0705", "DIST_07", "Kandi PS", "Kandy", "কান্দি", "कांदी"),
     ("PS_0706", "DIST_07", "Domkal PS", "Domkol", "ডোমকল", "डोमकल"),
+    # Owner, 2026-10-31 ("থানার রাজারহাটি": the Rajarhat station was in no table, so an answer could not be checked): the well-known police stations of North 24 Parganas, which the Kolkata
+    # callers live next to. Added from public knowledge, NOT from the PDF above -- the owner should compare them with the official list; a station can be added or corrected by one row here.
+    ("PS_0801", "DIST_08", "Rajarhat PS", "Rajarhaat|Rajarhat Gopalpur", "রাজারহাট|রাজারহাটি|রাজারহাট গোপালপুর", "राजारहाट|राजारहाट गोपालपुर"),
+    ("PS_0802", "DIST_08", "New Town PS", "Newtown|Nutan Town", "নিউ টাউন|নিউটাউন|নিউ টাউন", "न्यू टाउन|न्यूटाउन"),
+    ("PS_0803", "DIST_08", "Airport PS", "Dum Dum Airport|Netaji Subhas Airport", "এয়ারপোর্ট|বিমানবন্দর", "एयरपोर्ट|हवाई अड्डा"),
+    ("PS_0804", "DIST_08", "Baguiati PS", "Baguihati|Baguiaty", "বাগুইআটি|বাগুইহাটি|বাগুইআটী", "बागुईआटी|बागुईहाटी"),
+    ("PS_0805", "DIST_08", "Dum Dum PS", "Dumdum", "দমদম|ডামডাম", "दमदम|डमडम"),
+    ("PS_0806", "DIST_08", "Barasat PS", "Barasaat", "বারাসাত", "बारासात"),
+    ("PS_0807", "DIST_08", "Barrackpore PS", "Barrackpur|Barakpur|Barrackpore", "ব্যারাকপুর|বারাকপুর", "बैरकपुर|बैरकपोर"),
+    ("PS_0808", "DIST_08", "Titagarh PS", "Titagar", "টিটাগড়", "टीटागढ़|टिटागढ़"),
+    ("PS_0809", "DIST_08", "Khardah PS", "Khardaha|Khardha", "খড়দহ|খড়দা", "खरदा|खड़दह"),
+    ("PS_0811", "DIST_08", "Madhyamgram PS", "Madhyamgram", "মধ্যমগ্রাম", "मध्यमग्राम"),
+    ("PS_0812", "DIST_08", "Habra PS", "Habra", "হাবড়া", "हाबड़ा"),
+    ("PS_0813", "DIST_08", "Basirhat PS", "Basirhaat", "বসিরহাট|বাসিরহাট", "बसीरहाट"),
+    ("PS_0814", "DIST_08", "Bongaon PS", "Bangaon", "বনগাঁ|বনগাঁও", "बोनगांव|बनगांव"),
 ]
 
 # code, district code, name, unit type

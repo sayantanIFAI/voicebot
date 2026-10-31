@@ -92,7 +92,12 @@ _CHANGE_CUES = (
 
 
 def mentions_change_or_cancel(text: str) -> bool:
-    return _has(_norm(text), _CHANGE_CUES)
+    if _has(_norm(text), _CHANGE_CUES):
+        return True
+    # Owner, 2026-10-31 ("আমার অ্যাপয়েন্টমেন্ট আছে দু তারিখে ... ওটা একদিন আগানো যাবে" was answered "which doctor?"): bring-forward / push-back / "I cannot come" are the words of moving a booking too
+    from agent import reschedule_request
+
+    return reschedule_request.asks_reschedule(text)
 
 
 # A bare "do it" / "take it" said right after a doctor was asked about ("এই সেদিনেরই করুন", "ওই দিনই করে দিন", "मैं ले लूँगा"): the booking goes on.

@@ -28,6 +28,7 @@ import os
 import re
 import uuid
 
+import symptom_lexicon  # owner, 2026-10-31: symptom word -> department fallback (symptom_lexicon.py)
 import lay_departments  # sourav, 2026-10-24: lay doctor phrases -> department, and the paediatric age limit (lay_departments.py)
 import booking_log  # sourav, 2026-10-24: a readable record of every confirmed booking (booking_log.py); never allowed to break a booking
 import notifications
@@ -1281,6 +1282,13 @@ def route_department(db: Session, query_text: str, lang: str, age: int | None = 
         strong = any(not weak for weak in lay_departments.lay_hits(q).values())
         if lay_ids and (strong or not matches):
             matches = list(dict.fromkeys(lay_ids))
+    if not matches:
+        # Owner, 2026-10-31 ("আমার ছেলে ছুলির মতো হয়ে যায়, কাকে দেখাবো" -- ছুলি, a skin disease, found no department): the clinic's keyword rows and the lay-doctor phrases could not place the sentence, so
+        # the symptom-word algorithm does (symptom_lexicon.py): a table of every symptom / disease / body-part word -> department, matched word by word with spelling folded.
+        lex_names = symptom_lexicon.departments_for(query_text)
+        if lex_names:
+            by_name_lex = {d.name: d.id for d in db.query(Department).all()}
+            matches = list(dict.fromkeys(by_name_lex[n] for n in lex_names if n in by_name_lex))
     if age is not None and matches:
         by_id = {d.id: d.name for d in db.query(Department).all()}
         names = lay_departments.apply_age_rule([by_id.get(m, "") for m in matches], age)

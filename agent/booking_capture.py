@@ -1140,6 +1140,22 @@ def _refuses_station(answer: str) -> bool:
     return any(p in t for p in _PS_REFUSAL_PHRASES) or _PS_REFUSAL_ROMAN.search(t) is not None
 
 
+# Owner, 2026-10-31 ("থানার রাজারহাটি" was stored as the station, word "থানার" and all): the words that SAY "police station" are not part of its name. The same list the geography lookup drops
+# (clinic-api/geo_service._DROP), kept here as the agent must not import the clinic service.
+_STATION_FILLER = frozenset({
+    "police", "station", "stn", "thana", "thanay", "thanar", "thane", "thanaye", "ps", "p.s", "p.s.", "p/s", "near", "nearby", "under", "area",
+    "থানা", "থানায়", "থানার", "থানাতে", "থানাটা", "থানাও", "থানাই", "পুলিশ", "পুলিস", "স্টেশন", "স্টেশনের", "পিএস", "পি.এস", "পি এস", "ইলাকা", "এলাকা", "এলাকায়", "এলাকার",
+    "थाना", "थाने", "थानेमें", "थाना", "थानेका", "पुलिस", "स्टेशन", "इलाके", "इलाका", "का", "के", "की", "में", "पीएस",
+})
+
+
+def station_name_only(answer: str) -> str:
+    """"থানার রাজারহাটি" / "rajarhat thana" / "थाना राजारहाट" -> "রাজারহাটি" / "rajarhat" / "राजारहाट": the answer to "which police station?" without the words that say "police station". Word by
+    word, so a station whose own name holds one of them as a part ("Park Street") is untouched."""
+    words = [w for w in (answer or "").split() if w.strip(" ,.।-").lower() not in _STATION_FILLER]
+    return " ".join(words).strip(" ,.।")
+
+
 def _lacks_police_station(address: str) -> bool:
     low = f" {address.lower()} "
     return not any(w in low for w in _STATION_WORDS)
@@ -1222,6 +1238,10 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
                 return True
     if tag == "address" and st.slots.get("_ps_pending"):
         station = fix_station(" ".join((text or "").split()).strip(" ,.।"), lang)
+        said_station = station_name_only(station)
+        if said_station != station and not _refuses_station(station):
+            # the words "police station" are dropped; a bare "থানা" (nothing left) is not a name and is asked for again
+            station = said_station or station
         asked = int(st.slots.get("_ps_asks") or 0)
         # Item 19: main.py checked the answer against the geography tables. A station they know (even spelled as the recogniser heard it) is stored under the table's own name;
         # a refusal that outlasts the re-asks falls back to the station of a place the ADDRESS names, when the tables give exactly one.
@@ -1229,6 +1249,10 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
         from_place = st.slots.pop("_ps_place", None)
         if matched:
             station = matched
+        if not matched and station_name_only(station) == "" and asked < _PS_MAX_REASKS:
+            st.slots["_ps_asks"] = asked + 1  # only the words "police station" were said
+            plan.speak = prompt("ps_again", lang)
+            return True
         if not matched and _refuses_station(station) and asked < _PS_MAX_REASKS:
             st.slots["_ps_asks"] = asked + 1  # "_ps_pending" stays: the very next answer is read as the station again, and the closing question waits for it
             plan.speak = prompt("ps_again", lang)
