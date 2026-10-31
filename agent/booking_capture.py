@@ -1532,6 +1532,16 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
         plan = TurnPlan()
         plan.speak = readback(st, lang, "age", age)
         return plan
+    if age and _active(st) and st.action == "book_appointment" and st.slots.get("_phone_pending") and not st.slots.get("patient_age") and confirm_answer(text, lang) is None and read_digits(text)[1] < 7:
+        # Owner, 2026-10-31 (the address asked again and again, in Hindi, English and Bengali): the phone number is read back with "what is the patient's age?" and the caller answers the AGE ("বাইশ বছর")
+        # without a separate yes. The age had already been taken out of `text` above, so the number's own check below no longer saw it: the age was dropped, the number stayed "waiting for a yes", and every
+        # later answer was read as that wait. The number stands (nobody refused it), the age is kept and read back like any age, and the address is asked next -- once.
+        st.slots["_phone_ok"] = st.slots.pop("_phone_pending")
+        st.asked_fields.add("patient_age")
+        st.slots["_age_pending"] = age
+        plan = TurnPlan()
+        plan.speak = readback(st, lang, "age", age)  # "The patient's age is 22. Could you tell me the address?"
+        return plan
     plan = _before_model(st, text, lang, window=window, today=today)
     if age:
         plan.age = age
@@ -1645,10 +1655,14 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
                 return plan
         else:  # neither a yes, a no nor an age: the number was read back once; only the QUESTION is asked again (owner, 2026-10-28)
             candidates = number_words.phonetic_numbers(text)
+            # Owner, 2026-10-31: the number was read back once and the caller did not refuse it -- it stands; otherwise one unclear answer kept it "pending" for the rest of the call. And the question asked again
+            # is the AGE (the one after the phone: next_ask(.., "phone")); next_ask(.., "patient_age") is the one after the age, the address, which is what looped.
+            st.slots.pop("_phone_pending", None)
+            st.slots["_phone_ok"] = pending_phone
             if len(candidates) >= 2:
                 plan.speak = prompt("age_which", lang, a=candidates[0], b=candidates[1])
             else:
-                plan.speak = next_ask(st, lang, "patient_age") or readback(st, lang, "phone", spoken_digit_groups(pending_phone))
+                plan.speak = next_ask(st, lang, "phone") or readback(st, lang, "phone", spoken_digit_groups(pending_phone))
             return plan
 
     # 1c-wa. The answer to "does this number have WhatsApp?" (owner, 2026-10-23).

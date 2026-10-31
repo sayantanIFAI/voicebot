@@ -218,3 +218,24 @@ def test_a_garbled_age_is_asked_once_more_before_it_is_let_go():
     st2 = _booking(doctor_name="Sen", date="2026-10-20", time_slot="10:00", patient_name="Rahul Dey", phone="9876543210")
     st2.asked_fields.add("patient_age")
     assert bc.before_model(st2, "পঁয়তাল্লিশ", "bn").speak is None or "45" in (bc.before_model(st2, "পঁয়তাল্লিশ", "bn").speak or "")
+
+
+def test_the_age_said_while_the_number_is_waiting_for_its_yes_is_kept_and_read_back():
+    """Owner, 2026-10-31: "बाईस साल" answering the age question right after the phone read-back (no separate yes) was swallowed: the age was lost, the number stayed pending, and the address was asked
+    over and over. The number is accepted, the age is stored and read back, and the address is asked next -- exactly once."""
+    for lang, said in (("hi", "बाईस साल"), ("bn", "বাইশ বছর"), ("en", "twenty two")):
+        st = _booking(doctor_name="Sen", date="2026-11-02", patient_name="Saurav", phone="7808797966")
+        st.slots["_phone_pending"] = "7808797966"
+        st.asked_fields.update({"patient_name", "phone", "patient_age"})
+        plan = bc.before_model(st, said, lang)
+        assert "_phone_pending" not in st.slots and st.slots.get("_phone_ok") == "7808797966", lang
+        assert st.slots.get("_age_pending") == 22, lang
+        assert plan.speak and "22" in plan.speak, (lang, plan.speak)
+
+
+def test_an_unclear_answer_to_the_age_question_after_the_number_asks_the_age_again_not_the_address():
+    st = _booking(doctor_name="Sen", date="2026-11-02", patient_name="Saurav", phone="7808797966")
+    st.slots["_phone_pending"] = "7808797966"
+    st.asked_fields.update({"patient_name", "phone", "patient_age"})
+    plan = bc.before_model(st, "my uncle lives nearby", "en")
+    assert plan.speak == bc.prompt("ask_age", "en") and "_phone_pending" not in st.slots
