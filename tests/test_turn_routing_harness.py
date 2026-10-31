@@ -273,7 +273,10 @@ def test_a_symptom_the_model_could_not_place_is_routed_to_a_department_with_real
 @pytest.mark.parametrize("text", ["My eyes hurt.", "Ami jhapsa dekhchi."])
 def test_a_department_the_clinic_does_not_have_is_never_invented(turns, entry, text):
     said = _one_reply(_run(turns, entry, text))
-    assert "Dr." not in said and "ডা" not in said, said
+    # owner, 2026-10-30: when nothing is clear the agent asks again and suggests GENERAL MEDICINE's doctors who are available -- those may be named; no other department's doctor, and no eye department, is invented
+    names_a_doctor = "Dr." in said or "ডাঃ" in said or "डॉ." in said  # a doctor NAMED (the bare word "ডাক্তার" in a question is not one)
+    assert (not names_a_doctor) or any(w in said for w in ("General Medicine", "জেনারেল মেডিসিন", "जनरल मेडिसिन")), said
+    assert not any(w in said for w in ("Ophthalm", "Eye department", "চক্ষু", "नेत्र")), said
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)
@@ -483,7 +486,8 @@ def test_hr1_a_misheard_bone_doctor_question_still_lists_tomorrows_orthopaedic_d
     """Owner, 2026-10-30: the recogniser heard "হাড়ের ডাক্তার বসবে" as "হাইড্রাস্ট এ বুঝবে"; on the pod that became a lab-test guess ("PSA?"). It is the orthopaedic doctors of tomorrow."""
     r = _run(turns, entry, HR1_CASES[0][0])
     said = _one_reply(r)
-    assert not r["model_called"] and "তপন বসু" in said and "শুভঙ্কর নন্দী" in said and "আগামীকাল" in said, said
+    # (which day is listed depends on the date the test runs: tomorrow, or the next day anybody of the department sits)
+    assert not r["model_called"] and "অর্থোপেডিক্স" in said and any(n in said for n in ("তপন বসু", "শুভঙ্কর নন্দী", "দেবাশিস দাস", "অমিত কর")), said
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)

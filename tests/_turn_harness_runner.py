@@ -152,6 +152,12 @@ class FakeTools:
         self.calls.append(("department_doctors", name))
         return bs.department_doctors(_DBSESSION, name, lang, sex=sex, on_date=on_date, at_time=at_time)
 
+    async def doctor_weekdays(self, name):
+        """The weekly pattern of one doctor (Monday, Wednesday, Friday, 10:00-12:00): a stand-in for the clinic's /doctors/weekdays."""
+        self.calls.append(("doctor_weekdays", name))
+        hours = {"0": "10:00-12:00", "2": "10:00-12:00", "4": "10:00-12:00"}
+        return {"found": True, "doctor_name": name, "doctor_name_bn": name, "doctor_name_hi": name, "weekdays": [0, 2, 4], "hours": hours}
+
     async def free_slots(self, doctor_name, date):
         """Every doctor has free slots, except Dr. Biswajit Sen: fully booked (so "who is available today" must leave him out)."""
         self.calls.append(("free_slots", doctor_name))
